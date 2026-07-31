@@ -1,193 +1,160 @@
 import React, { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
-import { Code2, Loader2, AlertCircle, Send, Bot, Copy, Download, Sparkles, Image as ImageIcon, MessageSquare, Trash2 } from 'lucide-react'
+import { Code2, Send, Loader2, AlertCircle, Copy, Sparkles, Bot, User, Download, Edit2, Save, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import RichTextEditor from '../components/RichTextEditor'
 
 export default function CodePage() {
   const [techDesign, setTechDesign] = useState('')
   const [language, setLanguage] = useState('go')
   const [loading, setLoading] = useState(false)
   const [messages, setMessages] = useState([])
-  const [inputMessage, setInputMessage] = useState('')
-  const [error, setError] = useState(null)
-  const [uploadedImage, setUploadedImage] = useState(null)
-  const [currentAgent, setCurrentAgent] = useState(null)
   const messagesEndRef = useRef(null)
-  const fileInputRef = useRef(null)
+  const chatInputRef = useRef(null)
+  const [editingMsgIdx, setEditingMsgIdx] = useState(null)
+  const [editContent, setEditContent] = useState('')
 
-  useEffect(() => {
-    const saved = localStorage.getItem('tech_design')
-    if (saved) setTechDesign(saved)
-  }, [])
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  const stripImages = (html) => html ? html.replace(/<img[^>]*>/gi, '[图片已移除]').replace(/src="data:image\/[a-zA-Z]+;base64,[^"]*"/g, '') : html
 
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onloadend = () => setUploadedImage(reader.result)
-      reader.readAsDataURL(file)
-    }
-  }
-
-  const sendMessage = async () => {
-    if (!inputMessage.trim() && !uploadedImage) return
-    const userMessage = { role: 'user', content: inputMessage, image: uploadedImage, timestamp: new Date().toISOString() }
-    setMessages(prev => [...prev, userMessage])
-    setInputMessage('')
-    setUploadedImage(null)
+  const handleGenerate = async () => {
+    if (!techDesign.trim()) return
     setLoading(true)
     try {
-      const res = await axios.post('/api/prd/generate-code', { task_type: 'code', tech_design: techDesign || inputMessage, message: inputMessage, language })
-      if (res.data.status === 'success') {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.data.result, timestamp: new Date().toISOString() }])
-      } else {
-        setError('生成失败: ' + (res.data.result || '未知错误'))
-      }
+      const res = await axios.post('/api/prd/generate-code', { task_type: 'code', tech_design: stripImages(techDesign), language })
+      const result = res.data.result || '生成失败'
+      setMessages(prev => [...prev,
+        { role: 'user', content: `语言: ${language}\n技术方案: ${techDesign}`, timestamp: new Date().toISOString() },
+        { role: 'assistant', content: result, timestamp: new Date().toISOString() }
+      ])
     } catch (err) {
-      const errMsg = err.response?.data?.result || err.response?.data?.detail || err.message
-      setError('生成失败: ' + errMsg)
-    } finally {
-      setLoading(false)
-    }
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ 生成失败: ' + (err.response?.data?.detail || err.message), timestamp: new Date().toISOString(), error: true }])
+    } finally { setLoading(false) }
   }
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() }
+  const handleChatSend = async () => {
+    const text = chatInputRef.current?.value?.trim()
+    if (!text) return
+    chatInputRef.current.value = ''
+    setMessages(prev => [...prev, { role: 'user', content: text, timestamp: new Date().toISOString() }])
+    setLoading(true)
+    try {
+      const historyText = messages.map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`).join('\n\n')
+      const fullContext = historyText + '\n\n用户最新指令: ' + text
+      const res = await axios.post('/api/prd/code-chat', { message: fullContext, language })
+      setMessages(prev => [...prev, { role: 'assistant', content: res.data.result || '处理失败', timestamp: new Date().toISOString() }])
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'assistant', content: '❌ 处理失败: ' + (err.response?.data?.detail || err.message), timestamp: new Date().toISOString(), error: true }])
+    } finally { setLoading(false) }
   }
 
-  const handleCopy = (text) => { navigator.clipboard.writeText(text); alert('已复制到剪贴板') }
-  const handleDownload = (text, filename) => {
+  const startEdit = (idx) => { setEditingMsgIdx(idx); setEditContent(messages[idx].content) }
+  const saveEdit = (idx) => { const u = [...messages]; u[idx] = { ...u[idx], content: editContent }; setMessages(u); setEditingMsgIdx(null) }
+  const cancelEdit = () => setEditingMsgIdx(null)
+  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); alert('已复制') }
+  const downloadCode = (text) => {
+    const ext = language === 'python' ? 'py' : language === 'java' ? 'java' : language === 'typescript' ? 'ts' : 'go'
     const blob = new Blob([text], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url)
-  }
-
-  const selectAgent = (agentName) => {
-    setCurrentAgent(agentName)
-    setMessages([{ role: 'assistant', content: `你好！我是${agentName}，有什么可以帮你的吗？`, timestamp: new Date().toISOString() }])
+    const a = document.createElement('a'); a.href = url; a.download = `code_${Date.now()}.${ext}`; a.click(); URL.revokeObjectURL(url)
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-[1400px] mx-auto p-6">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-600 to-indigo-700 rounded-2xl shadow-lg mb-4">
-            <Code2 className="w-8 h-8 text-white" />
+    <div className="space-y-6">
+      <div className="text-center space-y-4 py-6">
+        <h1 className="text-3xl font-bold text-gray-900 flex items-center justify-center gap-2"><Code2 className="w-8 h-8 text-purple-600" /> 代码生成</h1>
+        <p className="text-lg text-gray-600">基于技术方案自动生成代码，支持对话式迭代修改</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-[1600px] mx-auto" style={{ height: 'calc(100vh - 200px)' }}>
+        {/* LEFT */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+          <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2"><Code2 className="w-4 h-4 text-purple-600" />配置</h2>
+            <span className="text-xs text-gray-400">左侧：输入方案，点击生成</span>
           </div>
-          <h1 className="text-3xl font-extrabold text-gray-900 mb-2">代码生成</h1>
-          <p className="text-gray-500">基于技术方案自动生成 Go/Python/Java 代码</p>
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            <RichTextEditor value={techDesign} onChange={setTechDesign} placeholder="粘贴或输入技术方案内容..." minHeight={180} />
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
+              <select className="w-full p-2.5 border border-gray-200 rounded-lg focus:border-purple-500" value={language} onChange={e => setLanguage(e.target.value)}>
+                <option value="go">Go</option>
+                <option value="python">Python</option>
+                <option value="java">Java</option>
+                <option value="typescript">TypeScript</option>
+              </select>
+            </div>
+            <button onClick={handleGenerate} disabled={loading || !techDesign.trim()}
+              className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-2.5 px-4 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center gap-2">
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" />生成中...</> : <><Sparkles className="w-4 h-4" />生成代码</>}
+            </button>
+            <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+              <p className="text-xs font-medium text-purple-700 mb-1">💡 使用提示</p>
+              <ul className="text-xs text-purple-600 space-y-0.5">
+                <li>• 在左侧输入技术方案，选择语言</li>
+                <li>• 生成的代码出现在右侧聊天框中</li>
+                <li>• 在右侧对代码提出修改意见</li>
+                <li>• 每条 AI 回复可复制/下载</li>
+              </ul>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Panel - Configuration */}
-          <div className="lg:col-span-4 space-y-4">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-200 bg-gray-50">
-                <h2 className="text-base font-semibold text-gray-900 flex items-center">
-                  <Code2 className="w-4 h-4 text-purple-600 mr-2" />
-                  技术方案输入
-                </h2>
-              </div>
-              <div className="p-5 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">技术方案内容</label>
-                  <textarea className="w-full p-3 border border-gray-200 rounded-lg focus:border-purple-500 focus:ring-1 focus:ring-purple-500 resize-none h-40 text-sm" value={techDesign} onChange={e => setTechDesign(e.target.value)} placeholder="粘贴或输入技术方案内容..." />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">编程语言</label>
-                  <select className="w-full p-2.5 border border-gray-200 rounded-lg focus:border-purple-500" value={language} onChange={e => setLanguage(e.target.value)}>
-                    <option value="go">Go</option>
-                    <option value="python">Python</option>
-                    <option value="java">Java</option>
-                  </select>
-                </div>
-                <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                  <p className="text-xs font-medium text-purple-700 mb-1.5">生成内容包括：</p>
-                  <ul className="text-xs text-purple-600 space-y-0.5">
-                    <li>• Handler 层代码（路由处理）</li>
-                    <li>• Service 层代码（业务逻辑）</li>
-                    <li>• DAO 层代码（数据访问）</li>
-                    <li>• Model 定义（结构体）</li>
-                    <li>• 错误码定义</li>
-                    <li>• 测试用例代码</li>
-                  </ul>
-                </div>
-                <button onClick={sendMessage} disabled={loading || (!techDesign.trim() && !inputMessage.trim())} className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-2.5 px-4 rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center">
-                  {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />生成中...</> : <><Sparkles className="w-4 h-4 mr-2" />生成代码</>}
-                </button>
-                {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3"><AlertCircle className="w-4 h-4 text-red-600 inline mr-1.5" /><span className="text-red-700 text-sm">{error}</span></div>}
-              </div>
-            </div>
+        {/* RIGHT */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+          <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div className="flex items-center gap-2"><Bot className="w-4 h-4 text-purple-600" /><h2 className="text-base font-semibold text-gray-900">代码对话</h2>{messages.length > 0 && <span className="text-xs text-gray-400 ml-1">{messages.length} 条消息</span>}</div>
+            {messages.length > 0 && <button onClick={() => setMessages([])} className="text-xs text-gray-400 hover:text-red-500">清空</button>}
           </div>
-
-          {/* Right Panel - Chat & Results */}
-          <div className="lg:col-span-8 space-y-4">
-            {/* Agent Selection Pills */}
-            <div className="flex flex-wrap gap-2">
-              {[{ name: '代码助手', icon: '🤖' }, { name: '架构师', icon: '🏗️' }, { name: '测试工程师', icon: '🧪' }].map(a => (
-                <button key={a.name} onClick={() => selectAgent(a.name)} className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${currentAgent === a.name ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
-                  {a.icon} {a.name}
-                </button>
-              ))}
-            </div>
-
-            {/* Chat Area */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
-              <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-gray-900 flex items-center">
-                  <MessageSquare className="w-4 h-4 text-purple-600 mr-2" />
-                  对话与结果
-                </h2>
-                <button onClick={() => messages.length > 0 && setMessages([])} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="清空对话">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-400 py-16">
+                <Code2 className="w-12 h-12 mb-3 opacity-40" /><p className="text-sm font-medium">暂无对话记录</p><p className="text-xs mt-1">在左侧输入方案后点击"生成代码"</p>
               </div>
-
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                {messages.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                    <Bot className="w-12 h-12 mb-3 opacity-40" />
-                    <p className="text-sm font-medium">暂无对话记录</p>
-                    <p className="text-xs mt-1">开始对话或点击"生成代码"</p>
+            ) : messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`flex items-start gap-2 max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-purple-600' : 'bg-blue-600'}`}>
+                    {msg.role === 'user' ? <User className="w-3.5 h-3.5 text-white" /> : <Bot className="w-3.5 h-3.5 text-white" />}
                   </div>
-                ) : messages.map((msg, idx) => (
-                  <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[85%] rounded-xl p-4 ${msg.role === 'user' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                      {msg.image && <img src={msg.image} alt="Uploaded" className="max-w-full rounded-lg mb-2 max-h-24 object-contain" />}
-                      <div className="prose prose-sm max-w-none">
-                        {msg.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown> : <p className="whitespace-pre-wrap">{msg.content}</p>}
-                      </div>
-                      <div className={`text-xs mt-2 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-500'}`}>{new Date(msg.timestamp).toLocaleTimeString()}</div>
-                      {msg.role === 'assistant' && (
-                        <div className="flex space-x-2 mt-2 pt-2 border-t border-purple-200/30">
-                          <button onClick={() => handleCopy(msg.content)} className="flex items-center px-2 py-1 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors"><Copy className="w-3 h-3 mr-1" />复制</button>
-                          <button onClick={() => handleDownload(msg.content, `code_${Date.now()}.go`)} className="flex items-center px-2 py-1 bg-white/20 rounded text-xs hover:bg-white/30 transition-colors"><Download className="w-3 h-3 mr-1" />下载</button>
-                        </div>
-                      )}
+                  <div className={`rounded-2xl px-3 py-2.5 ${msg.role === 'user' ? 'bg-purple-600 text-white' : msg.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-gray-100 text-gray-900'}`}>
+                    <div className={`flex items-center gap-1 mb-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>
+                      <button onClick={() => startEdit(idx)} title="编辑" className="p-0.5 hover:bg-black/10 rounded"><Edit2 className="w-3 h-3" /></button>
+                      <button onClick={() => copyToClipboard(msg.content)} title="复制" className="p-0.5 hover:bg-black/10 rounded"><Copy className="w-3 h-3" /></button>
+                      {msg.role === 'assistant' && <button onClick={() => downloadCode(msg.content)} title="下载代码" className="p-0.5 hover:bg-black/10 rounded"><Download className="w-3 h-3" /></button>}
                     </div>
+                    {editingMsgIdx === idx ? (
+                      <div className="space-y-1.5">
+                        <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)}
+                          className={`w-full p-2 rounded-lg text-sm resize-none font-mono ${msg.role === 'user' ? 'bg-white/20 text-white placeholder-white/60' : 'bg-white text-gray-900'}`} rows={6} />
+                        <div className="flex gap-1.5">
+                          <button onClick={() => saveEdit(idx)} className="px-2 py-0.5 bg-green-500 text-white text-xs rounded hover:bg-green-600 flex items-center gap-0.5"><Save className="w-2.5 h-2.5 inline" />保存</button>
+                          <button onClick={cancelEdit} className="px-2 py-0.5 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 flex items-center gap-0.5"><X className="w-2.5 h-2.5 inline" />取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                        {msg.role === 'assistant' ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown> : msg.content}
+                      </div>
+                    )}
+                    <div className={`text-xs mt-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>{new Date(msg.timestamp).toLocaleTimeString()}</div>
                   </div>
-                ))}
-                {loading && <div className="flex justify-start"><div className="bg-gray-100 rounded-xl p-3 flex items-center"><Loader2 className="w-4 h-4 animate-spin text-purple-600 mr-2" /><span className="text-sm text-gray-600">生成中...</span></div></div>}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Input Area */}
-              <div className="border-t border-gray-200 bg-gray-50 p-4">
-                {uploadedImage && <div className="mb-2 relative inline-block"><img src={uploadedImage} alt="Preview" className="h-12 rounded-lg border border-gray-200" /><button onClick={() => setUploadedImage(null)} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-xs">×</button></div>}
-                <div className="flex items-end space-x-2">
-                  <button onClick={() => fileInputRef.current?.click()} className="p-2.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" title="上传图片"><ImageIcon className="w-4 h-4" /></button>
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                  <textarea className="flex-1 p-2.5 border border-gray-200 rounded-lg focus:border-purple-500 focus:ring-1 focus:ring-purple-500 resize-none text-sm bg-white" placeholder="输入消息... (Enter 发送，Shift+Enter 换行)" value={inputMessage} onChange={e => setInputMessage(e.target.value)} onKeyDown={handleKeyDown} rows={2} />
-                  <button onClick={sendMessage} disabled={!inputMessage.trim() && !uploadedImage || loading} className="p-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"><Send className="w-4 h-4" /></button>
                 </div>
               </div>
+            ))}
+            {loading && <div className="flex items-center gap-2 text-gray-500"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">AI 正在思考...</span></div>}
+            <div ref={messagesEndRef} />
+          </div>
+          <div className="border-t border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-end gap-2">
+              <textarea ref={chatInputRef} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend() } }}
+                placeholder="对生成的代码提出修改意见，例如：增加错误处理、优化性能..." className="flex-1 p-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/10 resize-none text-sm bg-white" rows={2} />
+              <button onClick={handleChatSend} disabled={loading || !chatInputRef.current?.value?.trim()}
+                className="px-3 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl hover:from-purple-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 self-end">
+                <Send className="w-4 h-4" /><span className="hidden sm:inline">发送</span>
+              </button>
             </div>
           </div>
         </div>

@@ -1,76 +1,120 @@
 #!/bin/bash
-# 智能研发平台启动脚本
-# 用法: ./start.sh
+set -e
 
-echo "========================================"
-echo "  AI 智能研发平台 - 启动服务"
-echo "========================================"
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-PROJECT_DIR="$HOME/PycharmProjects/Code-Platform"
+# ─── 颜色输出 ────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
 
-# 1. 清理端口占用
-echo ""
-echo "[1/3] 清理端口占用..."
-for PORT in 8888 5173; do
-    PID=$(lsof -ti:$PORT 2>/dev/null || true)
-    if [ ! -z "$PID" ]; then
-        echo "  关闭端口 $PORT (PID: $PID)"
-        kill -9 $PID 2>/dev/null || true
+log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# ─── 加载环境变量 ────────────────────────────────────────────────
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+    log_info "Loaded .env file"
+else
+    log_warn "No .env file found. Using defaults."
+fi
+
+# ─── 后端启动 ────────────────────────────────────────────────────
+start_backend() {
+    log_info "Starting backend on port 8888..."
+    export AGNES_API_KEY="${AGNES_API_KEY:-}"
+    cd "$PROJECT_ROOT/backend"
+    nohup python3 main.py > /tmp/backend.log 2>&1 &
+    BACKEND_PID=$!
+    echo "$BACKEND_PID" > /tmp/backend.pid
+    log_info "Backend PID: $BACKEND_PID"
+}
+
+# ─── 前端启动 ────────────────────────────────────────────────────
+start_frontend() {
+    log_info "Starting frontend on port 5173..."
+    cd "$PROJECT_ROOT/frontend"
+    if command -v nvm &> /dev/null; then
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+        nvm use 18 >/dev/null 2>&1 || true
     fi
-done
-sleep 1
+    nohup npm run dev > /tmp/frontend.log 2>&1 &
+    FRONTEND_PID=$!
+    echo "$FRONTEND_PID" > /tmp/frontend.pid
+    log_info "Frontend PID: $FRONTEND_PID"
+}
 
-# 2. 启动后端
-echo ""
-echo "[2/3] 启动后端服务 (port: 8888)..."
-cd "$PROJECT_DIR/backend"
-AGNES_API_KEY=*** /usr/local/bin/python3.13 -m uvicorn main:app --host 0.0.0.0 --port 8888 &
-BACKEND_PID=$!
-echo "  后端 PID: $BACKEND_PID"
+# ─── 停止服务 ────────────────────────────────────────────────────
+stop_services() {
+    log_info "Stopping services..."
 
-# 等待后端启动
-sleep 3
-curl -s http://localhost:8888/api/health > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-    echo "  ✅ 后端启动成功"
-else
-    echo "  ❌ 后端启动失败"
-    exit 1
-fi
+    # 停止后端
+    if [ -f /tmp/backend.pid ]; then
+        BACKEND_PID=$(cat /tmp/backend.pid)
+        kill "$BACKEND_PID" 2>/dev/null || true
+        rm -f /tmp/backend.pid
+        log_info "Backend stopped (PID: $BACKEND_PID)"
+    fi
 
-# 3. 启动前端
-echo ""
-echo "[3/3] 启动前端服务 (port: 5173)..."
-cd "$PROJECT_DIR/frontend"
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-nvm use 18 > /dev/null 2>&1
-npm install > /dev/null 2>&1
-npm run dev &
-FRONTEND_PID=$!
-echo "  前端 PID: $FRONTEND_PID"
+    # 停止前端
+    if [ -f /tmp/frontend.pid ]; then
+        FRONTEND_PID=$(cat /tmp/frontend.pid)
+        kill "$FRONTEND_PID" 2>/dev/null || true
+        rm -f /tmp/frontend.pid
+        log_info "Frontend stopped (PID: $FRONTEND_PID)"
+    fi
 
-# 等待前端启动
-sleep 5
-curl -s http://localhost:5173 > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-    echo "  ✅ 前端启动成功"
-else
-    echo "  ⚠️  前端可能还在编译中，请稍候..."
-fi
+    # 额外清理：按端口杀进程
+    lsof -ti:8888 | xargs kill 2>/dev/null || true
+    lsof -ti:5173 | xargs kill 2>/dev/null || true
+}
 
-# 显示状态
-echo ""
-echo "========================================"
-echo "  ✅ 服务已全部启动"
-echo "========================================"
-echo ""
-echo "  前端访问: http://localhost:5173"
-echo "  后端 API: http://localhost:8888"
-echo "  Swagger:  http://localhost:8888/docs"
-echo ""
-echo "  后端 PID: $BACKEND_PID"
-echo "  前端 PID: $FRONTEND_PID"
-echo ""
-echo "  停止服务: 运行 ./stop.sh 或 kill $BACKEND_PID $FRONTEND_PID"
-echo "========================================"
+# ─── 检查状态 ────────────────────────────────────────────────────
+check_status() {
+    log_info "Checking service status..."
+    if lsof -ti:8888 >/dev/null 2>&1; then
+        log_info "Backend is running on port 8888 ✓"
+    else
+        log_error "Backend is NOT running on port 8888 ✗"
+    fi
+    if lsof -ti:5173 >/dev/null 2>&1; then
+        log_info "Frontend is running on port 5173 ✓"
+    else
+        log_error "Frontend is NOT running on port 5173 ✗"
+    fi
+}
+
+# ─── 主逻辑 ──────────────────────────────────────────────────────
+case "${1:-start}" in
+    start)
+        start_backend
+        sleep 1
+        start_frontend
+        sleep 2
+        check_status
+        ;;
+    stop)
+        stop_services
+        ;;
+    restart)
+        stop_services
+        sleep 1
+        start_backend
+        sleep 1
+        start_frontend
+        sleep 2
+        check_status
+        ;;
+    status)
+        check_status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
