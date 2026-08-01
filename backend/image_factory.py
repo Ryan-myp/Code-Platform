@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""图片工厂后端实现"""
+"""图片工厂模块 - 完整版本
+
+功能：
+1. 文生图（调用 Agnes AI API）
+2. 图生图
+3. 智能抠图（基于颜色阈值）
+4. 剪裁缩放
+5. 模板合成
+6. 批量生成
+7. 图片管理（下载、预览、删除）
+"""
 
 import os
 import json
@@ -12,7 +22,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import JSONResponse, FileResponse
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageEnhance
 import requests
 
 logger = logging.getLogger(__name__)
@@ -21,7 +31,7 @@ router = APIRouter(prefix="/api/image-factory", tags=["图片工厂"])
 
 # 配置
 AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
+AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), "image_factory")
 TEMPLATE_DIR = os.path.join(IMAGE_DIR, "templates")
 
@@ -86,7 +96,8 @@ async def get_stats():
     return {
         "total_images": len(files),
         "total_templates": len(templates),
-        "image_dir": IMAGE_DIR
+        "image_dir": IMAGE_DIR,
+        "api_configured": bool(AGNES_API_KEY)
     }
 
 
@@ -135,9 +146,20 @@ async def delete_image(filename: str):
 async def text_to_image(
     prompt: str = Form(...),
     size: str = Form("1024x1024"),
-    model: str = Form("agnes-image-2.1-flash")
+    model: str = Form("agnes-image-2.1-flash"),
+    batch_size: int = Form(1),
+    n: int = Form(1)
 ):
-    """文生图"""
+    """
+    文生图 - 支持批量生成
+    
+    参数:
+    - prompt: 图片描述
+    - size: 尺寸 (1024x1024, 800x600, 1280x720 等)
+    - model: 模型名称
+    - batch_size: 批量生成数量 (1-4)
+    - n: 每批次生成数量
+    """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
     
@@ -146,30 +168,53 @@ async def text_to_image(
         "Authorization": f"Bearer {AGNES_API_KEY}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "n": 1
-    }
     
+    # 解析尺寸
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
+        width, height = map(int, size.split('x'))
+        size_str = f"{width}x{height}"
+    except:
+        size_str = size
+    
+    results = []
+    
+    for i in range(batch_size):
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": size_str,
+            "n": min(n, 4)  # API 限制最多 4 张
+        }
         
-        if "data" in data and len(data["data"]) > 0:
-            image_url = data["data"][0].get("url")
-            if image_url:
-                img_resp = requests.get(image_url, timeout=60)
-                img = Image.open(io.BytesIO(img_resp.content))
-                filename = save_image(img)
-                return {"id": filename, "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
-        
-        return JSONResponse(status_code=500, content={"error": "生成失败", "response": data})
-    except Exception as e:
-        logger.error(f"文生图失败：{e}")
-        raise HTTPException(500, f"生成失败：{str(e)}")
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=180)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if "data" in data and len(data["data"]) > 0:
+                for item in data["data"]:
+                    image_url = item.get("url")
+                    if image_url:
+                        img_resp = requests.get(image_url, timeout=60)
+                        img = Image.open(io.BytesIO(img_resp.content))
+                        filename = save_image(img)
+                        results.append({
+                            "id": filename,
+                            "url": f"/api/image-factory/images/{filename}",
+                            "prompt": prompt
+                        })
+            else:
+                results.append({"error": f"生成失败：{data}", "prompt": prompt})
+                
+        except Exception as e:
+            logger.error(f"文生图失败：{e}")
+            results.append({"error": f"生成失败：{str(e)}", "prompt": prompt})
+    
+    return {
+        "results": results,
+        "total": len(results),
+        "prompt": prompt
+    }
 
 
 # ── 图生图 API ────────────────────────────────────────────────
@@ -181,7 +226,7 @@ async def image_to_image(
     strength: float = Form(0.35),
     model: str = Form("agnes-image-2.1-flash")
 ):
-    """图生图"""
+    """图生图 - 基于输入图片生成新图片"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
     
@@ -202,7 +247,7 @@ async def image_to_image(
     }
     
     try:
-        resp = requests.post(url, headers=headers, data=data, files=files, timeout=120)
+        resp = requests.post(url, headers=headers, data=data, files=files, timeout=180)
         resp.raise_for_status()
         data = resp.json()
         
@@ -316,6 +361,58 @@ async def blur_image(
     blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
     filename = save_image(blurred)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/edit/text-overlay")
+async def text_overlay(
+    image: UploadFile = File(...),
+    text: str = Form("Hello World"),
+    font_size: int = Form(48),
+    color: str = Form("#FFFFFF"),
+    x: int = Form(50),
+    y: int = Form(50)
+):
+    """文字叠加"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content)).convert("RGBA")
+    
+    # 创建透明图层
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    
+    try:
+        font = get_font(font_size)
+    except:
+        font = ImageFont.load_default()
+    
+    # 解析颜色
+    r = int(color[1:3], 16) if color.startswith('#') and len(color) == 7 else 255
+    g = int(color[3:5], 16) if color.startswith('#') and len(color) == 7 else 255
+    b = int(color[5:7], 16) if color.startswith('#') and len(color) == 7 else 255
+    
+    draw.text((x, y), text, fill=(r, g, b, 255), font=font)
+    
+    # 合成
+    result = Image.alpha_composite(img, overlay)
+    filename = save_image(result)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/edit/batch-resize")
+async def batch_resize(
+    images: List[UploadFile] = File(...),
+    width: int = Form(800),
+    height: int = Form(800)
+):
+    """批量调整大小"""
+    results = []
+    for image in images:
+        content = await image.read()
+        img = Image.open(io.BytesIO(content))
+        img = img.resize((width, height), Image.LANCZOS)
+        filename = save_image(img)
+        results.append({"filename": filename, "url": f"/api/image-factory/images/{filename}"})
+    return {"results": results, "total": len(results)}
 
 
 # ── 模板管理 API ──────────────────────────────────────────────
@@ -486,6 +583,30 @@ def init_templates():
             "layers": [
                 {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1080, "height": 1920},
                 {"type": "text", "key": "title", "x": 50, "y": 1700, "font_size": 48, "color": "#FFFFFF", "text": "视频标题"}
+            ]
+        },
+        {
+            "id": "tmplt_jd_main",
+            "name": "京东主图模板",
+            "width": 800,
+            "height": 800,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "product_image", "x": 100, "y": 100, "width": 600, "height": 600},
+                {"type": "text", "key": "title", "x": 50, "y": 720, "font_size": 28, "color": "#333333", "text": "商品标题"},
+                {"type": "text", "key": "price", "x": 50, "y": 760, "font_size": 24, "color": "#FF0000", "text": "¥199"}
+            ]
+        },
+        {
+            "id": "tmplt_pinduoduo",
+            "name": "拼多多主图模板",
+            "width": 800,
+            "height": 800,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "product_image", "x": 100, "y": 100, "width": 600, "height": 500},
+                {"type": "text", "key": "discount", "x": 100, "y": 650, "font_size": 32, "color": "#FF4400", "text": "限时特惠"},
+                {"type": "text", "key": "price", "x": 100, "y": 700, "font_size": 28, "color": "#333333", "text": "¥99"}
             ]
         }
     ]
