@@ -68,19 +68,19 @@ export default function VideoFactoryPage() {
     }
     setIsGenerating(true)
     try {
+      const formData = new FormData()
+      formData.append('prompt', prompt)
+      formData.append('model', model)
+      formData.append('width', width)
+      formData.append('height', height)
+      formData.append('duration', duration)
+      formData.append('mode', mode)
+      if (mode === 'i2vid') formData.append('image', image)
+      formData.append('frame_rate', frameRate)
+
       const res = await fetch(`${API_BASE}/api/video-factory/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          model,
-          width,
-          height,
-          duration,
-          mode,
-          image: mode === 'i2vid' ? image : '',
-          frame_rate: frameRate,
-        }),
+        body: formData,
       })
       const data = await res.json()
       setLastResult(data)

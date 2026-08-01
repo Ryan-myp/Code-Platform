@@ -65,9 +65,16 @@ export default function MusicFactoryPage() {
     }
     setIsGeneratingLyrics(true)
     try {
-      const res = await fetch(
-        `${API_BASE}/api/music-factory/lyrics/generate?theme=${encodeURIComponent(theme)}&style=${style}&language=${language}&length=${length}`
-      )
+      const formData = new FormData()
+      formData.append('theme', theme)
+      formData.append('style', style)
+      formData.append('language', language)
+      formData.append('length', length)
+
+      const res = await fetch(`${API_BASE}/api/music-factory/lyrics/generate`, {
+        method: 'POST',
+        body: formData,
+      })
       const data = await res.json()
       setLyrics(data.lyrics || '')
     } catch (e) {

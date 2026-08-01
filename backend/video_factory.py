@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
@@ -49,14 +49,14 @@ async def get_stats():
 
 @router.post("/generate")
 async def create_video_task(
-    prompt: str = ...,
-    model: str = "agnes-video-v2.0",
-    width: int = 1152,
-    height: int = 768,
-    duration: int = 5,
-    mode: str = "ti2vid",  # ti2vid, i2vid, keyframes
-    image: str = "",  # 图生视频的图片URL
-    frame_rate: int = 24,
+    prompt: str = Form(...),
+    model: str = Form("agnes-video-v2.0"),
+    width: int = Form(1152),
+    height: int = Form(768),
+    duration: int = Form(5),
+    mode: str = Form("ti2vid"),  # ti2vid, i2vid, keyframes
+    image: str = Form(""),
+    frame_rate: int = Form(24),
 ):
     """创建视频生成任务"""
     if not AGNES_API_KEY:

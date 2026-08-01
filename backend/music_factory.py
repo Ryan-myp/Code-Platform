@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Form
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
@@ -46,10 +46,10 @@ async def get_stats():
 
 @router.post("/lyrics/generate")
 async def generate_lyrics(
-    theme: str = ...,
-    style: str = "pop",  # pop, rock, rap, ballad, jazz, classical
-    language: str = "zh",  # zh, en
-    length: str = "short",  # short, medium, long
+    theme: str = Form(...),
+    style: str = Form("pop"),
+    language: str = Form("zh"),
+    length: str = Form("medium"),
 ):
     """生成歌词"""
     if not AGNES_API_KEY:
@@ -138,10 +138,10 @@ async def generate_lyrics(
 
 @router.post("/music/generate")
 async def generate_music(
-    lyrics: str = ...,
-    style: str = "pop",
-    mood: str = "happy",  # happy, sad, energetic, calm, romantic
-    duration: int = 30,
+    lyrics: str = Form(...),
+    style: str = Form("pop"),
+    mood: str = Form("happy"),
+    duration: int = Form(30),
 ):
     """生成音乐（调用第三方API或占位）"""
     if not AGNES_API_KEY:
@@ -166,9 +166,9 @@ async def generate_music(
 
 @router.post("/tts/sing")
 async def generate_vocal(
-    lyrics: str = ...,
-    voice: str = "female",  # female, male
-    style: str = "pop",
+    lyrics: str = Form(...),
+    voice: str = Form("female"),
+    style: str = Form("pop"),
 ):
     """生成虚拟人声（TTS）"""
     if not AGNES_API_KEY:
