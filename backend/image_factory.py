@@ -384,6 +384,140 @@ async def batch_resize(images: list[UploadFile] = File(...), width: int = Form(8
     return {"results": results, "total": len(results)}
 
 
+@router.post("/edit/rotate")
+async def rotate_image(image: UploadFile = File(...), angle: int = Form(0)):
+    """旋转图片"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+    rotated = img.rotate(angle, expand=True)
+    filename = save_image(rotated)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}", "angle": angle}
+
+
+@router.post("/edit/flip")
+async def flip_image(image: UploadFile = File(...), direction: str = Form("horizontal")):
+    """翻转图片"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+    if direction == "horizontal":
+        flipped = img.transpose(Image.FLIP_LEFT_RIGHT)
+    else:
+        flipped = img.transpose(Image.FLIP_TOP_BOTTOM)
+    filename = save_image(flipped)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/edit/filter")
+async def apply_filter(
+    image: UploadFile = File(...),
+    filter_type: str = Form("none"),
+    intensity: float = Form(0.5),
+):
+    """应用滤镜"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+
+    if filter_type == "grayscale":
+        result = img.convert("L").convert("RGB")
+    elif filter_type == "sepia":
+        result = img.filter(ImageFilter.FIND_EDGES)
+        result = result.filter(ImageFilter.EMBOSS)
+    elif filter_type == "blur":
+        radius = int(intensity * 20)
+        result = img.filter(ImageFilter.GaussianBlur(radius=radius))
+    elif filter_type == "sharpen":
+        result = img.filter(ImageFilter.SHARPEN)
+    elif filter_type == "emboss":
+        result = img.filter(ImageFilter.EMBOSS)
+    elif filter_type == "contour":
+        result = img.filter(ImageFilter.FIND_EDGES)
+    else:
+        result = img
+
+    filename = save_image(result)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}", "filter": filter_type}
+
+
+@router.post("/edit/adjust")
+async def adjust_image(
+    image: UploadFile = File(...),
+    brightness: float = Form(1.0),
+    contrast: float = Form(1.0),
+    saturation: float = Form(1.0),
+):
+    """调整图片参数"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content)).convert("RGB")
+
+    # 调整亮度
+    from PIL import ImageEnhance
+    enhancer = ImageEnhance.Brightness(img)
+    img = enhancer.enhance(brightness)
+
+    # 调整对比度
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(contrast)
+
+    # 调整饱和度
+    enhancer = ImageEnhance.Color(img)
+    img = enhancer.enhance(saturation)
+
+    filename = save_image(img)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/edit/watermark")
+async def add_watermark(
+    image: UploadFile = File(...),
+    text: str = Form(" watermark"),
+    position: str = Form("bottom-right"),
+    opacity: float = Form(0.5),
+    font_size: int = Form(24),
+):
+    """添加水印"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content)).convert("RGBA")
+
+    # 创建水印图层
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    try:
+        font = get_font(font_size)
+    except:
+        font = ImageFont.load_default()
+
+    # 计算水印位置
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+
+    if position == "bottom-right":
+        x = img.size[0] - text_width - 20
+        y = img.size[1] - text_height - 20
+    elif position == "bottom-left":
+        x = 20
+        y = img.size[1] - text_height - 20
+    elif position == "top-right":
+        x = img.size[0] - text_width - 20
+        y = 20
+    elif position == "top-left":
+        x = 20
+        y = 20
+    else:  # center
+        x = (img.size[0] - text_width) // 2
+        y = (img.size[1] - text_height) // 2
+
+    # 绘制水印（半透明）
+    alpha = int(255 * opacity)
+    draw.text((x, y), text, fill=(255, 255, 255, alpha), font=font)
+
+    # 合成
+    result = Image.alpha_composite(img, overlay)
+    filename = save_image(result)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
 # ── 模板管理 API ──────────────────────────────────────────────
 @router.get("/templates")
 async def list_templates():
@@ -647,6 +781,93 @@ def init_templates():
                     "font_size": 28,
                     "color": "#333333",
                     "text": "¥99",
+                },
+            ],
+        },
+        # 新增商用模板
+        {
+            "id": "tmplt_insta_post",
+            "name": "Instagram 帖子",
+            "width": 1080,
+            "height": 1080,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1080, "height": 1080},
+            ],
+        },
+        {
+            "id": "tmplt_facebook_ad",
+            "name": "Facebook 广告",
+            "width": 1200,
+            "height": 628,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1200, "height": 628},
+                {
+                    "type": "text",
+                    "key": "cta",
+                    "x": 50,
+                    "y": 550,
+                    "font_size": 36,
+                    "color": "#1877F2",
+                    "text": "立即购买",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_weibo_ad",
+            "name": "微博广告",
+            "width": 1080,
+            "height": 608,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1080, "height": 608},
+            ],
+        },
+        {
+            "id": "tmplt_baidu_ad",
+            "name": "百度推广",
+            "width": 340,
+            "height": 260,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 20, "y": 20, "width": 300, "height": 200},
+                {
+                    "type": "text",
+                    "key": "title",
+                    "x": 20,
+                    "y": 230,
+                    "font_size": 16,
+                    "color": "#000000",
+                    "text": "推广标题",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_coupon",
+            "name": "优惠券模板",
+            "width": 800,
+            "height": 400,
+            "background": "#FF4444",
+            "layers": [
+                {"type": "image", "key": "logo", "x": 30, "y": 30, "width": 100, "height": 100},
+                {
+                    "type": "text",
+                    "key": "discount",
+                    "x": 150,
+                    "y": 120,
+                    "font_size": 48,
+                    "color": "#FFFFFF",
+                    "text": "¥50",
+                },
+                {
+                    "type": "text",
+                    "key": "title",
+                    "x": 150,
+                    "y": 180,
+                    "font_size": 24,
+                    "color": "#FFFFFF",
+                    "text": "限时优惠券",
                 },
             ],
         },

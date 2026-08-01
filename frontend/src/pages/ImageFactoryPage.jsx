@@ -56,13 +56,23 @@ export default function ImageFactoryPage() {
   const [renderingImage, setRenderingImage] = useState(null)
   const [templateOverrides, setTemplateOverrides] = useState({})
   
-  // 上传状态
-  const [uploading, setUploading] = useState(false)
+  // 编辑状态
   const [uploadedImage, setUploadedImage] = useState(null)
-  
-  const fileInputRef = useRef(null)
-  const editFileInputRef = useRef(null)
-  
+  const [editOptions, setEditOptions] = useState({
+    angle: '0',
+    filter: 'none',
+    brightness: 1.0,
+    contrast: 1.0,
+    saturation: 1.0,
+  })
+
+  const editTools = [
+    { icon: Crop, label: '裁剪', action: 'crop' },
+    { icon: RotateCw, label: '旋转', action: 'rotate' },
+    { icon: FlipHorizontal, label: '翻转', action: 'flip' },
+    { icon: Sliders, label: '调整', action: 'adjust' },
+  ]
+
   useEffect(() => {
     loadStats()
     loadImages()
@@ -220,7 +230,7 @@ export default function ImageFactoryPage() {
     }
   }
   
-  const handleUpload = async (e) => {
+  const handleEditUpload = async (e) => {
     const file = e.target.files[0]
     if (!file) return
     
@@ -229,13 +239,13 @@ export default function ImageFactoryPage() {
     formData.append('image', file)
     
     try {
-      const res = await fetch(`${API_BASE}/api/image-factory/edit/crop`, {
+      const res = await fetch(`${API_BASE}/api/image-factory/edit/resize`, {
         method: 'POST',
         body: formData
       })
       const data = await res.json()
       if (data.url) {
-        setUploadedImage(data)
+        setUploadedImage({ ...data, url: `${API_BASE}${data.url}` })
         loadImages()
       }
     } catch (e) {
@@ -255,10 +265,18 @@ export default function ImageFactoryPage() {
       
       if (editType === 'crop') {
         params = { x1: 0, y1: 0, x2: 100, y2: 100 }
-      } else if (editType === 'resize') {
-        params = { width: 800, height: 800 }
-      } else if (editType === 'blur') {
-        params = { radius: options.radius || 5 }
+      } else if (editType === 'rotate') {
+        params = { angle: editOptions.angle || '0' }
+      } else if (editType === 'flip') {
+        params = { direction: 'horizontal' }
+      } else if (editType === 'filter') {
+        params = { filter_type: editOptions.filter || 'none', intensity: 0.5 }
+      } else if (editType === 'adjust') {
+        params = {
+          brightness: editOptions.brightness || 1.0,
+          contrast: editOptions.contrast || 1.0,
+          saturation: editOptions.saturation || 1.0,
+        }
       }
       
       Object.entries(params).forEach(([k, v]) => formData.append(k, v))
@@ -269,6 +287,7 @@ export default function ImageFactoryPage() {
       })
       const data = await res.json()
       if (data.url) {
+        setUploadedImage({ ...data, url: `${API_BASE}${data.url}` })
         loadImages()
       }
     } catch (e) {
@@ -631,31 +650,121 @@ export default function ImageFactoryPage() {
         {activeTab === 'edit' && (
           <div className={`${theme.card} rounded-2xl shadow-sm border ${theme.cardBorder} p-6`}>
             <h2 className="text-lg font-semibold mb-6">图片编辑工具</h2>
-            <div className="grid grid-cols-4 gap-4 mb-6">
-              {[
-                { icon: Upload, label: '上传图片', desc: '裁剪、缩放', action: () => fileInputRef.current?.click() },
-                { icon: Crop, label: '智能抠图', desc: '去除背景', action: () => {} },
-                { icon: RotateCw, label: '旋转翻转', desc: '调整角度', action: () => {} },
-                { icon: Maximize2, label: '批量处理', desc: '批量调整', action: () => {} },
-              ].map((tool, idx) => (
-                <button
-                  key={idx}
-                  onClick={tool.action}
-                  className={`p-6 rounded-xl border-2 border-dashed ${theme.cardBorder} hover:border-violet-500 hover:bg-violet-50 transition-all text-center`}
-                >
-                  <tool.icon className="w-8 h-8 mx-auto text-violet-500 mb-2" />
-                  <p className="font-medium">{tool.label}</p>
-                  <p className={`text-sm ${theme.muted}`}>{tool.desc}</p>
-                </button>
-              ))}
+            
+            {/* Upload Area */}
+            <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-8 text-center mb-6 hover:border-violet-500 transition-colors`}>
+              <input
+                ref={editFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleEditUpload(e)}
+              />
+              <Upload className="w-12 h-12 mx-auto text-violet-500 mb-3" />
+              <p className={`font-medium ${theme.text}`}>点击上传图片</p>
+              <p className={`text-sm ${theme.muted} mt-1`}>支持 JPG、PNG 格式</p>
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleUpload}
-            />
+
+            {uploadedImage && (
+              <div className="mb-6">
+                <img src={uploadedImage.url} alt="Uploaded" className="w-full max-h-96 object-contain rounded-xl" />
+              </div>
+            )}
+
+            {/* Edit Tools */}
+            {uploadedImage && (
+              <div>
+                <h3 className="font-medium mb-4">编辑工具</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  {editTools.map((tool, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleEditImage(uploadedImage, tool.action)}
+                      className={`p-4 rounded-xl border ${theme.cardBorder} ${theme.hover} transition-all text-center`}
+                    >
+                      <tool.icon className="w-6 h-6 mx-auto text-violet-500 mb-2" />
+                      <p className="font-medium text-sm">{tool.label}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Advanced Controls */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">旋转角度</label>
+                    <select
+                      value={editOptions.angle}
+                      onChange={(e) => setEditOptions({...editOptions, angle: e.target.value})}
+                      className={`w-full px-3 py-2 rounded-lg border ${theme.input}`}
+                    >
+                      <option value="0">0°</option>
+                      <option value="90">90°</option>
+                      <option value="180">180°</option>
+                      <option value="270">270°</option>
+                    </select>
+                    <button
+                      onClick={() => handleEditImage(uploadedImage, 'rotate')}
+                      className="mt-2 w-full px-3 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700"
+                    >
+                      应用旋转
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">滤镜效果</label>
+                    <select
+                      value={editOptions.filter}
+                      onChange={(e) => setEditOptions({...editOptions, filter: e.target.value})}
+                      className={`w-full px-3 py-2 rounded-lg border ${theme.input}`}
+                    >
+                      <option value="none">无</option>
+                      <option value="grayscale">黑白</option>
+                      <option value="sepia">复古</option>
+                      <option value="blur">模糊</option>
+                      <option value="sharpen">锐化</option>
+                      <option value="emboss">浮雕</option>
+                      <option value="contour">轮廓</option>
+                    </select>
+                    <button
+                      onClick={() => handleEditImage(uploadedImage, 'filter')}
+                      className="mt-2 w-full px-3 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700"
+                    >
+                      应用滤镜
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">亮度: {editOptions.brightness.toFixed(1)}</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={editOptions.brightness}
+                      onChange={(e) => setEditOptions({...editOptions, brightness: parseFloat(e.target.value)})}
+                      className="w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium mb-2 block">对比度: {editOptions.contrast.toFixed(1)}</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={editOptions.contrast}
+                      onChange={(e) => setEditOptions({...editOptions, contrast: parseFloat(e.target.value)})}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleEditImage(uploadedImage, 'adjust')}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl font-medium hover:from-violet-700 hover:to-purple-700"
+                >
+                  应用调整
+                </button>
+              </div>
+            )}
           </div>
         )}
         
