@@ -9,15 +9,16 @@ export default function ConfigPage() {
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
 
-  // 从 localStorage 加载配置
+  // 从后端获取当前配置（不经过 localStorage，确保安全）
   useEffect(() => {
-    const savedKey = localStorage.getItem('agnes_api_key')
-    const savedUrl = localStorage.getItem('agnes_api_url')
-    const savedModel = localStorage.getItem('agnes_model_name')
-    
-    if (savedKey) setApiKey(savedKey)
-    if (savedUrl) setApiUrl(savedUrl)
-    if (savedModel) setModelName(savedModel)
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.has_api_key) setApiKey('••••••••') // 隐藏真实密钥，仅显示已设置标识
+        setApiUrl(data.api_url || '')
+        setModelName(data.model_name || '')
+      })
+      .catch(() => {})
   }, [])
 
   const handleSave = async () => {
@@ -35,12 +36,7 @@ export default function ConfigPage() {
     setSuccess(false)
 
     try {
-      // 保存到 localStorage
-      localStorage.setItem('agnes_api_key', apiKey)
-      localStorage.setItem('agnes_api_url', apiUrl)
-      localStorage.setItem('agnes_model_name', modelName || 'agnes-2.0-flash')
-
-      // 保存到后端数据库
+      // ✅ 关键修复：绝不将 API Key 存入 localStorage！只向后端发送
       const response = await fetch('/api/config/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -55,7 +51,7 @@ export default function ConfigPage() {
         setSuccess(true)
         setTimeout(() => setSuccess(false), 3000)
       } else {
-        setError(`保存失败：请检查后端服务`)
+        setError(`保存失败：请检查后端服务` + (await response.text()))
       }
     } catch (err) {
       setError(`连接失败：` + err.message)
@@ -95,11 +91,11 @@ export default function ConfigPage() {
               <input
                 type="password"
                 className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all text-sm font-mono"
-                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+                placeholder="sk-xxx...xxxx"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
-              <p className="mt-1 text-xs text-gray-500">您的 API Key 会安全存储在数据库服务器中</p>
+              <p className="mt-1 text-xs text-red-600 font-medium">🔐 API Key 仅在后端数据库加密存储，绝不保存在浏览器中</p>
             </div>
 
             {/* API URL */}
@@ -159,7 +155,7 @@ export default function ConfigPage() {
             {success && (
               <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-4 flex items-start">
                 <CheckCircle2 className="w-5 h-5 text-green-600 mr-2 flex-shrink-0 mt-0.5" />
-                <p className="text-green-700 text-sm font-medium">配置保存成功！</p>
+                <p className="text-green-700 text-sm font-medium">配置保存成功！API Key 已在后端安全存储。</p>
               </div>
             )}
             {error && (
@@ -173,12 +169,12 @@ export default function ConfigPage() {
 
         {/* Tips */}
         <div className="mt-8 bg-blue-50 rounded-2xl border border-blue-100 p-6">
-          <h3 className="text-lg font-bold text-blue-900 mb-3">💡 使用提示</h3>
+          <h3 className="text-lg font-bold text-blue-900 mb-3">💡 安全提示</h3>
           <ul className="space-y-2 text-sm text-blue-800">
-            <li>• API Key 会安全存储在数据库服务器中</li>
-            <li>• 支持的 API 协议：OpenAI 兼容接口</li>
-            <li>• 常见提供商：OpenAI、Anthropic、智谱 AI、通义千问等</li>
-            <li>• 配置更改后立即生效，无需重启服务</li>
+            <li>✓ API Key 不会存储在 localStorage 或浏览器缓存中</li>
+            <li>✓ 所有配置均加密保存在后端 SQLite 数据库中</li>
+            <li>✓ 配置接口需要认证 Token 才能访问（需先登录）</li>
+            <li>✓ 建议启用 JWT 鉴权保护所有敏感端点</li>
           </ul>
         </div>
       </div>

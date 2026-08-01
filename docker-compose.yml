@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  # ─── 后端服务 ────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: code-platform-backend
+    ports:
+      - "8888:8888"
+    environment:
+      - AGNES_API_KEY=${AGNES_API_KEY:-}
+      - AGNES_API_BASE=${AGNES_API_BASE:-https://apihub.agnes-ai.com/v1}
+      - MODEL_NAME=${MODEL_NAME:-agnes-2.0-flash}
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - DB_PATH=/data/platform.db
+      - HOST=0.0.0.0
+      - PORT=8888
+    volumes:
+      - db-data:/data
+      - ./backend/artifacts:/app/backend/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ─── 前端服务 ────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: code-platform-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── 开发模式（可选）─────────────────────────────────────────
+  backend-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: code-platform-backend-dev
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./backend:/app/backend
+      - db-data-dev:/data
+    environment:
+      - DEBUG=true
+      - AGNES_API_KEY=${AGNES_API_KEY:-}
+      - AGNES_API_BASE=${AGNES_API_BASE:-https://apihub.agnes-ai.com/v1}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key}
+      - DB_PATH=/data/platform.db
+    command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  db-data-dev:

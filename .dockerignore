@@ -1,0 +1,17 @@
+# ─── Docker ──────────────────────────────────────────────────────
+.git/
+.gitignore
+docs/
+tests/
+*.md
+Makefile
+docker-compose.yml
+Dockerfile.*
+.github/
+
+# ─── Local files ───────────────────────────────────────────────
+.env
+.env.local
+*.db
+data/
+backend/artifacts/*.md

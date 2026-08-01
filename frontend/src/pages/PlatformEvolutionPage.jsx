@@ -13,7 +13,7 @@ export default function PlatformEvolutionPage() {
   // 加载统计数据
   const loadStats = async () => {
     try {
-      const res = await axios.get('/api/platform/usage-stats')
+      const res = await axios.get('/api/usage-stats')
       setStats(res.data)
     } catch (err) {
       console.error('Failed to load stats:', err)
@@ -23,8 +23,8 @@ export default function PlatformEvolutionPage() {
   // 加载优化建议
   const loadOptimizations = async () => {
     try {
-      const res = await axios.get('/api/platform/prompt-history')
-      setPromptHistory(res.data.prompts)
+      const res = await axios.get('/api/evolution/prompt-history')
+      setPromptHistory(res.data?.prompts || res.data || [])
     } catch (err) {
       console.error('Failed to load optimizations:', err)
     }
@@ -34,9 +34,9 @@ export default function PlatformEvolutionPage() {
   const triggerOptimization = async (target = 'all') => {
     setOptimizing(true)
     try {
-      const res = await axios.post('/api/platform/optimize', { target })
-      setOptimizations(res.data.optimizations)
-      alert(res.data.message)
+      const res = await axios.post('/api/evolution/optimize-prompts', { target })
+      setOptimizations(res.data.optimizations || [res.data])
+      alert(res.data.action || '优化完成')
       // 刷新数据
       loadStats()
       loadOptimizations()

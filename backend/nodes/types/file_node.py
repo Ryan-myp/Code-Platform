@@ -1,0 +1,245 @@
+"""文件操作节点——执行文件系统的读写/移动/删除等操作
+
+适用场景：
+- 教育：保存生成的教案到文件系统
+- 制造：保存工艺图纸到共享目录
+- 金融：保存合规报告到指定路径
+- 通用：任何需要持久化输出到文件的业务环节
+"""
+
+import os, shutil, logging, re
+from typing import Dict, Any, Optional
+from datetime import datetime
+from ..base import BusinessNode, NodeResult, TypeValidator, RequiredFieldsValidator
+
+logger = logging.getLogger(__name__)
+
+
+class FileOperationNode(BusinessNode):
+    """文件操作节点——对文件系统进行增删改查操作
+    
+    支持的操作类型:
+      - "read": 读取文件内容
+      - "write": 写入文件内容
+      - "create_dir": 创建目录
+      - "delete": 删除文件或目录
+      - "move": 移动/重命名文件
+    
+    节点配置示例:
+        node = FileOperationNode(
+            node_id="save_report",
+            operation_type="write",
+            path="/var/www/reports/{timestamp}.txt",
+            content="{output_text}"  # 引用上游节点的输出
+        )
+    """
+    
+    OP_TYPES = ["read", "write", "create_dir", "delete", "move"]
+    
+    def __init__(self, node_id: str, operation_type: str, path: str, 
+                 content: Optional[str] = None, dest: Optional[str] = None,
+                 input_schema: Optional[Dict[str, Any]] = None,
+                 validators: Optional[Any] = None):
+        
+        if operation_type not in self.OP_TYPES:
+            raise ValueError(f"不支持的操作类型: {operation_type}. 必须是: {self.OP_TYPES}")
+        
+        super().__init__(node_id, f"文件操作({operation_type})", 
+                        f"执行{operation_type}操作于路径: {path}")
+        
+        self.operation_type = operation_type
+        self.path = path
+        self.content = content  # write/delete时需要指定要写入/删除的内容
+        self.dest = dest  # move时的目标路径
+        
+        # 默认输入验证
+        default_validators = []
+        if operation_type == "read":
+            default_validators.append(RequiredFieldsValidator(["path"]))
+        elif operation_type == "write":
+            default_validators.append(RequiredFieldsValidator(["path", "content"]))
+            default_validators.append(TypeValidator({"content": str}))
+        elif operation_type == "create_dir":
+            default_validators.append(RequiredFieldsValidator(["path"]))
+        elif operation_type == "delete":
+            default_validators.append(RequiredFieldsValidator(["path"]))
+        elif operation_type == "move":
+            default_validators.append(RequiredFieldsValidator(["path", "dest"]))
+            default_validators.append(TypeValidator({"dest": str}))
+        
+        if validators:
+            default_validators.extend(validators)
+        
+        self.validators = default_validators
+    
+    def _resolve_path_vars(self, path: str, context: Dict[str, Any]) -> str:
+        """解析路径中的变量占位符如{timestamp},{outputs.node_id}等"""
+        # 1. 替换 timestamp
+        now = datetime.now()
+        path = path.replace("{timestamp}", now.strftime("%Y%m%d_%H%M%S"))
+        path = path.replace("{date}", now.strftime("%Y-%m-%d"))
+        path = path.replace("{time}", now.strftime("%H:%M:%S"))
+        
+        # 2. 替换 outputs.{node_name}.{field}
+        outputs = context.get("outputs", {})
+        for node_id, output_val in outputs.items():
+            output_key_pattern = rf"{{outputs\.{node_id}\.(\w+)}}"
+            def replace_output(match):
+                key = match.group(1)
+                return str(output_val.get(key, "")) if isinstance(output_val, dict) else str(output_val)
+            path = re.sub(output_key_pattern, replace_output, path)
+        
+        # 3. 替换 global_outputs.{key}
+        global_out = context.get("global_outputs", {})
+        for key, value in global_out.items():
+            placeholder = f"{{global_outputs.{key}}}"
+            if placeholder in path:
+                path = path.replace(placeholder, str(value))
+        
+        # 4. 替换 simple {key} 来自当前输入
+        current_input = context.get("current_node_input", {})
+        for key, value in current_input.items():
+            placeholder = f"{{{key}}}"
+            if placeholder in path:
+                path = path.replace(placeholder, str(value))
+        
+        # 展开用户家目录
+        return os.path.expanduser(path)
+    
+    def resolve_content(self, content: str, context: Dict[str, Any]) -> str:
+        """解析内容中的变量占位符"""
+        if not content:
+            return content
+        
+        resolved = content
+        
+        # 1. 替换 outputs.{node}.{field}
+        outputs = context.get("outputs", {})
+        for node_id, output_val in outputs.items():
+            if isinstance(output_val, dict):
+                for key, val in output_val.items():
+                    placeholder = f"{{outputs.{node_id}.{key}}}"
+                    resolved = resolved.replace(placeholder, str(val))
+            else:
+                placeholder = f"{{outputs.{node_id}}}"
+                resolved = resolved.replace(placeholder, str(output_val))
+        
+        # 2. 替换 global_outputs.{key}
+        global_out = context.get("global_outputs", {})
+        for key, value in global_out.items():
+            placeholder = f"{{global_outputs.{key}}}"
+            resolved = resolved.replace(placeholder, str(value))
+        
+        return resolved
+    
+    def execute(self, context: Dict[str, Any]) -> NodeResult:
+        try:
+            # 解析带有变量的路径
+            resolved_path = self._resolve_path_vars(self.path, context)
+            
+            if self.operation_type == "read":
+                if not os.path.exists(resolved_path):
+                    raise FileNotFoundError(f"文件不存在: {resolved_path}")
+                with open(resolved_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                logger.info(f"成功读取文件: {resolved_path} ({len(content)}字符)")
+                return NodeResult.success(
+                    output={"content": content, "file_path": resolved_path},
+                    messages=[f"已读取文件"]
+                )
+            
+            elif self.operation_type == "write":
+                # 解析内容中的变量
+                resolved_content = self.resolve_content(self.content or "", context)
+                
+                # 确保目录存在
+                dir_path = os.path.dirname(resolved_path)
+                if dir_path and not os.path.exists(dir_path):
+                    os.makedirs(dir_path, exist_ok=True)
+                
+                with open(resolved_path, 'w', encoding='utf-8') as f:
+                    f.write(resolved_content)
+                
+                logger.info(f"成功写入文件: {resolved_path}")
+                return NodeResult.success(
+                    output={"written_to": resolved_path, "content_length": len(resolved_content)},
+                    messages=[f"已保存到 {resolved_path}"]
+                )
+            
+            elif self.operation_type == "create_dir":
+                os.makedirs(resolved_path, exist_ok=True)
+                logger.info(f"已创建目录: {resolved_path}")
+                return NodeResult.success(
+                    output={"created_directory": resolved_path},
+                    messages=[f"已创建目录"]
+                )
+            
+            elif self.operation_type == "delete":
+                if os.path.isfile(resolved_path):
+                    os.remove(resolved_path)
+                elif os.path.isdir(resolved_path):
+                    shutil.rmtree(resolved_path)
+                else:
+                    raise FileNotFoundError(f"文件/目录不存在: {resolved_path}")
+                
+                logger.info(f"已删除: {resolved_path}")
+                return NodeResult.success(
+                    output={"deleted": resolved_path},
+                    messages=[f"已删除文件"]
+                )
+            
+            elif self.operation_type == "move":
+                resolved_dest = self._resolve_path_vars(self.dest, context)
+                
+                # 确保目标目录存在
+                dest_dir = os.path.dirname(resolved_dest) or "."
+                if dest_dir and not os.path.exists(dest_dir):
+                    os.makedirs(dest_dir, exist_ok=True)
+                
+                shutil.move(resolved_path, resolved_dest)
+                logger.info(f"已移动: {resolved_path} -> {resolved_dest}")
+                return NodeResult.success(
+                    output={"moved_from": resolved_path, "moved_to": resolved_dest},
+                    messages=[f"已移动到 {resolved_dest}"]
+                )
+            
+            else:
+                raise ValueError(f"不支持的操作类型: {self.operation_type}")
+        
+        except FileNotFoundError as e:
+            logger.error(f"文件操作失败: {e}")
+            return NodeResult.failed(f"文件不存在: {str(e)}")
+        except PermissionError as e:
+            logger.error(f"权限错误: {e}")
+            return NodeResult.failed(f"无权限访问: {str(e)}")
+        except Exception as e:
+            logger.error(f"文件操作异常: {e}")
+            return NodeResult.failed(f"操作失败: {str(e)}")
+
+
+# ─── 使用示例 ───────────────────────────────────────────────
+
+if __name__ == "__main__":
+    # 示例1: 读取一个配置文件
+    read_node = FileOperationNode(
+        node_id="read_config",
+        operation_type="read",
+        path="/app/config/settings.json"
+    )
+    
+    # 示例2: 保存生成的报告到文件系统
+    save_node = FileOperationNode(
+        node_id="save_report",
+        operation_type="write",
+        path="/var/www/reports/report_{timestamp}.txt",
+        content="{output_text}"  # 会从context中获取output_text
+    )
+    
+    # 示例3: 创建输出目录
+    mkdir_node = FileOperationNode(
+        node_id="create_output_dir",
+        operation_type="create_dir",
+        path="/var/www/output"
+    )
+    
+    print("FileOperationNode 示例完成")

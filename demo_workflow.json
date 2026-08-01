@@ -1,0 +1,28 @@
+{
+  "workflow_id": "demo_workflow_001",
+  "name": "Demo Workflow Example",
+  "description": "Sample workflow showing LLM + File node sequence",
+  "nodes": [
+    {
+      "type": "llm_node",
+      "node_id": "analyze_input",
+      "name": "Text Analyzer Agent",
+      "model": "agnes-2.0-flash",
+      "prompt_template": """Summarize and analyze this text:
+
+{text}
+
+Key outputs should include: sentiment, main topics, and key recommendations.""",
+      "input_schema": {"text": "string"},
+      "tools": ["web_search"],
+      "knowledge_base_ids": []
+    },
+    {
+      "type": "file_node",
+      "node_id": "save_report",
+      "operation_type": "write",
+      "path": "/tmp/demo_report_{timestamp}.md",
+      "content": "{analyze_input.output}"
+    }
+  ]
+}

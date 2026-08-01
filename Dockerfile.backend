@@ -1,0 +1,55 @@
+# ─── 构建阶段 ────────────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+WORKDIR /app
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建虚拟环境并安装 Python 依赖
+COPY backend/requirements.txt .
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 安装额外依赖（认证、测试）
+RUN pip install --no-cache-dir \
+    python-jose[cryptography] \
+    passlib[bcrypt] \
+    ruff \
+    pytest \
+    pytest-asyncio \
+    httpx
+
+# ─── 运行阶段 ────────────────────────────────────────────────────
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# 从 builder 复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制应用代码
+COPY backend/ ./backend/
+
+# 创建 artifacts 目录
+RUN mkdir -p /app/backend/artifacts
+
+# 非 root 用户运行
+RUN useradd -m -u 1000 appuser
+USER appuser
+
+EXPOSE 8888
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8888/api/health || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888"]
