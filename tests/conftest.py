@@ -22,9 +22,9 @@ def setup_test_db():
     # 重置 Config 模块缓存
     if "config" in sys.modules:
         del sys.modules["config"]
-    if "database" in sys.modules:
-        del sys.modules["database"]
-    from database import init_db
+    if "main" in sys.modules:
+        del sys.modules["main"]
+    from main import init_db
     init_db()
     yield db_path
     # Cleanup
