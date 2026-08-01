@@ -141,7 +141,7 @@ class LLMNode(BusinessNode):
                 input_text = str(current_input["text"])
             else:
                 # 尝试找到第一个字符串值作为输入
-                for key, value in current_input.items():
+                for _key, value in current_input.items():
                     if isinstance(value, str) and value.strip():
                         input_text = str(value)
                         break
@@ -168,7 +168,7 @@ class LLMNode(BusinessNode):
             output_content = result.content if result.content else str(result)
 
             # 记录执行时间
-            elapsed = getattr(self, "_last_exec_time", 0)
+            # elapsed = getattr(self, "_last_exec_time", 0)
 
             logger.info(f"LLM节点 {self.node_id} 执行完成，输出长度: {len(output_content)}字符")
 
