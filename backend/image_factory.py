@@ -741,6 +741,48 @@ async def virtual_try_on(
             "snow": "snowy mountain landscape, winter wonderland, snow-capped peaks",
         }
 
+        # 用多模态文本模型自动识别衣物特征（颜色/款式/面料/图案）
+        clothing_description = description
+        try:
+            clothing_data_uri_desc = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
+            analyze_payload = {
+                "model": os.environ.get("MODEL_NAME", "agnes-2.5-flash"),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": clothing_data_uri_desc},
+                            },
+                            {
+                                "type": "text",
+                                "text": (
+                                    "Describe this garment in detail for a virtual try-on system. "
+                                    "Include: exact color(s), clothing type, fabric/material, pattern, "
+                                    "length, sleeves, style details. Reply in English, one concise paragraph."
+                                ),
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 200,
+            }
+            api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
+            analyze_resp = requests.post(
+                f"{api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+                json=analyze_payload,
+                timeout=60,
+            )
+            if analyze_resp.status_code == 200:
+                ad = analyze_resp.json()
+                auto_desc = ad.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                if auto_desc:
+                    clothing_description = auto_desc
+        except Exception as e:
+            logger.warning(f"衣物识别失败，使用用户描述: {e}")
+
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
@@ -748,8 +790,42 @@ async def virtual_try_on(
         person_data_uri = f"data:image/png;base64,{base64.b64encode(person_content).decode('utf-8')}"
         clothing_data_uri = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
 
-        # 调用 Agnes AI 多图合成 API
+        # 强化提示词：保持人物特征不变，只更换衣服
+        # 第一张图 = 人物本人，第二张图 = 要穿的衣物
+        style_prompt = style_prompts.get(style, style_prompts["casual"])
+        bg_prompt = background_prompts.get(background, background_prompts["beach"])
+
+        # 调用 Agnes AI 多图合成 API（messages 多模态格式，理解更准确）
         api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
+
+        messages_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": person_data_uri},
+            },
+            {
+                "type": "text",
+                "text": (
+                    "This is the person. IMPORTANT: keep this exact same person — "
+                    "same face, body, hair, skin, pose, and identity. Do NOT change the person."
+                ),
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": clothing_data_uri},
+            },
+            {
+                "type": "text",
+                "text": (
+                    f"This is the garment to wear ({style_prompt}). "
+                    f"Exact garment details: {clothing_description}. "
+                    f"Dress the person from the first image in exactly this garment from the second image "
+                    f"(match the described color, type and pattern precisely). "
+                    f"New background: {bg_prompt}. "
+                    "Photorealistic, high resolution, the person looks natural wearing the garment."
+                ),
+            },
+        ]
 
         response = requests.post(
             f"{api_base}/images/generations",
@@ -759,9 +835,9 @@ async def virtual_try_on(
             },
             json={
                 "model": "agnes-image-2.1-flash",
-                "prompt": f"Virtual try-on: person wearing {style_prompts.get(style, 'casual outfit')}, background: {bg_prompt}, photorealistic, 8K quality",
-                "image": [person_data_uri, clothing_data_uri],
+                "messages": [{"role": "user", "content": messages_content}],
                 "size": "1024x1024",
+                "n": 1,
                 "extra_body": {
                     "response_format": "url"
                 }
