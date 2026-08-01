@@ -8,7 +8,8 @@ import {
   Heart, Share2, MoreVertical, DownloadCloud, Copy,
   Wand2, Sliders, Settings, ArrowLeft, ArrowRight,
   ZoomIn, ZoomOut, Minimize2, Crop, FlipHorizontal,
-  Sun, Moon, SunMoon
+  Sun, Moon, SunMoon, UserCircle, Shirt, Palette as PaletteIcon,
+  Camera, Download as DownloadIcon
 } from 'lucide-react'
 
 const API_BASE = 'http://localhost:8888'
@@ -66,6 +67,15 @@ export default function ImageFactoryPage() {
     saturation: 1.0,
   })
 
+  // 虚拟试衣状态
+  const [personImage, setPersonImage] = useState(null)
+  const [clothingImage, setClothingImage] = useState(null)
+  const [tryOnStyle, setTryOnStyle] = useState('casual')
+  const [tryOnBackground, setTryOnBackground] = useState('beach')
+  const [tryOnDescription, setTryOnDescription] = useState('')
+  const [isTryOnGenerating, setIsTryOnGenerating] = useState(false)
+  const [tryOnResult, setTryOnResult] = useState(null)
+
   const editTools = [
     { icon: Crop, label: '裁剪', action: 'crop' },
     { icon: RotateCw, label: '旋转', action: 'rotate' },
@@ -105,8 +115,13 @@ export default function ImageFactoryPage() {
       const res = await fetch(`${API_BASE}/api/image-factory/templates`)
       const data = await res.json()
       setTemplates(data)
-      if (data.length > 0 && !selectedTemplate) {
-        setSelectedTemplate(data[0].id)
+      if (data.length > 0) {
+        // 延迟设置默认模板，避免在渲染过程中修改状态
+        setTimeout(() => {
+          if (!selectedTemplate) {
+            setSelectedTemplate(data[0].id)
+          }
+        }, 0)
       }
     } catch (e) {
       console.error('Failed to load templates', e)
@@ -295,6 +310,41 @@ export default function ImageFactoryPage() {
     }
   }
   
+  // 虚拟试衣处理
+  const handleTryOn = async () => {
+    if (!personImage || !clothingImage) {
+      alert('请上传人物照片和衣物照片')
+      return
+    }
+    
+    setIsTryOnGenerating(true)
+    setTryOnResult(null)
+    
+    try {
+      const formData = new FormData()
+      formData.append('person_image', await (await fetch(personImage.url)).blob())
+      formData.append('clothing_image', await (await fetch(clothingImage.url)).blob())
+      formData.append('description', tryOnDescription)
+      formData.append('style', tryOnStyle)
+      formData.append('background', tryOnBackground)
+      
+      const res = await fetch(`${API_BASE}/api/image-factory/try-on/generate`, {
+        method: 'POST',
+        body: formData
+      })
+      const data = await res.json()
+      if (data.url) {
+        setTryOnResult({ ...data, url: `${API_BASE}${data.url}` })
+        loadImages()
+      }
+    } catch (e) {
+      console.error('Try-on failed', e)
+      alert('生成失败，请重试')
+    } finally {
+      setIsTryOnGenerating(false)
+    }
+  }
+  
   const applyTemplate = (tmpl) => {
     setPrompt(tmpl.prompt)
   }
@@ -371,6 +421,7 @@ export default function ImageFactoryPage() {
             {[
               { id: 'generate', label: '文生图', icon: Sparkles, desc: 'AI 生成图片' },
               { id: 'template', label: '模板合成', icon: LayoutTemplate, desc: '电商模板' },
+              { id: 'try-on', label: '虚拟试衣', icon: UserCircle, desc: '上传照片试穿' },
               { id: 'edit', label: '图片编辑', icon: Scissors, desc: '裁剪/缩放' },
               { id: 'gallery', label: '图片库', icon: ImageIcon, desc: '查看管理' },
             ].map(tab => (
@@ -765,6 +816,205 @@ export default function ImageFactoryPage() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+        
+        {/* Try-On Tab */}
+        {activeTab === 'try-on' && (
+          <div className={`${theme.card} rounded-2xl shadow-sm border ${theme.cardBorder} p-6`}>
+            <h2 className="text-lg font-semibold mb-6">虚拟试衣</h2>
+            
+            <div className="grid grid-cols-2 gap-8">
+              {/* Left: Upload Area */}
+              <div className="space-y-6">
+                {/* Person Upload */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">上传人物照片</label>
+                  <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-8 text-center hover:border-violet-500 transition-colors`}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="person-upload"
+                      onChange={(e) => {
+                        const file = e.target.files[0]
+                        if (file) {
+                          const url = URL.createObjectURL(file)
+                          setPersonImage({ url, file })
+                        }
+                      }}
+                    />
+                    <label htmlFor="person-upload" className="cursor-pointer">
+                      {personImage ? (
+                        <img src={personImage.url} alt="Person" className="w-full h-48 object-contain rounded-lg" />
+                      ) : (
+                        <>
+                          <Camera className="w-12 h-12 mx-auto text-violet-500 mb-3" />
+                          <p className={`font-medium ${theme.text}`}>上传人物照片</p>
+                          <p className={`text-sm ${theme.muted} mt-1`}>全身照效果最佳</p>
+                        </>
+                      )}
+                    </label>
+                  </div>
+                </div>
+                
+                {/* Clothing Upload */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">上传衣物照片</label>
+                  <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-8 text-center hover:border-violet-500 transition-colors`}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="clothing-upload"
+                      onChange={(e) => {
+                        const file = e.target.files[0]
+                        if (file) {
+                          const url = URL.createObjectURL(file)
+                          setClothingImage({ url, file })
+                        }
+                      }}
+                    />
+                    <label htmlFor="clothing-upload" className="cursor-pointer">
+                      {clothingImage ? (
+                        <img src={clothingImage.url} alt="Clothing" className="w-full h-48 object-contain rounded-lg" />
+                      ) : (
+                        <>
+                          <Shirt className="w-12 h-12 mx-auto text-violet-500 mb-3" />
+                          <p className={`font-medium ${theme.text}`}>上传衣物照片</p>
+                          <p className={`text-sm ${theme.muted} mt-1`}>正面平铺效果最佳</p>
+                        </>
+                      )}
+                    </label>
+                  </div>
+                </div>
+                
+                {/* Description */}
+                <div>
+                  <label className="text-sm font-medium mb-2 block">描述（可选）</label>
+                  <textarea
+                    value={tryOnDescription}
+                    onChange={(e) => setTryOnDescription(e.target.value)}
+                    placeholder="例如：这件衣服是夏季轻薄面料，适合海边度假..."
+                    className={`w-full h-24 px-4 py-3 rounded-lg border ${theme.input} focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none`}
+                  />
+                </div>
+                
+                {/* Style Selection */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">风格</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { id: 'casual', label: '休闲', icon: '👕' },
+                      { id: 'formal', label: '正式', icon: '👔' },
+                      { id: 'sporty', label: '运动', icon: '🏃' },
+                      { id: 'fashion', label: '时尚', icon: '✨' },
+                    ].map(style => (
+                      <button
+                        key={style.id}
+                        onClick={() => setTryOnStyle(style.id)}
+                        className={`p-3 rounded-lg border text-center transition-all ${
+                          tryOnStyle === style.id
+                            ? 'border-violet-500 bg-violet-50 text-violet-700'
+                            : `${theme.cardBorder} ${theme.hover}`
+                        }`}
+                      >
+                        <div className="text-2xl mb-1">{style.icon}</div>
+                        <div className="text-sm font-medium">{style.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Background Selection */}
+                <div>
+                  <label className="text-sm font-medium mb-3 block">背景场景</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'beach', label: '沙滩', icon: '🏖️' },
+                      { id: 'city', label: '城市', icon: '🏙️' },
+                      { id: 'space', label: '太空', icon: '🚀' },
+                      { id: 'studio', label: '摄影棚', icon: '📷' },
+                      { id: 'forest', label: '森林', icon: '🌲' },
+                      { id: 'snow', label: '雪景', icon: '❄️' },
+                    ].map(bg => (
+                      <button
+                        key={bg.id}
+                        onClick={() => setTryOnBackground(bg.id)}
+                        className={`p-3 rounded-lg border text-center transition-all ${
+                          tryOnBackground === bg.id
+                            ? 'border-violet-500 bg-violet-50 text-violet-700'
+                            : `${theme.cardBorder} ${theme.hover}`
+                        }`}
+                      >
+                        <div className="text-2xl mb-1">{bg.icon}</div>
+                        <div className="text-xs font-medium">{bg.label}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Generate Button */}
+                <button
+                  onClick={handleTryOn}
+                  disabled={isTryOnGenerating || !personImage || !clothingImage}
+                  className="w-full px-4 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-xl font-medium hover:from-violet-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+                >
+                  {isTryOnGenerating ? (
+                    <>
+                      <Loader className="w-5 h-5 animate-spin" />
+                      <span>生成中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-5 h-5" />
+                      <span>生成试穿效果</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              
+              {/* Right: Result Area */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium">试穿效果</h3>
+                  {tryOnResult && (
+                    <div className="flex items-center space-x-2">
+                      <a
+                        href={tryOnResult.url}
+                        download
+                        className={`flex items-center space-x-1 px-3 py-1.5 ${theme.hover} rounded-lg text-sm`}
+                      >
+                        <DownloadIcon className="w-4 h-4" />
+                        <span>下载</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+                
+                {tryOnResult ? (
+                  <div className="rounded-xl overflow-hidden border ${theme.cardBorder}">
+                    <img src={tryOnResult.url} alt="Try-on result" className="w-full h-96 object-cover" />
+                  </div>
+                ) : (
+                  <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-12 text-center h-96 flex flex-col items-center justify-center`}>
+                    <UserCircle className="w-16 h-16 text-gray-300 mb-4" />
+                    <p className={`font-medium ${theme.muted}`}>上传照片后生成试穿效果</p>
+                    <p className={`text-sm ${theme.muted} mt-2`}>支持人物全身照 + 衣物平铺照</p>
+                  </div>
+                )}
+                
+                {/* Tips */}
+                <div className={`p-4 rounded-lg ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                  <h4 className="font-medium text-sm mb-2">💡 使用提示</h4>
+                  <ul className={`text-xs ${theme.muted} space-y-1`}>
+                    <li>• 人物照片：全身照效果最佳，光线均匀</li>
+                    <li>• 衣物照片：正面平铺或挂拍，背景干净</li>
+                    <li>• 可尝试不同风格和背景组合</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
           </div>
         )}
         
