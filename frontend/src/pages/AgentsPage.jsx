@@ -444,15 +444,15 @@ function AgentsPageInner() {
     try {
       const [agentsR, skillsR, kbsR, mcpR] = await Promise.all([
         axios.get(`${API_BASE}/api/agents`),
-        axios.get(`${API_BASE}/api/skills`),
-        axios.get(`${API_BASE}/api/knowledge-bases`),
-        axios.get(`${API_BASE}/api/mcp-servers`),
+        axios.get(`${API_BASE}/api/skills`).catch(e => { console.warn('Skills load failed:', e.message); return { data: [] } }),
+        axios.get(`${API_BASE}/api/knowledge-bases`).catch(e => { console.warn('KB load failed:', e.message); return { data: [] } }),
+        axios.get(`${API_BASE}/api/mcp-servers`).catch(e => { console.warn('MCP load failed:', e.message); return { data: [] } }),
       ])
-      setAgents(agentsR.data)
-      setSkills(skillsR.data)
-      setKbs(kbsR.data)
-      setMcpServers(mcpR.data)
-    } catch (e) { console.error(e) }
+      setAgents(agentsR.data || [])
+      setSkills(skillsR.data || [])
+      setKbs(kbsR.data || [])
+      setMcpServers(mcpR.data || [])
+    } catch (e) { console.error('Failed to load agents:', e) }
   }
 
   useEffect(() => { loadAll() }, [])

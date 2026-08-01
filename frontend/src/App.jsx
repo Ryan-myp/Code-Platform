@@ -61,7 +61,7 @@ export default function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/skills" replace />} />
+        <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/agents" replace />} />
         <Route path="*" element={
           <ProtectedRoute isAuthenticated={isAuthenticated}>
             <div className="flex min-h-screen bg-gray-50">
@@ -86,7 +86,7 @@ export default function App() {
                     <Route path="/sandbox" element={<SandboxPage />} />
                     <Route path="/mcp-servers" element={<MCPServersPage />} />
                     <Route path="/evolution" element={<PlatformEvolutionPage />} />
-                    <Route path="/" element={<Navigate to="/skills" replace />} />
+                    <Route path="/" element={<Navigate to="/agents" replace />} />
                   </Routes>
                 </main>
               </div>

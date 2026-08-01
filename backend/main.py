@@ -315,6 +315,166 @@ async def create_session(req: dict, current_user: Dict = require_auth()):
     conn.close()
     return {"session_id": session_id}
 
+# ── Team 管理 ───────────────────────────────────────────────────
+@app.get("/api/teams")
+async def list_teams(current_user: Dict = require_auth()):
+    """获取所有 Teams"""
+    conn = get_db()
+    teams = conn.execute("SELECT * FROM teams ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(t) for t in teams]
+
+@app.post("/api/teams")
+async def create_team(req: dict, current_user: Dict = require_auth()):
+    """创建 Team"""
+    name = req.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    conn = get_db()
+    team_id = f"team_{int(time.time()*1000)}"
+    conn.execute(
+        """INSERT INTO teams (id, name, description, mode, members, instructions, respond_directly, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (team_id, name, req.get("description", ""), req.get("mode", "coordinate"),
+         json.dumps(req.get("members", [])), req.get("instructions", ""),
+         1 if req.get("respond_directly", False) else 0, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {"id": team_id, "name": name}
+
+@app.put("/api/teams/<team_id>")
+async def update_team(team_id: str, req: dict, current_user: Dict = require_auth()):
+    """更新 Team"""
+    conn = get_db()
+    conn.execute(
+        """UPDATE teams SET name=?, description=?, mode=?, members=?, instructions=?, respond_directly=?
+           WHERE id=?""",
+        (req.get("name", ""), req.get("description", ""), req.get("mode", "coordinate"),
+         json.dumps(req.get("members", [])), req.get("instructions", ""),
+         1 if req.get("respond_directly", False) else 0, team_id)
+    )
+    conn.commit()
+    conn.close()
+    return {"id": team_id, "name": req.get("name", "")}
+
+@app.delete("/api/teams/<team_id>")
+async def delete_team(team_id: str, current_user: Dict = require_auth()):
+    """删除 Team"""
+    conn = get_db()
+    conn.execute("DELETE FROM teams WHERE id=?", (team_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+# ── Skills 管理 ─────────────────────────────────────────────────
+@app.get("/api/skills")
+async def list_skills(current_user: Dict = require_auth()):
+    """获取所有 Skills"""
+    conn = get_db()
+    skills = conn.execute("SELECT * FROM skills ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(s) for s in skills]
+
+@app.post("/api/skills")
+async def create_skill(req: dict, current_user: Dict = require_auth()):
+    """创建 Skill"""
+    name = req.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    conn = get_db()
+    skill_id = f"skill_{int(time.time()*1000)}"
+    conn.execute(
+        """INSERT INTO skills (id, name, description, content, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (skill_id, name, req.get("description", ""), req.get("content", ""), datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {"id": skill_id, "name": name}
+
+@app.delete("/api/skills/<skill_id>")
+async def delete_skill(skill_id: str, current_user: Dict = require_auth()):
+    """删除 Skill"""
+    conn = get_db()
+    conn.execute("DELETE FROM skills WHERE id=?", (skill_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+# ── 知识库管理 ──────────────────────────────────────────────────
+@app.get("/api/knowledge-bases")
+async def list_knowledge_bases(current_user: Dict = require_auth()):
+    """获取所有知识库"""
+    conn = get_db()
+    kbs = conn.execute("SELECT * FROM knowledge_bases ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(kb) for kb in kbs]
+
+@app.post("/api/knowledge-bases")
+async def create_knowledge_base(req: dict, current_user: Dict = require_auth()):
+    """创建知识库"""
+    name = req.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    conn = get_db()
+    kb_id = f"kb_{int(time.time()*1000)}"
+    conn.execute(
+        """INSERT INTO knowledge_bases (id, name, type, path, url, filter, top_k, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (kb_id, name, req.get("type", "file"), req.get("path", ""), req.get("url", ""),
+         json.dumps(req.get("filter", {})), req.get("top_k", 5), datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {"id": kb_id, "name": name}
+
+@app.delete("/api/knowledge-bases/<kb_id>")
+async def delete_knowledge_base(kb_id: str, current_user: Dict = require_auth()):
+    """删除知识库"""
+    conn = get_db()
+    conn.execute("DELETE FROM knowledge_bases WHERE id=?", (kb_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
+# ── MCP Servers 管理 ───────────────────────────────────────────
+@app.get("/api/mcp-servers")
+async def list_mcp_servers(current_user: Dict = require_auth()):
+    """获取所有 MCP Servers"""
+    conn = get_db()
+    servers = conn.execute("SELECT * FROM mcp_servers ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(s) for s in servers]
+
+@app.post("/api/mcp-servers")
+async def create_mcp_server(req: dict, current_user: Dict = require_auth()):
+    """创建 MCP Server"""
+    name = req.get("name", "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    conn = get_db()
+    server_id = f"mcp_{int(time.time()*1000)}"
+    conn.execute(
+        """INSERT INTO mcp_servers (id, name, transport_type, command, args, env, url, enabled, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (server_id, name, req.get("transport_type", "stdio"), req.get("command", ""),
+         json.dumps(req.get("args", [])), json.dumps(req.get("env", {})),
+         req.get("url", ""), 1 if req.get("enabled", True) else 0, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+    return {"id": server_id, "name": name}
+
+@app.delete("/api/mcp-servers/<server_id>")
+async def delete_mcp_server(server_id: str, current_user: Dict = require_auth()):
+    """删除 MCP Server"""
+    conn = get_db()
+    conn.execute("DELETE FROM mcp_servers WHERE id=?", (server_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
+
 # ── 初始化 ─────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():

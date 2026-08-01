@@ -22,7 +22,7 @@ export default function LoginPage({ onLogin }) {
       localStorage.setItem('user', JSON.stringify(user))
       axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
       onLogin(user)
-      navigate('/skills')
+      navigate('/agents')
     } catch (err) {
       setError(err.response?.data?.detail || '登录失败')
     } finally {

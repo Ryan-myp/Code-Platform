@@ -105,7 +105,7 @@ export default function Sidebar({ activePath, setActivePath, sidebarOpen, setSid
             )}
             <div className="text-xs text-gray-500 text-center">
               <p>Powered by Agno</p>
-              <p>v6.4</p>
+              <p>v7.0</p>
             </div>
           </div>
         </div>
