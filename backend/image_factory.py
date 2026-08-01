@@ -743,12 +743,12 @@ async def virtual_try_on(
 
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
-        
-        # 将图像编码为 base64
-        person_b64 = base64.b64encode(person_content).decode('utf-8')
-        clothing_b64 = base64.b64encode(clothing_content).decode('utf-8')
 
-        # 调用 Agnes AI 图生图 API
+        # 将图像转换为 Data URI Base64
+        person_data_uri = f"data:image/png;base64,{base64.b64encode(person_content).decode('utf-8')}"
+        clothing_data_uri = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
+
+        # 调用 Agnes AI 多图合成 API
         api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 
         response = requests.post(
@@ -760,9 +760,11 @@ async def virtual_try_on(
             json={
                 "model": "agnes-image-2.1-flash",
                 "prompt": f"Virtual try-on: person wearing {style_prompts.get(style, 'casual outfit')}, background: {bg_prompt}, photorealistic, 8K quality",
-                "image": person_b64,
+                "image": [person_data_uri, clothing_data_uri],
                 "size": "1024x1024",
-                "strength": 0.75,
+                "extra_body": {
+                    "response_format": "url"
+                }
             },
             timeout=120,
         )
