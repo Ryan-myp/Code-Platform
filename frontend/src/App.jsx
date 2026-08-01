@@ -18,6 +18,7 @@ import ReqBoardPage from './pages/ReqBoardPage'
 import AIWorkspacePage from './pages/AIWorkspacePage'
 import LoginPage from './pages/LoginPage'
 import AgentExecutePage from './pages/AgentExecutePage'
+import ImageFactoryPage from './pages/ImageFactoryPage'
 
 const API = 'http://localhost:8888'
 
@@ -86,6 +87,7 @@ export default function App() {
                     <Route path="/sandbox" element={<SandboxPage />} />
                     <Route path="/mcp-servers" element={<MCPServersPage />} />
                     <Route path="/evolution" element={<PlatformEvolutionPage />} />
+                    <Route path="/image-factory" element={<ImageFactoryPage />} />
                     <Route path="/" element={<Navigate to="/agents" replace />} />
                   </Routes>
                 </main>

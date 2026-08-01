@@ -2,7 +2,7 @@ import React from 'react'
 import {
   BookOpen, FileText, Code2, TestTube2, TerminalSquare, Settings, Bot, Users, Layers,
   ChevronDown, ChevronRight, Menu, X, Brain, Database, Wrench, Server, ListTodo,
-  Puzzle, MessageSquare, Sparkles, Play
+  Puzzle, MessageSquare, Sparkles, Play, Image as ImageIcon
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -20,6 +20,7 @@ export default function Sidebar({ activePath, setActivePath, sidebarOpen, setSid
         { path: '/teams', label: 'Team 管理', icon: Users },
         { path: '/workflows', label: 'Workflow 管理', icon: Layers },
         { path: '/sandbox', label: '沙箱运行', icon: Play },
+        { path: '/image-factory', label: '图片工厂', icon: ImageIcon },
       ] },
     { key: 'system', label: '系统配置', icon: Settings,
       items: [
@@ -149,7 +150,7 @@ export default function Sidebar({ activePath, setActivePath, sidebarOpen, setSid
                       <div className="ml-4 mt-1 space-y-0.5">
                         {menu.items.map(item => (
                           <Link key={item.path} to={item.path} onClick={() => { setActivePath(item.path); setSidebarOpen(false); }}
-                            className={`flex items-center px-3 py-2 rounded-lg text-sm ${activePath === item.path ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}>
+                            className={`flex items-center px-3 py-2 rounded-lg text-sm ${activePath === item.path ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'}`}>
                             <item.icon className="w-4 h-4 mr-2" />{item.label}
                           </Link>
                         ))}
