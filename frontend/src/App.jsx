@@ -19,6 +19,8 @@ import AIWorkspacePage from './pages/AIWorkspacePage'
 import LoginPage from './pages/LoginPage'
 import AgentExecutePage from './pages/AgentExecutePage'
 import ImageFactoryPage from './pages/ImageFactoryPage'
+import MusicFactoryPage from './pages/MusicFactoryPage'
+import VideoFactoryPage from './pages/VideoFactoryPage'
 
 const API = 'http://localhost:8888'
 
@@ -88,6 +90,8 @@ export default function App() {
                     <Route path="/mcp-servers" element={<MCPServersPage />} />
                     <Route path="/evolution" element={<PlatformEvolutionPage />} />
                     <Route path="/image-factory" element={<ImageFactoryPage />} />
+                    <Route path="/video-factory" element={<VideoFactoryPage />} />
+                    <Route path="/music-factory" element={<MusicFactoryPage />} />
                     <Route path="/" element={<Navigate to="/agents" replace />} />
                   </Routes>
                 </main>

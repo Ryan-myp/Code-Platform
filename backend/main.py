@@ -21,6 +21,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from image_factory import router as image_factory_router
+from video_factory import router as video_factory_router
+from music_factory import router as music_factory_router
 
 # ── 配置 ──────────────────────────────────────────────────────
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -562,6 +564,8 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
 
 
 app.include_router(image_factory_router)
+app.include_router(video_factory_router)
+app.include_router(music_factory_router)
 
 
 # ── 初始化 ─────────────────────────────────────────────────────

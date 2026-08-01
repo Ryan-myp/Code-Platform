@@ -21,6 +21,8 @@ export default function Sidebar({ activePath, setActivePath, sidebarOpen, setSid
         { path: '/workflows', label: 'Workflow 管理', icon: Layers },
         { path: '/sandbox', label: '沙箱运行', icon: Play },
         { path: '/image-factory', label: '图片工厂', icon: ImageIcon },
+        { path: '/video-factory', label: '视频工厂', icon: Film },
+        { path: '/music-factory', label: '音乐工厂', icon: Music },
       ] },
     { key: 'system', label: '系统配置', icon: Settings,
       items: [
