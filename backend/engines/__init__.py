@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime
 
-from plugin_registry import PluginInterface
+from plugin_registry import PluginInterface, registry
 
 # biz-delivery scripts path
 BIZ_DIR = "/Users/yanping.ma/biz-delivery/scripts"
@@ -189,7 +189,6 @@ class BizTestPlugin(PluginInterface):
 
 
 # 注册所有插件
-from plugin_registry import registry
 
 registry.register(BizCodeScanPlugin())
 registry.register(BizReviewPlugin())

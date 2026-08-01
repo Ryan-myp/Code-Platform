@@ -53,11 +53,10 @@ class WorkflowExecutor:
                 if isinstance(workflow["definition"], str)
                 else workflow["definition"]
             )
-        except:
-            raise ValueError("工作流定义格式错误")
+        except Exception:
+            raise ValueError("工作流定义格式错误") from None
 
         nodes = definition.get("nodes", [])
-        edges = definition.get("edges", [])
 
         # 执行节点
         results = {}

@@ -12,7 +12,7 @@
 import logging
 from typing import Any
 
-from ..base import BusinessNode, NodeResult, RequiredFieldsValidator, TypeValidator
+from ..base import BusinessNode, MinLengthValidator, NodeResult, RequiredFieldsValidator, TypeValidator
 
 logger = logging.getLogger(__name__)
 

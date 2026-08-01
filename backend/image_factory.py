@@ -78,7 +78,7 @@ def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
         if os.path.exists(fp):
             try:
                 return ImageFont.truetype(fp, size)
-            except:
+            except Exception:
                 continue
     return ImageFont.load_default()
 
