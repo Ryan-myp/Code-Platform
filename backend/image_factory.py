@@ -749,17 +749,16 @@ async def virtual_try_on(
         clothing_b64 = base64.b64encode(clothing_content).decode('utf-8')
 
         # 调用 Agnes AI 图生图 API
-        api_key = os.environ.get("AGNES_API_KEY")
         api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 
         response = requests.post(
             f"{api_base}/images/generations",
             headers={
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {AGNES_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": "agnes-image-v2",
+                "model": "agnes-image-2.1-flash",
                 "prompt": f"Virtual try-on: person wearing {style_prompts.get(style, 'casual outfit')}, background: {bg_prompt}, photorealistic, 8K quality",
                 "image": person_b64,
                 "size": "1024x1024",
