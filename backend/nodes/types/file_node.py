@@ -94,9 +94,9 @@ class FileOperationNode(BusinessNode):
         for node_id, output_val in outputs.items():
             output_key_pattern = rf"{{outputs\.{node_id}\.(\w+)}}"
 
-            def replace_output(match):
+            def replace_output(match, _output_val=output_val):
                 key = match.group(1)
-                return str(output_val.get(key, "")) if isinstance(output_val, dict) else str(output_val)
+                return str(_output_val.get(key, "")) if isinstance(_output_val, dict) else str(_output_val)
 
             path = re.sub(output_key_pattern, replace_output, path)
 
