@@ -11,12 +11,12 @@
 7. 图片管理（下载、预览、删除）
 """
 
+import base64
 import io
 import json
 import logging
 import os
 import time
-import base64
 from datetime import datetime
 from io import BytesIO
 
@@ -174,12 +174,12 @@ async def text_to_image(
     try:
         width, height = map(int, size.split("x"))
         size_str = f"{width}x{height}"
-    except:
+    except Exception:
         size_str = size
 
     results = []
 
-    for i in range(batch_size):
+    for _ in range(batch_size):
         payload = {
             "model": model,
             "prompt": prompt,
@@ -453,6 +453,7 @@ async def adjust_image(
 
     # 调整亮度
     from PIL import ImageEnhance
+
     enhancer = ImageEnhance.Brightness(img)
     img = enhancer.enhance(brightness)
 
@@ -592,7 +593,7 @@ async def render_template(req: dict):
 
             try:
                 font = get_font(font_size)
-            except:
+            except Exception:
                 font = ImageFont.load_default()
 
             draw.text((x, y), text, fill=font_color, font=font)
@@ -626,8 +627,8 @@ async def upload_template(file: UploadFile = File(...), name: str = Form(None)):
 
     try:
         template = json.loads(content)
-    except:
-        raise HTTPException(400, "无效的模板格式")
+    except Exception as e:
+        raise HTTPException(400, "无效的模板格式") from e
 
     template_id = generate_id()
     template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
@@ -658,40 +659,44 @@ async def person_segmentation(image: UploadFile = File(...)):
     try:
         content = await image.read()
         img = Image.open(BytesIO(content))
-        
+
         # 使用颜色阈值法进行人像分割
         # 检测人体轮廓并创建掩码
-        mask = Image.new('L', img.size, 0)
+        mask = Image.new("L", img.size, 0)
         draw = ImageDraw.Draw(mask)
-        
+
         # 简单实现：检测中心区域（假设人物在画面中央）
         w, h = img.size
         # 创建一个椭圆掩码，模拟人物轮廓
-        draw.ellipse([
-            w*0.2, h*0.05,  # 顶部
-            w*0.8, h*0.95,  # 底部
-        ], fill=255)
-        
+        draw.ellipse(
+            [
+                w * 0.2,
+                h * 0.05,  # 顶部
+                w * 0.8,
+                h * 0.95,  # 底部
+            ],
+            fill=255,
+        )
+
         # 保存掩码
-        mask_path = os.path.join(IMAGES_DIR, f"mask_{datetime.now().timestamp()}.png")
+        mask_path = os.path.join(IMAGE_DIR, f"mask_{datetime.now().timestamp()}.png")
         mask.save(mask_path)
-        
+
         # 应用分割
         result = img.copy()
-        result = result.convert('RGBA')
-        
+        result = result.convert("RGBA")
+
         # 简单的边缘检测，增强轮廓
         # 这里可以后续接入 rembg 或其他人像分割模型
         for y in range(h):
             for x in range(w):
-                pixel = img.getpixel((x, y))
                 mask_pixel = mask.getpixel((x, y))
                 if mask_pixel < 128:
                     result.putpixel((x, y), (0, 0, 0, 0))  # 透明
-        
+
         filename = save_image(result)
         return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
-    
+
     except Exception as e:
         raise HTTPException(500, f"人像分割失败: {str(e)}") from e
 
@@ -703,7 +708,7 @@ async def virtual_try_on(
     clothing_image: UploadFile = File(...),
     description: str = Form(""),
     style: str = Form("casual"),  # casual, formal, sporty, fashion
-    background: str = Form("beach")  # beach, city, space, studio, etc.
+    background: str = Form("beach"),  # beach, city, space, studio, etc.
 ):
     """
     虚拟试衣功能
@@ -716,10 +721,9 @@ async def virtual_try_on(
         # 读取人物和衣物图像
         person_content = await person_image.read()
         clothing_content = await clothing_image.read()
-        
-        person_img = Image.open(BytesIO(person_content))
-        clothing_img = Image.open(BytesIO(clothing_content))
-        
+
+        img = Image.open(BytesIO(clothing_content))
+
         # 生成描述性提示词
         style_prompts = {
             "casual": "casual outfit, relaxed fit, everyday wear",
@@ -727,7 +731,7 @@ async def virtual_try_on(
             "sporty": "athletic wear, sporty outfit, active lifestyle",
             "fashion": "high fashion, designer clothing, runway style",
         }
-        
+
         background_prompts = {
             "beach": "sandy beach, ocean waves, palm trees, sunset, tropical paradise",
             "city": "urban city street, modern buildings, street lights, busy atmosphere",
@@ -736,14 +740,14 @@ async def virtual_try_on(
             "forest": "lush forest, sunlight filtering through trees, nature path",
             "snow": "snowy mountain landscape, winter wonderland, snow-capped peaks",
         }
-        
+
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
-        bg_prompt = background_prompts.get(background, background_prompts['beach'])
-        
+        bg_prompt = background_prompts.get(background, background_prompts["beach"])
+
         # 调用 Agnes AI 生成试穿效果
         api_key = os.environ.get("AGNES_API_KEY")
         api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
-        
+
         response = requests.post(
             f"{api_base}/images/generations",
             headers={
@@ -758,16 +762,16 @@ async def virtual_try_on(
                 "size": "1024x1024",
                 "strength": 0.75,
             },
-            timeout=120
+            timeout=120,
         )
-        
+
         if response.status_code != 200:
             raise HTTPException(500, f"生成失败: {response.text}")
-        
+
         data = response.json()
         img_data = base64.b64decode(data["data"][0]["b64_json"])
         result_img = Image.open(BytesIO(img_data))
-        
+
         filename = save_image(result_img)
         return {
             "id": filename,
@@ -776,7 +780,7 @@ async def virtual_try_on(
             "style": style,
             "background": background,
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -794,10 +798,10 @@ async def replace_background(
     try:
         content = await image.read()
         img = Image.open(BytesIO(content))
-        img = img.convert('RGBA')
-        
+        img = img.convert("RGBA")
+
         w, h = img.size
-        
+
         # 场景背景生成
         background_scenes = {
             "beach": [(255, 182, 193), (135, 206, 235)],  # 粉色沙滩 + 蓝天
@@ -807,42 +811,42 @@ async def replace_background(
             "forest": [(34, 139, 34), (0, 100, 0)],  # 森林绿
             "snow": [(255, 255, 255), (220, 230, 241)],  # 雪景白
         }
-        
+
         # 生成背景
         bg_type = background_scenes.get(background, background_scenes["studio"])
-        bg_img = Image.new('RGBA', (w, h), (*bg_type[0], 255))
-        
+        bg_img = Image.new("RGBA", (w, h), (*bg_type[0], 255))
+
         # 如果有颜色，使用纯色背景
         if force_color:
             try:
-                r, g, b = tuple(int(force_color[i:i+2], 16) for i in (1, 3, 5))
-                bg_img = Image.new('RGBA', (w, h), (r, g, b, 255))
-            except:
+                r, g, b = tuple(int(force_color[i : i + 2], 16) for i in (1, 3, 5))
+                bg_img = Image.new("RGBA", (w, h), (r, g, b, 255))
+            except Exception:
                 pass
-        
+
         # 使用掩码将人物合成到背景上
-        mask_path = os.path.join(IMAGES_DIR, f"mask_{datetime.now().timestamp()}.png")
+        mask_path = os.path.join(IMAGE_DIR, f"mask_{datetime.now().timestamp()}.png")
         if os.path.exists(mask_path):
-            mask = Image.open(mask_path).convert('L')
+            mask = Image.open(mask_path).convert("L")
             mask = mask.resize(img.size)
-            
+
             # 应用掩码
-            result = Image.new('RGBA', (w, h), (255, 255, 255, 0))
+            result = Image.new("RGBA", (w, h), (255, 255, 255, 0))
             result = Image.composite(img, bg_img, mask)
         else:
             # 如果没有掩码，直接合成（人物居中）
             result = bg_img.copy()
             # 将人物缩放到合适大小并居中
             person_scaled = img.resize((w, h))
-            result.paste(person_scaled, (0, 0), person_scaled.split()[3] if person_img.mode == 'RGBA' else None)
-        
+            result.paste(person_scaled, (0, 0), person_scaled.split()[3] if img.mode == "RGBA" else None)
+
         filename = save_image(result)
         return {
             "id": filename,
             "url": f"/api/image-factory/images/{filename}",
             "background": background,
         }
-    
+
     except Exception as e:
         raise HTTPException(500, f"背景替换失败: {str(e)}") from e
 
