@@ -43,7 +43,7 @@ export default function ConfigPage() {
         body: JSON.stringify({
           api_key: apiKey,
           api_url: apiUrl,
-          model_name: modelName || 'agnes-2.0-flash'
+          model_name: modelName || 'agnes-2.5-flash'
         })
       })
 
@@ -123,7 +123,7 @@ export default function ConfigPage() {
               <input
                 type="text"
                 className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all text-sm font-mono"
-                placeholder="agnes-2.0-flash"
+                placeholder="agnes-2.5-flash"
                 value={modelName}
                 onChange={(e) => setModelName(e.target.value)}
               />

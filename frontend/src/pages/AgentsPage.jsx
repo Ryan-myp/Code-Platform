@@ -435,7 +435,7 @@ function AgentsPageInner() {
   const [activeToolCategory, setActiveToolCategory] = useState(AGNO_TOOLS[0].category)
 
   const [form, setForm] = useState({
-    name: '', description: '', instructions: '', model: 'agnes-2.0-flash',
+    name: '', description: '', instructions: '', model: 'agnes-2.5-flash',
     enable_memory: false, enable_reasoning: false,
     tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: []
   })
@@ -459,7 +459,7 @@ function AgentsPageInner() {
 
   const openCreate = () => {
     setEditingAgent(null)
-    setForm({ name: '', description: '', instructions: '', model: 'agnes-2.0-flash', enable_memory: false, enable_reasoning: false, tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [] })
+    setForm({ name: '', description: '', instructions: '', model: 'agnes-2.5-flash', enable_memory: false, enable_reasoning: false, tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [] })
     setShowModal(true)
   }
 
@@ -471,7 +471,7 @@ function AgentsPageInner() {
     const mcpIds = typeof agent.mcp_server_ids === 'string' ? (JSON.parse(agent.mcp_server_ids) || []) : (agent.mcp_server_ids || [])
     setForm({
       name: agent.name, description: agent.description || '', instructions: agent.instructions || '',
-      model: agent.model || 'agnes-2.0-flash', enable_memory: !!agent.enable_memory, enable_reasoning: !!agent.enable_reasoning,
+      model: agent.model || 'agnes-2.5-flash', enable_memory: !!agent.enable_memory, enable_reasoning: !!agent.enable_reasoning,
       tools, knowledge_base_ids: kbIds, skill_ids: skillIds, mcp_server_ids: mcpIds
     })
     setShowModal(true)
@@ -570,7 +570,7 @@ function AgentsPageInner() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">{agent.name}</h3>
-                    <p className="text-xs text-gray-500">{agent.model || 'agnes-2.0-flash'}</p>
+                    <p className="text-xs text-gray-500">{agent.model || 'agnes-2.5-flash'}</p>
                   </div>
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -630,7 +630,7 @@ function AgentsPageInner() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">模型</label>
                   <input type="text" className="w-full p-2.5 border border-gray-200 rounded-lg focus:border-purple-500 focus:ring-2 focus:ring-purple-500/10"
-                    value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="agnes-2.0-flash" />
+                    value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="agnes-2.5-flash" />
                 </div>
               </div>
               <div>

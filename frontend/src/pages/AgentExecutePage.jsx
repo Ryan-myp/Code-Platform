@@ -330,7 +330,7 @@ export default function AgentExecutePage({ agentId, onBack }) {
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-gray-400" />
               <span className="text-gray-600">模型:</span>
-              <span className="text-gray-900">{agent.model || 'agnes-2.0-flash'}</span>
+              <span className="text-gray-900">{agent.model || 'agnes-2.5-flash'}</span>
             </div>
             {tools.length > 0 && (
               <div className="flex items-center gap-2">
