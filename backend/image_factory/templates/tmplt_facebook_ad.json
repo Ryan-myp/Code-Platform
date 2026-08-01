@@ -1,0 +1,26 @@
+{
+  "id": "tmplt_facebook_ad",
+  "name": "Facebook 广告",
+  "width": 1200,
+  "height": 628,
+  "background": "#FFFFFF",
+  "layers": [
+    {
+      "type": "image",
+      "key": "cover_image",
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": 628
+    },
+    {
+      "type": "text",
+      "key": "cta",
+      "x": 50,
+      "y": 550,
+      "font_size": 36,
+      "color": "#1877F2",
+      "text": "立即购买"
+    }
+  ]
+}

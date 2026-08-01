@@ -1,0 +1,17 @@
+{
+  "id": "tmplt_weibo_ad",
+  "name": "微博广告",
+  "width": 1080,
+  "height": 608,
+  "background": "#FFFFFF",
+  "layers": [
+    {
+      "type": "image",
+      "key": "cover_image",
+      "x": 0,
+      "y": 0,
+      "width": 1080,
+      "height": 608
+    }
+  ]
+}

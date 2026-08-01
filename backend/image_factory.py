@@ -743,8 +743,12 @@ async def virtual_try_on(
 
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
+        
+        # 将图像编码为 base64
+        person_b64 = base64.b64encode(person_content).decode('utf-8')
+        clothing_b64 = base64.b64encode(clothing_content).decode('utf-8')
 
-        # 调用 Agnes AI 生成试穿效果
+        # 调用 Agnes AI 图生图 API
         api_key = os.environ.get("AGNES_API_KEY")
         api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 
@@ -756,9 +760,8 @@ async def virtual_try_on(
             },
             json={
                 "model": "agnes-image-v2",
-                "prompt": f"Virtual try-on: {prompt}, background: {bg_prompt}, photorealistic, 8K quality",
-                "image": person_content,
-                "style_image": clothing_content,
+                "prompt": f"Virtual try-on: person wearing {style_prompts.get(style, 'casual outfit')}, background: {bg_prompt}, photorealistic, 8K quality",
+                "image": person_b64,
                 "size": "1024x1024",
                 "strength": 0.75,
             },

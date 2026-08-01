@@ -76,6 +76,8 @@ export default function ImageFactoryPage() {
   const [tryOnDescription, setTryOnDescription] = useState('')
   const [isTryOnGenerating, setIsTryOnGenerating] = useState(false)
   const [tryOnResult, setTryOnResult] = useState(null)
+  const [showImagePicker, setShowImagePicker] = useState(null) // 'person' 或 'clothing'
+  const [galleryImages, setGalleryImages] = useState([])
   
   // 3D 旋转状态
   const [rotationY, setRotationY] = useState(0)
@@ -94,7 +96,18 @@ export default function ImageFactoryPage() {
     loadStats()
     loadImages()
     loadTemplates()
+    loadGalleryImages()
   }, [])
+  
+  const loadGalleryImages = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/image-factory/images`)
+      const data = await res.json()
+      setGalleryImages(data)
+    } catch (e) {
+      console.error('Failed to load gallery images', e)
+    }
+  }
   
   // 3D 自动旋转
   useEffect(() => {
@@ -847,7 +860,16 @@ export default function ImageFactoryPage() {
               <div className="space-y-6">
                 {/* Person Upload */}
                 <div>
-                  <label className="text-sm font-medium mb-3 block">上传人物照片</label>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium">上传人物照片</label>
+                    <button
+                      onClick={() => setShowImagePicker('person')}
+                      className="text-xs text-violet-500 hover:text-violet-600 flex items-center space-x-1"
+                    >
+                      <ImageIcon className="w-3 h-3" />
+                      <span>从图库选择</span>
+                    </button>
+                  </div>
                   <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-8 text-center hover:border-violet-500 transition-colors`}>
                     <input
                       type="file"
@@ -875,10 +897,19 @@ export default function ImageFactoryPage() {
                     </label>
                   </div>
                 </div>
-                
+
                 {/* Clothing Upload */}
                 <div>
-                  <label className="text-sm font-medium mb-3 block">上传衣物照片</label>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium">上传衣物照片</label>
+                    <button
+                      onClick={() => setShowImagePicker('clothing')}
+                      className="text-xs text-violet-500 hover:text-violet-600 flex items-center space-x-1"
+                    >
+                      <ImageIcon className="w-3 h-3" />
+                      <span>从图库选择</span>
+                    </button>
+                  </div>
                   <div className={`border-2 border-dashed ${theme.cardBorder} rounded-xl p-8 text-center hover:border-violet-500 transition-colors`}>
                     <input
                       type="file"
@@ -1191,6 +1222,66 @@ export default function ImageFactoryPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        
+        {/* Image Picker Modal */}
+        {showImagePicker && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75" onClick={() => setShowImagePicker(null)}>
+            <div className={`${theme.card} rounded-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto`} onClick={e => e.stopPropagation()}>
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">
+                    {showImagePicker === 'person' ? '选择人物照片' : '选择衣物照片'}
+                  </h3>
+                  <button
+                    onClick={() => setShowImagePicker(null)}
+                    className={`p-2 ${theme.hover} rounded-lg`}
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                {galleryImages.length === 0 ? (
+                  <div className="text-center py-12">
+                    <ImageIcon className={`w-16 h-16 mx-auto ${theme.muted} mb-4 opacity-50`} />
+                    <p className={theme.muted}>图片库为空，请先上传图片</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-4">
+                    {galleryImages.map(img => (
+                      <div
+                        key={img.filename}
+                        className={`relative rounded-lg overflow-hidden cursor-pointer border-2 ${
+                          (showImagePicker === 'person' && personImage?.url === `${API_BASE}${img.url}`) ||
+                          (showImagePicker === 'clothing' && clothingImage?.url === `${API_BASE}${img.url}`)
+                            ? 'border-violet-500'
+                            : `${theme.cardBorder}`
+                        } hover:border-violet-500 transition-all`}
+                        onClick={() => {
+                          const selectedImage = { url: `${API_BASE}${img.url}`, filename: img.filename }
+                          if (showImagePicker === 'person') {
+                            setPersonImage(selectedImage)
+                          } else {
+                            setClothingImage(selectedImage)
+                          }
+                          setShowImagePicker(null)
+                        }}
+                      >
+                        <img
+                          src={`${API_BASE}${img.url}`}
+                          alt={img.filename}
+                          className="w-full h-32 object-cover"
+                        />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 px-2 py-1">
+                          <p className="text-xs text-white truncate">{img.filename}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
         
