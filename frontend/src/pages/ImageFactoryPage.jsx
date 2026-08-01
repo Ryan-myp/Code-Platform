@@ -9,7 +9,8 @@ import {
   Wand2, Sliders, Settings, ArrowLeft, ArrowRight,
   ZoomIn, ZoomOut, Minimize2, Crop, FlipHorizontal,
   Sun, Moon, SunMoon, UserCircle, Shirt, Palette as PaletteIcon,
-  Camera, Download as DownloadIcon
+  Camera, Download as DownloadIcon,
+  Rotate3D, Move
 } from 'lucide-react'
 
 const API_BASE = 'http://localhost:8888'
@@ -75,6 +76,12 @@ export default function ImageFactoryPage() {
   const [tryOnDescription, setTryOnDescription] = useState('')
   const [isTryOnGenerating, setIsTryOnGenerating] = useState(false)
   const [tryOnResult, setTryOnResult] = useState(null)
+  
+  // 3D 旋转状态
+  const [rotationY, setRotationY] = useState(0)
+  const [rotationX, setRotationX] = useState(0)
+  const [isAutoRotate, setIsAutoRotate] = useState(false)
+  const [rotationSpeed, setRotationSpeed] = useState(1)
 
   const editTools = [
     { icon: Crop, label: '裁剪', action: 'crop' },
@@ -88,6 +95,17 @@ export default function ImageFactoryPage() {
     loadImages()
     loadTemplates()
   }, [])
+  
+  // 3D 自动旋转
+  useEffect(() => {
+    if (!isAutoRotate) return
+    
+    const interval = setInterval(() => {
+      setRotationY(prev => (prev + rotationSpeed) % 360)
+    }, 50)
+    
+    return () => clearInterval(interval)
+  }, [isAutoRotate, rotationSpeed])
   
   const loadStats = async () => {
     try {
@@ -1015,6 +1033,164 @@ export default function ImageFactoryPage() {
                 </div>
               </div>
             </div>
+            
+            {/* 3D Rotation Viewer */}
+            {tryOnResult && (
+              <div className={`mt-6 p-6 rounded-xl ${darkMode ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-medium">🎯 3D 旋转查看</h3>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setIsAutoRotate(!isAutoRotate)}
+                      className={`px-3 py-1.5 rounded-lg text-sm ${
+                        isAutoRotate
+                          ? 'bg-violet-600 text-white'
+                          : `${theme.cardBorder} ${theme.hover}`
+                      }`}
+                    >
+                      {isAutoRotate ? '⏸ 暂停' : '▶ 自动旋转'}
+                    </button>
+                    <button
+                      onClick={() => { setRotationY(0); setRotationX(0); }}
+                      className={`px-3 py-1.5 rounded-lg text-sm ${theme.cardBorder} ${theme.hover}`}
+                    >
+                      ↺ 重置
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-6">
+                  {/* 3D Viewer */}
+                  <div className="col-span-2">
+                    <div 
+                      className="relative h-80 rounded-xl overflow-hidden cursor-move"
+                      style={{ perspective: '1000px' }}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        const startX = e.clientX
+                        const startY = e.clientY
+                        const startRotationY = rotationY
+                        const startRotationX = rotationX
+                        
+                        const handleMouseMove = (e) => {
+                          const deltaX = e.clientX - startX
+                          const deltaY = e.clientY - startY
+                          setRotationY(startRotationY + deltaX * 0.5)
+                          setRotationX(startRotationX - deltaY * 0.3)
+                        }
+                        
+                        const handleMouseUp = () => {
+                          document.removeEventListener('mousemove', handleMouseMove)
+                          document.removeEventListener('mouseup', handleMouseUp)
+                        }
+                        
+                        document.addEventListener('mousemove', handleMouseMove)
+                        document.addEventListener('mouseup', handleMouseUp)
+                      }}
+                    >
+                      <div
+                        className="w-full h-full flex items-center justify-center transition-transform duration-100"
+                        style={{
+                          transform: `rotateY(${rotationY}deg) rotateX(${rotationX}deg)`,
+                          transformStyle: 'preserve-3d'
+                        }}
+                      >
+                        <img
+                          src={tryOnResult.url}
+                          alt="Try-on result"
+                          className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                          style={{ backfaceVisibility: 'hidden' }}
+                        />
+                      </div>
+                      
+                      {/* Rotation indicators */}
+                      <div className="absolute bottom-4 left-4 flex items-center space-x-2">
+                        <div className={`px-2 py-1 rounded text-xs ${darkMode ? 'bg-gray-700' : 'bg-white'} opacity-75`}>
+                          X: {rotationX.toFixed(0)}°
+                        </div>
+                        <div className={`px-2 py-1 rounded text-xs ${darkMode ? 'bg-gray-700' : 'bg-white'} opacity-75`}>
+                          Y: {rotationY.toFixed(0)}°
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Rotation Controls */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">旋转角度</label>
+                      <div className="space-y-2">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className={`text-xs ${theme.muted}`}>水平 (Y轴)</span>
+                            <span className={`text-xs ${theme.muted}`}>{rotationY.toFixed(0)}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-180"
+                            max="180"
+                            value={rotationY}
+                            onChange={(e) => setRotationY(Number(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className={`text-xs ${theme.muted}`}>垂直 (X轴)</span>
+                            <span className={`text-xs ${theme.muted}`}>{rotationX.toFixed(0)}°</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-90"
+                            max="90"
+                            value={rotationX}
+                            onChange={(e) => setRotationX(Number(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">快速角度</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { label: '前', y: 0, x: 0, icon: '👤' },
+                          { label: '左', y: 90, x: 0, icon: '⬅️' },
+                          { label: '右', y: -90, x: 0, icon: '➡️' },
+                          { label: '后', y: 180, x: 0, icon: '🔙' },
+                          { label: '上', y: 0, x: -45, icon: '⬆️' },
+                          { label: '下', y: 0, x: 45, icon: '⬇️' },
+                        ].map(angle => (
+                          <button
+                            key={angle.label}
+                            onClick={() => { setRotationY(angle.y); setRotationX(angle.x); }}
+                            className={`p-2 rounded-lg border ${theme.cardBorder} ${theme.hover} transition-all text-center`}
+                          >
+                            <div className="text-lg">{angle.icon}</div>
+                            <div className="text-xs font-medium">{angle.label}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <label className="text-sm font-medium mb-2 block">自动旋转速度</label>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="5"
+                        step="0.5"
+                        value={rotationSpeed}
+                        onChange={(e) => setRotationSpeed(Number(e.target.value))}
+                        className="w-full"
+                      />
+                      <div className={`text-xs ${theme.muted} text-center mt-1`}>{rotationSpeed}x</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
         
