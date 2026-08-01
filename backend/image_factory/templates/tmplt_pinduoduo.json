@@ -1,0 +1,35 @@
+{
+  "id": "tmplt_pinduoduo",
+  "name": "拼多多主图模板",
+  "width": 800,
+  "height": 800,
+  "background": "#FFFFFF",
+  "layers": [
+    {
+      "type": "image",
+      "key": "product_image",
+      "x": 100,
+      "y": 100,
+      "width": 600,
+      "height": 500
+    },
+    {
+      "type": "text",
+      "key": "discount",
+      "x": 100,
+      "y": 650,
+      "font_size": 32,
+      "color": "#FF4400",
+      "text": "限时特惠"
+    },
+    {
+      "type": "text",
+      "key": "price",
+      "x": 100,
+      "y": 700,
+      "font_size": 28,
+      "color": "#333333",
+      "text": "¥99"
+    }
+  ]
+}
