@@ -145,12 +145,13 @@ officecli get deck.pptx '/slide[1]/shape[1]' --json
 ```python
 from pptx import Presentation
 from pptx.util import Inches, Pt
+
 prs = Presentation()
 slide = prs.slides.add_slide(prs.slide_layouts[0])
 title = slide.shapes.title
 title.text = "Q4 Report"
 # ... 还有 45 行 ...
-prs.save('deck.pptx')
+prs.save("deck.pptx")
 ```
 
 现在只需一条命令：
@@ -599,8 +600,10 @@ officecli validate report.docx && officecli view report.docx issues --json
 ```python
 import json, subprocess
 
+
 def cli(*args):
     return json.loads(subprocess.check_output(["officecli", *args, "--json"], text=True))
+
 
 cli("create", "deck.pptx")
 cli("add", "deck.pptx", "/", "--type", "slide", "--prop", "title=Q4 报告")

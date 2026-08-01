@@ -9,50 +9,56 @@
 - 多语言支持: 用户所在地区 = CN → 中文界面; 否则英文界面
 """
 
-import re, logging
-from typing import Dict, Any, Optional, List
-from ..base import BusinessNode, NodeResult, RequiredFieldsValidator, TypeValidator, PatternValidator
+import logging
+from typing import Any
+
+from ..base import BusinessNode, NodeResult, RequiredFieldsValidator, TypeValidator
 
 logger = logging.getLogger(__name__)
 
 
 class DecisionNode(BusinessNode):
     """决策节点——根据条件判断决定工作流走向
-    
+
     配置说明:
       - condition_expr: 条件表达式，使用Python语法，可引用上下文变量
         例如: "output.score > 80" 或 "inputs.input_text.lower() contains 'urgent'"
         支持的变量: inputs.{field}, outputs.{node}.{field}, global_outputs.{key}
-        
+
       - true_next_node: 条件为TRUE时跳转的下一个节点ID（必填）
       - false_next_node: 条件为FALSE时跳转的下一个节点ID（可选，默认为当前节点的下一个）
-    
+
     在顺序执行的工作流中，默认false_next_node指向列表中的下一个节点。
     如果要创建复杂的多分支结构，需要使用独立的决策链式节点。
     """
-    
-    def __init__(self, node_id: str, name: str, description: str,
-                 condition_expr: str, true_next_node: str,
-                 false_next_node: Optional[str] = None,
-                 input_schema: Optional[Dict[str, Any]] = None,
-                 validators: Optional[Any] = None):
-        
-        super().__init__(node_id, name, description, input_schema=input_schema, 
-                        validators=validators or [])
-        
+
+    def __init__(
+        self,
+        node_id: str,
+        name: str,
+        description: str,
+        condition_expr: str,
+        true_next_node: str,
+        false_next_node: str | None = None,
+        input_schema: dict[str, Any] | None = None,
+        validators: Any | None = None,
+    ):
+
+        super().__init__(node_id, name, description, input_schema=input_schema, validators=validators or [])
+
         self.condition_expr = condition_expr
         self.true_next_node = true_next_node
         self.false_next_node = false_next_node
-        
+
         # 默认验证：条件表达式非空
         default_validators = [RequiredFieldsValidator(["condition_expr", "true_next_node"])]
         if validators:
             default_validators.extend(validators)
         self.validators = default_validators
-    
-    def _evaluate_condition(self, context: Dict[str, Any]) -> bool:
+
+    def _evaluate_condition(self, context: dict[str, Any]) -> bool:
         """评估条件表达式，返回布尔值
-        
+
         支持的变量前缀：
         - inputs.X: 当前节点的输入字段X
         - outputs.node_name.X: 上一个输出节点output.X
@@ -72,18 +78,18 @@ class DecisionNode(BusinessNode):
                 "lower": lambda s: s.lower() if isinstance(s, str) else "",
                 "upper": lambda s: s.upper() if isinstance(s, str) else "",
             }
-            
+
             # 安全地eval表达式
             result = eval(self.condition_expr, {"__builtins__": {}}, safe_globals)
-            
+
             # 确保结果是布尔值或可转换为布尔值
             return bool(result)
-            
+
         except Exception as e:
             logger.error(f"条件表达式求值错误: {self.condition_expr}, 错误: {e}")
             raise
-    
-    def execute(self, context: Dict[str, Any]) -> NodeResult:
+
+    def execute(self, context: dict[str, Any]) -> NodeResult:
         try:
             # 验证输入
             current_input = context.get("current_node_input", {})
@@ -92,33 +98,35 @@ class DecisionNode(BusinessNode):
                 error_msg = f"输入验证失败: {'; '.join(validation_errors)}"
                 logger.warning(error_msg)
                 return NodeResult.failed(error_msg)
-            
+
             # 评估条件
             should_follow_true = self._evaluate_condition(context)
             logger.info(f"决策节点 {self.node_id}: condition='{self.condition_expr}' => {should_follow_true}")
-            
+
             # 记录决策结果作为输出
             output = {
                 "condition_evaluated": self.condition_expr,
                 "result": should_follow_true,
-                "next_node": self.true_next_node if should_follow_true else (self.false_next_node or "unknown")
+                "next_node": self.true_next_node if should_follow_true else (self.false_next_node or "unknown"),
             }
-            
+
             return NodeResult.success(
                 output=output,
-                messages=[f"条件评估结果: {'通过' if should_follow_true else '未通过'} -> 跳转至 {self.true_next_node if should_follow_true else (self.false_next_node or '下一节点')}"]
+                messages=[
+                    f"条件评估结果: {'通过' if should_follow_true else '未通过'} -> 跳转至 {self.true_next_node if should_follow_true else (self.false_next_node or '下一节点')}"
+                ],
             )
-            
+
         except Exception as e:
             error_msg = f"决策节点执行异常: {str(e)}"
             logger.error(error_msg)
             return NodeResult.failed(error_msg)
-    
+
     def get_true_next(self) -> str:
         """获取真分支的目标节点ID"""
         return self.true_next_node
-    
-    def get_false_next(self) -> Optional[str]:
+
+    def get_false_next(self) -> str | None:
         """获取假分支的目标节点ID"""
         return self.false_next_node
 
@@ -133,11 +141,11 @@ if __name__ == "__main__":
         description="判断分数是否及格",
         condition_expr="outputs.previous_step.score >= 60",
         true_next_node="issue_certificate",  # 及格 -> 发证
-        false_next_node="retake_course",     # 不及格 -> 重修课程
+        false_next_node="retake_course",  # 不及格 -> 重修课程
         input_schema={"score": int},
-        validators=[TypeValidator({"score": int})]
+        validators=[TypeValidator({"score": int})],
     )
-    
+
     # 示例2: 基于文本的情感分析决策
     urgent_alert = DecisionNode(
         node_id="check_urgency",
@@ -146,7 +154,7 @@ if __name__ == "__main__":
         condition_expr="contains(lower(inputs.text), 'urgent') or contains(lower(inputs.text), '紧急')",
         true_next_node="alert_manager",
         input_schema={"text": str},
-        validators=[RequiredFieldsValidator(["text"]), MinLengthValidator({"text": 5})]
+        validators=[RequiredFieldsValidator(["text"]), MinLengthValidator({"text": 5})],
     )
-    
+
     print("DecisionNode 示例完成")

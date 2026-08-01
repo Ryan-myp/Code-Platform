@@ -1,13 +1,14 @@
 """add users table with authentication fields
 
 Revision ID: init_users
-Revises: 
+Revises:
 Create Date: 2024-01-01
 
 This migration adds the users table for JWT-based authentication.
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "init_users"
 down_revision = None

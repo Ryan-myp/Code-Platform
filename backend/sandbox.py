@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 """沙箱容器管理器 — 基于 Podman/Docker 的容器化沙箱"""
+
+import json
 import subprocess
 import threading
-import json
-from typing import Dict, Optional, List
 from datetime import datetime
 
 # 沙箱状态
-SANDBOX_STATUS = {
-    "ready": "ready",
-    "running": "running",
-    "stopped": "stopped",
-    "error": "error"
-}
+SANDBOX_STATUS = {"ready": "ready", "running": "running", "stopped": "stopped", "error": "error"}
 
 # 预置服务模板
 SERVICE_TEMPLATES = {
@@ -21,7 +16,7 @@ SERVICE_TEMPLATES = {
         "image": "redis:7-alpine",
         "ports": ["6379:6379"],
         "command": None,
-        "description": "Redis 缓存服务"
+        "description": "Redis 缓存服务",
     },
     "postgres": {
         "name": "PostgreSQL",
@@ -29,7 +24,7 @@ SERVICE_TEMPLATES = {
         "ports": ["5432:5432"],
         "env": ["POSTGRES_PASSWORD=password", "POSTGRES_USER=postgres", "POSTGRES_DB=sandbox"],
         "command": None,
-        "description": "PostgreSQL 数据库"
+        "description": "PostgreSQL 数据库",
     },
     "mysql": {
         "name": "MySQL",
@@ -37,21 +32,21 @@ SERVICE_TEMPLATES = {
         "ports": ["3306:3306"],
         "env": ["MYSQL_ROOT_PASSWORD=password", "MYSQL_DATABASE=sandbox"],
         "command": None,
-        "description": "MySQL 数据库"
+        "description": "MySQL 数据库",
     },
     "rabbitmq": {
         "name": "RabbitMQ",
         "image": "rabbitmq:3-management-alpine",
         "ports": ["5672:5672", "15672:15672"],
         "command": None,
-        "description": "RabbitMQ 消息队列 (含管理界面)"
+        "description": "RabbitMQ 消息队列 (含管理界面)",
     },
     "nginx": {
         "name": "Nginx",
         "image": "nginx:alpine",
         "ports": ["8080:80"],
         "command": None,
-        "description": "Nginx Web 服务器"
+        "description": "Nginx Web 服务器",
     },
     "mongo": {
         "name": "MongoDB",
@@ -59,8 +54,8 @@ SERVICE_TEMPLATES = {
         "ports": ["27017:27017"],
         "env": ["MONGO_INITDB_ROOT_USERNAME=admin", "MONGO_INITDB_ROOT_PASSWORD=password"],
         "command": None,
-        "description": "MongoDB 文档数据库"
-    }
+        "description": "MongoDB 文档数据库",
+    },
 }
 
 
@@ -74,12 +69,7 @@ class ContainerManager:
     def _ensure_runtime(self):
         """确保容器运行时可用"""
         try:
-            result = subprocess.run(
-                [self.runtime, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
+            result = subprocess.run([self.runtime, "--version"], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 raise RuntimeError(f"{self.runtime} 不可用")
         except FileNotFoundError:
@@ -95,16 +85,18 @@ class ContainerManager:
         if result.returncode != 0:
             return []
         images = []
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line:
                 try:
                     img = json.loads(line)
-                    images.append({
-                        "id": img.get("Id", "")[:12],
-                        "tag": img.get("Tag", "latest"),
-                        "size": img.get("Size", "0"),
-                        "created": img.get("CreatedAt", "")
-                    })
+                    images.append(
+                        {
+                            "id": img.get("Id", "")[:12],
+                            "tag": img.get("Tag", "latest"),
+                            "size": img.get("Size", "0"),
+                            "created": img.get("CreatedAt", ""),
+                        }
+                    )
                 except Exception:
                     pass
         return images
@@ -153,14 +145,10 @@ class ContainerManager:
                 "name": name,
                 "image": image,
                 "status": "running",
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
             }
 
-        return {
-            "status": "success",
-            "container_id": container_id,
-            "name": name
-        }
+        return {"status": "success", "container_id": container_id, "name": name}
 
     def start_container(self, project_id: str) -> dict:
         """启动容器"""
@@ -218,33 +206,23 @@ class ContainerManager:
 
     def get_logs(self, project_id: str, tail: int = 100) -> list[str]:
         """获取容器日志"""
-        result = self._run_cmd([
-            self.runtime, "logs",
-            "--tail", str(tail),
-            f"sandbox-{project_id}"
-        ])
+        result = self._run_cmd([self.runtime, "logs", "--tail", str(tail), f"sandbox-{project_id}"])
         if result.returncode != 0:
             return []
-        return result.stdout.strip().split('\n') if result.stdout else []
+        return result.stdout.strip().split("\n") if result.stdout else []
 
     def get_ports(self, project_id: str) -> list[dict]:
         """获取端口映射"""
-        result = self._run_cmd([
-            self.runtime, "port",
-            f"sandbox-{project_id}"
-        ])
+        result = self._run_cmd([self.runtime, "port", f"sandbox-{project_id}"])
         ports = []
         if result.returncode == 0:
-            for line in result.stdout.strip().split('\n'):
+            for line in result.stdout.strip().split("\n"):
                 if line:
-                    parts = line.split(':')
+                    parts = line.split(":")
                     if len(parts) >= 2:
                         container_port = parts[0]
                         host_port = parts[1] if len(parts) > 1 else "0"
-                        ports.append({
-                            "container": container_port,
-                            "host": host_port
-                        })
+                        ports.append({"container": container_port, "host": host_port})
         return ports
 
 

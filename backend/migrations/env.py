@@ -1,4 +1,5 @@
 """Alembic Config object."""
+
 import os
 from configparser import ConfigParser
 
@@ -28,8 +29,6 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    import sqlite3
-    from alembic.migration import MigrationContext
     from sqlalchemy import engine_from_config, pool
 
     connectable = engine_from_config(
