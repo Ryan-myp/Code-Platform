@@ -773,8 +773,21 @@ async def virtual_try_on(
             raise HTTPException(500, f"生成失败: {response.text}")
 
         data = response.json()
-        img_data = base64.b64decode(data["data"][0]["b64_json"])
-        result_img = Image.open(BytesIO(img_data))
+        if not data.get("data"):
+            raise HTTPException(500, f"生成失败: {data}")
+
+        # API 返回 url 或 b64_json，两种都要兼容
+        first_item = data["data"][0]
+        image_url = first_item.get("url")
+        if image_url:
+            img_resp = requests.get(image_url, timeout=60)
+            img_resp.raise_for_status()
+            result_img = Image.open(BytesIO(img_resp.content))
+        elif first_item.get("b64_json"):
+            img_data = base64.b64decode(first_item["b64_json"])
+            result_img = Image.open(BytesIO(img_data))
+        else:
+            raise HTTPException(500, f"生成失败: {data}")
 
         filename = save_image(result_img)
         return {
