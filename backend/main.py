@@ -17,6 +17,7 @@ from agno.team import Team
 from agno.workflow import Workflow
 from agno.models.openai import OpenAIChat
 from functools import lru_cache
+from image_factory import router as image_factory_router
 
 # ── 配置 ──────────────────────────────────────────────────────
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -474,6 +475,8 @@ async def delete_mcp_server(server_id: str, current_user: Dict = require_auth())
     conn.commit()
     conn.close()
     return {"success": True}
+
+app.include_router(image_factory_router)
 
 # ── 初始化 ─────────────────────────────────────────────────────
 @app.on_event("startup")

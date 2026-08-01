@@ -1,0 +1,35 @@
+{
+  "id": "tmplt_xiaohongshu",
+  "name": "小红书封面模板",
+  "width": 1080,
+  "height": 1440,
+  "background": "#FFFFFF",
+  "layers": [
+    {
+      "type": "image",
+      "key": "cover_image",
+      "x": 0,
+      "y": 0,
+      "width": 1080,
+      "height": 900
+    },
+    {
+      "type": "text",
+      "key": "title",
+      "x": 50,
+      "y": 950,
+      "font_size": 40,
+      "color": "#000000",
+      "text": "标题文字"
+    },
+    {
+      "type": "text",
+      "key": "subtitle",
+      "x": 50,
+      "y": 1000,
+      "font_size": 28,
+      "color": "#666666",
+      "text": "副标题"
+    }
+  ]
+}

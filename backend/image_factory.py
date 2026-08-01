@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""图片工厂后端实现"""
+
+import os
+import json
+import time
+import io
+import logging
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from fastapi.responses import JSONResponse, FileResponse
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import requests
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/image-factory", tags=["图片工厂"])
+
+# 配置
+AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
+AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
+IMAGE_DIR = os.path.join(os.path.dirname(__file__), "image_factory")
+TEMPLATE_DIR = os.path.join(IMAGE_DIR, "templates")
+
+os.makedirs(IMAGE_DIR, exist_ok=True)
+os.makedirs(TEMPLATE_DIR, exist_ok=True)
+
+
+# ── 辅助函数 ──────────────────────────────────────────────────
+def generate_id() -> str:
+    return f"img_{int(time.time()*1000)}"
+
+def save_image(img: Image.Image, fmt: str = "PNG") -> str:
+    """保存图像并返回文件名"""
+    img_id = generate_id()
+    ext = ".png" if fmt == "PNG" else ".jpg"
+    filename = f"{img_id}{ext}"
+    filepath = os.path.join(IMAGE_DIR, filename)
+    
+    # 转换为 RGB
+    if img.mode in ("RGBA", "P"):
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+        img = background
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    
+    if fmt == "PNG":
+        img.save(filepath, "PNG")
+    else:
+        img.save(filepath, "JPEG", quality=95)
+    
+    return filename
+
+def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
+    """获取字体"""
+    font_paths = [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    for fp in font_paths:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, size)
+            except:
+                continue
+    return ImageFont.load_default()
+
+
+# ── 统计 API ──────────────────────────────────────────────────
+@router.get("/stats")
+async def get_stats():
+    """获取图片工厂统计"""
+    files = []
+    if os.path.exists(IMAGE_DIR):
+        files = [f for f in os.listdir(IMAGE_DIR) if f.endswith(('.png', '.jpg', '.jpeg'))]
+    templates = []
+    if os.path.exists(TEMPLATE_DIR):
+        templates = [f for f in os.listdir(TEMPLATE_DIR) if f.endswith('.json')]
+    return {
+        "total_images": len(files),
+        "total_templates": len(templates),
+        "image_dir": IMAGE_DIR
+    }
+
+
+# ── 图片管理 API ──────────────────────────────────────────────
+@router.get("/images")
+async def list_images(filename: Optional[str] = None):
+    """列出所有图片"""
+    files = []
+    if os.path.exists(IMAGE_DIR):
+        for f in os.listdir(IMAGE_DIR):
+            if f.endswith(('.png', '.jpg', '.jpeg')):
+                if filename and filename.lower() not in f.lower():
+                    continue
+                filepath = os.path.join(IMAGE_DIR, f)
+                stat = os.stat(filepath)
+                files.append({
+                    "filename": f,
+                    "size": stat.st_size,
+                    "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "url": f"/api/image-factory/images/{f}"
+                })
+    files.sort(key=lambda x: x["created_at"], reverse=True)
+    return files
+
+
+@router.get("/images/{filename}")
+async def get_image(filename: str):
+    """获取图片文件"""
+    filepath = os.path.join(IMAGE_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(404, "图片不存在")
+    return FileResponse(filepath)
+
+
+@router.delete("/images/{filename}")
+async def delete_image(filename: str):
+    """删除图片"""
+    filepath = os.path.join(IMAGE_DIR, filename)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    return {"success": True}
+
+
+# ── 文生图 API ────────────────────────────────────────────────
+@router.post("/generate/text-to-image")
+async def text_to_image(
+    prompt: str = Form(...),
+    size: str = Form("1024x1024"),
+    model: str = Form("agnes-image-2.1-flash")
+):
+    """文生图"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    
+    url = f"{AGNES_API_BASE}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {AGNES_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "n": 1
+    }
+    
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if "data" in data and len(data["data"]) > 0:
+            image_url = data["data"][0].get("url")
+            if image_url:
+                img_resp = requests.get(image_url, timeout=60)
+                img = Image.open(io.BytesIO(img_resp.content))
+                filename = save_image(img)
+                return {"id": filename, "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
+        
+        return JSONResponse(status_code=500, content={"error": "生成失败", "response": data})
+    except Exception as e:
+        logger.error(f"文生图失败：{e}")
+        raise HTTPException(500, f"生成失败：{str(e)}")
+
+
+# ── 图生图 API ────────────────────────────────────────────────
+@router.post("/generate/image-to-image")
+async def image_to_image(
+    prompt: str = Form(...),
+    image: UploadFile = File(...),
+    size: str = Form("1024x1024"),
+    strength: float = Form(0.35),
+    model: str = Form("agnes-image-2.1-flash")
+):
+    """图生图"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    
+    image_content = await image.read()
+    
+    url = f"{AGNES_API_BASE}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {AGNES_API_KEY}",
+    }
+    
+    files = {"image": ("input.png", image_content, "image/png")}
+    data = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "strength": strength,
+        "n": 1
+    }
+    
+    try:
+        resp = requests.post(url, headers=headers, data=data, files=files, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if "data" in data and len(data["data"]) > 0:
+            image_url = data["data"][0].get("url")
+            if image_url:
+                img_resp = requests.get(image_url, timeout=60)
+                result_img = Image.open(io.BytesIO(img_resp.content))
+                filename = save_image(result_img)
+                return {"id": filename, "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
+        
+        return JSONResponse(status_code=500, content={"error": "生成失败", "response": data})
+    except Exception as e:
+        logger.error(f"图生图失败：{e}")
+        raise HTTPException(500, f"生成失败：{str(e)}")
+
+
+# ── 编辑 API ──────────────────────────────────────────────────
+@router.post("/edit/crop")
+async def crop_image(
+    image: UploadFile = File(...),
+    x1: int = Form(0),
+    y1: int = Form(0),
+    x2: int = Form(100),
+    y2: int = Form(100)
+):
+    """剪裁图片（百分比坐标）"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+    
+    w, h = img.size
+    crop_box = (
+        int(x1 * w / 100),
+        int(y1 * h / 100),
+        int(x2 * w / 100),
+        int(y2 * h / 100)
+    )
+    
+    cropped = img.crop(crop_box)
+    filename = save_image(cropped)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}", "size": cropped.size}
+
+
+@router.post("/edit/resize")
+async def resize_image(
+    image: UploadFile = File(...),
+    width: int = Form(1024),
+    height: int = Form(1024),
+    maintain_aspect: bool = Form(True)
+):
+    """调整大小"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+    
+    if maintain_aspect:
+        img.thumbnail((width, height), Image.LANCZOS)
+    else:
+        img = img.resize((width, height), Image.LANCZOS)
+    
+    filename = save_image(img)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}", "size": img.size}
+
+
+@router.post("/edit/background-remove")
+async def remove_background(image: UploadFile = File(...)):
+    """简单抠图：基于颜色阈值"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content)).convert("RGBA")
+    
+    w, h = img.size
+    # 检测背景色
+    corner_colors = [
+        img.getpixel((0, 0)),
+        img.getpixel((w-1, 0)),
+        img.getpixel((0, h-1)),
+        img.getpixel((w-1, h-1))
+    ]
+    
+    from collections import Counter
+    bg_color = Counter(corner_colors).most_common(1)[0][0]
+    
+    # 创建掩码
+    pixels = img.load()
+    mask = Image.new("L", (w, h), 0)
+    mask_pixels = mask.load()
+    
+    for y in range(h):
+        for x in range(w):
+            px = pixels[x, y]
+            if abs(px[0] - bg_color[0]) < 30 and abs(px[1] - bg_color[1]) < 30 and abs(px[2] - bg_color[2]) < 30:
+                mask_pixels[x, y] = 0
+            else:
+                mask_pixels[x, y] = 255
+    
+    result = img.copy()
+    result.putalpha(mask)
+    
+    filename = save_image(result)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/edit/blur")
+async def blur_image(
+    image: UploadFile = File(...),
+    radius: int = Form(5)
+):
+    """高斯模糊"""
+    image_content = await image.read()
+    img = Image.open(io.BytesIO(image_content))
+    
+    blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
+    filename = save_image(blurred)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+# ── 模板管理 API ──────────────────────────────────────────────
+@router.get("/templates")
+async def list_templates():
+    """列出所有模板"""
+    templates = []
+    if os.path.exists(TEMPLATE_DIR):
+        for f in os.listdir(TEMPLATE_DIR):
+            if f.endswith(".json"):
+                filepath = os.path.join(TEMPLATE_DIR, f)
+                with open(filepath, "r", encoding="utf-8") as fh:
+                    template = json.load(fh)
+                    templates.append(template)
+    templates.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return templates
+
+
+@router.post("/template/create")
+async def create_template(req: dict):
+    """创建模板"""
+    template_id = generate_id()
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    
+    template = {
+        "id": template_id,
+        "name": req.get("name", "未命名模板"),
+        "width": req.get("width", 1080),
+        "height": req.get("height", 1920),
+        "background": req.get("background", "#FFFFFF"),
+        "layers": req.get("layers", []),
+        "created_at": datetime.now().isoformat()
+    }
+    
+    with open(template_path, "w", encoding="utf-8") as f:
+        json.dump(template, f, ensure_ascii=False, indent=2)
+    
+    return template
+
+
+@router.post("/template/render")
+async def render_template(req: dict):
+    """渲染模板"""
+    template_id = req.get("template_id")
+    overrides = req.get("overrides", {})
+    
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    if not os.path.exists(template_path):
+        raise HTTPException(404, "模板不存在")
+    
+    with open(template_path, "r", encoding="utf-8") as f:
+        template = json.load(f)
+    
+    width = overrides.get("width", template.get("width", 1080))
+    height = overrides.get("height", template.get("height", 1920))
+    bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
+    
+    img = Image.new("RGB", (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+    
+    for layer in template.get("layers", []):
+        layer_type = layer.get("type")
+        
+        if layer_type == "text":
+            x = layer.get("x", 0)
+            y = layer.get("y", 0)
+            key = layer.get("key", "")
+            default_text = layer.get("text", "")
+            text = overrides.get(key, default_text)
+            font_size = layer.get("font_size", 24)
+            font_color = layer.get("color", "#000000")
+            
+            try:
+                font = get_font(font_size)
+            except:
+                font = ImageFont.load_default()
+            
+            draw.text((x, y), text, fill=font_color, font=font)
+        
+        elif layer_type == "image":
+            image_url = layer.get("url", "")
+            if image_url and image_url.startswith("http"):
+                try:
+                    resp = requests.get(image_url, timeout=30)
+                    layer_img = Image.open(io.BytesIO(resp.content))
+                    layer_img = layer_img.convert("RGBA")
+                    
+                    x = layer.get("x", 0)
+                    y = layer.get("y", 0)
+                    w = layer.get("width", 200)
+                    h = layer.get("height", 200)
+                    layer_img = layer_img.resize((w, h), Image.LANCZOS)
+                    
+                    img.paste(layer_img, (x, y), layer_img)
+                except Exception as e:
+                    print(f"Layer image error: {e}")
+    
+    filename = save_image(img)
+    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/template/upload")
+async def upload_template(file: UploadFile = File(...), name: str = Form(None)):
+    """上传模板"""
+    content = await file.read()
+    
+    try:
+        template = json.loads(content)
+    except:
+        raise HTTPException(400, "无效的模板格式")
+    
+    template_id = generate_id()
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    
+    template["id"] = template_id
+    template["name"] = name or template.get("name", "上传模板")
+    template["created_at"] = datetime.now().isoformat()
+    
+    with open(template_path, "w", encoding="utf-8") as f:
+        json.dump(template, f, ensure_ascii=False, indent=2)
+    
+    return {"id": template_id, "name": template["name"]}
+
+
+@router.delete("/templates/{template_id}")
+async def delete_template(template_id: str):
+    """删除模板"""
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    if os.path.exists(template_path):
+        os.remove(template_path)
+    return {"success": True}
+
+
+# ── 预置电商模板 ──────────────────────────────────────────────
+def init_templates():
+    """初始化预置模板"""
+    templates = [
+        {
+            "id": "tmplt_taobao_main",
+            "name": "淘宝主图模板",
+            "width": 800,
+            "height": 800,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "product_image", "x": 100, "y": 100, "width": 600, "height": 600},
+                {"type": "text", "key": "title", "x": 50, "y": 720, "font_size": 28, "color": "#333333", "text": "商品标题"},
+                {"type": "text", "key": "price", "x": 50, "y": 760, "font_size": 24, "color": "#FF4400", "text": "¥199"}
+            ]
+        },
+        {
+            "id": "tmplt_xiaohongshu",
+            "name": "小红书封面模板",
+            "width": 1080,
+            "height": 1440,
+            "background": "#FFFFFF",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1080, "height": 900},
+                {"type": "text", "key": "title", "x": 50, "y": 950, "font_size": 40, "color": "#000000", "text": "标题文字"},
+                {"type": "text", "key": "subtitle", "x": 50, "y": 1000, "font_size": 28, "color": "#666666", "text": "副标题"}
+            ]
+        },
+        {
+            "id": "tmplt_douyin",
+            "name": "抖音封面模板",
+            "width": 1080,
+            "height": 1920,
+            "background": "#000000",
+            "layers": [
+                {"type": "image", "key": "cover_image", "x": 0, "y": 0, "width": 1080, "height": 1920},
+                {"type": "text", "key": "title", "x": 50, "y": 1700, "font_size": 48, "color": "#FFFFFF", "text": "视频标题"}
+            ]
+        }
+    ]
+    
+    for tmpl in templates:
+        tmpl_path = os.path.join(TEMPLATE_DIR, f"{tmpl['id']}.json")
+        if not os.path.exists(tmpl_path):
+            with open(tmpl_path, "w", encoding="utf-8") as f:
+                json.dump(tmpl, f, ensure_ascii=False, indent=2)
+            logger.info(f"初始化模板：{tmpl['name']}")
+
+
+# 启动时初始化模板
+init_templates()
