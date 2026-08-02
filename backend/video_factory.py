@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""视频工厂模块 - 基于 Agnes AI Video API"""
+"""视频工厂模块 - 基于 Agnes AI Video API v2.0"""
 
-import base64
-import io
 import json
+import logging
 import os
 import time
-import logging
 from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Form
 from fastapi.responses import FileResponse
 
 logger = logging.getLogger(__name__)
@@ -23,27 +21,37 @@ AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 VIDEO_DIR = Path(__file__).parent / "video_factory"
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
+# 常用提示词模板
+PRESET_PROMPTS = [
+    "A beautiful sunset over the ocean with gentle waves, cinematic quality",
+    "A cute cat walking on the beach at sunset, warm golden light",
+    "Time-lapse of clouds moving over mountains at sunrise",
+    "Aerial view of a forest with autumn colors",
+    "City street at night with neon lights and rain reflections",
+    "Underwater scene with colorful coral and fish",
+    "Northern lights dancing in the night sky",
+    "A peaceful lake reflecting snow-capped mountains",
+]
+
 
 def save_video(data: bytes, filename: str) -> str:
-    """保存视频文件"""
     filepath = VIDEO_DIR / filename
     filepath.write_bytes(data)
     return filename
 
 
 def generate_video_id() -> str:
-    """生成唯一视频ID"""
     return f"video_{int(time.time() * 1000)}"
 
 
 @router.get("/stats")
 async def get_stats():
-    """获取视频统计"""
     video_count = len(list(VIDEO_DIR.glob("*.mp4"))) if VIDEO_DIR.exists() else 0
     return {
         "total_videos": video_count,
-        "video_dir": str(VIDEO_DIR),
         "api_configured": bool(AGNES_API_KEY),
+        "model": "agnes-video-v2.0",
+        "price": "免费",
     }
 
 
@@ -54,7 +62,7 @@ async def create_video_task(
     width: int = Form(1152),
     height: int = Form(768),
     duration: int = Form(5),
-    mode: str = Form("ti2vid"),  # ti2vid, i2vid, keyframes
+    mode: str = Form("ti2vid"),
     image: str = Form(""),
     frame_rate: int = Form(24),
 ):
@@ -77,7 +85,6 @@ async def create_video_task(
         "mode": mode,
     }
 
-    # 图生视频需要图片URL
     if image and mode == "i2vid":
         payload["image"] = image
 
@@ -89,7 +96,7 @@ async def create_video_task(
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=30,
+            timeout=60,
         )
 
         if response.status_code != 200:
@@ -110,6 +117,7 @@ async def create_video_task(
             "height": height,
             "duration": duration,
             "mode": mode,
+            "estimated_time": duration * 10,  # 估算时间
         }
 
     except HTTPException:
@@ -126,7 +134,6 @@ async def get_video_result(video_id: str):
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     try:
-        # 推荐使用 agnesapi 端点
         response = requests.get(
             f"{AGNES_API_BASE}/agnesapi",
             params={"video_id": video_id},
@@ -134,27 +141,17 @@ async def get_video_result(video_id: str):
             timeout=30,
         )
 
-        if response.status_code != 200:
-            # 尝试兼容旧版端点
-            response = requests.get(
-                f"{AGNES_API_BASE}/videos/{video_id}",
-                headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
-                timeout=30,
-            )
-
         if response.status_code not in [200, 202]:
             raise HTTPException(500, f"获取视频结果失败: {response.text}")
 
         data = response.json()
-
-        # 检查状态
         status = data.get("status", "unknown")
+
         if status == "completed":
             video_url = data.get("output", {}).get("video_url") or data.get("url")
             if not video_url:
                 raise HTTPException(500, "视频生成完成但未找到视频URL")
 
-            # 下载视频
             video_resp = requests.get(video_url, timeout=120)
             if video_resp.status_code != 200:
                 raise HTTPException(500, "下载视频失败")
@@ -166,16 +163,20 @@ async def get_video_result(video_id: str):
                 "video_id": video_id,
                 "status": "completed",
                 "url": f"/api/video-factory/videos/{filename}",
+                "prompt": data.get("prompt", ""),
                 "duration": data.get("duration", 0),
+                "width": data.get("width", 0),
+                "height": data.get("height", 0),
+                "created_at": data.get("created_at", int(time.time())),
             }
         elif status == "failed":
             raise HTTPException(500, f"视频生成失败: {data.get('error', 'unknown')}")
         else:
-            # 还在生成中
             return {
                 "video_id": video_id,
                 "status": status,
                 "progress": data.get("progress", 0),
+                "message": data.get("message", "生成中..."),
             }
 
     except HTTPException:
@@ -187,17 +188,14 @@ async def get_video_result(video_id: str):
 
 @router.get("/videos/{filename}")
 async def get_video(filename: str):
-    """获取视频文件"""
     video_path = VIDEO_DIR / filename
     if not video_path.exists():
         raise HTTPException(404, "视频不存在")
-    
     return FileResponse(video_path, media_type="video/mp4")
 
 
 @router.get("/list")
 async def list_videos():
-    """列出所有视频"""
     videos = []
     for f in sorted(VIDEO_DIR.glob("*.mp4"), reverse=True):
         videos.append({
@@ -210,9 +208,14 @@ async def list_videos():
 
 @router.delete("/delete/{filename}")
 async def delete_video(filename: str):
-    """删除视频"""
     video_path = VIDEO_DIR / filename
     if not video_path.exists():
         raise HTTPException(404, "视频不存在")
     video_path.unlink()
     return {"success": True}
+
+
+@router.get("/prompts")
+async def get_preset_prompts():
+    """获取预设提示词"""
+    return {"prompts": PRESET_PROMPTS}

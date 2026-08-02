@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
-import json
 import logging
 import os
 import time
@@ -20,28 +19,38 @@ AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
 MUSIC_DIR = Path(__file__).parent / "music_factory"
 MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 
+# 示例歌词模板
+LYRICS_EXAMPLES = {
+    "love": "[Verse 1]\n阳光透过窗帘洒在你脸上\n你笑着问我今天怎么样\n咖啡的香气弥漫在空气\n这一刻时间仿佛静止\n\n[Chorus]\n你是我最美的遇见\n像星光照亮我的夜\n每一秒都想和你在一起\n这份爱永远不会变\n\n[Verse 2]\n手牵着手走在夕阳下\n影子被拉得好长好远\n你说我们的故事才刚开始\n未来还有很多美好要分享",
+    "nature": "[Verse 1]\n山峦叠翠云雾缭绕\n溪水潺潺流淌过高桥\n鸟儿在枝头歌唱\n大自然是最美的诗行\n\n[Chorus]\n让我走进你的怀抱\n感受清风和阳光\n每一片叶每一朵花\n都在诉说着生命的魔法",
+    "dream": "[Verse 1]\n夜晚的星空如此明亮\n我望着远方静静想\n梦想就像那流星划过\n带着希望飞向远方\n\n[Chorus]\n追逐梦的脚步不停歇\n哪怕前路有多曲折\n心中有光就不怕黑夜\n梦想终会实现的那一刻"
+}
+
 
 def save_music(data: bytes, filename: str) -> str:
-    """保存音乐文件"""
     filepath = MUSIC_DIR / filename
     filepath.write_bytes(data)
     return filename
 
 
 def generate_music_id() -> str:
-    """生成唯一音乐ID"""
     return f"music_{int(time.time() * 1000)}"
 
 
 @router.get("/stats")
 async def get_stats():
-    """获取音乐统计"""
     music_count = len(list(MUSIC_DIR.glob("*"))) if MUSIC_DIR.exists() else 0
     return {
         "total_tracks": music_count,
-        "music_dir": str(MUSIC_DIR),
         "api_configured": bool(AGNES_API_KEY),
+        "features": ["歌词生成", "音乐生成(待接入)", "虚拟人声(待接入)"],
     }
+
+
+@router.get("/lyrics/examples")
+async def get_lyrics_examples():
+    """获取歌词示例"""
+    return {"examples": LYRICS_EXAMPLES}
 
 
 @router.post("/lyrics/generate")
@@ -50,6 +59,7 @@ async def generate_lyrics(
     style: str = Form("pop"),
     language: str = Form("zh"),
     length: str = Form("medium"),
+    mood: str = Form("happy"),
 ):
     """生成歌词"""
     if not AGNES_API_KEY:
@@ -62,10 +72,21 @@ async def generate_lyrics(
         "ballad": "抒情歌曲",
         "jazz": "爵士乐",
         "classical": "古典音乐",
+        "folk": "民谣",
+        "electronic": "电子音乐",
     }
     lang_prompts = {
         "zh": "中文",
         "en": "英文",
+        "mixed": "中英混合",
+    }
+    mood_prompts = {
+        "happy": "欢快、积极、充满希望",
+        "sad": "忧伤、感伤、怀旧",
+        "romantic": "浪漫、甜蜜、温柔",
+        "energetic": "激昂、充满活力",
+        "calm": "平静、舒缓、治愈",
+        "epic": "史诗、壮阔、震撼",
     }
     length_prompts = {
         "short": "30秒到1分钟的短歌曲，包含主歌和副歌",
@@ -74,28 +95,20 @@ async def generate_lyrics(
     }
 
     prompt = f"""创作一首{lang_prompts.get(language, '中文')}{style_prompts.get(style, '流行')}的歌词：
+
 主题：{theme}
-风格：{style}
-长度要求：{length_prompts.get(length, '短歌曲')}
+情感基调：{mood_prompts.get(mood, '欢快')}
+风格：{style_prompts.get(style, '流行')}
+长度要求：{length_prompts.get(length, '中歌')}
 
 要求：
 - 歌词要富有诗意和感染力
-- 包含主歌(Verse)、副歌(Chorus)、桥段(Bridge)结构
-- 使用押韵
-- 情感表达要真挚
+- 押韵自然流畅
+- 情感表达真挚
+- 结构清晰（标注Verse、Chorus、Bridge等）
+- 适合演唱
 
-请只输出歌词，不要解释。格式：
-[Verse 1]
-...
-[Chorus]
-...
-[Verse 2]
-...
-[Chorus]
-[Bridge]
-...
-[Chorus]
-..."""
+请只输出歌词，不要解释。"""
 
     try:
         response = requests.post(
@@ -111,8 +124,9 @@ async def generate_lyrics(
                     {"role": "user", "content": prompt},
                 ],
                 "max_tokens": 2000,
+                "temperature": 0.8,
             },
-            timeout=60,
+            timeout=90,
         )
 
         if response.status_code != 200:
@@ -121,12 +135,19 @@ async def generate_lyrics(
         data = response.json()
         lyrics = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
+        # 保存生成的歌词
+        lyrics_filename = f"{generate_music_id()}.txt"
+        lyrics_path = MUSIC_DIR / lyrics_filename
+        lyrics_path.write_text(lyrics, encoding="utf-8")
+
         return {
             "lyrics": lyrics,
+            "lyrics_file": lyrics_filename,
             "theme": theme,
             "style": style,
             "language": language,
             "length": length,
+            "mood": mood,
         }
 
     except HTTPException:
@@ -143,14 +164,9 @@ async def generate_music(
     mood: str = Form("happy"),
     duration: int = Form(30),
 ):
-    """生成音乐（调用第三方API或占位）"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-
-    # 暂时返回占位，未来可以接入 Suno/Udio API
+    """生成音乐（占位，待接入 Suno/Udio API）"""
     music_id = generate_music_id()
     
-    # 模拟生成过程
     result = {
         "music_id": music_id,
         "lyrics": lyrics[:200] + "..." if len(lyrics) > 200 else lyrics,
@@ -159,6 +175,7 @@ async def generate_music(
         "duration": duration,
         "status": "pending",
         "message": "音乐生成功能正在开发中，敬请期待",
+        "note": "当前仅支持歌词生成，音乐生成需要接入第三方API（如Suno、Udio）",
     }
 
     return result
@@ -171,19 +188,15 @@ async def generate_vocal(
     style: str = Form("pop"),
 ):
     """生成虚拟人声（TTS）"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-
-    # 使用 TTS API 生成人声
     voice_mapping = {
         "female": "zh-CN-XiaoxiaoNeural",
         "male": "zh-CN-YunxiNeural",
+        "child": "zh-CN-XiaomoNeural",
     }
 
     tts_voice = voice_mapping.get(voice, "zh-CN-XiaoxiaoNeural")
 
     try:
-        # 调用 Agnes TTS API（如果支持）
         response = requests.post(
             f"{AGNES_API_BASE}/audio/speech",
             headers={
@@ -192,7 +205,7 @@ async def generate_vocal(
             },
             json={
                 "model": "tts-1",
-                "input": lyrics,
+                "input": lyrics[:500],
                 "voice": tts_voice,
                 "speed": 1.0,
             },
@@ -207,14 +220,14 @@ async def generate_vocal(
                 "url": f"/api/music-factory/audios/{filename}",
                 "voice": voice,
                 "style": style,
-                "duration": len(lyrics) / 10,  # 估算时长
+                "duration": len(lyrics) / 15,
             }
         else:
-            # TTS API 不可用，返回占位
             return {
                 "status": "not_supported",
                 "message": "虚拟人声功能需要 TTS API 支持",
                 "lyrics": lyrics[:200],
+                "note": "当前Agnes AI暂不支持TTS，可考虑使用Azure TTS或Google Cloud TTS替代",
             }
 
     except Exception as e:
@@ -227,24 +240,45 @@ async def generate_vocal(
 
 @router.get("/audios/{filename}")
 async def get_audio(filename: str):
-    """获取音频文件"""
     audio_path = MUSIC_DIR / filename
     if not audio_path.exists():
         raise HTTPException(404, "音频不存在")
-    
-    from fastapi.responses import FileResponse
     return FileResponse(audio_path, media_type="audio/mpeg")
 
 
 @router.get("/list")
 async def list_audios():
-    """列出所有音频"""
-    audios = []
+    """列出所有音频和歌词文件"""
+    items = []
     for f in sorted(MUSIC_DIR.glob("*"), reverse=True):
         if f.is_file():
-            audios.append({
+            ext = f.suffix.lower()
+            item_type = "audio" if ext in [".mp3", ".wav", ".ogg"] else "lyrics"
+            items.append({
                 "filename": f.name,
-                "url": f"/api/music-factory/audios/{f.name}",
+                "url": f"/api/music-factory/audios/{f.name}" if ext in [".mp3", ".wav", ".ogg"] else f"/api/music-factory/lyrics/{f.name}",
                 "size": f.stat().st_size,
+                "type": item_type,
+                "ext": ext,
             })
-    return {"audios": audios}
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/lyrics/{filename}")
+async def get_lyrics_file(filename: str):
+    """获取歌词文件"""
+    lyrics_path = MUSIC_DIR / filename
+    if not lyrics_path.exists():
+        raise HTTPException(404, "歌词文件不存在")
+    content = lyrics_path.read_text(encoding="utf-8")
+    return {"filename": filename, "content": content}
+
+
+@router.delete("/delete/{filename}")
+async def delete_item(filename: str):
+    """删除文件"""
+    file_path = MUSIC_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(404, "文件不存在")
+    file_path.unlink()
+    return {"success": True}
