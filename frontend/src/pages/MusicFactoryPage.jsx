@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { 
   Music, FileText, Mic, Play, Pause, Download, 
   Loader, Sparkles, RefreshCw, Clock, Type, Palette,

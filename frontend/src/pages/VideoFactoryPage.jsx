@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { 
   Video, Film, Play, Pause, Download, Loader, Sparkles,
   Clock, Maximize2, Trash2, RefreshCw, Image as ImageIcon,
-  Camera, Wand2, DownloadCloud, FilmStrip
+  Camera, Wand2, DownloadCloud
 } from 'lucide-react'
 
 const API_BASE = 'http://localhost:8888'
