@@ -3,7 +3,9 @@ import {
   Code2, Bot, Layers, Sparkles, Settings, Database, Wrench, Server,
   ListTodo, FileText, FolderKanban, Puzzle, MessageSquare, Brain,
   ChevronDown, ChevronRight, Menu, X, Play, Image as ImageIcon, Film, Music,
-  Wand2, LogOut, Users, Zap
+  Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell,
+  Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
+  Presentation, Table2, TrendingUp
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -16,25 +18,40 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
   const [confirmLogout, setConfirmLogout] = useState(false)
 
   const navItems = [
+    { key: 'home', label: '工作台', icon: Home, color: 'from-blue-500 to-indigo-600',
+      items: [
+        { path: '/home', label: '首页', icon: Home },
+        { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
+        { path: '/notifications', label: '通知中心', icon: Bell },
+      ] },
     { key: 'rdm', label: '研发管理', icon: Code2, color: 'from-brand-500 to-brand-600',
       items: [
         { path: '/board', label: '需求看板', icon: ListTodo },
         { path: '/workspace', label: 'AI 工作台', icon: Sparkles },
         { path: '/projects', label: '项目空间', icon: FolderKanban },
         { path: '/artifacts', label: '成果仓库', icon: FileText },
+        { path: '/pipelines', label: 'CI/CD 流水线', icon: GitBranch },
+        { path: '/sandbox', label: '沙箱运行', icon: Play },
+        { path: '/code-gen', label: '代码生成', icon: Code2 },
+        { path: '/code-review', label: '代码审查', icon: Shield },
       ] },
     { key: 'agent', label: '智能体管理', icon: Bot, color: 'from-emerald-500 to-teal-600',
       items: [
         { path: '/agents', label: 'Agent 列表', icon: Bot },
         { path: '/teams', label: 'Team 管理', icon: Users },
         { path: '/workflows', label: 'Workflow 管理', icon: Layers },
-        { path: '/sandbox', label: '沙箱运行', icon: Play },
       ] },
     { key: 'factory', label: '创作工厂', icon: Wand2, color: 'from-accent-500 to-blue-600',
       items: [
         { path: '/image-factory', label: '图片工厂', icon: ImageIcon },
         { path: '/video-factory', label: '视频工厂', icon: Film },
         { path: '/music-factory', label: '音乐工厂', icon: Music },
+        { path: '/copywriting', label: '文案工厂', icon: PenTool },
+        { path: '/translation', label: '翻译中心', icon: Languages },
+      ] },
+    { key: 'office', label: '效率工具箱', icon: Wrench, color: 'from-orange-500 to-red-600',
+      items: [
+        { path: '/tool-hub', label: '全部工具', icon: Wrench },
       ] },
     { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
       items: [
@@ -144,7 +161,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         <Zap className="w-3 h-3 text-brand-400" />
         <span>Powered by Agno</span>
         <span className="text-ink-300">·</span>
-        <span>v7.0</span>
+        <span>v9.0</span>
       </div>
     </div>
   )
@@ -155,13 +172,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       <div className="hidden md:block fixed left-0 top-0 bottom-0 z-30 w-64 bg-white/95 backdrop-blur-xl border-r border-ink-200/60 shadow-soft">
         <div className="h-full flex flex-col">
           <div className="px-4 py-4 border-b border-ink-100">
-            <Link to="/agents" className="flex items-center gap-3 group">
+            <Link to="/home" className="flex items-center gap-3 group">
               <div className="w-11 h-11 bg-gradient-to-br from-brand-500 via-brand-600 to-brand-700 rounded-xl flex items-center justify-center shadow-glow transition-transform group-hover:scale-105">
                 <span className="text-white font-bold text-sm tracking-tight">AI</span>
               </div>
               <div>
-                <h1 className="font-semibold text-ink-900 tracking-tight">智能研发平台</h1>
-                <p className="text-xs text-ink-400 mt-0.5">Agno Agent Powered</p>
+                <h1 className="font-semibold text-ink-900 tracking-tight">小团智能平台</h1>
+                <p className="text-xs text-ink-400 mt-0.5">AI 赋能 · 智效未来</p>
               </div>
             </Link>
           </div>
@@ -176,7 +193,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
           <div className="w-8 h-8 bg-gradient-to-br from-brand-500 to-brand-700 rounded-lg flex items-center justify-center shadow-soft">
             <span className="text-white font-bold text-xs">AI</span>
           </div>
-          <span className="font-semibold text-ink-900">智能研发平台</span>
+          <span className="font-semibold text-ink-900">小团智能平台</span>
         </div>
         <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-ink-50 rounded-lg transition-colors">
           {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -194,7 +211,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
                   <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-700 rounded-xl flex items-center justify-center shadow-glow">
                     <span className="text-white font-bold text-sm">AI</span>
                   </div>
-                  <h1 className="font-semibold text-ink-900">智能研发平台</h1>
+                  <h1 className="font-semibold text-ink-900">小团智能平台</h1>
                 </div>
                 <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-ink-50 rounded-lg">
                   <X className="w-5 h-5" />

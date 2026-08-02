@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — Plugin Registry 测试（适配 plugin_registry.py 当前 API）
+"""小团智能平台 — Plugin Registry 测试（适配 plugin_registry.py 当前 API）
 
 当前 API:
 - PluginInterface: 普通基类（name/category/version 类属性，execute 抛 NotImplementedError）

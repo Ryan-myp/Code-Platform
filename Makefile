@@ -1,4 +1,4 @@
-# ─── 智能研发平台 Makefile ──────────────────────────────────────
+# ─── 小团智能平台 Makefile ──────────────────────────────────────
 .PHONY: help install backend frontend dev test lint format clean docker-up docker-down reset-db
 
 help: ## 显示可用命令

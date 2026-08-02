@@ -27,7 +27,7 @@ def _insert_agents(conn):
     agents = [
         (
             "agent-1", "产品经理助手", "负责需求分析、PRD撰写和产品规划的智能助手",
-            "你是一名资深产品经理，擅长用户需求分析、产品规划和PRD文档撰写。",
+            "你是「产品经理助手」，一个专注于产品管理的专业AI助手。重要规则：\n1. 永远不要说自己是 Agnes 或其他模型名称\n2. 当被问到身份时，只介绍自己是「产品经理助手」\n3. 你的专长是用户需求分析、产品规划和PRD文档撰写\n4. 以专业产品经理的身份回答所有问题",
             "gpt-4o", 1, 1,
             json.dumps(["web_search", "code_interpreter"]),
             json.dumps(["kb-1"]),
@@ -37,7 +37,7 @@ def _insert_agents(conn):
         ),
         (
             "agent-2", "代码开发助手", "根据需求生成代码、进行代码审查和重构",
-            "你是一名资深全栈工程师，精通Python、JavaScript、TypeScript等多种编程语言。",
+            "你是「代码开发助手」，一个专注于软件开发的专业AI助手。重要规则：\n1. 永远不要说自己是 Agnes 或其他模型名称\n2. 当被问到身份时，只介绍自己是「代码开发助手」\n3. 你是一名资深全栈工程师，精通Python、JavaScript、TypeScript等多种编程语言\n4. 以专业工程师的身份回答所有编程问题",
             "agnes-2.5-flash", 1, 1,
             json.dumps(["code_interpreter", "file_system"]),
             json.dumps(["kb-2"]),
@@ -47,7 +47,7 @@ def _insert_agents(conn):
         ),
         (
             "agent-3", "测试工程师助手", "自动生成测试用例、执行测试并报告结果",
-            "你是一名资深测试工程师，擅长设计测试用例、自动化测试和缺陷分析。",
+            "你是「测试工程师助手」，一个专注于软件测试的专业AI助手。重要规则：\n1. 永远不要说自己是 Agnes 或其他模型名称\n2. 当被问到身份时，只介绍自己是「测试工程师助手」\n3. 你是一名资深测试工程师，擅长设计测试用例、自动化测试和缺陷分析\n4. 以专业测试工程师的身份回答所有问题",
             "claude-3", 1, 1,
             json.dumps(["code_interpreter", "terminal"]),
             json.dumps(["kb-2"]),
@@ -57,7 +57,7 @@ def _insert_agents(conn):
         ),
         (
             "agent-4", "架构设计助手", "系统架构设计、技术选型和设计模式建议",
-            "你是一名资深架构师，熟悉分布式系统、微服务架构和云原生技术。",
+            "你是「架构设计助手」，一个专注于系统架构的专业AI助手。重要规则：\n1. 永远不要说自己是 Agnes 或其他模型名称\n2. 当被问到身份时，只介绍自己是「架构设计助手」\n3. 你是一名资深架构师，熟悉分布式系统、微服务架构和云原生技术\n4. 以专业架构师的身份回答所有问题",
             "qwen-max", 1, 1,
             json.dumps(["web_search", "code_interpreter"]),
             json.dumps(["kb-1", "kb-3"]),
@@ -67,7 +67,7 @@ def _insert_agents(conn):
         ),
         (
             "agent-5", "运维工程师助手", "部署、监控、故障排查和性能优化",
-            "你是一名资深SRE工程师，擅长DevOps、容器化部署和系统监控。",
+            "你是「运维工程师助手」，一个专注于运维和SRE的专业AI助手。重要规则：\n1. 永远不要说自己是 Agnes 或其他模型名称\n2. 当被问到身份时，只介绍自己是「运维工程师助手」\n3. 你是一名资深SRE工程师，擅长DevOps、容器化部署和系统监控\n4. 以专业运维工程师的身份回答所有问题",
             "agnes-2.5-flash", 1, 0,
             json.dumps(["terminal", "file_system"]),
             json.dumps(["kb-3"]),
@@ -174,11 +174,16 @@ def _insert_workflows(conn):
     ]
     for w in workflows:
         if _row_exists(conn, "workflows", w[0]):
-            continue
-        conn.execute(
-            """INSERT INTO workflows (id, name, description, steps, connections, created_at, active)
+            # 始终更新工作流数据，确保格式正确
+            conn.execute(
+                "UPDATE workflows SET steps=?, connections=? WHERE id=?",
+                (w[3], w[4], w[0]),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO workflows (id, name, description, steps, connections, created_at, active)
                VALUES (?,?,?,?,?,?,?)""", w,
-        )
+            )
     logger.info("Workflows seeded: %d rows", len(workflows))
 
 
@@ -359,8 +364,8 @@ def _insert_skills(conn):
 def _insert_projects(conn):
     projects = [
         (
-            "proj-1", "智能研发平台",
-            "基于 AI Agent 的一站式智能研发平台，覆盖需求→设计→开发→测试→上线全流程",
+            "proj-1", "小团智能平台",
+            "AI 赋能各行业的智能平台，覆盖创作、翻译、分析、办公等全场景工具",
             "active", "team-1", _NOW, _NOW, 1,
         ),
         (
@@ -458,6 +463,37 @@ def _insert_artifacts(conn):
     logger.info("Artifacts seeded: %d rows", len(artifacts))
 
 
+def _insert_global_tasks(conn):
+    tasks = [
+        ("task_demo1", "完善用户认证模块", "实现 JWT 认证和刷新令牌机制", "in_progress", "P1", "", json.dumps(["backend", "auth"]), "proj-1", "", "admin", "admin", _NOW, _NOW, "", 1),
+        ("task_demo2", "优化首页加载性能", "减少首屏加载时间到 2s 以内", "todo", "P2", "", json.dumps(["frontend", "performance"]), "proj-2", "", "admin", "", _NOW, _NOW, "", 1),
+        ("task_demo3", "编写 API 文档", "使用 Swagger 生成完整的 API 文档", "todo", "P2", "", json.dumps(["documentation"]), "proj-1", "", "admin", "", _NOW, _NOW, "", 1),
+    ]
+    for t in tasks:
+        if _row_exists(conn, "global_tasks", t[0]):
+            continue
+        conn.execute(
+            """INSERT INTO global_tasks (id, title, description, status, priority, due_date, tags, project_id, agent_id, created_by, assigned_to, created_at, updated_at, completed_at, active)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", t,
+        )
+    logger.info("Global tasks seeded: %d rows", len(tasks))
+
+
+def _insert_notifications(conn):
+    notifications = [
+        ("notif_welcome", "info", "欢迎使用小团智能平台 v9.0", "平台已升级到 v9.0，新增了工作台、任务中心和通知中心等功能", "", "", "all", _NOW, 0, ""),
+        ("notif_task", "task", "新任务已创建", "任务「完善用户认证模块」已分配给你", "global_task", "task_demo1", "all", _NOW, 0, ""),
+    ]
+    for n in notifications:
+        if _row_exists(conn, "notifications", n[0]):
+            continue
+        conn.execute(
+            """INSERT INTO notifications (id, type, title, content, target_type, target_id, user_id, created_at, read, read_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""", n,
+        )
+    logger.info("Notifications seeded: %d rows", len(notifications))
+
+
 def seed_if_empty():
     """向空数据库灌入种子数据。幂等——已存在的记录不会重复插入。"""
     conn = get_db()
@@ -472,6 +508,8 @@ def seed_if_empty():
         _insert_projects(conn)
         _insert_sandbox_projects(conn)
         _insert_artifacts(conn)
+        _insert_global_tasks(conn)
+        _insert_notifications(conn)
         conn.commit()
         logger.info("Seed data inserted successfully")
     finally:

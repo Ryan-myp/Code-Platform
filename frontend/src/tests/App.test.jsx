@@ -11,8 +11,8 @@ describe('App', () => {
 
   it('renders without crashing', () => {
     render(<App />)
-    // Sidebar 中有多个"智能研发平台"文字（桌面版 + 移动版）
-    expect(screen.getAllByText(/智能研发平台/i).length).toBeGreaterThan(0)
+    // Sidebar 中有多个“小团智能平台”文字（桌面版 + 移动版）
+    expect(screen.getAllByText(/小团智能平台/i).length).toBeGreaterThan(0)
   })
 
   it('shows navigation menu items', () => {

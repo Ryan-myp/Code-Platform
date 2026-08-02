@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Database, Plus, Edit2, Trash2, Search,
   FolderOpen, Link2, Hash, RefreshCw,
+  FileText, Globe, File, Clock, BarChart3,
+  BookOpen, Shield, HelpCircle, TrendingUp,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -17,10 +19,50 @@ const KB_TYPES = [
 
 const typeMeta = (type) => KB_TYPES.find((t) => t.value === type) || KB_TYPES[0]
 
+// 文档子类型
+const DOC_SUBTYPES = [
+  { value: 'general', label: '通用', icon: File, color: 'bg-gray-100 text-gray-600' },
+  { value: 'pdf', label: 'PDF', icon: FileText, color: 'bg-red-50 text-red-600' },
+  { value: 'word', label: 'Word', icon: FileText, color: 'bg-blue-50 text-blue-600' },
+  { value: 'txt', label: 'TXT', icon: File, color: 'bg-gray-50 text-gray-600' },
+  { value: 'web', label: '网页', icon: Globe, color: 'bg-emerald-50 text-emerald-600' },
+  { value: 'db', label: '数据库', icon: Database, color: 'bg-amber-50 text-amber-600' },
+]
+
+const getSubtypeMeta = (subtype) => DOC_SUBTYPES.find(d => d.value === subtype) || DOC_SUBTYPES[0]
+
+// 知识库快速模板
+const KB_TEMPLATES = [
+  { name: '产品文档库', description: '产品需求文档、PRD、用户手册等产品相关资料', icon: BookOpen, color: 'from-blue-500 to-indigo-600',
+    defaults: { name: '产品文档库', type: 'file', path: '', description: '产品需求文档、PRD、用户手册等产品相关资料', subtype: 'general' } },
+  { name: '技术规范库', description: 'API文档、架构设计、编码规范等技术文档', icon: Shield, color: 'from-emerald-500 to-green-600',
+    defaults: { name: '技术规范库', type: 'file', path: '', description: 'API文档、架构设计、编码规范等技术文档', subtype: 'general' } },
+  { name: 'FAQ 知识库', description: '常见问题解答、客户FAQ、技术支持问答', icon: HelpCircle, color: 'from-amber-500 to-orange-600',
+    defaults: { name: 'FAQ 知识库', type: 'file', path: '', description: '常见问题解答、客户FAQ、技术支持问答集合', subtype: 'general' } },
+  { name: '行业报告库', description: '行业分析报告、市场研究、竞品分析等', icon: TrendingUp, color: 'from-violet-500 to-purple-600',
+    defaults: { name: '行业报告库', type: 'file', path: '', description: '行业分析报告、市场研究、竞品分析等研究资料', subtype: 'pdf' } },
+]
+
+// 根据路径/URL推测文档子类型
+function guessSubtype(kb) {
+  if (kb.type === 'url') return 'web'
+  const path = (kb.path || '').toLowerCase()
+  if (path.endsWith('.pdf')) return 'pdf'
+  if (path.endsWith('.doc') || path.endsWith('.docx')) return 'word'
+  if (path.endsWith('.txt') || path.endsWith('.md')) return 'txt'
+  if (path.includes('database') || path.includes('db')) return 'db'
+  return 'general'
+}
+
 // 知识库卡片
 function KBCard({ kb, onEdit, onDelete }) {
   const meta = typeMeta(kb.type)
   const Icon = meta.icon
+  const subtype = kb.subtype || guessSubtype(kb)
+  const subMeta = getSubtypeMeta(subtype)
+  const docCount = kb.doc_count || 0
+  const totalSize = kb.total_size ? formatFileSize(kb.total_size) : null
+
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 flex flex-col">
       <div className="flex items-start justify-between mb-4">
@@ -30,10 +72,12 @@ function KBCard({ kb, onEdit, onDelete }) {
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{kb.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{meta.label}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${subMeta.color}`}>{subMeta.label}</span>
+              <span className="text-xs text-gray-400">{meta.label}</span>
+            </div>
           </div>
         </div>
-        <Badge label={meta.label} className="bg-gray-100 text-gray-600" />
       </div>
 
       <div className="space-y-1.5 mb-4 flex-1">
@@ -48,14 +92,34 @@ function KBCard({ kb, onEdit, onDelete }) {
             <span className="truncate font-mono text-xs">{kb.path || '-'}</span>
           </p>
         )}
-        <p className="text-xs text-gray-500 flex items-center gap-2">
-          <Hash className="w-3.5 h-3.5" />
-          top_k: <span className="font-medium text-gray-700">{kb.top_k ?? 5}</span>
-        </p>
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          <span className="flex items-center gap-1">
+            <Hash className="w-3.5 h-3.5" />
+            top_k: <span className="font-medium text-gray-700">{kb.top_k ?? 5}</span>
+          </span>
+          {docCount > 0 && (
+            <span className="flex items-center gap-1">
+              <FileText className="w-3.5 h-3.5" />{docCount} 文档
+            </span>
+          )}
+          {totalSize && (
+            <span className="flex items-center gap-1">
+              <BarChart3 className="w-3.5 h-3.5" />{totalSize}
+            </span>
+          )}
+        </div>
       </div>
 
+      {/* 描述 */}
+      {kb.description && (
+        <p className="text-xs text-gray-500 line-clamp-2 mb-3">{kb.description}</p>
+      )}
+
       <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-        <span className="text-xs text-gray-400">{formatRelativeTime(kb.created_at)}</span>
+        <span className="text-xs text-gray-400 flex items-center gap-1">
+          <Clock className="w-3 h-3" />
+          {formatRelativeTime(kb.created_at)}
+        </span>
         <div className="flex items-center gap-1">
           <button
             onClick={() => onEdit(kb)}
@@ -77,9 +141,22 @@ function KBCard({ kb, onEdit, onDelete }) {
   )
 }
 
+// 格式化文件大小
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let size = bytes
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024
+    i++
+  }
+  return `${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`
+}
+
 // 创建/编辑表单
-function KBFormModal({ open, onClose, onSubmit, editing, loading }) {
-  const [form, setForm] = useState({ name: '', type: 'file', path: '', url: '', top_k: 5 })
+function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
+  const [form, setForm] = useState({ name: '', type: 'file', path: '', url: '', top_k: 5, description: '', subtype: 'general' })
   const [errors, setErrors] = useState({})
 
   useEffect(() => {
@@ -91,12 +168,24 @@ function KBFormModal({ open, onClose, onSubmit, editing, loading }) {
         path: editing.path || '',
         url: editing.url || '',
         top_k: editing.top_k ?? 5,
+        description: editing.description || '',
+        subtype: editing.subtype || 'general',
+      })
+    } else if (defaults) {
+      setForm({
+        name: defaults.name || '',
+        type: defaults.type || 'file',
+        path: defaults.path || '',
+        url: defaults.url || '',
+        top_k: 5,
+        description: defaults.description || '',
+        subtype: defaults.subtype || 'general',
       })
     } else {
-      setForm({ name: '', type: 'file', path: '', url: '', top_k: 5 })
+      setForm({ name: '', type: 'file', path: '', url: '', top_k: 5, description: '', subtype: 'general' })
     }
     setErrors({})
-  }, [open, editing])
+  }, [open, editing, defaults])
 
   const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
 
@@ -125,6 +214,8 @@ function KBFormModal({ open, onClose, onSubmit, editing, loading }) {
       path: form.type === 'file' ? form.path.trim() : '',
       url: form.type === 'url' ? form.url.trim() : '',
       top_k: Number(form.top_k) || 5,
+      description: form.description?.trim() || '',
+      subtype: form.subtype || 'general',
     }
     onSubmit(payload)
   }
@@ -160,6 +251,38 @@ function KBFormModal({ open, onClose, onSubmit, editing, loading }) {
             className={inputCls(errors.name)}
           />
           {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
+          <input
+            type="text"
+            value={form.description}
+            onChange={(e) => setField('description', e.target.value)}
+            placeholder="简要说明知识库的内容和用途"
+            className={inputCls(false)}
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">文档类型</label>
+          <div className="grid grid-cols-3 gap-2">
+            {DOC_SUBTYPES.map((st) => (
+              <button
+                key={st.value}
+                type="button"
+                onClick={() => setField('subtype', st.value)}
+                className={`px-3 py-2 rounded-xl text-sm font-medium border transition-all flex items-center justify-center gap-1.5 ${
+                  form.subtype === st.value
+                    ? 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm'
+                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                <st.icon className="w-3.5 h-3.5" />
+                {st.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div>
@@ -235,6 +358,7 @@ export default function KnowledgeBasesPage() {
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [formDefaults, setFormDefaults] = useState(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -258,13 +382,15 @@ export default function KnowledgeBasesPage() {
     const matchSearch = !q ||
       item.name?.toLowerCase().includes(q) ||
       item.path?.toLowerCase().includes(q) ||
-      item.url?.toLowerCase().includes(q)
+      item.url?.toLowerCase().includes(q) ||
+      item.description?.toLowerCase().includes(q)
     const matchType = typeFilter === 'all' || item.type === typeFilter
     return matchSearch && matchType
   })
 
   const openCreate = () => {
     setEditingItem(null)
+    setFormDefaults(null)
     setShowForm(true)
   }
   const openEdit = (item) => {
@@ -306,11 +432,13 @@ export default function KnowledgeBasesPage() {
     }
   }
 
+  const totalDocs = items.reduce((sum, i) => sum + (i.doc_count || 0), 0)
+
   const stats = [
     { label: '总知识库', value: items.length, icon: Database, color: 'from-violet-500 to-purple-600' },
     { label: '本地文件', value: items.filter((i) => (i.type || 'file') === 'file').length, icon: FolderOpen, color: 'from-emerald-500 to-green-600' },
-    { label: 'URL 类型', value: items.filter((i) => i.type === 'url').length, icon: Link2, color: 'from-blue-500 to-cyan-600' },
-    { label: '平均 top_k', value: items.length ? (items.reduce((a, i) => a + (Number(i.top_k) || 0), 0) / items.length).toFixed(1) : '0.0', icon: Hash, color: 'from-orange-500 to-amber-600' },
+    { label: 'URL 类型', value: items.filter((i) => i.type === 'url').length, icon: Globe, color: 'from-blue-500 to-cyan-600' },
+    { label: '总文档数', value: totalDocs, icon: FileText, color: 'from-amber-500 to-orange-600' },
   ]
 
   return (
@@ -341,6 +469,31 @@ export default function KnowledgeBasesPage() {
           </div>
         ))}
       </div>
+
+      {/* 快速模板（仅在知识库为空时显示） */}
+      {items.length === 0 && !loading && !error && (
+        <div className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl border border-violet-200/50 p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+            <Database className="w-4 h-4 text-violet-500" />
+            从模板快速创建
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {KB_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
+              >
+                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                  <tpl.icon className="w-4.5 h-4.5" />
+                </div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
+                <p className="text-xs text-gray-500 line-clamp-2">{tpl.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -396,9 +549,10 @@ export default function KnowledgeBasesPage() {
 
       <KBFormModal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingItem(null) }}
+        onClose={() => { setShowForm(false); setEditingItem(null); setFormDefaults(null) }}
         onSubmit={handleSave}
         editing={editingItem}
+        defaults={formDefaults}
         loading={saving}
       />
 

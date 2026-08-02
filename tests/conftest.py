@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — 测试配置 fixtures"""
+"""小团智能平台 — 测试配置 fixtures"""
 
 import os
 import sys

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 v8.0 — 智能研发 + Agent 工作流平台。
+"""小团智能平台 v8.0 — AI 赋能各行各业，智能解决工作难题。
 
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
 """
@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
 
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
-app = FastAPI(title="智能研发平台 v8.0", version="8.0.0", lifespan=lifespan)
+app = FastAPI(title="小团智能平台 v8.0", version="8.0.0", lifespan=lifespan)
 
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
@@ -225,8 +225,44 @@ async def get_workflow(workflow_id: str, current_user: dict = require_auth()):
             edges = []
     except (json.JSONDecodeError, TypeError):
         edges = []
-    d["nodes"] = nodes
-    d["definition"] = {"nodes": nodes, "edges": edges}
+
+    # 规范化节点格式：确保每个节点都有 x/y/config/type 字段
+    valid_types = {"agent", "http", "condition", "parallel", "code", "delay", "output"}
+    type_map = {"start": "agent", "end": "output", "llm": "agent", "http": "http", "condition": "condition"}
+    normalized_nodes = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        # 映射旧类型到新类型
+        raw_type = n.get("type", "agent")
+        n["type"] = type_map.get(raw_type, raw_type) if raw_type not in valid_types else raw_type
+        # 确保有 x/y 坐标
+        if "x" not in n:
+            n["x"] = 80 + len(normalized_nodes) * 180
+        if "y" not in n:
+            n["y"] = 160
+        # 确保有 config
+        if "config" not in n:
+            n["config"] = {}
+        normalized_nodes.append(n)
+
+    # 规范化边格式：统一使用 from/to
+    normalized_edges = []
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        # 兼容 source/target 和 from/to
+        edge_from = e.get("from") or e.get("source")
+        edge_to = e.get("to") or e.get("target")
+        if edge_from and edge_to:
+            normalized_edges.append({
+                "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
+                "from": edge_from,
+                "to": edge_to,
+            })
+
+    d["nodes"] = normalized_nodes
+    d["definition"] = {"nodes": normalized_nodes, "edges": normalized_edges}
     return d
 
 
@@ -767,6 +803,22 @@ app.include_router(chat_engine_router)
 app.include_router(sessions_router)
 app.include_router(collab_engine_router)
 app.include_router(realtime_router)
+
+# v9.0: Platform API
+from platform_api import router as platform_api_router
+app.include_router(platform_api_router)
+
+# v9.0: Extended API (Phase 2-4 + Office)
+from extended_api import router as extended_api_router
+app.include_router(extended_api_router)
+
+# v9.0: Tool Hub API
+from tool_hub import router as tool_hub_router
+app.include_router(tool_hub_router)
+
+# v9.0: Stock Tools API
+from stock_tools import router as stock_tools_router
+app.include_router(stock_tools_router)
 
 
 if __name__ == "__main__":

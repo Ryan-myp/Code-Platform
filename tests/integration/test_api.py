@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — 集成测试（API 端点）"""
+"""小团智能平台 — 集成测试（API 端点）"""
 
 import sys
 import json

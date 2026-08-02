@@ -18,7 +18,7 @@ function renderWithProviders(ui) {
 describe('Sidebar', () => {
   it('renders sidebar with logo', () => {
     renderWithProviders(<Sidebar sidebarOpen={false} setSidebarOpen={() => {}} user={{ username: 'admin' }} onLogout={() => {}} />)
-    expect(screen.getAllByText(/智能研发平台/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/小团智能平台/i).length).toBeGreaterThan(0)
   })
 
   it('renders all navigation sections', () => {

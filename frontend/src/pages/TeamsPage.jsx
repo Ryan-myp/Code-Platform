@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Users, Plus, Edit2, Trash2, Search, Eye,
-  MessageSquare, RefreshCw, LayoutGrid, List as ListIcon, Bot, Settings, UserPlus
+  MessageSquare, RefreshCw, LayoutGrid, List as ListIcon, Bot, Settings, UserPlus,
+  Code2, PenTool, HeadphonesIcon, Activity, Shield, UserCog,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -14,6 +15,35 @@ const MODE_META = {
   coordinate: { label: '协调模式', color: 'bg-blue-50 text-blue-600', dot: 'bg-blue-500' },
   parallel: { label: '并行模式', color: 'bg-emerald-50 text-emerald-600', dot: 'bg-emerald-500' },
   sequential: { label: '顺序模式', color: 'bg-amber-50 text-amber-600', dot: 'bg-amber-500' },
+}
+
+// 团队快速模板
+const TEAM_TEMPLATES = [
+  { name: '产品研发组', description: '产品经理 + 开发 + 测试的敏捷研发团队', icon: Code2, color: 'from-blue-500 to-indigo-600',
+    defaults: { name: '产品研发组', description: '负责产品需求分析、开发实现、测试验证的敏捷研发团队', mode: 'coordinate', instructions: '## 协作规则\n1. 产品经理负责需求拆解和优先级排序\n2. 开发人员负责技术实现和代码质量\n3. 测试人员负责质量保障和Bug追踪\n4. 每日同步进度，遇到阻塞及时上报' } },
+  { name: '内容创作组', description: '策划 + 写作 + 审核的内容生产团队', icon: PenTool, color: 'from-amber-500 to-orange-600',
+    defaults: { name: '内容创作组', description: '负责内容策划、文案撰写、审核发布的内容生产团队', mode: 'sequential', instructions: '## 协作规则\n1. 策划人员负责选题规划和内容方向\n2. 写作人员负责文案创作和内容生产\n3. 审核人员负责质量把关和合规审查\n4. 按流程顺序执行，每环节完成后流转下一步' } },
+  { name: '客户服务组', description: '售前咨询 + 技术支持 + 售后跟进', icon: HeadphonesIcon, color: 'from-emerald-500 to-teal-600',
+    defaults: { name: '客户服务组', description: '负责售前咨询、技术支持、售后跟进的全流程客户服务团队', mode: 'parallel', instructions: '## 协作规则\n1. 售前顾问负责产品咨询和方案推荐\n2. 技术支持负责问题诊断和解决方案\n3. 售后专员负责跟进和客户满意度\n4. 各角色可并行处理不同客户请求' } },
+]
+
+// 成员角色定义
+const MEMBER_ROLES = [
+  { value: 'coordinator', label: '协调者', icon: UserCog, color: 'bg-blue-50 text-blue-700' },
+  { value: 'executor', label: '执行者', icon: Bot, color: 'bg-emerald-50 text-emerald-700' },
+  { value: 'reviewer', label: '审核者', icon: Shield, color: 'bg-amber-50 text-amber-700' },
+]
+
+// 模拟活动日志（基于团队创建时间等生成）
+function generateActivityLog(team) {
+  const activities = []
+  const base = team.created_at
+  if (!base) return activities
+  activities.push({ text: `团队「${team.name}」创建`, time: base, type: 'create' })
+  if (team.last_run) {
+    activities.push({ text: '最近一次协作执行', time: team.last_run, type: 'run' })
+  }
+  return activities
 }
 
 function TeamCard({ team, members, onView, onEdit, onDelete, viewMode }) {
@@ -36,6 +66,7 @@ function TeamCard({ team, members, onView, onEdit, onDelete, viewMode }) {
         </div>
         <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
           <span className="flex items-center gap-1"><Bot className="w-3.5 h-3.5" />{memberCount} 成员</span>
+          <span className="flex items-center gap-1"><Activity className="w-3.5 h-3.5" />{team.execution_count || 0} 次执行</span>
           <span>{formatRelativeTime(team.created_at)}</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -66,25 +97,31 @@ function TeamCard({ team, members, onView, onEdit, onDelete, viewMode }) {
 
       <p className="text-sm text-gray-600 line-clamp-2 mb-3 flex-1">{team.description || '暂无描述'}</p>
 
-      <div className="flex items-center gap-2 mb-3">
-        <div className="flex -space-x-2">
-          {memberIds.slice(0, 4).map((id, i) => (
-            <div key={i} className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 border-2 border-white flex items-center justify-center text-white text-xs font-bold">
-              {String.fromCharCode(65 + (i % 26))}
-            </div>
-          ))}
-          {memberCount > 4 && (
-            <div className="w-7 h-7 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-gray-500 text-xs font-medium">
-              +{memberCount - 4}
-            </div>
-          )}
-          {memberCount === 0 && (
-            <div className="w-7 h-7 rounded-full bg-gray-100 border-2 border-white flex items-center justify-center text-gray-400 text-xs">
-              <MessageSquare className="w-3 h-3" />
-            </div>
-          )}
+      {/* 成员头像 + 执行统计 */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="flex -space-x-2">
+            {memberIds.slice(0, 4).map((id, i) => (
+              <div key={i} className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 border-2 border-white flex items-center justify-center text-white text-xs font-bold">
+                {String.fromCharCode(65 + (i % 26))}
+              </div>
+            ))}
+            {memberCount > 4 && (
+              <div className="w-7 h-7 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-gray-500 text-xs font-medium">
+                +{memberCount - 4}
+              </div>
+            )}
+            {memberCount === 0 && (
+              <div className="w-7 h-7 rounded-full bg-gray-100 border-2 border-white flex items-center justify-center text-gray-400 text-xs">
+                <MessageSquare className="w-3 h-3" />
+              </div>
+            )}
+          </div>
+          <span className="text-xs text-gray-400">{memberCount} 成员</span>
         </div>
-        <span className="text-xs text-gray-400">{memberCount} 成员</span>
+        <span className="text-xs text-gray-400 flex items-center gap-1">
+          <Activity className="w-3 h-3" />{team.execution_count || 0} 次
+        </span>
       </div>
 
       <div className="flex items-center justify-between pt-3 border-t border-gray-100">
@@ -99,7 +136,7 @@ function TeamCard({ team, members, onView, onEdit, onDelete, viewMode }) {
   )
 }
 
-function TeamFormModal({ open, onClose, onSubmit, editing, agents, loading }) {
+function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loading }) {
   const [form, setForm] = useState({ name: '', description: '', mode: 'coordinate', members: [], instructions: '', respond_directly: false })
   const [errors, setErrors] = useState({})
 
@@ -115,11 +152,20 @@ function TeamFormModal({ open, onClose, onSubmit, editing, agents, loading }) {
         instructions: editing.instructions || '',
         respond_directly: !!editing.respond_directly,
       })
+    } else if (defaults) {
+      setForm({
+        name: defaults.name || '',
+        description: defaults.description || '',
+        mode: defaults.mode || 'coordinate',
+        members: [],
+        instructions: defaults.instructions || '',
+        respond_directly: false,
+      })
     } else {
       setForm({ name: '', description: '', mode: 'coordinate', members: [], instructions: '', respond_directly: false })
     }
     setErrors({})
-  }, [open, editing])
+  }, [open, editing, defaults])
 
   const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
 
@@ -236,6 +282,7 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
   if (!team) return null
   const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
   const memberIds = Array.isArray(team.members) ? team.members : (team.members ? JSON.parse(team.members) : [])
+  const activityLog = generateActivityLog(team)
 
   return (
     <Modal
@@ -278,8 +325,11 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
             {memberIds.length === 0 ? (
               <p className="text-sm text-gray-400 italic">暂无成员</p>
             ) : members.length > 0 ? (
-              memberIds.map((id) => {
+              memberIds.map((id, idx) => {
                 const agent = members.find((m) => m.id === id)
+                // 根据索引分配角色标签（第一个为协调者，后面交替分配）
+                const roleIdx = idx === 0 ? 0 : (idx % 2 === 1 ? 1 : 2)
+                const role = MEMBER_ROLES[roleIdx]
                 return (
                   <div key={id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
                     <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-xs font-bold">
@@ -289,6 +339,9 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
                       <p className="text-sm font-medium text-gray-800 truncate">{agent?.name || id}</p>
                       {agent && <p className="text-xs text-gray-400 truncate">{agent.model}</p>}
                     </div>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${role.color}`}>
+                      {role.label}
+                    </span>
                   </div>
                 )
               })
@@ -297,6 +350,24 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
             )}
           </div>
         </div>
+
+        {/* 团队活动日志 */}
+        {activityLog.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+              <Activity className="w-3 h-3" /> 活动日志
+            </p>
+            <div className="space-y-2">
+              {activityLog.map((log, i) => (
+                <div key={i} className="flex items-center gap-3 text-sm">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${log.type === 'create' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+                  <span className="text-gray-700 flex-1">{log.text}</span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{formatRelativeTime(log.time)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {team.instructions && (
           <div>
@@ -322,6 +393,7 @@ export default function TeamsPage() {
   const [saving, setSaving] = useState(false)
   const [viewTarget, setViewTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [formDefaults, setFormDefaults] = useState(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -349,7 +421,7 @@ export default function TeamsPage() {
       (t.description || '').toLowerCase().includes(q)
   })
 
-  const openCreate = () => { setEditingTeam(null); setShowForm(true) }
+  const openCreate = () => { setEditingTeam(null); setFormDefaults(null); setShowForm(true) }
   const openEdit = (team) => { setEditingTeam(team); setShowForm(true) }
 
   const handleSubmit = async (payload) => {
@@ -386,11 +458,17 @@ export default function TeamsPage() {
     }
   }
 
+  const totalMembers = teams.reduce((acc, t) => {
+    const ids = Array.isArray(t.members) ? t.members : (t.members ? JSON.parse(t.members) : [])
+    return acc + ids.length
+  }, 0)
+  const totalExecutions = teams.reduce((sum, t) => sum + (t.execution_count || 0), 0)
+
   const stats = [
     { label: '总 Team 数', value: teams.length, icon: Users, color: 'from-emerald-500 to-teal-600' },
     { label: '协调模式', value: teams.filter((t) => t.mode === 'coordinate').length, icon: Settings, color: 'from-blue-500 to-cyan-600' },
-    { label: '并行模式', value: teams.filter((t) => t.mode === 'parallel').length, icon: MessageSquare, color: 'from-amber-500 to-orange-600' },
-    { label: '总成员数', value: teams.reduce((acc, t) => acc + (Array.isArray(t.members) ? t.members.length : 0), 0), icon: UserPlus, color: 'from-violet-500 to-purple-600' },
+    { label: '总成员数', value: totalMembers, icon: UserPlus, color: 'from-violet-500 to-purple-600' },
+    { label: '总执行次数', value: totalExecutions, icon: Activity, color: 'from-amber-500 to-orange-600' },
   ]
 
   return (
@@ -418,6 +496,31 @@ export default function TeamsPage() {
           </div>
         ))}
       </div>
+
+      {/* 快速模板（仅在团队为空时显示） */}
+      {teams.length === 0 && !loading && !error && (
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl border border-emerald-200/50 p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-500" />
+            从模板快速创建
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {TEAM_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                className="bg-white rounded-xl p-4 border border-gray-200 hover:border-emerald-300 hover:shadow-md transition-all text-left group"
+              >
+                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                  <tpl.icon className="w-4.5 h-4.5" />
+                </div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
+                <p className="text-xs text-gray-500 line-clamp-2">{tpl.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
@@ -455,7 +558,7 @@ export default function TeamsPage() {
         </div>
       )}
 
-      <TeamFormModal open={showForm} onClose={() => { setShowForm(false); setEditingTeam(null) }} onSubmit={handleSubmit} editing={editingTeam} agents={agents} loading={saving} />
+      <TeamFormModal open={showForm} onClose={() => { setShowForm(false); setEditingTeam(null); setFormDefaults(null) }} onSubmit={handleSubmit} editing={editingTeam} defaults={formDefaults} agents={agents} loading={saving} />
 
       <TeamDetailModal open={!!viewTarget} onClose={() => setViewTarget(null)} team={viewTarget} members={agents} onEdit={openEdit} onDelete={setDeleteTarget} />
 

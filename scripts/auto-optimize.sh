@@ -1,10 +1,10 @@
 #!/bin/bash
-# 智能研发平台自动优化脚本
+# 小团智能平台自动优化脚本
 # 用于定时任务，持续改进平台
 
 set -e
 
-echo "🚀 智能研发平台自动优化开始 - $(date)"
+echo "🚀 小团智能平台自动优化开始 - $(date)"
 echo "=========================================="
 
 PROJECT_DIR="/Users/yanping.ma/PycharmProjects/Code-Platform"
@@ -75,7 +75,7 @@ echo ""
 echo "【7】生成优化报告..."
 REPORT_FILE="$BACKEND_DIR/optimization_$(date +%Y%m%d_%H%M%S).md"
 cat > "$REPORT_FILE" << 'EOF'
-# 智能研发平台优化报告
+# 小团智能平台优化报告
 
 ## 系统状态
 - 检查时间: $(date)

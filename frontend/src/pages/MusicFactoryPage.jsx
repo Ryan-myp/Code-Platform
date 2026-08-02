@@ -14,13 +14,43 @@ import {
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
 
-const PRESET_THEMES = [
-  { text: '夏日海滩旅行', style: 'pop' },
-  { text: '星空下的告白', style: 'ballad' },
-  { text: '城市霓虹灯', style: 'rap' },
-  { text: '春天的约定', style: 'pop' },
-  { text: '深夜食堂', style: 'jazz' },
-  { text: '青春奋斗', style: 'rock' },
+const PRESET_CATEGORIES = [
+  {
+    name: '爱情情感', icon: '💕',
+    themes: [
+      { text: '星空下的告白', style: 'ballad' },
+      { text: '春天的约定', style: 'pop' },
+      { text: '分手后的雨天', style: 'ballad' },
+      { text: '第一次心动', style: 'pop' },
+    ],
+  },
+  {
+    name: '生活场景', icon: '🌴',
+    themes: [
+      { text: '夏日海滩旅行', style: 'pop' },
+      { text: '深夜食堂', style: 'jazz' },
+      { text: '周末的早晨', style: 'jazz' },
+      { text: '城市漫步', style: 'pop' },
+    ],
+  },
+  {
+    name: '励志奋斗', icon: '🔥',
+    themes: [
+      { text: '青春奋斗', style: 'rock' },
+      { text: '追梦不放弃', style: 'rock' },
+      { text: '城市霓虹灯', style: 'rap' },
+      { text: '逆风翻盘', style: 'rap' },
+    ],
+  },
+  {
+    name: '自然意境', icon: '🌿',
+    themes: [
+      { text: '山间清晨的雾气', style: 'classical' },
+      { text: '月光下的湖泊', style: 'classical' },
+      { text: '秋天的落叶', style: 'ballad' },
+      { text: '雨后彩虹', style: 'pop' },
+    ],
+  },
 ]
 
 const STYLES = [
@@ -30,6 +60,17 @@ const STYLES = [
   { value: 'ballad', label: '抒情' },
   { value: 'jazz', label: '爵士' },
   { value: 'classical', label: '古典' },
+  { value: 'folk', label: '民谣' },
+  { value: 'electronic', label: '电子' },
+]
+
+const INSTRUMENTS = [
+  { value: '', label: '默认' },
+  { value: 'piano', label: '钢琴' },
+  { value: 'guitar', label: '吉他' },
+  { value: 'violin', label: '小提琴' },
+  { value: 'drums', label: '鼓' },
+  { value: 'synth', label: '合成器' },
 ]
 
 const MOODS = [
@@ -49,6 +90,19 @@ const LENGTHS = [
 const VOICES = [
   { value: 'female', label: '女声' },
   { value: 'male', label: '男声' },
+]
+
+const TTS_SPEEDS = [
+  { value: '0.8', label: '慢速' },
+  { value: '1.0', label: '正常' },
+  { value: '1.2', label: '快速' },
+  { value: '1.5', label: '极速' },
+]
+
+const LYRICS_TEMPLATES = [
+  { name: '标准结构', icon: '🎵', structure: '[Verse 1]\n[主歌第一段内容]\n\n[Chorus]\n[副歌内容，重复性强]\n\n[Verse 2]\n[主歌第二段内容]\n\n[Chorus]\n[副歌重复]\n\n[Bridge]\n[桥段，情感升华]\n\n[Chorus]\n[副歌最后重复]' },
+  { name: '简单结构', icon: '🎶', structure: '[Verse 1]\n[主歌内容]\n\n[Chorus]\n[副歌内容]\n\n[Verse 2]\n[主歌内容]\n\n[Chorus]\n[副歌重复]' },
+  { name: '说唱结构', icon: '🎤', structure: '[Intro]\n[开场白]\n\n[Verse 1]\n[说唱第一段]\n\n[Hook]\n[记忆点/副歌]\n\n[Verse 2]\n[说唱第二段]\n\n[Hook]\n[记忆点重复]\n\n[Outro]\n[结尾]' },
 ]
 
 const TABS = [
@@ -301,7 +355,8 @@ export default function MusicFactoryPage() {
             </h2>
             <button
               onClick={() => {
-                const preset = PRESET_THEMES[Math.floor(Math.random() * PRESET_THEMES.length)]
+                const allThemes = PRESET_CATEGORIES.flatMap(c => c.themes)
+                const preset = allThemes[Math.floor(Math.random() * allThemes.length)]
                 setTheme(preset.text)
                 setStyle(preset.style)
               }}
@@ -347,14 +402,39 @@ export default function MusicFactoryPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="space-y-2">
             <span className="text-sm text-gray-500">快捷主题:</span>
-            {PRESET_THEMES.map((preset, i) => (
-              <button key={i} onClick={() => { setTheme(preset.text); setStyle(preset.style) }}
-                className="text-xs px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-full transition-colors">
-                {preset.text}
-              </button>
-            ))}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {PRESET_CATEGORIES.map((cat, ci) => (
+                <div key={ci} className="relative group">
+                  <button className="w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all text-left">
+                    <span className="text-sm">{cat.icon}</span>
+                    <span className="text-xs text-gray-700">{cat.name}</span>
+                  </button>
+                  <div className="absolute z-10 top-full left-0 mt-1 w-48 bg-white rounded-xl border border-gray-200 shadow-lg p-1.5 space-y-0.5 hidden group-hover:block">
+                    {cat.themes.map((preset, pi) => (
+                      <button key={pi} onClick={() => { setTheme(preset.text); setStyle(preset.style) }}
+                        className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-purple-50 text-gray-600 transition-colors">
+                        {preset.text}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 歌词结构模板 */}
+          <div>
+            <span className="text-sm text-gray-500">歌词结构模板:</span>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {LYRICS_TEMPLATES.map((tpl, i) => (
+                <button key={i} onClick={() => setLyrics(tpl.structure)}
+                  className="text-xs px-3 py-1 bg-gray-100 hover:bg-purple-100 text-gray-700 rounded-full transition-colors flex items-center gap-1">
+                  <span>{tpl.icon}</span> {tpl.name}
+                </button>
+              ))}
+            </div>
           </div>
 
           <Button variant="gradient" size="lg" icon={Sparkles} loading={generatingLyrics} disabled={!theme.trim()} onClick={generateLyrics} className="w-full">

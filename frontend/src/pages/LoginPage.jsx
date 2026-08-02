@@ -52,8 +52,8 @@ export default function LoginPage({ onLogin }) {
           <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/30">
             <span className="text-white text-2xl font-bold">AI</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">智能研发平台</h1>
-          <p className="text-gray-500 mt-2 text-sm">Agno Agent 驱动的研发创作一体化平台</p>
+          <h1 className="text-2xl font-bold text-gray-900">小团智能平台</h1>
+          <p className="text-gray-500 mt-2 text-sm">AI 赋能各行各业，智能解决工作难题</p>
         </div>
 
         <form onSubmit={handleLogin} className="space-y-4">

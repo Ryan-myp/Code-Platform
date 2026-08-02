@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-智能研发平台 v6.4 — 完整端到端演示脚本
+小团智能平台 v6.4 — 完整端到端演示脚本
 
 此脚本将：
 1. 启动后端FastAPI服务（如未运行）
@@ -179,7 +179,7 @@ def execute_workflow(workflow_id: str, input_text: str) -> dict:
 def main():
     """主演示入口"""
     print("\n" + "=" * 70)
-    print("智能研发平台 v6.4 — 端到端功能演示")
+    print("小团智能平台 v6.4 — 端到端功能演示")
     print("=" * 70 + "\n")
     
     # Step 1: 验证环境

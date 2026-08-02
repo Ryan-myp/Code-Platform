@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Bot, Plus, Edit2, Trash2, Search,
   Play, RefreshCw, Cpu, MemoryStick,
-  Layers, Zap,
-  LayoutGrid, List as ListIcon,
-  MessageSquare, Clock, X, Sparkles
+  Layers, Zap, Code2, PenTool, BarChart3,
+  HeadphonesIcon, Languages, LayoutGrid, List as ListIcon,
+  MessageSquare, Clock, X, Sparkles, ChevronDown,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -151,7 +151,7 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
 }
 
 // 表单模态框（创建/编辑共用）
-function AgentFormModal({ open, onClose, onSubmit, editing, loading }) {
+function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const [form, setForm] = useState({
     name: '', description: '', model: 'agnes-2.5-flash', instructions: '', tools: [], knowledge_bases: []
   })
@@ -168,6 +168,14 @@ function AgentFormModal({ open, onClose, onSubmit, editing, loading }) {
           tools: editing.tools || [],
           knowledge_bases: editing.knowledge_bases || []
         })
+      } else if (defaults) {
+        setForm({
+          name: defaults.name || '',
+          description: defaults.description || '',
+          model: 'agnes-2.5-flash',
+          instructions: defaults.instructions || '',
+          tools: [], knowledge_bases: []
+        })
       } else {
         setForm({
           name: '', description: '', model: 'agnes-2.5-flash',
@@ -176,7 +184,7 @@ function AgentFormModal({ open, onClose, onSubmit, editing, loading }) {
       }
       setErrors({})
     }
-  }, [open, editing])
+  }, [open, editing, defaults])
 
   const validate = () => {
     const e = {}
@@ -281,6 +289,7 @@ export default function AgentsPage({ tab }) {
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [formDefaults, setFormDefaults] = useState(null)
 
   const fetchAgents = useCallback(async () => {
     setLoading(true)
@@ -315,6 +324,7 @@ export default function AgentsPage({ tab }) {
 
   const openCreate = () => {
     setEditingAgent(null)
+    setFormDefaults(null)
     setShowForm(true)
   }
   const openEdit = (agent) => {
@@ -394,6 +404,37 @@ export default function AgentsPage({ tab }) {
           </div>
         ))}
       </div>
+
+      {/* 快速创建模板 */}
+      {agents.length === 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" /> 快速创建 Agent
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[
+              { name: '代码助手', icon: Code2, desc: '全栈开发专家', color: 'from-blue-500 to-cyan-600', instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '' },
+              { name: '文案写手', icon: PenTool, desc: '营销文案专家', color: 'from-pink-500 to-rose-600', instructions: '' },
+              { name: '数据分析师', icon: BarChart3, desc: '数据分析专家', color: 'from-green-500 to-emerald-600', instructions: '' },
+              { name: '客服助手', icon: HeadphonesIcon, desc: '客户服务专家', color: 'from-amber-500 to-orange-600', instructions: '' },
+              { name: '翻译官', icon: Languages, desc: '多语言翻译', color: 'from-purple-500 to-indigo-600', instructions: '' },
+            ].map((tpl, i) => (
+              <button key={i} onClick={() => {
+                setEditingAgent(null)
+                setFormDefaults({ name: tpl.name, description: tpl.desc, instructions: tpl.instructions })
+                setShowForm(true)
+              }}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all">
+                <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center`}>
+                  <tpl.icon className="w-5 h-5 text-white" />
+                </div>
+                <div className="text-sm font-medium text-gray-900">{tpl.name}</div>
+                <div className="text-xs text-gray-500">{tpl.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -486,6 +527,7 @@ export default function AgentsPage({ tab }) {
         onClose={() => setShowForm(false)}
         onSubmit={handleSave}
         editing={editingAgent}
+        defaults={formDefaults}
         loading={saving}
       />
 

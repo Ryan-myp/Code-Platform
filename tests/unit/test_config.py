@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — 配置模块测试（common.config 单一来源）"""
+"""小团智能平台 — 配置模块测试（common.config 单一来源）"""
 
 import importlib
 import sys

@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react'
 import {
   Wrench, Plus, Trash2, Search, Edit2, Eye,
   FileText, RefreshCw, LayoutGrid, List as ListIcon,
-  Link2, X
+  Link2, Code2, PenTool, BarChart3, ShieldCheck,
+  Sparkles, BookOpen,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -19,20 +20,60 @@ const isThisMonth = (val) => {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
 }
 
+// 技能分类
+const SKILL_CATEGORIES = [
+  { value: 'all', label: '全部', icon: Sparkles },
+  { value: 'coding', label: '编程', icon: Code2 },
+  { value: 'writing', label: '写作', icon: PenTool },
+  { value: 'analysis', label: '分析', icon: BarChart3 },
+  { value: 'testing', label: '测试', icon: ShieldCheck },
+  { value: 'general', label: '通用', icon: BookOpen },
+]
+
+// 技能快速模板
+const SKILL_TEMPLATES = [
+  { name: '代码审查', description: '自动化代码审查，检查代码质量、安全性和最佳实践', icon: Code2, color: 'from-blue-500 to-indigo-600', category: 'coding',
+    defaults: { name: '代码审查专家', description: '自动化代码审查，检查代码质量、安全性和最佳实践', content: '## 代码审查清单\n\n### 1. 代码质量\n- 命名规范是否一致？\n- 是否有重复代码？\n- 函数/方法是否足够简洁？\n\n### 2. 安全性\n- 是否有SQL注入风险？\n- 输入是否经过验证？\n- 敏感信息是否暴露？\n\n### 3. 性能\n- 是否有不必要的循环？\n- 数据库查询是否优化？\n- 是否有内存泄漏风险？\n\n### 4. 可维护性\n- 注释是否充分？\n- 错误处理是否完善？\n- 是否遵循设计模式？', references: '' } },
+  { name: '文档生成', description: '根据代码或需求自动生成技术文档', icon: PenTool, color: 'from-emerald-500 to-green-600', category: 'writing',
+    defaults: { name: '文档生成助手', description: '根据代码或需求自动生成高质量技术文档', content: '## 文档生成模板\n\n### API 文档\n- 接口名称和路径\n- 请求参数说明\n- 响应格式示例\n- 错误码说明\n\n### 技术设计文档\n- 背景与目标\n- 架构设计\n- 核心流程\n- 数据模型\n- 风险评估\n\n### 用户手册\n- 功能概述\n- 操作步骤\n- 常见问题\n- 联系方式', references: '' } },
+  { name: '数据分析', description: '数据集分析、统计摘要、趋势洞察', icon: BarChart3, color: 'from-amber-500 to-orange-600', category: 'analysis',
+    defaults: { name: '数据分析专家', description: '数据集分析、统计摘要、趋势洞察和可视化建议', content: '## 数据分析框架\n\n### 1. 数据概览\n- 数据规模和结构\n- 缺失值统计\n- 数据类型分布\n\n### 2. 统计摘要\n- 基本统计量（均值/中位数/标准差）\n- 相关性分析\n- 异常值检测\n\n### 3. 趋势洞察\n- 时间序列趋势\n- 同比/环比分析\n- 关键指标变化\n\n### 4. 建议\n- 数据质量改进\n- 进一步分析方向\n- 可视化建议', references: '' } },
+  { name: '测试用例', description: '根据需求自动生成测试用例和测试计划', icon: ShieldCheck, color: 'from-violet-500 to-purple-600', category: 'testing',
+    defaults: { name: '测试用例生成器', description: '根据需求自动生成全面的测试用例和测试计划', content: '## 测试用例模板\n\n### 功能测试\n- 正常流程测试\n- 边界条件测试\n- 异常输入测试\n- 并发场景测试\n\n### 性能测试\n- 响应时间基准\n- 吞吐量目标\n- 资源使用上限\n\n### 安全测试\n- 认证授权测试\n- 输入验证测试\n- 会话管理测试\n\n### 兼容性测试\n- 浏览器兼容\n- 设备兼容\n- 系统版本兼容', references: '' } },
+]
+
+// 根据描述猜测分类
+function guessCategory(skill) {
+  const text = `${skill.name || ''} ${skill.description || ''} ${skill.content || ''}`.toLowerCase()
+  if (/代码|编程|开发|code|debug|api|函数|组件/.test(text)) return 'coding'
+  if (/文档|写作|文案|翻译|blog|文章|内容/.test(text)) return 'writing'
+  if (/分析|数据|统计|报表|dashboard|图表/.test(text)) return 'analysis'
+  if (/测试|test|qa|用例|bug|缺陷/.test(text)) return 'testing'
+  return 'general'
+}
+
 function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
   const initial = skill.name?.[0]?.toUpperCase() || 'S'
+  const category = skill.category || guessCategory(skill)
+  const catMeta = SKILL_CATEGORIES.find(c => c.value === category) || SKILL_CATEGORIES[5]
+  const refCount = skill.references ? (skill.references.split('\n').filter(l => l.trim()).length) : 0
 
   if (viewMode === 'list') {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow flex items-center gap-4">
         <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold flex-shrink-0">{initial}</div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
+            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}>
+              {catMeta.label}
+            </span>
+          </div>
           <p className="text-sm text-gray-500 truncate">{skill.description || '暂无描述'}</p>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
           {skill.content ? <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" />有内容</span> : null}
-          {skill.references ? <span className="flex items-center gap-1"><Link2 className="w-3.5 h-3.5" />有引用</span> : null}
+          {refCount > 0 ? <span className="flex items-center gap-1"><Link2 className="w-3.5 h-3.5" />{refCount} 引用</span> : null}
           <span>{formatRelativeTime(skill.created_at)}</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -51,7 +92,12 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
           <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">{initial}</div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">{formatRelativeTime(skill.created_at)}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}>
+                {catMeta.label}
+              </span>
+              <p className="text-xs text-gray-500">{formatRelativeTime(skill.created_at)}</p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -60,9 +106,9 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
               <FileText className="w-3 h-3" />内容
             </span>
           )}
-          {skill.references && (
+          {refCount > 0 && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-xs">
-              <Link2 className="w-3 h-3" />引用
+              <Link2 className="w-3 h-3" />{refCount}
             </span>
           )}
         </div>
@@ -82,7 +128,7 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
   )
 }
 
-function SkillFormModal({ open, onClose, onSubmit, editing, loading }) {
+function SkillFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const [form, setForm] = useState({ name: '', description: '', content: '', references: '' })
   const [errors, setErrors] = useState({})
 
@@ -95,11 +141,18 @@ function SkillFormModal({ open, onClose, onSubmit, editing, loading }) {
         content: editing.content || '',
         references: editing.references || '',
       })
+    } else if (defaults) {
+      setForm({
+        name: defaults.name || '',
+        description: defaults.description || '',
+        content: defaults.content || '',
+        references: defaults.references || '',
+      })
     } else {
       setForm({ name: '', description: '', content: '', references: '' })
     }
     setErrors({})
-  }, [open, editing])
+  }, [open, editing, defaults])
 
   const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
 
@@ -160,6 +213,10 @@ function SkillFormModal({ open, onClose, onSubmit, editing, loading }) {
 
 function SkillDetailModal({ open, onClose, skill, onEdit, onDelete }) {
   if (!skill) return null
+  const category = skill.category || guessCategory(skill)
+  const catMeta = SKILL_CATEGORIES.find(c => c.value === category) || SKILL_CATEGORIES[5]
+  const refCount = skill.references ? (skill.references.split('\n').filter(l => l.trim()).length) : 0
+
   return (
     <Modal
       open={open}
@@ -181,7 +238,12 @@ function SkillDetailModal({ open, onClose, skill, onEdit, onDelete }) {
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
-            <p className="text-xs text-gray-500 mt-0.5">创建于 {formatDateTime(skill.created_at)}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`px-2 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}>
+                {catMeta.label}
+              </span>
+              <p className="text-xs text-gray-500">创建于 {formatDateTime(skill.created_at)}</p>
+            </div>
           </div>
         </div>
 
@@ -202,7 +264,7 @@ function SkillDetailModal({ open, onClose, skill, onEdit, onDelete }) {
         {skill.references && (
           <div>
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-              <Link2 className="w-3 h-3" /> 引用 / 参考
+              <Link2 className="w-3 h-3" /> 引用 / 参考（{refCount}）
             </p>
             <div className="bg-emerald-50 rounded-xl p-4 text-sm text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap">{skill.references}</div>
           </div>
@@ -219,11 +281,13 @@ export default function SkillsPage() {
   const [error, setError] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [viewMode, setViewMode] = useState('grid')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [showForm, setShowForm] = useState(false)
   const [editingSkill, setEditingSkill] = useState(null)
   const [saving, setSaving] = useState(false)
   const [viewTarget, setViewTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [formDefaults, setFormDefaults] = useState(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -242,14 +306,17 @@ export default function SkillsPage() {
 
   const filteredItems = items.filter((s) => {
     const q = searchTerm.toLowerCase()
-    if (!q) return true
-    return (s.name || '').toLowerCase().includes(q) ||
+    const matchSearch = !q ||
+      (s.name || '').toLowerCase().includes(q) ||
       (s.description || '').toLowerCase().includes(q) ||
       (s.content || '').toLowerCase().includes(q) ||
       (s.references || '').toLowerCase().includes(q)
+    const cat = s.category || guessCategory(s)
+    const matchCategory = categoryFilter === 'all' || cat === categoryFilter
+    return matchSearch && matchCategory
   })
 
-  const openCreate = () => { setEditingSkill(null); setShowForm(true) }
+  const openCreate = () => { setEditingSkill(null); setFormDefaults(null); setShowForm(true) }
   const openEdit = (skill) => { setEditingSkill(skill); setShowForm(true) }
 
   const handleSubmit = async (payload) => {
@@ -288,9 +355,9 @@ export default function SkillsPage() {
 
   const stats = [
     { label: '总技能数', value: items.length, icon: Wrench, color: 'from-violet-500 to-purple-600' },
-    { label: '含描述', value: items.filter((s) => s.description?.trim()).length, icon: FileText, color: 'from-emerald-500 to-green-600' },
-    { label: '含内容', value: items.filter((s) => s.content?.trim()).length, icon: Edit2, color: 'from-blue-500 to-cyan-600' },
-    { label: '含引用', value: items.filter((s) => s.references?.trim()).length, icon: Link2, color: 'from-amber-500 to-orange-600' },
+    { label: '含内容', value: items.filter((s) => s.content?.trim()).length, icon: FileText, color: 'from-blue-500 to-cyan-600' },
+    { label: '含引用', value: items.filter((s) => s.references?.trim()).length, icon: Link2, color: 'from-emerald-500 to-green-600' },
+    { label: '本月新增', value: items.filter((s) => isThisMonth(s.created_at)).length, icon: Sparkles, color: 'from-amber-500 to-orange-600' },
   ]
 
   return (
@@ -319,12 +386,54 @@ export default function SkillsPage() {
         ))}
       </div>
 
+      {/* 快速模板（仅在技能为空时显示） */}
+      {items.length === 0 && !loading && !error && (
+        <div className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl border border-violet-200/50 p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-violet-500" />
+            从模板快速创建
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {SKILL_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
+              >
+                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                  <tpl.icon className="w-4.5 h-4.5" />
+                </div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
+                <p className="text-xs text-gray-500 line-clamp-2">{tpl.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 分类筛选 + 搜索 */}
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="搜索 Skill 名称、描述、内容或引用…" className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
         </div>
         <div className="flex items-center gap-2">
+          {/* 分类标签 */}
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {SKILL_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                onClick={() => setCategoryFilter(cat.value)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                  categoryFilter === cat.value
+                    ? 'bg-purple-100 text-purple-700'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
           <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData}>刷新</Button>
           <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
             <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`} title="网格视图"><LayoutGrid className="w-4 h-4" /></button>
@@ -339,7 +448,7 @@ export default function SkillsPage() {
         <ErrorState message={`加载失败：${error.message}`} onRetry={loadData} />
       ) : filteredItems.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200">
-          <Empty icon={Wrench} title={searchTerm ? '未找到匹配的 Skill' : '暂无 Skill'} description={searchTerm ? '尝试调整搜索条件' : '点击「新建 Skill」创建你的第一个 AI 技能'} actionLabel={searchTerm ? undefined : '新建 Skill'} onAction={searchTerm ? undefined : openCreate} />
+          <Empty icon={Wrench} title={searchTerm || categoryFilter !== 'all' ? '未找到匹配的 Skill' : '暂无 Skill'} description={searchTerm || categoryFilter !== 'all' ? '尝试调整搜索或筛选条件' : '点击「新建 Skill」创建你的第一个 AI 技能'} actionLabel={searchTerm || categoryFilter !== 'all' ? undefined : '新建 Skill'} onAction={searchTerm || categoryFilter !== 'all' ? undefined : openCreate} />
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -355,7 +464,7 @@ export default function SkillsPage() {
         </div>
       )}
 
-      <SkillFormModal open={showForm} onClose={() => { setShowForm(false); setEditingSkill(null) }} onSubmit={handleSubmit} editing={editingSkill} loading={saving} />
+      <SkillFormModal open={showForm} onClose={() => { setShowForm(false); setEditingSkill(null); setFormDefaults(null) }} onSubmit={handleSubmit} editing={editingSkill} defaults={formDefaults} loading={saving} />
 
       <SkillDetailModal open={!!viewTarget} onClose={() => setViewTarget(null)} skill={viewTarget} onEdit={openEdit} onDelete={setDeleteTarget} />
 

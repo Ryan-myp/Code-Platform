@@ -3,6 +3,8 @@ import {
   Plus, Edit2, Trash2, Play, Clock,
   Search, LayoutGrid, List as ListIcon,
   Workflow, Calendar, Folder,
+  BarChart3, CheckCircle2,
+  GitBranch, Shield, FileCheck, UserCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -12,9 +14,34 @@ import {
   Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
 } from '../components/ui'
 
+// 工作流快速模板
+const WORKFLOW_TEMPLATES = [
+  { name: '需求评审流程', description: '从需求收集→评审→确认的标准化流程', icon: FileCheck, color: 'from-blue-500 to-indigo-600',
+    defaults: { name: '需求评审流程', description: '产品需求收集、技术评审、排期确认的标准化工作流' } },
+  { name: '代码发布流程', description: '代码审查→测试→部署的CI/CD流程', icon: GitBranch, color: 'from-emerald-500 to-green-600',
+    defaults: { name: '代码发布流程', description: '代码审查、自动化测试、灰度发布、全量上线的CI/CD工作流' } },
+  { name: '内容审核流程', description: '内容创建→审核→发布的管控流程', icon: Shield, color: 'from-amber-500 to-orange-600',
+    defaults: { name: '内容审核流程', description: '内容创建、多级审核、合规检查、定时发布的管控工作流' } },
+  { name: '客户 Onboarding', description: '新客户引导→配置→上线流程', icon: UserCheck, color: 'from-violet-500 to-purple-600',
+    defaults: { name: '客户 Onboarding', description: '新客户注册、需求对接、系统配置、培训上线的标准流程' } },
+]
+
+// 状态元数据
+const STATUS_META = {
+  active:    { label: '运行中', className: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+  inactive:  { label: '已停止', className: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
+  draft:     { label: '草稿', className: 'bg-blue-50 text-blue-700', dot: 'bg-blue-500' },
+  paused:    { label: '已暂停', className: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
+  archived:  { label: '已归档', className: 'bg-gray-50 text-gray-500', dot: 'bg-gray-400' },
+}
+
+const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.inactive
+
 // Workflow 卡片组件
 function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
   const nodeCount = workflow.nodes?.length || 0
+  const execCount = workflow.execution_count || 0
+  const successRate = workflow.success_rate != null ? `${Math.round(workflow.success_rate * 100)}%` : null
 
   if (viewMode === 'list') {
     return (
@@ -32,7 +59,15 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
           </div>
           <p className="text-sm text-gray-500 truncate">{workflow.description || '暂无描述'}</p>
         </div>
-        <div className="hidden sm:flex items-center gap-3 text-sm text-gray-500 flex-shrink-0">
+        <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500 flex-shrink-0">
+          <span className="flex items-center gap-1" title="执行次数">
+            <BarChart3 className="w-4 h-4" />{execCount} 次
+          </span>
+          {successRate && (
+            <span className="flex items-center gap-1" title="成功率">
+              <CheckCircle2 className="w-4 h-4" />{successRate}
+            </span>
+          )}
           <span className="flex items-center gap-1"><Clock className="w-4 h-4" />{formatRelativeTime(workflow.created_at)}</span>
           <span className="flex items-center gap-1"><Folder className="w-4 h-4" />{nodeCount} 节点</span>
         </div>
@@ -76,10 +111,33 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
         {workflow.description || '暂无描述'}
       </p>
 
+      {/* 执行统计 */}
+      <div className="flex items-center gap-3 mb-3 text-xs text-gray-500">
+        <span className="flex items-center gap-1" title="节点数">
+          <Folder className="w-3.5 h-3.5" />{nodeCount} 节点
+        </span>
+        <span className="flex items-center gap-1" title="执行次数">
+          <BarChart3 className="w-3.5 h-3.5" />{execCount} 次
+        </span>
+        {successRate && (
+          <span className="flex items-center gap-1" title="成功率">
+            <CheckCircle2 className="w-3.5 h-3.5" />{successRate}
+          </span>
+        )}
+      </div>
+
+      {/* 最后执行时间 */}
+      {workflow.last_run && (
+        <p className="text-xs text-gray-400 mb-3 flex items-center gap-1">
+          <Clock className="w-3 h-3" />
+          最后执行：{formatRelativeTime(workflow.last_run)}
+        </p>
+      )}
+
       <div className="flex items-center justify-between pt-4 border-t border-gray-100">
         <span className="text-xs text-gray-500 flex items-center gap-1">
-          <Folder className="w-3.5 h-3.5" />
-          {nodeCount} 个节点
+          <Calendar className="w-3.5 h-3.5" />
+          {formatRelativeTime(workflow.created_at)}
         </span>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => onView(workflow)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="打开">
@@ -98,19 +156,25 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
 }
 
 // 表单模态框（创建/编辑共用）
-function WorkflowFormModal({ open, onClose, onSubmit, editing, loading }) {
+function WorkflowFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const [form, setForm] = useState({ name: '', description: '' })
   const [errors, setErrors] = useState({})
 
   useEffect(() => {
     if (open) {
-      setForm({
-        name: editing?.name || '',
-        description: editing?.description || '',
-      })
+      if (editing) {
+        setForm({
+          name: editing?.name || '',
+          description: editing?.description || '',
+        })
+      } else if (defaults) {
+        setForm({ name: defaults.name || '', description: defaults.description || '' })
+      } else {
+        setForm({ name: '', description: '' })
+      }
       setErrors({})
     }
-  }, [open, editing])
+  }, [open, editing, defaults])
 
   const validate = () => {
     const e = {}
@@ -176,6 +240,7 @@ export default function WorkflowsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState('grid')
   const [filter, setFilter] = useState('all')
+  const [formDefaults, setFormDefaults] = useState(null)
 
   const [showForm, setShowForm] = useState(false)
   const [editingWorkflow, setEditingWorkflow] = useState(null)
@@ -204,12 +269,16 @@ export default function WorkflowsPage() {
       w.description?.toLowerCase().includes(searchQuery.toLowerCase())
     const matchFilter = filter === 'all' ||
       (filter === 'active' && (w.status || 'inactive') === 'active') ||
-      (filter === 'inactive' && (w.status || 'inactive') === 'inactive')
+      (filter === 'inactive' && (w.status || 'inactive') === 'inactive') ||
+      (filter === 'draft' && (w.status || 'inactive') === 'draft') ||
+      (filter === 'paused' && (w.status || 'inactive') === 'paused') ||
+      (filter === 'archived' && (w.status || 'inactive') === 'archived')
     return matchSearch && matchFilter
   })
 
   const openCreate = () => {
     setEditingWorkflow(null)
+    setFormDefaults(null)
     setShowForm(true)
   }
   const openEdit = (workflow) => {
@@ -257,11 +326,17 @@ export default function WorkflowsPage() {
   }
 
   const today = new Date().toISOString().split('T')[0]
+  const totalExecutions = workflows.reduce((sum, w) => sum + (w.execution_count || 0), 0)
+  const avgSuccess = workflows.filter(w => w.success_rate != null)
+  const avgRate = avgSuccess.length > 0
+    ? Math.round(avgSuccess.reduce((s, w) => s + w.success_rate, 0) / avgSuccess.length * 100)
+    : null
+
   const stats = [
     { label: '总工作流', value: workflows.length, icon: Workflow, color: 'from-violet-500 to-purple-600' },
     { label: '运行中', value: workflows.filter((w) => (w.status || 'inactive') === 'active').length, icon: Play, color: 'from-emerald-500 to-green-600' },
-    { label: '已停止', value: workflows.filter((w) => (w.status || 'inactive') === 'inactive').length, icon: Clock, color: 'from-gray-400 to-gray-500' },
-    { label: '今日执行', value: workflows.filter((w) => w.last_run?.startsWith(today)).length, icon: Calendar, color: 'from-blue-500 to-cyan-600' },
+    { label: '总执行次数', value: totalExecutions, icon: BarChart3, color: 'from-blue-500 to-cyan-600' },
+    { label: '平均成功率', value: avgRate != null ? `${avgRate}%` : '-', icon: CheckCircle2, color: 'from-amber-500 to-orange-600' },
   ]
 
   return (
@@ -292,6 +367,31 @@ export default function WorkflowsPage() {
         ))}
       </div>
 
+      {/* 快速模板（仅在工作流为空时显示） */}
+      {workflows.length === 0 && !loading && !error && (
+        <div className="bg-gradient-to-r from-violet-50 to-purple-50 rounded-2xl border border-violet-200/50 p-5">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+            <Workflow className="w-4 h-4 text-violet-500" />
+            从模板快速创建
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {WORKFLOW_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.name}
+                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
+              >
+                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                  <tpl.icon className="w-4.5 h-4.5" />
+                </div>
+                <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
+                <p className="text-xs text-gray-500 line-clamp-2">{tpl.description}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
@@ -313,6 +413,9 @@ export default function WorkflowsPage() {
             <option value="all">全部状态</option>
             <option value="active">运行中</option>
             <option value="inactive">已停止</option>
+            <option value="draft">草稿</option>
+            <option value="paused">已暂停</option>
+            <option value="archived">已归档</option>
           </select>
           <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
             <button
@@ -378,9 +481,10 @@ export default function WorkflowsPage() {
 
       <WorkflowFormModal
         open={showForm}
-        onClose={() => setShowForm(false)}
+        onClose={() => { setShowForm(false); setFormDefaults(null) }}
         onSubmit={handleSave}
         editing={editingWorkflow}
+        defaults={formDefaults}
         loading={saving}
       />
 

@@ -53,6 +53,8 @@ export default function WorkflowEditorPage() {
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
+  const [showRunDialog, setShowRunDialog] = useState(false)
+  const [runInput, setRunInput] = useState('')
   const [deleteNodeTarget, setDeleteNodeTarget] = useState(null)
 
   // 画布交互
@@ -297,27 +299,56 @@ export default function WorkflowEditorPage() {
 
   const handleNodeClick = (nodeId, e) => {
     e.stopPropagation()
+    // 如果正在连线，点击任意节点完成连线（不清除 pendingConnection，支持连续分支）
     if (pendingConnection && pendingConnection !== nodeId) {
       addEdge(pendingConnection, nodeId)
+      toast.success(`已连线 → ${nodes.find(n => n.id === nodeId)?.label || nodeId}`)
+      // 不清除 pendingConnection，允许继续连线实现分支
+    } else if (!dragMoved) {
+      // 没有连线时，正常选中节点
       setPendingConnection(null)
-    } else {
       setSelectedNodeId(nodeId)
     }
   }
 
   const handleOutputHandleClick = (nodeId, e) => {
     e.stopPropagation()
-    setPendingConnection(pendingConnection === nodeId ? null : nodeId)
-    setSelectedNodeId(nodeId)
+    e.preventDefault()
+    if (pendingConnection === nodeId) {
+      // 再次点击同一个节点退出连线模式
+      setPendingConnection(null)
+      toast.info('已退出连线模式')
+    } else {
+      setPendingConnection(nodeId)
+      setSelectedNodeId(nodeId)
+      const label = nodes.find(n => n.id === nodeId)?.label || nodeId
+      toast.success(`从「${label}」开始连线，可连续创建分支`)
+    }
+  }
+
+  const handleInputHandleClick = (nodeId, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (pendingConnection && pendingConnection !== nodeId) {
+      addEdge(pendingConnection, nodeId)
+      toast.success(`已连线 → ${nodes.find(n => n.id === nodeId)?.label || nodeId}`)
+      // 不清除 pendingConnection，支持连续分支
+    }
   }
 
   // 运行工作流
   const runWorkflow = async () => {
     if (!workflow) return
+    if (!runInput.trim()) {
+      toast.error('请输入执行内容')
+      return
+    }
+    setShowRunDialog(false)
     setRunning(true)
     try {
-      const res = await api.post(`/api/workflows/${workflow.id}/run`, { message: '执行工作流' })
+      const res = await api.post(`/api/workflows/${workflow.id}/run`, { message: runInput.trim() })
       setRunResult(res.data)
+      setRunInput('')
     } catch (e) {
       toast.error(`执行失败：${e.message}`)
     } finally {
@@ -487,7 +518,7 @@ export default function WorkflowEditorPage() {
           <Button variant="primary" size="sm" icon={Save} loading={saving} onClick={() => doSave({ manual: true })}>
             <span className="hidden sm:inline">保存</span>
           </Button>
-          <Button variant="success" size="sm" icon={Play} loading={running} onClick={runWorkflow}>
+          <Button variant="success" size="sm" icon={Play} onClick={() => setShowRunDialog(true)}>
             <span className="hidden sm:inline">执行</span>
           </Button>
         </div>
@@ -498,11 +529,17 @@ export default function WorkflowEditorPage() {
           className="flex-1 relative overflow-hidden bg-gray-50"
           style={{ cursor: pendingConnection ? 'crosshair' : isPanning ? 'grabbing' : dragging ? 'grabbing' : 'default' }}
           onMouseDown={(e) => {
-            if (e.target === canvasRef.current || e.target.tagName === 'svg' || e.target.tagName === 'rect') {
+            // 点击画布空白处退出连线模式或取消选中
+            const isCanvas = e.target === canvasRef.current || 
+              ['svg', 'rect', 'path'].includes(e.target.tagName?.toLowerCase())
+            if (isCanvas) {
+              if (pendingConnection) {
+                setPendingConnection(null)
+                toast.info('已退出连线模式')
+              }
               setIsPanning(true)
               setPanStart({ x: e.clientX, y: e.clientY })
               setSelectedNodeId(null)
-              setPendingConnection(null)
             }
           }}
           onMouseMove={handleMouseMove}
@@ -552,14 +589,42 @@ export default function WorkflowEditorPage() {
                       toast.info('已删除连线')
                     }}
                   >
+                    {/* 隐形加粗点击区域 */}
+                    <path
+                      d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth="14"
+                    />
+                    {/* 可见连线 */}
                     <path
                       d={`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
                       fill="none"
                       stroke="#9ca3af"
                       strokeWidth="2"
-                      className="hover:stroke-red-500"
+                      className="hover:stroke-red-400 hover:stroke-[3px]"
+                      style={{ pointerEvents: 'none' }}
                     />
-                    <circle cx={(x1 + x2) / 2} cy={(y1 + y2) / 2} r="5" fill="white" stroke="#9ca3af" />
+                    {/* 中点删除按钮 */}
+                    <circle
+                      cx={(x1 + x2) / 2}
+                      cy={(y1 + y2) / 2}
+                      r="6"
+                      fill="white"
+                      stroke="#d1d5db"
+                      strokeWidth="1.5"
+                      className="hover:fill-red-100 hover:stroke-red-400"
+                    />
+                    <text
+                      x={(x1 + x2) / 2}
+                      y={(y1 + y2) / 2 + 3.5}
+                      textAnchor="middle"
+                      fontSize="9"
+                      fill="#9ca3af"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      ×
+                    </text>
                   </g>
                 )
               })}
@@ -572,10 +637,11 @@ export default function WorkflowEditorPage() {
               const isPendingFrom = pendingConnection === node.id
               const cfg = NODE_TYPES[node.type]
               const styles = COLOR_STYLES[cfg?.color] || COLOR_STYLES.gray
+              const isPendingTo = pendingConnection && pendingConnection !== node.id
               return (
                 <div
                   key={node.id}
-                  className={`absolute select-none ${isSelected ? `z-20` : 'z-10'}`}
+                  className={`absolute select-none group ${isSelected ? `z-20` : 'z-10'}`}
                   style={{ left: node.x, top: node.y, width: NODE_W }}
                   onMouseDown={(e) => handleMouseDown(node.id, e)}
                   onClick={(e) => handleNodeClick(node.id, e)}
@@ -583,7 +649,7 @@ export default function WorkflowEditorPage() {
                   <div
                     className={`relative w-full bg-white rounded-xl shadow-md border-2 cursor-move transition-shadow ${
                       isSelected ? `${styles.border} ring-2 ${styles.ring}/30` : 'border-gray-200'
-                    } ${isPendingFrom ? 'ring-2 ring-offset-1 ' + styles.ring : ''}`}
+                    } ${isPendingFrom ? 'ring-2 ring-offset-1 ' + styles.ring : ''} ${isPendingTo ? 'ring-2 ring-offset-1 ring-purple-400' : ''}`}
                     style={{ width: NODE_W }}
                   >
                     <div className={`px-2 py-1.5 rounded-t-lg flex items-center gap-1.5 ${styles.header}`}>
@@ -594,14 +660,48 @@ export default function WorkflowEditorPage() {
                       {node.label}
                     </div>
 
-                    {/* 输出连接点 */}
-                    <button
-                      onClick={(e) => handleOutputHandleClick(node.id, e)}
-                      className={`absolute top-1/2 -right-2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white transition-all hover:scale-125 ${
-                        isPendingFrom ? styles.header + ' scale-125' : 'bg-gray-400'
-                      }`}
-                      title="点击后选择目标节点以连线"
-                    />
+                    {/* 输入连接点（左侧） */}
+                    <div
+                      onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (pendingConnection && pendingConnection !== node.id) {
+                          addEdge(pendingConnection, node.id)
+                          const label = nodes.find(n => n.id === node.id)?.label || node.id
+                          toast.success(`已连线 → ${label}`)
+                        }
+                      }}
+                      className="absolute top-1/2 -left-4 -translate-y-1/2 w-6 h-6 rounded-full border-2 border-white cursor-pointer transition-all z-30 flex items-center justify-center shadow-md hover:scale-110"
+                      style={{ background: isPendingTo ? '#a855f7' : '#d1d5db' }}
+                      title={pendingConnection ? '✅ 点击完成连线' : '输入端'}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10">
+                        <polygon points="3,1 8,5 3,9" fill="white" />
+                      </svg>
+                    </div>
+                    
+                    {/* 输出连接点（右侧） */}
+                    <div
+                      onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (pendingConnection === node.id) {
+                          setPendingConnection(null)
+                          toast.info('已退出连线模式')
+                        } else {
+                          setPendingConnection(node.id)
+                          const label = nodes.find(n => n.id === node.id)?.label || node.id
+                          toast.success(`从「${label}」开始连线，可连续创建分支`)
+                        }
+                      }}
+                      className="absolute top-1/2 -right-4 -translate-y-1/2 w-6 h-6 rounded-full border-2 border-white cursor-pointer transition-all z-30 flex items-center justify-center shadow-md hover:scale-110"
+                      style={{ background: isPendingFrom ? '#3b82f6' : '#9ca3af' }}
+                      title="点击开始连线"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10">
+                        <polygon points="2,1 7,5 2,9" fill="white" />
+                      </svg>
+                    </div>
 
                     {/* 删除按钮 */}
                     <button
@@ -609,7 +709,7 @@ export default function WorkflowEditorPage() {
                         e.stopPropagation()
                         setDeleteNodeTarget(node.id)
                       }}
-                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 opacity-0 group-hover:opacity-100 transition-opacity z-30"
                       style={{ opacity: isSelected ? 1 : 0 }}
                       title="删除节点"
                     >
@@ -632,16 +732,20 @@ export default function WorkflowEditorPage() {
             </div>
           )}
 
-          {/* 连线提示 */}
+          {/* 连线模式提示 */}
           {pendingConnection && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-purple-600 text-white text-xs rounded-full shadow-lg z-30">
-              已选择起点，点击目标节点完成连线（Esc 取消）
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 px-4 py-2 bg-purple-600 text-white text-xs rounded-full shadow-lg z-30 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span>
+                连线模式：点击目标节点创建连线（支持分支）
+                <span className="ml-2 text-purple-200">| 点击空白处或按 Esc 退出</span>
+              </span>
             </div>
           )}
 
           {/* 快捷键提示 */}
           <div className="absolute bottom-3 right-3 px-2.5 py-1.5 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-lg text-[10px] text-gray-400 hidden md:block">
-            拖拽节点移动 · 点击右侧圆点连线 · Del 删除 · Ctrl+Z 撤销
+            拖拽节点移动 · 点击右侧圆点连线（支持分支） · 点击连线删除 · Del 删除节点 · Ctrl+Z 撤销
           </div>
         </div>
       </div>
@@ -818,6 +922,46 @@ export default function WorkflowEditorPage() {
         }
         confirmLabel="删除"
       />
+
+      {/* 运行输入对话框 */}
+      <Modal
+        open={showRunDialog}
+        onClose={() => { setShowRunDialog(false); setRunInput('') }}
+        title={`执行工作流：${workflow?.name || ''}`}
+        size="md"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => { setShowRunDialog(false); setRunInput('') }}>
+              取消
+            </Button>
+            <Button variant="success" icon={Play} loading={running} onClick={runWorkflow}>
+              执行
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block text-sm font-medium text-gray-700">
+            请输入执行内容或指令
+          </label>
+          <textarea
+            value={runInput}
+            onChange={(e) => setRunInput(e.target.value)}
+            placeholder="例如：帮我分析用户登录功能的需求..."
+            className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 resize-none"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                runWorkflow()
+              }
+            }}
+          />
+          <p className="text-xs text-gray-400">
+            提示：按 Ctrl+Enter 快速执行
+          </p>
+        </div>
+      </Modal>
 
       {/* 执行结果 */}
       <Modal

@@ -14,13 +14,76 @@ import {
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
 
-const PRESETS = [
-  'A beautiful sunset over the ocean with gentle waves, cinematic quality',
-  'A cute cat walking on the beach at sunset, warm golden light',
-  'Time-lapse of a flower blooming in fast motion, macro photography',
-  'Aerial view of a misty mountain range at sunrise, drone footage',
-  'Slow motion water droplets falling into a pond, high speed photography',
-  'A cozy coffee shop on a rainy day, warm lighting, cinematic',
+const PRESET_CATEGORIES = [
+  {
+    name: '自然风光',
+    icon: '🌄',
+    presets: [
+      'A beautiful sunset over the ocean with gentle waves, cinematic quality, golden hour',
+      'Aerial view of a misty mountain range at sunrise, drone footage, epic landscape',
+      'Time-lapse of clouds moving over mountains at sunrise, golden light, 4K',
+      'A peaceful lake reflecting snow-capped mountains, calm water, nature documentary',
+    ],
+  },
+  {
+    name: '城市人文',
+    icon: '🏙️',
+    presets: [
+      'City street at night with neon lights and rain reflections, cyberpunk mood',
+      'A cozy coffee shop on a rainy day, warm lighting, cinematic, lo-fi aesthetic',
+      'Busy Tokyo intersection at night, time-lapse, people flowing, urban energy',
+      'Vintage European old town street, cobblestone, warm afternoon light, travel film',
+    ],
+  },
+  {
+    name: '产品展示',
+    icon: '📦',
+    presets: [
+      'Product showcase of a sleek smartphone rotating on a marble surface, studio lighting',
+      'Perfume bottle on a silk fabric with soft bokeh lights, luxury commercial',
+      'Sneakers floating in mid-air with dynamic lighting, sports commercial style',
+      'Coffee being poured into a cup, slow motion, warm tones, food commercial',
+    ],
+  },
+  {
+    name: '抽象艺术',
+    icon: '🎨',
+    presets: [
+      'Abstract colorful ink dropping into water, slow motion, macro, vibrant colors',
+      'Geometric shapes morphing and transforming, neon glow, digital art',
+      'Liquid metal flowing and forming patterns, chrome reflection, futuristic',
+      'Particle effects forming a human silhouette, sci-fi, blue and purple glow',
+    ],
+  },
+  {
+    name: '自然微观',
+    icon: '🔬',
+    presets: [
+      'Time-lapse of a flower blooming in fast motion, macro photography, vivid colors',
+      'Slow motion water droplets falling into a pond, high speed photography',
+      'Underwater scene with colorful coral and fish, crystal clear water, nature doc',
+      'A cute cat walking on the beach at sunset, warm golden light, heartwarming',
+    ],
+  },
+]
+
+const VIDEO_STYLES = [
+  { value: '', label: '默认', desc: '无特殊风格' },
+  { value: 'cinematic', label: '电影感', desc: '宽色域/景深' },
+  { value: 'documentary', label: '纪录片', desc: '真实/自然' },
+  { value: 'animation', label: '动画风', desc: '卡通/流畅' },
+  { value: 'vlog', label: 'Vlog', desc: '手持/亲切' },
+  { value: 'commercial', label: '广告', desc: '精致/吸引' },
+]
+
+const CAMERA_ANGLES = [
+  { value: '', label: '默认' },
+  { value: 'wide shot', label: '远景' },
+  { value: 'medium shot', label: '中景' },
+  { value: 'close-up', label: '近景' },
+  { value: 'extreme close-up', label: '特写' },
+  { value: 'aerial/drone', label: '航拍' },
+  { value: 'low angle', label: '仰拍' },
 ]
 
 const RESOLUTIONS = [
@@ -223,7 +286,10 @@ export default function VideoFactoryPage() {
             创建视频任务
           </h2>
           <button
-            onClick={() => setPrompt(PRESETS[Math.floor(Math.random() * PRESETS.length)])}
+            onClick={() => {
+              const allPresets = PRESET_CATEGORIES.flatMap(c => c.presets)
+              setPrompt(allPresets[Math.floor(Math.random() * allPresets.length)])
+            }}
             className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
           >
             <Wand2 className="w-4 h-4" />
@@ -240,20 +306,45 @@ export default function VideoFactoryPage() {
             rows={3}
             className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
           />
-          {PRESETS.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2 items-center">
-              <span className="text-xs text-gray-500">快捷预设:</span>
-              {PRESETS.slice(0, 3).map((p, i) => (
-                <button
-                  key={i}
-                  onClick={() => setPrompt(p)}
-                  className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600 truncate max-w-xs transition-colors"
-                >
-                  {p.slice(0, 30)}...
+        </div>
+
+        {/* 分类提示词模板 */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">提示词模板</label>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {PRESET_CATEGORIES.map((cat, ci) => (
+              <div key={ci} className="relative group">
+                <button className="w-full flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-left">
+                  <span className="text-base">{cat.icon}</span>
+                  <span className="text-xs text-gray-700">{cat.name}</span>
                 </button>
-              ))}
-            </div>
-          )}
+                <div className="absolute z-10 top-full left-0 mt-1 w-72 bg-white rounded-xl border border-gray-200 shadow-lg p-2 space-y-1 hidden group-hover:block">
+                  {cat.presets.map((p, pi) => (
+                    <button key={pi} onClick={() => setPrompt(p)}
+                      className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-blue-50 text-gray-600 truncate transition-colors">
+                      {p.slice(0, 40)}...
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 视频风格 + 镜头语言 */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">视频风格</label>
+            <select defaultValue="" className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm">
+              {VIDEO_STYLES.map(s => <option key={s.value} value={s.value}>{s.label}{s.desc ? ` (${s.desc})` : ''}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">镜头语言</label>
+            <select defaultValue="" className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm">
+              {CAMERA_ANGLES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+            </select>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

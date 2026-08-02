@@ -1,0 +1,419 @@
+import React, { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { Card, Button, Badge, Empty } from '../components/ui'
+import { useToast } from '../lib/toast'
+import api from '../lib/api'
+import ReactMarkdown from 'react-markdown'
+import {
+  ArrowLeft, Play, Copy, Check, Clock, History, Sparkles,
+  FileText, ClipboardList, Mail, Target, Users,
+  Heart, Video, Calendar,
+  GraduationCap, BookOpen, GitBranch, Layers,
+  Search, UserCircle, Megaphone, TrendingUp, BarChart,
+  Settings, ChevronDown, Upload, X, Download
+} from 'lucide-react'
+
+const ICON_MAP = {
+  FileText, ClipboardList, Mail, Target, Users,
+  Sparkles, Heart, Video, Calendar,
+  GraduationCap, BookOpen, GitBranch, Layers,
+  Search, UserCircle, Megaphone, TrendingUp, BarChart
+}
+
+const CATEGORY_COLORS = {
+  '职场办公': 'from-blue-500 to-indigo-600',
+  '自媒体创作': 'from-pink-500 to-rose-600',
+  '学习研究': 'from-cyan-500 to-teal-600',
+  '产品/营销': 'from-purple-500 to-violet-600',
+  '互联网行业': 'from-blue-500 to-cyan-600',
+  '传统行业': 'from-amber-500 to-orange-600',
+  '通用办公': 'from-gray-500 to-slate-600',
+  '专业工具': 'from-orange-500 to-red-600',
+}
+
+export default function ToolRunPage() {
+  const { toolId } = useParams()
+  const navigate = useNavigate()
+  const toast = useToast()
+  
+  const [tool, setTool] = useState(null)
+  const [input, setInput] = useState('')
+  const [result, setResult] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [history, setHistory] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [params, setParams] = useState({})
+  const [showParams, setShowParams] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState(null)
+  const [uploadedFile, setUploadedFile] = useState(null)
+  const [fileContent, setFileContent] = useState('')
+  const fileInputRef = React.useRef(null)
+
+  useEffect(() => {
+    loadTool()
+    loadHistory()
+  }, [toolId])
+
+  useEffect(() => {
+    if (tool?.params) {
+      const defaults = {}
+      Object.entries(tool.params).forEach(([key, config]) => {
+        defaults[key] = config.default
+      })
+      setParams(defaults)
+    }
+  }, [tool])
+
+  const loadTool = async () => {
+    try {
+      const res = await api.get(`/api/tools/${toolId}`)
+      setTool(res.data)
+    } catch (err) {
+      toast.error('工具不存在')
+      navigate('/tool-hub')
+    }
+  }
+
+  const loadHistory = async () => {
+    try {
+      const res = await api.get(`/api/tools/${toolId}/history`)
+      setHistory(res.data)
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  const handleRun = async () => {
+    const finalInput = fileContent ? `${fileContent}\n\n${input}`.trim() : input.trim()
+    if (!finalInput) {
+      toast.warning('请输入内容或上传文件')
+      return
+    }
+    setLoading(true)
+    setResult('')
+    try {
+      const res = await api.post('/api/tools/run', {
+        tool_id: toolId,
+        input: finalInput,
+        params,
+      })
+      setResult(res.data.result)
+      loadHistory()
+      toast.success('生成完成')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '生成失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(result)
+    setCopied(true)
+    toast.success('已复制')
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleUseHistory = (item) => {
+    setInput(item.input_text || item.input)
+    if (item.params) {
+      setParams(prev => ({ ...prev, ...item.params }))
+    }
+    setResult(item.result)
+    setShowHistory(false)
+  }
+
+  const handleUseTemplate = (template) => {
+    setSelectedTemplate(template.id)
+    setInput(template.content)
+  }
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    if (file.size > maxSize) {
+      toast.error('文件大小不能超过 10MB')
+      return
+    }
+    
+    setUploadedFile(file)
+    
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    try {
+      const res = await api.post('/api/tools/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setFileContent(res.data.content)
+      toast.success(`已上传: ${file.name}`)
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '上传失败')
+      setUploadedFile(null)
+    }
+  }
+
+  const handleRemoveFile = () => {
+    setUploadedFile(null)
+    setFileContent('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleParamChange = (key, value) => {
+    setParams(prev => ({ ...prev, [key]: value }))
+  }
+
+  if (!tool) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full" />
+      </div>
+    )
+  }
+
+  const Icon = ICON_MAP[tool.icon] || Sparkles
+  const categoryColor = CATEGORY_COLORS[tool.category] || 'from-gray-500 to-gray-600'
+  const templates = tool.templates || []
+  const toolParams = tool.params || {}
+
+  return (
+    <div className="flex-1 overflow-auto bg-gray-50">
+      <div className="max-w-7xl mx-auto px-6 py-6">
+        {/* 头部 */}
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            onClick={() => navigate('/tool-hub')}
+            className="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          >
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
+          </button>
+          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${categoryColor} flex items-center justify-center`}>
+            <Icon className="w-6 h-6 text-white" />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-gray-900">{tool.name}</h1>
+            <p className="text-sm text-gray-500">{tool.description}</p>
+          </div>
+          <Badge variant="info">{tool.category}</Badge>
+          <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
+              showHistory ? 'bg-brand-50 text-brand-600' : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <History className="w-4 h-4" />
+            历史
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* 左侧：配置区 */}
+          <div className="lg:col-span-1 space-y-4">
+            {/* 模板选择 */}
+            {templates.length > 0 && (
+              <Card>
+                <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                  <Layers className="w-4 h-4" />
+                  快速模板
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {templates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => handleUseTemplate(t)}
+                      className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+                        selectedTemplate === t.id
+                          ? 'bg-brand-500 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {/* 参数配置 */}
+            {Object.keys(toolParams).length > 0 && (
+              <Card>
+                <button
+                  onClick={() => setShowParams(!showParams)}
+                  className="w-full flex items-center justify-between text-sm font-medium text-gray-700"
+                >
+                  <span className="flex items-center gap-2">
+                    <Settings className="w-4 h-4" />
+                    高级选项
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showParams ? 'rotate-180' : ''}`} />
+                </button>
+                {showParams && (
+                  <div className="mt-4 space-y-3">
+                    {Object.entries(toolParams).map(([key, config]) => (
+                      <div key={key}>
+                        <label className="block text-xs text-gray-500 mb-1">{config.label}</label>
+                        <select
+                          value={params[key] || config.default}
+                          onChange={(e) => handleParamChange(key, e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          {config.options.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* 历史记录 */}
+            {showHistory && history.length > 0 && (
+              <Card>
+                <h3 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  使用历史
+                </h3>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {history.slice(0, 10).map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => handleUseHistory(item)}
+                      className="p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="text-xs text-gray-400 mb-1">
+                        {new Date(item.created_at).toLocaleString()}
+                      </div>
+                      <div className="text-sm text-gray-700 truncate">
+                        {item.input_text || item.input}
+                      </div>
+                      {item.params && Object.keys(item.params).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Object.entries(item.params).slice(0, 3).map(([k, v]) => (
+                            <span key={k} className="px-1.5 py-0.5 text-[10px] bg-gray-200 text-gray-600 rounded">
+                              {v}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+
+          {/* 中间：输入区 */}
+          <div className="lg:col-span-1">
+            <Card className="!p-0 overflow-hidden h-full flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700">输入内容</span>
+                <span className="text-xs text-gray-400">{input.length} 字</span>
+              </div>
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={tool.placeholder || '请输入内容...'}
+                className="flex-1 w-full px-4 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none resize-none min-h-[200px]"
+              />
+              {/* 文件上传区域 */}
+              <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
+                {uploadedFile ? (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-brand-50 rounded-lg">
+                    <FileText className="w-4 h-4 text-brand-600" />
+                    <span className="flex-1 text-sm text-gray-700 truncate">{uploadedFile.name}</span>
+                    <button onClick={handleRemoveFile} className="text-gray-400 hover:text-red-500">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-brand-500 hover:bg-brand-50/50 transition-colors">
+                    <Upload className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm text-gray-500">上传文件（可选）</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileUpload}
+                      accept=".xlsx,.xls,.csv,.pdf,.txt,.doc,.docx,.md"
+                      className="hidden"
+                    />
+                  </label>
+                )}
+                <Button
+                  onClick={handleRun}
+                  loading={loading}
+                  className="w-full"
+                  size="lg"
+                >
+                  <Play className="w-4 h-4 mr-2" />
+                  {loading ? '生成中...' : '开始生成'}
+                </Button>
+              </div>
+            </Card>
+          </div>
+
+          {/* 右侧：结果区 */}
+          <div className="lg:col-span-1">
+            <Card className="!p-0 overflow-hidden h-full flex flex-col min-h-[500px]">
+              <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700">生成结果</span>
+                {result && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopy}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-brand-600 hover:bg-gray-100 rounded transition-colors"
+                    >
+                      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      {copied ? '已复制' : '复制'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 p-4 overflow-y-auto">
+                {loading ? (
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <div className="animate-spin w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full mb-3" />
+                    <p className="text-sm text-gray-500">AI 正在生成中...</p>
+                  </div>
+                ) : result ? (
+                  <div className="prose prose-sm max-w-none">
+                    <ReactMarkdown
+                      components={{
+                        h1: ({children}) => <h1 className="text-xl font-bold text-gray-900 mb-3">{children}</h1>,
+                        h2: ({children}) => <h2 className="text-lg font-semibold text-gray-800 mt-4 mb-2">{children}</h2>,
+                        h3: ({children}) => <h3 className="text-base font-medium text-gray-700 mt-3 mb-1">{children}</h3>,
+                        p: ({children}) => <p className="text-sm text-gray-600 mb-2 leading-relaxed">{children}</p>,
+                        ul: ({children}) => <ul className="list-disc list-inside text-sm text-gray-600 mb-2 space-y-1">{children}</ul>,
+                        ol: ({children}) => <ol className="list-decimal list-inside text-sm text-gray-600 mb-2 space-y-1">{children}</ol>,
+                        li: ({children}) => <li className="text-sm text-gray-600">{children}</li>,
+                        strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                        code: ({children}) => <code className="px-1 py-0.5 bg-gray-100 rounded text-xs text-pink-600">{children}</code>,
+                        pre: ({children}) => <pre className="p-3 bg-gray-900 rounded-lg overflow-x-auto mb-2"><code className="text-xs text-gray-100">{children}</code></pre>,
+                        table: ({children}) => <div className="overflow-x-auto mb-2"><table className="min-w-full text-sm border border-gray-200">{children}</table></div>,
+                        th: ({children}) => <th className="px-3 py-2 bg-gray-50 border border-gray-200 font-medium text-gray-700">{children}</th>,
+                        td: ({children}) => <td className="px-3 py-2 border border-gray-200 text-gray-600">{children}</td>,
+                      }}
+                    >
+                      {result}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                    <Sparkles className="w-12 h-12 mb-3 opacity-50" />
+                    <p className="text-sm">点击「开始生成」查看结果</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

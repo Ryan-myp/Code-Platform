@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — Agent CRUD 测试"""
+"""小团智能平台 — Agent CRUD 测试"""
 
 import sys
 import json

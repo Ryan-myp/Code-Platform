@@ -238,6 +238,139 @@ _SCHEMA_STATEMENTS = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL, version INTEGER NOT NULL,
         instructions TEXT NOT NULL, optimized_at TEXT, created_by TEXT DEFAULT 'system'
     )""",
+
+    # ── v9.0: 平台体验增强 ──────────────────────────────────
+    # 全局任务（跨项目）
+    """CREATE TABLE IF NOT EXISTS global_tasks (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT DEFAULT '',
+        status TEXT DEFAULT 'todo', priority TEXT DEFAULT 'P2',
+        due_date TEXT DEFAULT '', tags TEXT DEFAULT '[]',
+        project_id TEXT DEFAULT '', agent_id TEXT DEFAULT '',
+        created_by TEXT DEFAULT 'admin', assigned_to TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT DEFAULT '', active INTEGER DEFAULT 1
+    )""",
+    # 通知记录
+    """CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'info',
+        title TEXT NOT NULL, content TEXT DEFAULT '',
+        target_type TEXT DEFAULT '', target_id TEXT DEFAULT '',
+        read INTEGER DEFAULT 0, user_id TEXT DEFAULT 'all',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, read_at TEXT DEFAULT ''
+    )""",
+    # 仪表盘组件配置
+    """CREATE TABLE IF NOT EXISTS dashboard_widgets (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'default',
+        widget_type TEXT NOT NULL, title TEXT DEFAULT '',
+        config TEXT DEFAULT '{}', position INTEGER DEFAULT 0,
+        size TEXT DEFAULT 'md', visible INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+
+    # ── v9.0: Phase 2 研发增强 ──────────────────────────────
+    # CI/CD 流水线
+    """CREATE TABLE IF NOT EXISTS pipelines (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+        type TEXT DEFAULT 'ci', config TEXT DEFAULT '{}',
+        status TEXT DEFAULT 'idle', last_run TEXT DEFAULT '',
+        created_by TEXT DEFAULT 'admin', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP, active INTEGER DEFAULT 1
+    )""",
+    # 代码生成记录
+    """CREATE TABLE IF NOT EXISTS code_generations (
+        id TEXT PRIMARY KEY, language TEXT NOT NULL, prompt TEXT NOT NULL,
+        result TEXT DEFAULT '', model TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 代码审查记录
+    """CREATE TABLE IF NOT EXISTS code_reviews (
+        id TEXT PRIMARY KEY, language TEXT NOT NULL, code TEXT NOT NULL,
+        result TEXT DEFAULT '', model TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+
+    # ── v9.0: Phase 3 内容创作 ──────────────────────────────
+    # 文案任务
+    """CREATE TABLE IF NOT EXISTS copywriting_tasks (
+        id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'marketing',
+        title TEXT DEFAULT '', prompt TEXT NOT NULL,
+        result TEXT DEFAULT '', model TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 翻译记录
+    """CREATE TABLE IF NOT EXISTS translations (
+        id TEXT PRIMARY KEY, source_lang TEXT NOT NULL, target_lang TEXT NOT NULL,
+        source_text TEXT NOT NULL, result TEXT DEFAULT '',
+        model TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+
+    # ── v9.0: Phase 4 运营分析 ──────────────────────────────
+    # A/B 测试
+    """CREATE TABLE IF NOT EXISTS ab_tests (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+        variant_a TEXT DEFAULT '', variant_b TEXT DEFAULT '',
+        status TEXT DEFAULT 'draft', result TEXT DEFAULT '{}',
+        created_by TEXT DEFAULT 'admin', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP, active INTEGER DEFAULT 1
+    )""",
+
+    # ── v9.0: 办公效率 ──────────────────────────────────────
+    # PPT 生成记录
+    """CREATE TABLE IF NOT EXISTS ppt_generations (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, outline TEXT DEFAULT '',
+        slides TEXT DEFAULT '[]', result TEXT DEFAULT '',
+        model TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # Excel 操作记录
+    """CREATE TABLE IF NOT EXISTS excel_operations (
+        id TEXT PRIMARY KEY, operation TEXT NOT NULL DEFAULT 'create',
+        title TEXT DEFAULT '', data TEXT DEFAULT '{}',
+        result TEXT DEFAULT '', file_path TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 效率工具使用记录
+    """CREATE TABLE IF NOT EXISTS tool_records (
+        id TEXT PRIMARY KEY, tool_id TEXT NOT NULL,
+        input TEXT DEFAULT '', result TEXT DEFAULT '',
+        model TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 股票分析记录
+    """CREATE TABLE IF NOT EXISTS stock_analyses (
+        id TEXT PRIMARY KEY, symbol TEXT NOT NULL,
+        analysis_type TEXT DEFAULT 'comprehensive', period TEXT DEFAULT '3mo',
+        result TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 模拟交易账户
+    """CREATE TABLE IF NOT EXISTS trading_accounts (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+        cash REAL DEFAULT 1000000, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 模拟交易持仓
+    """CREATE TABLE IF NOT EXISTS trading_positions (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL, quantity INTEGER DEFAULT 0,
+        avg_cost REAL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 模拟交易历史
+    """CREATE TABLE IF NOT EXISTS trading_history (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL, action TEXT NOT NULL,
+        quantity INTEGER DEFAULT 0, price REAL DEFAULT 0,
+        amount REAL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 工具收藏
+    """CREATE TABLE IF NOT EXISTS tool_favorites (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+        tool_id TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, tool_id)
+    )""",
+    # 工具使用统计
+    """CREATE TABLE IF NOT EXISTS tool_usage_stats (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+        tool_id TEXT NOT NULL, use_count INTEGER DEFAULT 0,
+        last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, tool_id)
+    )""",
 ]
 
 _INDEX_STATEMENTS = [
@@ -246,6 +379,12 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_comment_likes_comment ON comment_likes(comment_id)",
     "CREATE INDEX IF NOT EXISTS idx_expert_roles_role_type ON expert_roles(role_type)",
     "CREATE INDEX IF NOT EXISTS idx_expert_roles_name ON expert_roles(name)",
+    # v9.0 新索引
+    "CREATE INDEX IF NOT EXISTS idx_global_tasks_status ON global_tasks(status)",
+    "CREATE INDEX IF NOT EXISTS idx_global_tasks_priority ON global_tasks(priority)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read)",
+    "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_dashboard_widgets_user ON dashboard_widgets(user_id)",
 ]
 
 

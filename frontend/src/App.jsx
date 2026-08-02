@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import axios from 'axios'
 import Sidebar from './components/Sidebar'
 import ErrorBoundary from './components/ErrorBoundary'
+import CommandPalette from './components/CommandPalette'
 import { ToastProvider } from './lib/toast'
 import ConfigPage from './pages/ConfigPage'
 import AgentsPage from './pages/AgentsPage'
@@ -25,6 +26,22 @@ import ImageFactoryPage from './pages/ImageFactoryPage'
 import MusicFactoryPage from './pages/MusicFactoryPage'
 import VideoFactoryPage from './pages/VideoFactoryPage'
 import ProjectSpacePage from './pages/ProjectSpacePage'
+// v9.0 新页面
+import HomePage from './pages/HomePage'
+import TasksPage from './pages/TasksPage'
+import NotificationsPage from './pages/NotificationsPage'
+import CodeGenPage from './pages/CodeGenPage'
+import CodeReviewPage from './pages/CodeReviewPage'
+import PipelinesPage from './pages/PipelinesPage'
+import CopywritingPage from './pages/CopywritingPage'
+import TranslationPage from './pages/TranslationPage'
+import DashboardPage from './pages/DashboardPage'
+import ABTestingPage from './pages/ABTestingPage'
+import PPTFactoryPage from './pages/PPTFactoryPage'
+import ExcelPage from './pages/ExcelPage'
+import ToolHubPage from './pages/ToolHubPage'
+import ToolRunPage from './pages/ToolRunPage'
+import StockAnalysisPage from './pages/StockAnalysisPage'
 
 function ProtectedRoute({ children, isAuthenticated }) {
   if (!isAuthenticated) {
@@ -37,6 +54,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -47,6 +65,13 @@ export default function App() {
       setIsAuthenticated(true)
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
     }
+  }, [])
+
+  // 监听命令面板打开事件
+  useEffect(() => {
+    const handleOpen = () => setCommandPaletteOpen(true)
+    window.addEventListener('open-command-palette', handleOpen)
+    return () => window.removeEventListener('open-command-palette', handleOpen)
   }, [])
 
   const handleLogin = (userData) => {
@@ -65,8 +90,9 @@ export default function App() {
   return (
     <Router>
       <ToastProvider>
+      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
       <Routes>
-        <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/agents" replace />} />
+        <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/home" replace />} />
         <Route path="*" element={
           <ProtectedRoute isAuthenticated={isAuthenticated}>
             <div className="flex min-h-screen bg-ink-50">
@@ -75,6 +101,9 @@ export default function App() {
                 <main className="flex-1 overflow-y-auto p-4 md:p-6 animate-page-in">
                   <ErrorBoundary>
                   <Routes>
+                    <Route path="/home" element={<HomePage />} />
+                    <Route path="/tasks" element={<TasksPage />} />
+                    <Route path="/notifications" element={<NotificationsPage />} />
                     <Route path="/board" element={<ReqBoardPage />} />
                     <Route path="/workspace" element={<AIWorkspacePage />} />
                     <Route path="/projects" element={<ProjectSpacePage />} />
@@ -97,7 +126,24 @@ export default function App() {
                     <Route path="/image-factory" element={<ImageFactoryPage />} />
                     <Route path="/video-factory" element={<VideoFactoryPage />} />
                     <Route path="/music-factory" element={<MusicFactoryPage />} />
-                    <Route path="/" element={<Navigate to="/agents" replace />} />
+                    {/* v9.0 Phase 2: 研发增强 */}
+                    <Route path="/code-gen" element={<CodeGenPage />} />
+                    <Route path="/code-review" element={<CodeReviewPage />} />
+                    <Route path="/pipelines" element={<PipelinesPage />} />
+                    {/* v9.0 Phase 3: 内容创作 */}
+                    <Route path="/copywriting" element={<CopywritingPage />} />
+                    <Route path="/translation" element={<TranslationPage />} />
+                    {/* v9.0 Phase 4: 运营分析 */}
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                    <Route path="/ab-testing" element={<ABTestingPage />} />
+                    {/* v9.0 办公效率 */}
+                    <Route path="/ppt-factory" element={<PPTFactoryPage />} />
+                    <Route path="/excel" element={<ExcelPage />} />
+                    {/* v9.0 效率工具箱 */}
+                    <Route path="/tool-hub" element={<ToolHubPage />} />
+                    <Route path="/tool/:toolId" element={<ToolRunPage />} />
+                    <Route path="/stock" element={<StockAnalysisPage />} />
+                    <Route path="/" element={<Navigate to="/home" replace />} />
                   </Routes>
                   </ErrorBoundary>
                 </main>

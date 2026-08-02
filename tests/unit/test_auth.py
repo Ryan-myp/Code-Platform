@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — 认证模块测试"""
+"""小团智能平台 — 认证模块测试"""
 
 import sys
 from pathlib import Path

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""智能研发平台 — 项目/需求/任务 CRUD 测试"""
+"""小团智能平台 — 项目/需求/任务 CRUD 测试"""
 
 import sys
 from pathlib import Path
