@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import {
   Languages, Play, Copy, Check, ArrowRightLeft, Clock, Upload, X,
   FileText, Globe, Scale, Stethoscope, BookOpen, Briefcase, Code2,
-  Trash2, Sparkles, FileUp,
+  Trash2, Sparkles, FileUp, Star, ListOrdered, BookMarked, Plus,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -49,6 +49,12 @@ export default function TranslationPage() {
   const [copied, setCopied] = useState(false)
   const [uploadedFile, setUploadedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchTexts, setBatchTexts] = useState([''])
+  const [batchResults, setBatchResults] = useState([])
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('translation_favorites') || '[]') } catch { return [] }
+  })
   const fileInputRef = useRef(null)
 
   useEffect(() => { loadHistory() }, [])
@@ -116,6 +122,36 @@ export default function TranslationPage() {
 
   const reuseHistory = (item) => {
     setText(item.source_text); setSourceLang(item.source_lang); setTargetLang(item.target_lang); setResult(item.result)
+  }
+
+  const toggleFavorite = (item, e) => {
+    e.stopPropagation()
+    const isFav = favorites.some(f => f.id === item.id)
+    const next = isFav ? favorites.filter(f => f.id !== item.id) : [...favorites, { id: item.id, source_text: item.source_text, source_lang: item.source_lang, target_lang: item.target_lang, result: item.result, created_at: item.created_at }]
+    setFavorites(next)
+    localStorage.setItem('translation_favorites', JSON.stringify(next))
+    toast.success(isFav ? '已取消收藏' : '已收藏')
+  }
+
+  const addBatchLine = () => setBatchTexts([...batchTexts, ''])
+  const updateBatchLine = (idx, val) => { const next = [...batchTexts]; next[idx] = val; setBatchTexts(next) }
+  const removeBatchLine = (idx) => setBatchTexts(batchTexts.filter((_, i) => i !== idx))
+
+  const batchTranslate = async () => {
+    const validTexts = batchTexts.filter(t => t.trim())
+    if (validTexts.length === 0) { toast.error('请输入至少一段翻译内容'); return }
+    setLoading(true); setBatchResults([])
+    const domainMeta = DOMAINS.find(d => d.value === domain)
+    const styleMeta = STYLES.find(s => s.value === style)
+    const systemPrompt = `你是专业翻译，将以下内容从${sourceLang}翻译为${targetLang}。\n领域：${domainMeta.label}（${domainMeta.desc}）\n翻译风格：${styleMeta.label}（${styleMeta.desc}）\n要求：保持原文格式，术语准确，表达自然流畅。只返回翻译结果。`
+    try {
+      const results = await Promise.all(validTexts.map(t =>
+        api.post('/api/translation/translate', { source_lang: sourceLang, target_lang: targetLang, text: `${systemPrompt}\n\n${t}` })
+          .then(r => r.data.result).catch(() => '翻译失败')
+      ))
+      setBatchResults(results); toast.success(`批量翻译完成（${results.length}段）`)
+    } catch (e) { toast.error(`批量翻译失败：${e.message}`) }
+    finally { setLoading(false) }
   }
 
   const deleteHistory = async (id, e) => {
@@ -254,10 +290,44 @@ export default function TranslationPage() {
                   </label>
                 )}
               </div>
-              <textarea value={text} onChange={(e) => setText(e.target.value)}
-                placeholder="输入需要翻译的文本..."
-                rows={8} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
-              <Button variant="primary" icon={Languages} loading={loading} onClick={translate} className="w-full">翻译</Button>
+              {/* 批量模式开关 */}
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={batchMode} onChange={(e) => setBatchMode(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <span className="text-xs font-medium text-gray-600 flex items-center gap-1">
+                    <ListOrdered className="w-3 h-3" /> 批量翻译模式
+                  </span>
+                </label>
+                <span className="text-xs text-gray-400">{batchMode ? `${batchTexts.filter(t=>t.trim()).length} 段待翻译` : '单段翻译'}</span>
+              </div>
+
+              {batchMode ? (
+                <div className="space-y-2">
+                  {batchTexts.map((t, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-xs text-gray-400 mt-2 flex-shrink-0 w-5 text-right">{i + 1}.</span>
+                      <textarea value={t} onChange={(e) => updateBatchLine(i, e.target.value)}
+                        placeholder={`第${i + 1}段文本...`} rows={2}
+                        className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+                      {batchTexts.length > 1 && (
+                        <button onClick={() => removeBatchLine(i)} className="p-1 text-gray-400 hover:text-red-500 mt-1"><X className="w-3.5 h-3.5" /></button>
+                      )}
+                    </div>
+                  ))}
+                  <button onClick={addBatchLine} className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 ml-7">
+                    <Plus className="w-3 h-3" /> 添加一段
+                  </button>
+                  <Button variant="primary" icon={Languages} loading={loading} onClick={batchTranslate} className="w-full">批量翻译（{batchTexts.filter(t=>t.trim()).length}段）</Button>
+                </div>
+              ) : (
+                <>
+                  <textarea value={text} onChange={(e) => setText(e.target.value)}
+                    placeholder="输入需要翻译的文本..."
+                    rows={8} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+                  <Button variant="primary" icon={Languages} loading={loading} onClick={translate} className="w-full">翻译</Button>
+                </>
+              )}
             </div>
           </Card>
         </div>
@@ -267,21 +337,57 @@ export default function TranslationPage() {
           <Card className="min-h-[400px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                <Languages className="w-4 h-4 text-blue-500" /> 翻译结果
+                <Languages className="w-4 h-4 text-blue-500" /> {batchMode ? '批量翻译结果' : '翻译结果'}
               </h3>
-              {result && (
+              {(result || batchResults.length > 0) && (
                 <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                   {copied ? '已复制' : '复制'}
                 </Button>
               )}
             </div>
-            {result ? (
+            {batchMode && batchResults.length > 0 ? (
+              <div className="space-y-3">
+                {batchResults.map((r, i) => (
+                  <div key={i} className="p-3 bg-gray-50 rounded-lg">
+                    <div className="text-xs text-blue-600 font-medium mb-1">第{i + 1}段</div>
+                    <div className="prose prose-sm max-w-none text-gray-700">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{r}</ReactMarkdown>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : result ? (
               <div className="prose prose-sm max-w-none text-gray-700">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
               </div>
             ) : (
               <Empty icon={Languages} title="等待翻译" description="输入文本后点击翻译" />
             )}
+          </Card>
+
+          {/* 常用术语表 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <BookMarked className="w-4 h-4 text-blue-500" /> 常用术语参考
+            </h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {[
+                { zh: '人工智能', en: 'Artificial Intelligence (AI)' },
+                { zh: '机器学习', en: 'Machine Learning' },
+                { zh: '深度学习', en: 'Deep Learning' },
+                { zh: '自然语言处理', en: 'Natural Language Processing (NLP)' },
+                { zh: '大数据', en: 'Big Data' },
+                { zh: '云计算', en: 'Cloud Computing' },
+                { zh: '区块链', en: 'Blockchain' },
+                { zh: '物联网', en: 'Internet of Things (IoT)' },
+              ].map((term, i) => (
+                <div key={i} className="flex items-center gap-1 py-1 border-b border-gray-100">
+                  <span className="text-gray-700 font-medium">{term.zh}</span>
+                  <span className="text-gray-400">→</span>
+                  <span className="text-blue-600">{term.en}</span>
+                </div>
+              ))}
+            </div>
           </Card>
         </div>
       </div>
@@ -301,6 +407,11 @@ export default function TranslationPage() {
                 </span>
                 <span className="text-sm text-gray-700 truncate flex-1">{item.source_text?.slice(0, 60)}</span>
                 <span className="text-xs text-gray-400 flex-shrink-0">{item.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                <button onClick={(e) => toggleFavorite(item, e)}
+                  className={`p-1 rounded transition-colors flex-shrink-0 ${favorites.some(f => f.id === item.id) ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                  title="收藏">
+                  <Star className="w-3.5 h-3.5" fill={favorites.some(f => f.id === item.id) ? 'currentColor' : 'none'} />
+                </button>
                 <button onClick={(e) => deleteHistory(item.id, e)}
                   className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors flex-shrink-0">
                   <Trash2 className="w-3.5 h-3.5" />

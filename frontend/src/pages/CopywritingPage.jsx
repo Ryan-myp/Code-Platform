@@ -61,6 +61,9 @@ export default function CopywritingPage() {
   const [showTemplates, setShowTemplates] = useState(true)
   const [uploadedFile, setUploadedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('copywriting_favorites') || '[]') } catch { return [] }
+  })
   const fileInputRef = useRef(null)
 
   useEffect(() => { loadHistory() }, [])
@@ -119,6 +122,21 @@ export default function CopywritingPage() {
 
   const reuseHistory = (item) => {
     setPrompt(item.prompt); setType(item.type); setTitle(item.title || ''); setResult(item.result)
+  }
+
+  const toggleFavorite = (item, e) => {
+    e.stopPropagation()
+    const isFav = favorites.some(f => f.id === item.id)
+    const next = isFav ? favorites.filter(f => f.id !== item.id) : [...favorites, { id: item.id, prompt: item.prompt, type: item.type, title: item.title, created_at: item.created_at }]
+    setFavorites(next)
+    localStorage.setItem('copywriting_favorites', JSON.stringify(next))
+    toast.success(isFav ? '已取消收藏' : '已收藏')
+  }
+
+  const regenerateFromHistory = (item, e) => {
+    e.stopPropagation()
+    setPrompt(item.prompt); setType(item.type); setTitle(item.title || '')
+    toast.success('已填充，可修改后重新生成')
   }
 
   const deleteHistory = async (id, e) => {
@@ -301,12 +319,23 @@ export default function CopywritingPage() {
           <div className="space-y-2">
             {history.slice(0, 10).map(item => {
               const tc = TYPES.find(t => t.value === item.type) || TYPES[0]
+              const isFav = favorites.some(f => f.id === item.id)
               return (
                 <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
                   onClick={() => reuseHistory(item)}>
                   <Badge color={tc.color}>{tc.label}</Badge>
                   <span className="text-sm text-gray-700 truncate flex-1">{item.prompt?.slice(0, 80)}</span>
                   <span className="text-xs text-gray-400 flex-shrink-0">{item.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                  <button onClick={(e) => toggleFavorite(item, e)}
+                    className={`p-1 rounded transition-colors flex-shrink-0 ${isFav ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                    title={isFav ? '取消收藏' : '收藏'}>
+                    <Star className="w-3.5 h-3.5" fill={isFav ? 'currentColor' : 'none'} />
+                  </button>
+                  <button onClick={(e) => regenerateFromHistory(item, e)}
+                    className="p-1 text-gray-400 hover:text-blue-500 rounded transition-colors flex-shrink-0"
+                    title="以此重新生成">
+                    <Play className="w-3.5 h-3.5" />
+                  </button>
                   <button onClick={(e) => deleteHistory(item.id, e)}
                     className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors flex-shrink-0">
                     <Trash2 className="w-3.5 h-3.5" />

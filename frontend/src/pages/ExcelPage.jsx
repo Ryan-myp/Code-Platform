@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Table2, Play, Clock, Copy, Check, FileSpreadsheet, Upload, X, FileText,
-  BarChart3, TrendingUp, PieChart, Calculator, Eraser, Sparkles, Trash2,
+  BarChart3, TrendingUp, PieChart, Calculator, Eraser, Sparkles, Trash2, Lightbulb,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -262,6 +262,25 @@ export default function ExcelPage() {
               <Empty icon={FileSpreadsheet} title="等待操作" description="输入数据后点击执行" />
             )}
           </Card>
+
+          {/* 公式解释 */}
+          {operation === 'formula' && result && (
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Lightbulb className="w-4 h-4 text-amber-500" /> 公式解释
+              </h3>
+              <div className="bg-amber-50 rounded-xl p-4 text-sm text-gray-700 space-y-2">
+                <p className="font-medium text-amber-800">公式说明：</p>
+                <p>上述公式已根据你的需求生成。如果你需要了解公式的具体用法，可以参考以下说明：</p>
+                <ul className="list-disc list-inside space-y-1 text-gray-600">
+                  <li>公式中的单元格引用（如 A1, B2）需要根据实际数据位置调整</li>
+                  <li>数组公式需要按 Ctrl+Shift+Enter 确认（旧版 Excel）</li>
+                  <li>如果公式报错，请检查引用的单元格范围是否正确</li>
+                </ul>
+                <p className="text-xs text-gray-500 mt-2">提示：可以将公式直接粘贴到 Excel 单元格中使用</p>
+              </div>
+            </Card>
+          )}
 
           {/* 数据预览 */}
           {previewData && (

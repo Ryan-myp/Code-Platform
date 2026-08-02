@@ -5,6 +5,7 @@ import {
   Layers, Zap, Code2, PenTool, BarChart3,
   HeadphonesIcon, Languages, LayoutGrid, List as ListIcon,
   MessageSquare, Clock, X, Sparkles, ChevronDown,
+  CheckSquare, Square, Power, PowerOff,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -44,6 +45,27 @@ const DEFAULT_PROMPTS = {
 
 ## 输出要求
 - PRD 文档包含: 背景、目标、用户故事、功能描述、非功能需求、验收标准`,
+}
+
+// Agent 标签分类
+const AGENT_TAGS = [
+  { value: 'all', label: '全部', icon: Layers },
+  { value: 'coding', label: '编程', icon: Code2 },
+  { value: 'writing', label: '写作', icon: PenTool },
+  { value: 'analysis', label: '分析', icon: BarChart3 },
+  { value: 'service', label: '服务', icon: HeadphonesIcon },
+  { value: 'translation', label: '翻译', icon: Languages },
+]
+
+// 根据 agent 信息猜测标签
+function guessAgentTag(agent) {
+  const text = `${agent.name || ''} ${agent.description || ''} ${agent.instructions || ''}`.toLowerCase()
+  if (/代码|编程|开发|code|debug|api|全栈|前端|后端/.test(text)) return 'coding'
+  if (/文案|写作|内容|营销|blog|文章|创意/.test(text)) return 'writing'
+  if (/数据|分析|统计|报表|财务|dashboard/.test(text)) return 'analysis'
+  if (/客服|服务|客户|support|help/.test(text)) return 'service'
+  if (/翻译|语言|translate|多语/.test(text)) return 'translation'
+  return 'general'
 }
 
 const MODELS = ['agnes-2.5-flash', 'gpt-4o', 'claude-3', 'glm-4', 'qwen-max']
@@ -125,6 +147,10 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
         <span className="flex items-center gap-1" title="知识库数量">
           <Layers className="w-3.5 h-3.5" />
           {agent.kb_count || 0} 知识库
+        </span>
+        <span className="flex items-center gap-1" title="执行次数">
+          <Zap className="w-3.5 h-3.5" />
+          {agent.execution_count || 0} 次
         </span>
         <span className="flex items-center gap-1" title="最后运行时间">
           <Clock className="w-3.5 h-3.5" />
@@ -290,6 +316,8 @@ export default function AgentsPage({ tab }) {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [formDefaults, setFormDefaults] = useState(null)
+  const [tagFilter, setTagFilter] = useState('all')
+  const [selectedIds, setSelectedIds] = useState([])
 
   const fetchAgents = useCallback(async () => {
     setLoading(true)
@@ -319,8 +347,32 @@ export default function AgentsPage({ tab }) {
     const matchFilter = filter === 'all' ||
       (filter === 'active' && (agent.status || 'active') === 'active') ||
       (filter === 'inactive' && agent.status === 'inactive')
-    return matchSearch && matchFilter
+    const tag = agent.tag || guessAgentTag(agent)
+    const matchTag = tagFilter === 'all' || tag === tagFilter
+    return matchSearch && matchFilter && matchTag
   })
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
+  }
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredAgents.length) setSelectedIds([])
+    else setSelectedIds(filteredAgents.map(a => a.id))
+  }
+  const batchAction = async (action) => {
+    if (selectedIds.length === 0) { toast.error('请先选择 Agent'); return }
+    try {
+      if (action === 'delete') {
+        await Promise.all(selectedIds.map(id => api.delete(`/api/agents/${id}`)))
+        toast.success(`已删除 ${selectedIds.length} 个 Agent`)
+      } else {
+        const status = action === 'enable' ? 'active' : 'inactive'
+        await Promise.all(selectedIds.map(id => api.put(`/api/agents/${id}`, { status })))
+        toast.success(`已${action === 'enable' ? '启用' : '停用'} ${selectedIds.length} 个 Agent`)
+      }
+      setSelectedIds([]); fetchAgents()
+    } catch (e) { toast.error(`批量操作失败：${e.message}`) }
+  }
 
   const openCreate = () => {
     setEditingAgent(null)
@@ -436,6 +488,21 @@ export default function AgentsPage({ tab }) {
         </div>
       )}
 
+      {/* 标签筛选 */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {AGENT_TAGS.map(tag => (
+          <button key={tag.value} onClick={() => setTagFilter(tag.value)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
+              tagFilter === tag.value
+                ? 'bg-purple-100 text-purple-700 shadow-sm'
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+            }`}>
+            <tag.icon className="w-3.5 h-3.5" />
+            {tag.label}
+          </button>
+        ))}
+      </div>
+
       {/* Toolbar */}
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
@@ -476,6 +543,35 @@ export default function AgentsPage({ tab }) {
           </div>
         </div>
       </div>
+
+      {/* 批量操作栏 */}
+      {agents.length > 0 && (
+        <div className="flex items-center gap-3 px-1">
+          <button onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-purple-600 transition-colors">
+            {selectedIds.length === filteredAgents.length && filteredAgents.length > 0
+              ? <CheckSquare className="w-4 h-4 text-purple-600" />
+              : <Square className="w-4 h-4" />}
+            {selectedIds.length > 0 ? `已选 ${selectedIds.length} 个` : '全选'}
+          </button>
+          {selectedIds.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => batchAction('enable')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors">
+                <Power className="w-3 h-3" /> 启用
+              </button>
+              <button onClick={() => batchAction('disable')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors">
+                <PowerOff className="w-3 h-3" /> 停用
+              </button>
+              <button onClick={() => batchAction('delete')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-red-50 text-red-700 hover:bg-red-100 transition-colors">
+                <Trash2 className="w-3 h-3" /> 删除
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
