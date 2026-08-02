@@ -168,6 +168,9 @@ export default function WorkflowEditorPage() {
   const canRedo = futureRef.current.length > 0
 
   // ── 自动保存：debounce 2s ──
+  const toastRef = useRef(toast)
+  toastRef.current = toast
+
   const doSave = useCallback(async ({ manual = false } = {}) => {
     const { nodes: n, edges: e, workflow: wf } = stateRef.current
     if (!wf) return false
@@ -182,24 +185,32 @@ export default function WorkflowEditorPage() {
       setAutoSaveStatus('saved')
       setLastSavedAt(new Date())
       if (manual) {
-        toast.success('保存成功')
+        toastRef.current.success('保存成功')
       } else {
-        toast.success('已自动保存', 1500)
+        toastRef.current.success('已自动保存', 1500)
       }
       return true
     } catch (err) {
       setAutoSaveStatus('error')
-      toast.error(`保存失败：${err.message}`)
+      toastRef.current.error(`保存失败：${err.message}`)
       return false
     } finally {
       if (manual) setSaving(false)
     }
-  }, [toast])
+  }, [])
+
+  // 上次保存的快照，防止无变化时重复保存
+  const lastSavedSnapshotRef = useRef('')
 
   useEffect(() => {
     if (!loadedRef.current || !workflow) return
     clearTimeout(autoSaveTimerRef.current)
-    autoSaveTimerRef.current = setTimeout(() => doSave({ manual: false }), 2000)
+    const snapshot = JSON.stringify({ nodes, edges })
+    if (snapshot === lastSavedSnapshotRef.current) return
+    autoSaveTimerRef.current = setTimeout(() => {
+      lastSavedSnapshotRef.current = snapshot
+      doSave({ manual: false })
+    }, 2000)
     return () => clearTimeout(autoSaveTimerRef.current)
   }, [nodes, edges, workflow, doSave])
 
