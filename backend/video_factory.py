@@ -3,20 +3,24 @@
 
 import json
 import logging
-import os
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import requests
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse
+
+from common.config import load_config
+from common.db import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/video-factory", tags=["视频工厂"])
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
+# 配置：走 common.config 单一来源
+load_config()
+from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
 
 VIDEO_DIR = Path(__file__).parent / "video_factory"
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,6 +48,35 @@ def generate_video_id() -> str:
     return f"video_{int(time.time() * 1000)}"
 
 
+def _save_artifact(filename: str, project_id: str, prompt: str, duration: float,
+                   extra_meta: dict | None = None) -> str:
+    """将视频产物登记到 artifacts 表，返回 artifact id。
+
+    - type=video，media_url 指向 /api/video-factory/videos/{filename}
+    - metadata 含 prompt / video_id / 尺寸等
+    - 失败静默
+    """
+    art_id = f"art_{uuid.uuid4().hex[:12]}"
+    meta = {"prompt": prompt, "filename": filename}
+    if extra_meta:
+        meta.update(extra_meta)
+    try:
+        conn = get_db()
+        conn.execute(
+            """INSERT INTO artifacts
+               (id, project_id, type, content, version, author, created_at, active, media_url, duration, metadata)
+               VALUES (?, ?, 'video', ?, 'v1', 'video_factory', ?, 1, ?, ?, ?)""",
+            (art_id, project_id or "", json.dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False),
+             datetime.now().isoformat(), f"/api/video-factory/videos/{filename}",
+             float(duration or 0), json.dumps(meta, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"_save_artifact skipped: {e}")
+    return art_id
+
+
 @router.get("/stats")
 async def get_stats():
     video_count = len(list(VIDEO_DIR.glob("*.mp4"))) if VIDEO_DIR.exists() else 0
@@ -65,6 +98,7 @@ async def create_video_task(
     mode: str = Form("ti2vid"),
     image: str = Form(""),
     frame_rate: int = Form(24),
+    project_id: str = Form(""),
 ):
     """创建视频生成任务"""
     if not AGNES_API_KEY:
@@ -117,6 +151,7 @@ async def create_video_task(
             "height": height,
             "duration": duration,
             "mode": mode,
+            "project_id": project_id,
             "estimated_time": duration * 10,  # 估算时间
         }
 
@@ -124,12 +159,15 @@ async def create_video_task(
         raise
     except Exception as e:
         logger.error(f"创建视频任务异常: {e}")
-        raise HTTPException(500, f"创建视频任务失败: {str(e)}")
+        raise HTTPException(500, f"创建视频任务失败: {str(e)}") from e
 
 
 @router.get("/result/{video_id}")
-async def get_video_result(video_id: str):
-    """获取视频生成结果"""
+async def get_video_result(video_id: str, project_id: str = ""):
+    """获取视频生成结果。
+
+    project_id 作为 query 参数传入；视频生成完成时写入 artifacts 表关联到项目。
+    """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
@@ -158,16 +196,22 @@ async def get_video_result(video_id: str):
 
             filename = f"{video_id}.mp4"
             save_video(video_resp.content, filename)
+            vid_duration = float(data.get("duration", 0) or 0)
+            art_id = _save_artifact(filename, project_id, data.get("prompt", ""), vid_duration,
+                                    {"video_id": video_id, "width": data.get("width", 0),
+                                     "height": data.get("height", 0)})
 
             return {
                 "video_id": video_id,
                 "status": "completed",
+                "artifact_id": art_id,
                 "url": f"/api/video-factory/videos/{filename}",
                 "prompt": data.get("prompt", ""),
-                "duration": data.get("duration", 0),
+                "duration": vid_duration,
                 "width": data.get("width", 0),
                 "height": data.get("height", 0),
                 "created_at": data.get("created_at", int(time.time())),
+                "project_id": project_id,
             }
         elif status == "failed":
             raise HTTPException(500, f"视频生成失败: {data.get('error', 'unknown')}")
@@ -183,7 +227,7 @@ async def get_video_result(video_id: str):
         raise
     except Exception as e:
         logger.error(f"获取视频结果异常: {e}")
-        raise HTTPException(500, f"获取视频结果失败: {str(e)}")
+        raise HTTPException(500, f"获取视频结果失败: {str(e)}") from e
 
 
 @router.get("/videos/{filename}")

@@ -4,22 +4,23 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "smart-rd-platform"
-version = "6.1.0"
-description = "AI-Powered Smart R&D Platform - Full lifecycle development with LLM Agents"
+version = "8.0.0"
+description = "AI-Powered Smart R&D Platform v8.0 - Full lifecycle development with LLM Agents"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi==0.104.1",
     "uvicorn==0.24.0",
     "pydantic==2.5.0",
+    "pydantic-settings==2.1.0",
     "python-multipart==0.0.6",
-    "sqlalchemy==2.0.23",
-    "aiosqlite==0.19.0",
     "httpx==0.25.2",
+    "aiohttp==3.9.1",
+    "requests==2.31.0",
     "jinja2==3.1.2",
     "python-dotenv==1.0.0",
     "python-jose[cryptography]==3.3.0",
-    "passlib[bcrypt]==1.7.4",
-    "agno>=1.0.0",
+    "bcrypt>=4.0.0",
+    "slowapi==0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -48,7 +49,8 @@ select = [
     "UP",   # pyupgrade
 ]
 ignore = [
-    "E501", # line length handled by formatter
+    "E501",  # line length handled by formatter
+    "B008",  # Depends() and File() in default args is standard FastAPI pattern
 ]
 
 [tool.ruff.lint.per-file-ignores]

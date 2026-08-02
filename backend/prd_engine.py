@@ -3,126 +3,32 @@
 
 import json
 import logging
-import os
-import sqlite3
 import sys
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-import requests
-from fastapi import APIRouter, HTTPException, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException
+
+from common.config import BIZ_DELIVERY_DIR, load_config
+from common.db import get_db
+from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["研发流程"])
 
 PROJECT_DIR = Path(__file__).parent
-DB_PATH = PROJECT_DIR / "platform.db"
 ARTIFACTS_DIR = PROJECT_DIR / "artifacts"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# biz-delivery 引擎路径
-BIZ_DIR = "/Users/yanping.ma/biz-delivery/scripts"
-if BIZ_DIR not in sys.path:
+# biz-delivery 引擎路径（由 config.BIZ_DELIVERY_DIR 控制，留空则禁用 biz 引擎走 LLM fallback）
+BIZ_DIR = BIZ_DELIVERY_DIR
+if BIZ_DIR and BIZ_DIR not in sys.path:
     sys.path.insert(0, BIZ_DIR)
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.5-flash")
-
-# 从 config 表读取配置（优先于环境变量）
-def load_config():
-    global AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("SELECT key, value FROM config").fetchall()
-        conn.close()
-        for k, v in rows:
-            if k == "agnes_api_key" and v:
-                AGNES_API_KEY = v.strip()
-            elif k == "agnes_api_base" and v:
-                AGNES_API_BASE = v.strip()
-            elif k == "model_name" and v:
-                MODEL_NAME = v.strip()
-    except Exception as e:
-        logger.warning(f"load_config failed: {e}")
-
+# 模块加载时从 config 表加载 LLM 配置（覆盖环境变量）
 load_config()
-
-# 规范化 API Base（兼容存储了完整 /chat/completions 路径的旧配置）
-def normalize_api_base(base: str) -> str:
-    base = base.strip()
-    if base.endswith("/chat/completions"):
-        base = base[: -len("/chat/completions")]
-    if base.endswith("/v1"):
-        return base
-    if not base.endswith("/v1"):
-        return base.rstrip("/") + "/v1"
-    return base
-
-AGNES_API_BASE = normalize_api_base(AGNES_API_BASE)
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 4000, temperature: float = 0.4) -> str:
-    """调用 Agnes LLM"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-
-    url = f"{AGNES_API_BASE}/chat/completions"
-    try:
-        resp = requests.post(
-            url,
-            headers={
-                "Authorization": f"Bearer {AGNES_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MODEL_NAME,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            logger.error(f"LLM call failed: {resp.status_code} {resp.text[:500]}")
-            raise HTTPException(500, f"LLM 调用失败: {resp.status_code} {resp.text[:300]}")
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"LLM call exception: {e}")
-        raise HTTPException(500, f"LLM 调用异常: {str(e)}")
-
-
-def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, success: bool = True):
-    """记录使用统计"""
-    try:
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO usage_logs (id, timestamp, task_type, input_length, output_length, response_time, success)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (f"ul_{int(time.time() * 1000)}", datetime.now().isoformat(), task_type,
-             input_len, output_len, round(elapsed, 3), 1 if success else 0),
-        )
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
 
 
 # ══════════════════════════════════════════════════════════════
@@ -191,7 +97,7 @@ async def generate_prd(req: dict):
         return {"result": result}
     except Exception as e:
         logger.error(f"PRD generate failed: {e}")
-        raise HTTPException(500, f"PRD 生成失败: {str(e)}")
+        raise HTTPException(500, f"PRD 生成失败: {str(e)}") from e
 
 
 @router.post("/api/prd/review")
@@ -460,9 +366,32 @@ async def delete_project(proj_id: str):
 # ── 成果仓库 ────────────────────────────────────────────────
 
 @router.get("/api/artifacts")
-async def list_artifacts():
+async def list_artifacts(project_id: str = ""):
+    """成果列表，支持按 project_id 过滤（query 参数 ?project_id=xxx）。
+
+    - 不传 project_id：返回全部 active artifacts
+    - 传 project_id：仅返回该项目的 artifacts（包括图片/视频/音频/文档等所有类型）
+    """
     conn = get_db()
-    rows = conn.execute("SELECT * FROM artifacts WHERE active=1 ORDER BY created_at DESC").fetchall()
+    if project_id:
+        rows = conn.execute(
+            "SELECT * FROM artifacts WHERE active=1 AND project_id=? ORDER BY created_at DESC",
+            (project_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM artifacts WHERE active=1 ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.get("/api/projects/{project_id}/artifacts")
+async def list_project_artifacts(project_id: str):
+    """项目空间：按 project_id 查询该项目下全部 artifacts（聚合图片/视频/音频/文档产物）。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM artifacts WHERE active=1 AND project_id=? ORDER BY created_at DESC",
+        (project_id,),
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

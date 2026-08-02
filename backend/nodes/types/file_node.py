@@ -143,7 +143,7 @@ class FileOperationNode(BusinessNode):
 
         return resolved
 
-    def execute(self, context: dict[str, Any]) -> NodeResult:
+    def execute(self, context: dict[str, Any]) -> NodeResult:  # noqa: C901
         try:
             # 解析带有变量的路径
             resolved_path = self._resolve_path_vars(self.path, context)

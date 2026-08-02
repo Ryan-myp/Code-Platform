@@ -1,186 +1,317 @@
-import React, { useState, useEffect } from 'react'
-import axios from 'axios'
-import { 
-  Wrench, Plus, Trash2, Save, X, Search, Edit2, Eye,
-  FolderOpen, FileText, FileCode, Image, Code, RefreshCw,
-  ChevronDown, ChevronRight, Upload, Download, Terminal
+import React, { useState, useEffect, useCallback } from 'react'
+import {
+  Wrench, Plus, Trash2, Search, Edit2, Eye,
+  FileText, RefreshCw, LayoutGrid, List as ListIcon,
+  Link2, X
 } from 'lucide-react'
+import { api } from '../lib/api'
+import { useToast } from '../lib/toast'
+import { formatRelativeTime, formatDateTime } from '../lib/format'
+import {
+  Modal, Button, Empty, SkeletonGrid, ErrorState, PageHeader, ConfirmDialog,
+} from '../components/ui'
 
-const API = 'http://localhost:8888'
-
-// 技能卡片组件
-function SkillCard({ skill, onClick, onEdit, onDelete }) {
-  const categoryColors = {
-    'coding': 'from-blue-500 to-cyan-600',
-    'search': 'from-emerald-500 to-green-600',
-    'file': 'from-orange-500 to-amber-600',
-    'social': 'from-purple-500 to-pink-600',
-    'default': 'from-gray-500 to-gray-600'
-  }
-  
-  const color = categoryColors[skill.category] || categoryColors.default
-  
-  return (
-    <div 
-      className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all cursor-pointer group"
-      onClick={() => onClick(skill)}
-    >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center`}>
-            <Wrench className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900">{skill.name}</h3>
-            <p className="text-xs text-gray-500">{skill.category || '未分类'}</p>
-          </div>
-        </div>
-        <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs">
-          {skill.file_count || 0} 文件
-        </span>
-      </div>
-      
-      {skill.description && (
-        <p className="text-sm text-gray-600 line-clamp-2 mb-4">{skill.description}</p>
-      )}
-      
-      <div className="flex items-center gap-2 pt-4 border-t border-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button 
-          onClick={(e) => { e.stopPropagation(); onEdit(skill) }}
-          className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg"
-        >
-          <Edit2 className="w-4 h-4" />
-        </button>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onDelete(skill) }}
-          className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  )
+const isThisMonth = (val) => {
+  if (!val) return false
+  const d = new Date(val)
+  if (isNaN(d.getTime())) return false
+  const now = new Date()
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
 }
 
-export default function SkillsPage() {
-  const [skills, setSkills] = useState([])
-  const [selectedSkill, setSelectedSkill] = useState(null)
-  const [files, setFiles] = useState([])
-  const [editingFile, setEditingFile] = useState(null)
-  const [fileContent, setFileContent] = useState('')
-  const [showForm, setShowForm] = useState(false)
-  const [formData, setFormData] = useState({ name: '', description: '', category: '' })
-  const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [viewMode, setViewMode] = useState('grid')
+function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
+  const initial = skill.name?.[0]?.toUpperCase() || 'S'
 
-  const loadSkills = async () => {
-    const token = localStorage.getItem('token')
-    try {
-      const res = await axios.get(`${API}/api/skills`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setSkills(res.data)
-    } catch (err) {
-      console.error('加载技能失败', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const loadFiles = async (skillId) => {
-    const token = localStorage.getItem('token')
-    try {
-      const res = await axios.get(`${API}/api/skills/${skillId}/files`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setFiles(res.data)
-    } catch (err) {
-      console.error('加载文件失败', err)
-    }
-  }
-
-  useEffect(() => {
-    loadSkills()
-  }, [])
-
-  const filteredSkills = skills.filter(s => 
-    s.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.description?.toLowerCase().includes(searchTerm.toLowerCase())
-  )
-
-  const handleCreate = async () => {
-    if (!formData.name.trim()) return
-    const token = localStorage.getItem('token')
-    try {
-      await axios.post(`${API}/api/skills`, formData, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      setShowForm(false)
-      setFormData({ name: '', description: '', category: '' })
-      loadSkills()
-    } catch (err) {
-      alert('创建失败: ' + (err.response?.data?.detail || err.message))
-    }
-  }
-
-  const handleDelete = async (skill) => {
-    if (!confirm(`确定删除技能 "${skill.name}"？`)) return
-    const token = localStorage.getItem('token')
-    try {
-      await axios.delete(`${API}/api/skills/${skill.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      if (selectedSkill?.id === skill.id) {
-        setSelectedSkill(null)
-        setFiles([])
-      }
-      loadSkills()
-    } catch (err) {
-      alert('删除失败: ' + (err.response?.data?.detail || err.message))
-    }
-  }
-
-  if (loading) {
+  if (viewMode === 'list') {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="animate-spin w-8 h-8 text-purple-600" />
+      <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow flex items-center gap-4">
+        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold flex-shrink-0">{initial}</div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
+          <p className="text-sm text-gray-500 truncate">{skill.description || '暂无描述'}</p>
+        </div>
+        <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
+          {skill.content ? <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" />有内容</span> : null}
+          {skill.references ? <span className="flex items-center gap-1"><Link2 className="w-3.5 h-3.5" />有引用</span> : null}
+          <span>{formatRelativeTime(skill.created_at)}</span>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button onClick={() => onView(skill)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看"><Eye className="w-4 h-4" /></button>
+          <button onClick={() => onEdit(skill)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={() => onDelete(skill)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除"><Trash2 className="w-4 h-4" /></button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Skills 管理</h1>
-          <p className="text-gray-500 mt-1">创建和管理 AI 技能，定义 Agent 的行为和能力</p>
+    <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 flex flex-col">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">{initial}</div>
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{formatRelativeTime(skill.created_at)}</p>
+          </div>
         </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-xl hover:bg-purple-700"
-        >
-          <Plus className="w-4 h-4" />
-          <span>新建 Skill</span>
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {skill.content && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-xs">
+              <FileText className="w-3 h-3" />内容
+            </span>
+          )}
+          {skill.references && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full text-xs">
+              <Link2 className="w-3 h-3" />引用
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
-        {[
-          { label: '总技能数', value: skills.length, icon: Wrench, color: 'from-violet-500 to-purple-600' },
-          { label: '已绑定 Agent', value: skills.reduce((acc, s) => acc + (s.agent_count || 0), 0), icon: Bot, color: 'from-emerald-500 to-green-600' },
-          { label: '文件总数', value: skills.reduce((acc, s) => acc + (s.file_count || 0), 0), icon: FileCode, color: 'from-blue-500 to-cyan-600' },
-          { label: '分类数', value: [...new Set(skills.map(s => s.category).filter(Boolean))].length, icon: FolderOpen, color: 'from-orange-500 to-amber-600' },
-        ].map((stat, idx) => (
+      <p className="text-sm text-gray-600 line-clamp-2 mb-4 flex-1">{skill.description || '暂无描述'}</p>
+
+      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+        <span className="text-xs text-gray-400">{formatRelativeTime(skill.created_at)}</span>
+        <div className="flex items-center gap-1">
+          <button onClick={() => onView(skill)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看"><Eye className="w-4 h-4" /></button>
+          <button onClick={() => onEdit(skill)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={() => onDelete(skill)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除"><Trash2 className="w-4 h-4" /></button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SkillFormModal({ open, onClose, onSubmit, editing, loading }) {
+  const [form, setForm] = useState({ name: '', description: '', content: '', references: '' })
+  const [errors, setErrors] = useState({})
+
+  useEffect(() => {
+    if (!open) return
+    if (editing) {
+      setForm({
+        name: editing.name || '',
+        description: editing.description || '',
+        content: editing.content || '',
+        references: editing.references || '',
+      })
+    } else {
+      setForm({ name: '', description: '', content: '', references: '' })
+    }
+    setErrors({})
+  }, [open, editing])
+
+  const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
+
+  const validate = () => {
+    const e = {}
+    if (!form.name.trim()) e.name = '请输入 Skill 名称'
+    if (form.name.length > 80) e.name = '名称不能超过 80 个字符'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const handleSubmit = () => {
+    if (!validate()) return
+    onSubmit({ ...form, name: form.name.trim() })
+  }
+
+  const inputCls = (err) =>
+    `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
+      err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-purple-500/20 focus:border-purple-500'
+    }`
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={editing ? '编辑 Skill' : '新建 Skill'}
+      size="lg"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>取消</Button>
+          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
+          <input type="text" value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="例如：代码审查专家" className={inputCls(errors.name)} />
+          {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
+          <input type="text" value={form.description} onChange={(e) => setField('description', e.target.value)} placeholder="简要说明 Skill 的用途" className={inputCls(false)} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">内容（指令/模板）</label>
+          <textarea value={form.content} onChange={(e) => setField('content', e.target.value)} rows={6} placeholder="输入 Skill 的详细内容或系统指令…" className={`${inputCls(false)} font-mono text-sm`} />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">引用 / 参考（References）</label>
+          <textarea value={form.references} onChange={(e) => setField('references', e.target.value)} rows={3} placeholder="输入参考文档、链接或其他 Skill 名称，每行一个…" className={inputCls(false)} />
+          <p className="text-xs text-gray-400 mt-1">用于在对话中引用相关知识或其他 Skill</p>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function SkillDetailModal({ open, onClose, skill, onEdit, onDelete }) {
+  if (!skill) return null
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={skill.name}
+      size="lg"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>关闭</Button>
+          <Button icon={Edit2} onClick={() => { onEdit(skill); onClose() }}>编辑</Button>
+          <Button variant="danger" icon={Trash2} onClick={() => { onDelete(skill); onClose() }}>删除</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-3 pb-4 border-b border-gray-100">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">
+            {skill.name?.[0]?.toUpperCase() || 'S'}
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5">创建于 {formatDateTime(skill.created_at)}</p>
+          </div>
+        </div>
+
+        {skill.description && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">描述</p>
+            <p className="text-sm text-gray-700">{skill.description}</p>
+          </div>
+        )}
+
+        {skill.content && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">内容</p>
+            <pre className="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-64 overflow-y-auto">{skill.content}</pre>
+          </div>
+        )}
+
+        {skill.references && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+              <Link2 className="w-3 h-3" /> 引用 / 参考
+            </p>
+            <div className="bg-emerald-50 rounded-xl p-4 text-sm text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap">{skill.references}</div>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+export default function SkillsPage() {
+  const toast = useToast()
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [viewMode, setViewMode] = useState('grid')
+  const [showForm, setShowForm] = useState(false)
+  const [editingSkill, setEditingSkill] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [viewTarget, setViewTarget] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await api.get('/api/skills')
+      setItems(Array.isArray(res.data) ? res.data : [])
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const filteredItems = items.filter((s) => {
+    const q = searchTerm.toLowerCase()
+    if (!q) return true
+    return (s.name || '').toLowerCase().includes(q) ||
+      (s.description || '').toLowerCase().includes(q) ||
+      (s.content || '').toLowerCase().includes(q) ||
+      (s.references || '').toLowerCase().includes(q)
+  })
+
+  const openCreate = () => { setEditingSkill(null); setShowForm(true) }
+  const openEdit = (skill) => { setEditingSkill(skill); setShowForm(true) }
+
+  const handleSubmit = async (payload) => {
+    setSaving(true)
+    try {
+      if (editingSkill) {
+        await api.put(`/api/skills/${editingSkill.id}`, payload)
+        toast.success(`Skill「${payload.name}」已更新`)
+      } else {
+        await api.post('/api/skills', payload)
+        toast.success(`Skill「${payload.name}」已创建`)
+      }
+      setShowForm(false)
+      setEditingSkill(null)
+      loadData()
+    } catch (e) {
+      toast.error(`操作失败：${e.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return false
+    try {
+      await api.delete(`/api/skills/${deleteTarget.id}`)
+      toast.success(`Skill「${deleteTarget.name}」已删除`)
+      setDeleteTarget(null)
+      loadData()
+      return true
+    } catch (e) {
+      toast.error(`删除失败：${e.message}`)
+      return false
+    }
+  }
+
+  const stats = [
+    { label: '总技能数', value: items.length, icon: Wrench, color: 'from-violet-500 to-purple-600' },
+    { label: '含描述', value: items.filter((s) => s.description?.trim()).length, icon: FileText, color: 'from-emerald-500 to-green-600' },
+    { label: '含内容', value: items.filter((s) => s.content?.trim()).length, icon: Edit2, color: 'from-blue-500 to-cyan-600' },
+    { label: '含引用', value: items.filter((s) => s.references?.trim()).length, icon: Link2, color: 'from-amber-500 to-orange-600' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Skills 管理"
+        description="创建和管理 AI 技能，定义 Agent 的行为和能力"
+        icon={Wrench}
+        iconColor="from-violet-500 to-purple-600"
+        actions={<Button variant="primary" icon={Plus} onClick={openCreate}>新建 Skill</Button>}
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {stats.map((stat, idx) => (
           <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center`}>
+              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -188,189 +319,47 @@ export default function SkillsPage() {
         ))}
       </div>
 
-      {/* Toolbar */}
-      <div className="bg-white rounded-2xl border border-gray-200 p-4 flex items-center gap-4">
+      <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="搜索技能..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-          />
+          <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="搜索 Skill 名称、描述、内容或引用…" className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
         </div>
-        <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-          <button
-            onClick={() => setViewMode('grid')}
-            className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500'}`}
-          >
-            <Grid className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setViewMode('list')}
-            className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500'}`}
-          >
-            <ListIcon className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-4">
-        {/* Skills List */}
-        <div className="space-y-3">
-          {filteredSkills.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-              <Wrench className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="font-medium text-gray-900 mb-2">暂无技能</h3>
-              <p className="text-sm text-gray-500">创建一个 Skill 来定义 Agent 的能力</p>
-            </div>
-          ) : viewMode === 'grid' ? (
-            <div className="grid grid-cols-2 gap-3">
-              {filteredSkills.map(skill => (
-                <SkillCard
-                  key={skill.id}
-                  skill={skill}
-                  onClick={setSelectedSkill}
-                  onEdit={() => {}}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filteredSkills.map(skill => (
-                <div
-                  key={skill.id}
-                  className={`bg-white rounded-xl border p-4 flex items-center gap-3 cursor-pointer ${
-                    selectedSkill?.id === skill.id ? 'border-purple-500 bg-purple-50' : 'border-gray-200'
-                  }`}
-                  onClick={() => setSelectedSkill(skill)}
-                >
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                    <Wrench className="w-4 h-4 text-white" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-gray-900 truncate">{skill.name}</h3>
-                    <p className="text-xs text-gray-500">{skill.category || '未分类'}</p>
-                  </div>
-                  <span className="text-xs text-gray-500">{skill.file_count || 0} 文件</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Skill Detail */}
-        <div className="col-span-2">
-          {selectedSkill ? (
-            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                    <Wrench className="w-6 h-6 text-white" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-gray-900">{selectedSkill.name}</h2>
-                    <p className="text-sm text-gray-500">{selectedSkill.category || '未分类'}</p>
-                  </div>
-                </div>
-                {selectedSkill.description && (
-                  <p className="mt-4 text-gray-600">{selectedSkill.description}</p>
-                )}
-              </div>
-              
-              <div className="p-6">
-                <h3 className="font-medium text-gray-900 mb-4">文件列表</h3>
-                {files.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    <FileText className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>暂无文件</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {files.map(file => (
-                      <div key={file.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                        <FileCode className="w-5 h-5 text-gray-400" />
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">{file.name}</p>
-                          <p className="text-xs text-gray-500">{file.size || 'N/A'} · {new Date(file.created_at).toLocaleDateString()}</p>
-                        </div>
-                        <button className="p-2 hover:bg-white rounded-lg">
-                          <Edit2 className="w-4 h-4 text-gray-400" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
-              <Wrench className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">选择一个技能</h3>
-              <p className="text-gray-500">从左侧选择一个 Skill 查看详情</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Create Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <h2 className="text-xl font-bold">新建 Skill</h2>
-              <button onClick={() => setShowForm(false)} className="p-2 hover:bg-gray-100 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">名称 *</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  placeholder="例如：代码审查专家"
-                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">分类</label>
-                <select
-                  value={formData.category}
-                  onChange={(e) => setFormData({...formData, category: e.target.value})}
-                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="">未分类</option>
-                  <option value="coding">编码</option>
-                  <option value="search">搜索</option>
-                  <option value="file">文件</option>
-                  <option value="social">社交</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  rows={3}
-                  className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
-              <button onClick={() => setShowForm(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-xl">
-                取消
-              </button>
-              <button onClick={handleCreate} className="px-4 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700">
-                创建
-              </button>
-            </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData}>刷新</Button>
+          <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+            <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`} title="网格视图"><LayoutGrid className="w-4 h-4" /></button>
+            <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`} title="列表视图"><ListIcon className="w-4 h-4" /></button>
           </div>
         </div>
+      </div>
+
+      {loading ? (
+        <SkeletonGrid count={6} />
+      ) : error ? (
+        <ErrorState message={`加载失败：${error.message}`} onRetry={loadData} />
+      ) : filteredItems.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-200">
+          <Empty icon={Wrench} title={searchTerm ? '未找到匹配的 Skill' : '暂无 Skill'} description={searchTerm ? '尝试调整搜索条件' : '点击「新建 Skill」创建你的第一个 AI 技能'} actionLabel={searchTerm ? undefined : '新建 Skill'} onAction={searchTerm ? undefined : openCreate} />
+        </div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredItems.map((skill) => (
+            <SkillCard key={skill.id} skill={skill} onView={setViewTarget} onEdit={openEdit} onDelete={setDeleteTarget} viewMode="grid" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredItems.map((skill) => (
+            <SkillCard key={skill.id} skill={skill} onView={setViewTarget} onEdit={openEdit} onDelete={setDeleteTarget} viewMode="list" />
+          ))}
+        </div>
       )}
+
+      <SkillFormModal open={showForm} onClose={() => { setShowForm(false); setEditingSkill(null) }} onSubmit={handleSubmit} editing={editingSkill} loading={saving} />
+
+      <SkillDetailModal open={!!viewTarget} onClose={() => setViewTarget(null)} skill={viewTarget} onEdit={openEdit} onDelete={setDeleteTarget} />
+
+      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="确认删除 Skill" message={<>确定要删除 Skill「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。</>} confirmLabel="确认删除" />
     </div>
   )
 }

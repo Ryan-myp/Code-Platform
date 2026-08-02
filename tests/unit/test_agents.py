@@ -12,7 +12,7 @@ class TestAgentCRUD:
     """测试 Agent 的增删改查"""
 
     def test_create_agent(self, sample_agent_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -42,7 +42,7 @@ class TestAgentCRUD:
             assert row["name"] == sample_agent_data["name"]
 
     def test_update_agent(self, sample_agent_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -78,7 +78,7 @@ class TestAgentCRUD:
             assert row["instructions"] == "New instructions"
 
     def test_delete_agent_soft_delete(self, sample_agent_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -113,7 +113,7 @@ class TestAgentCRUD:
             assert row is None
 
     def test_list_agents(self, sample_agent_data):
-        from database import get_db
+        from common.db import get_db
         # 插入两个 agent
         with get_db() as conn:
             conn.execute(

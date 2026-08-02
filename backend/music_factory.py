@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
+import json
 import logging
-import os
 import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 import requests
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse
+
+from common.config import load_config
+from common.db import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/music-factory", tags=["音乐工厂"])
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
+# 配置：走 common.config 单一来源
+load_config()
+from common.config import AGNES_API_BASE, AGNES_API_KEY, MODEL_NAME  # noqa: E402
 
 MUSIC_DIR = Path(__file__).parent / "music_factory"
 MUSIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,6 +41,37 @@ def save_music(data: bytes, filename: str) -> str:
 
 def generate_music_id() -> str:
     return f"music_{int(time.time() * 1000)}"
+
+
+def _save_artifact(filename: str, project_id: str, art_type: str, content: str,
+                   duration: float = 0.0, extra_meta: dict | None = None) -> str:
+    """将音乐/歌词产物登记到 artifacts 表，返回 artifact id。
+
+    - art_type: 'lyrics' 或 'audio'
+    - lyrics: content=歌词正文，media_url 指向 /api/music-factory/lyrics/{filename}
+    - audio:  media_url 指向 /api/music-factory/audios/{filename}，duration 为估算时长
+    - 失败静默
+    """
+    art_id = f"art_{uuid.uuid4().hex[:12]}"
+    meta = {"filename": filename, "type": art_type}
+    if extra_meta:
+        meta.update(extra_meta)
+    media_url = (f"/api/music-factory/audios/{filename}" if art_type == "audio"
+                 else f"/api/music-factory/lyrics/{filename}")
+    try:
+        conn = get_db()
+        conn.execute(
+            """INSERT INTO artifacts
+               (id, project_id, type, content, version, author, created_at, active, media_url, duration, metadata)
+               VALUES (?, ?, ?, ?, 'v1', 'music_factory', ?, 1, ?, ?, ?)""",
+            (art_id, project_id or "", art_type, content, datetime.now().isoformat(),
+             media_url, float(duration or 0), json.dumps(meta, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"_save_artifact skipped: {e}")
+    return art_id
 
 
 @router.get("/stats")
@@ -60,6 +97,7 @@ async def generate_lyrics(
     language: str = Form("zh"),
     length: str = Form("medium"),
     mood: str = Form("happy"),
+    project_id: str = Form(""),
 ):
     """生成歌词"""
     if not AGNES_API_KEY:
@@ -118,7 +156,7 @@ async def generate_lyrics(
                 "Content-Type": "application/json",
             },
             json={
-                "model": "agnes-2.5-flash",
+                "model": MODEL_NAME,
                 "messages": [
                     {"role": "system", "content": "你是一位专业的歌词创作者，擅长创作优美动人的歌词。"},
                     {"role": "user", "content": prompt},
@@ -139,22 +177,27 @@ async def generate_lyrics(
         lyrics_filename = f"{generate_music_id()}.txt"
         lyrics_path = MUSIC_DIR / lyrics_filename
         lyrics_path.write_text(lyrics, encoding="utf-8")
+        art_id = _save_artifact(lyrics_filename, project_id, "lyrics", lyrics, 0.0,
+                                {"theme": theme, "style": style, "language": language,
+                                 "length": length, "mood": mood})
 
         return {
             "lyrics": lyrics,
             "lyrics_file": lyrics_filename,
+            "artifact_id": art_id,
             "theme": theme,
             "style": style,
             "language": language,
             "length": length,
             "mood": mood,
+            "project_id": project_id,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"生成歌词异常: {e}")
-        raise HTTPException(500, f"生成歌词失败: {str(e)}")
+        raise HTTPException(500, f"生成歌词失败: {str(e)}") from e
 
 
 @router.post("/music/generate")
@@ -166,7 +209,7 @@ async def generate_music(
 ):
     """生成音乐（占位，待接入 Suno/Udio API）"""
     music_id = generate_music_id()
-    
+
     result = {
         "music_id": music_id,
         "lyrics": lyrics[:200] + "..." if len(lyrics) > 200 else lyrics,
@@ -186,6 +229,7 @@ async def generate_vocal(
     lyrics: str = Form(...),
     voice: str = Form("female"),
     style: str = Form("pop"),
+    project_id: str = Form(""),
 ):
     """生成虚拟人声（TTS）"""
     voice_mapping = {
@@ -215,12 +259,17 @@ async def generate_vocal(
         if response.status_code == 200:
             filename = f"{generate_music_id()}.mp3"
             save_music(response.content, filename)
+            duration = len(lyrics) / 15
+            art_id = _save_artifact(filename, project_id, "audio", lyrics[:500], duration,
+                                    {"voice": voice, "style": style, "tts_voice": tts_voice})
             return {
                 "audio_id": filename,
+                "artifact_id": art_id,
                 "url": f"/api/music-factory/audios/{filename}",
                 "voice": voice,
                 "style": style,
-                "duration": len(lyrics) / 15,
+                "duration": duration,
+                "project_id": project_id,
             }
         else:
             return {

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
 class TestProjectCRUD:
     def test_create_project(self, sample_project_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO projects (id, name, description, status, team_id, created_at, updated_at) VALUES (?, ?, ?, 'planning', ?, ?, ?)",
@@ -31,7 +31,7 @@ class TestProjectCRUD:
             assert row["name"] == sample_project_data["name"]
 
     def test_delete_project_cascades(self, sample_project_data):
-        from database import get_db
+        from common.db import get_db
         proj_id = sample_project_data["id"]
         with get_db() as conn:
             conn.execute(
@@ -63,7 +63,7 @@ class TestProjectCRUD:
 
 class TestRequirementCRUD:
     def test_create_requirement(self, sample_requirement_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO requirements (id, name, description, status, priority, project_id, creator, version, created_at, updated_at) VALUES (?, ?, ?, 'draft', ?, ?, ?, 1, ?, ?)",
@@ -89,7 +89,7 @@ class TestRequirementCRUD:
 
 class TestTaskCRUD:
     def test_create_task(self, sample_task_data):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO tasks (id, project_id, title, description, type, assignee, status, priority, parent_task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'todo', ?, ?, ?)",
@@ -114,7 +114,7 @@ class TestTaskCRUD:
             assert row["title"] == sample_task_data["title"]
 
     def test_update_task_status(self, sample_task_data):
-        from database import get_db
+        from common.db import get_db
         task_id = sample_task_data["id"]
         with get_db() as conn:
             conn.execute(
@@ -134,7 +134,7 @@ class TestTaskCRUD:
 
 class TestArtifactCRUD:
     def test_create_artifact(self, test_db_path):
-        from database import get_db
+        from common.db import get_db
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO artifacts (id, project_id, requirement_id, type, content, version, author, created_at) VALUES (?, ?, ?, 'prd', '测试内容', 1, 'tester', '2024-01-01T00:00:00')",

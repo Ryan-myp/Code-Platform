@@ -2,59 +2,14 @@
 """会话管理 - 支持 Agent 对话历史"""
 
 import json
-import sqlite3
 import time
 from datetime import datetime
-from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "platform.db"
+from fastapi import APIRouter, HTTPException
 
+from common.db import get_db
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    """初始化会话表"""
-    conn = get_db()
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            agent_id TEXT NOT NULL,
-            title TEXT DEFAULT '',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            agent_id TEXT,
-            memory_type TEXT DEFAULT 'short',
-            content TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-    """)
-    conn.commit()
-    conn.close()
+router = APIRouter(tags=["会话"])
 
 
 def create_session(agent_id: str, title: str = "") -> str:
@@ -89,16 +44,16 @@ def list_sessions(agent_id: str = None) -> list:
     return [dict(r) for r in rows]
 
 
-def add_message(session_id: str, role: str, content: str, metadata: dict = None) -> str:
-    """添加消息"""
-    msg_id = f"msg_{int(time.time() * 1000)}"
+def add_message(session_id: str, role: str, content: str, metadata: dict = None) -> int:
+    """添加消息。返回自增 id。"""
     conn = get_db()
-    conn.execute(
-        "INSERT INTO messages (id, session_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)",
-        (msg_id, session_id, role, content, json.dumps(metadata or {})),
+    cur = conn.execute(
+        "INSERT INTO messages (session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
+        (session_id, role, content, json.dumps(metadata or {}), datetime.now().isoformat()),
     )
     conn.execute("UPDATE sessions SET updated_at=? WHERE id=?", (datetime.now().isoformat(), session_id))
     conn.commit()
+    msg_id = cur.lastrowid
     conn.close()
     return msg_id
 
@@ -154,10 +109,6 @@ def get_memories(session_id: str, agent_id: str = None) -> list:
 # FastAPI 路由
 # ══════════════════════════════════════════════════════════════
 
-from fastapi import APIRouter, HTTPException
-
-router = APIRouter(tags=["会话"])
-
 
 @router.get("/api/sessions")
 async def api_list_sessions(agent_id: str = None):
@@ -202,7 +153,3 @@ async def api_delete_session(session_id: str):
 async def api_get_memories(session_id: str, agent_id: str = None):
     """获取会话记忆"""
     return get_memories(session_id, agent_id)
-
-
-# 初始化
-init_db()

@@ -19,6 +19,7 @@ def setup_test_db():
         db_path = f.name
     original_db_path = os.environ.get("DB_PATH")
     os.environ["DB_PATH"] = db_path
+    os.environ["APP_ENV"] = "test"  # 禁用限流避免干扰测试
     # 重置 Config 模块缓存
     if "config" in sys.modules:
         del sys.modules["config"]
@@ -137,3 +138,20 @@ def sample_task_data():
         "status": "todo",
         "priority": "P1",
     }
+
+
+@pytest.fixture
+def auth_headers(setup_test_db):
+    """获取 admin 用户登录后的 Authorization 头。
+
+    init_db 已 ensure admin/admin123 用户，直接 login 拿 token。
+    供集成测试在调用受保护端点时使用：client.post(..., headers=auth_headers)
+    """
+    from main import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    assert resp.status_code == 200, f"admin login failed: {resp.status_code} {resp.text}"
+    token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}

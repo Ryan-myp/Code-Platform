@@ -1,48 +1,55 @@
 #!/usr/bin/env python3
-"""智能研发平台 v7.0 — 智能研发 + Agent 工作流平台"""
+"""智能研发平台 v8.0 — 智能研发 + Agent 工作流平台。
+
+v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
+"""
 
 import json
 import logging
 import os
-import sqlite3
 import time
-from collections.abc import Callable
-from datetime import datetime, timedelta
-from typing import Any
+from contextlib import asynccontextmanager
+from datetime import datetime
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
-from passlib.context import CryptContext
 from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # 加载 .env 文件
 load_dotenv()
 
-from image_factory import router as image_factory_router
-from video_factory import router as video_factory_router
-from music_factory import router as music_factory_router
-from prd_engine import router as prd_engine_router
-from chat_engine import router as chat_engine_router
-from sessions import router as sessions_router
-from collab_engine import router as collab_engine_router
-
-# ── 配置 ──────────────────────────────────────────────────────
-PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(PROJECT_DIR, "platform.db")
-SKILLS_DIR = os.path.join(PROJECT_DIR, "skills_files")
-ARTIFACTS_DIR = os.path.join(PROJECT_DIR, "artifacts")
-LOGS_DIR = os.path.join(PROJECT_DIR, "logs")
-
-os.makedirs(SKILLS_DIR, exist_ok=True)
-os.makedirs(ARTIFACTS_DIR, exist_ok=True)
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.0-flash")
-SECRET_KEY = os.environ.get("SECRET_KEY", "your-super-secret-change-in-prod")
+from chat_engine import router as chat_engine_router  # noqa: E402
+from collab_engine import router as collab_engine_router  # noqa: E402
+from common.auth import login_user, require_auth  # noqa: E402
+from common.config import ALLOWED_ORIGINS, validate_security_config  # noqa: E402
+from common.db import get_db, init_schema  # noqa: E402
+from common.models import (  # noqa: E402
+    AgentCreateRequest,
+    AgentUpdateRequest,
+    KnowledgeBaseCreateRequest,
+    KnowledgeBaseUpdateRequest,
+    LoginRequest,
+    MCPServerCreateRequest,
+    MCPServerUpdateRequest,
+    SandboxProjectCreateRequest,
+    SandboxPullImageRequest,
+    SkillCreateRequest,
+    SkillUpdateRequest,
+    TeamCreateRequest,
+    TeamUpdateRequest,
+    WorkflowCreateRequest,
+    WorkflowUpdateRequest,
+)
+from image_factory import router as image_factory_router  # noqa: E402
+from music_factory import router as music_factory_router  # noqa: E402
+from prd_engine import router as prd_engine_router  # noqa: E402
+from realtime import router as realtime_router  # noqa: E402
+from seed_data import seed_if_empty  # noqa: E402
+from sessions import router as sessions_router  # noqa: E402
+from video_factory import router as video_factory_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -51,160 +58,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── 密码哈希 ──────────────────────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-ALGORITHM = "HS256"
-security = HTTPBearer()
+# ── 限流器 ────────────────────────────────────────────────────
+# 测试环境下禁用限流，避免干扰测试
+_is_test = os.environ.get("APP_ENV") == "test"
+limiter = Limiter(key_func=get_remote_address, default_limits=[] if _is_test else ["200 per minute"])
 
 
-# ── Token 辅助函数 ────────────────────────────────────────────
-def create_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=30))
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def decode_token(token: str) -> dict:
-    try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError as e:
-        logger.warning(f"Token validation failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效或过期令牌",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-# ── 鉴权依赖 ──────────────────────────────────────────────────
-async def get_current_user(
-    request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> dict[str, Any]:
-    token = credentials.credentials
-    payload = decode_token(token)
-    user_info = {
-        "user_id": payload.get("user_id"),
-        "username": payload.get("sub"),
-        "role": payload.get("role", "viewer"),
-        "scope": payload.get("scope", ["read"]),
-    }
-    return user_info
-
-
-def require_auth(dependency: Callable = Depends(get_current_user)):
-    return dependency
-
-
-# ── 数据库 ────────────────────────────────────────────────────
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
+# ── 数据库初始化（保留 init_db 名字供 conftest 调用） ─────────
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
+    """委托给 common.db.init_schema（24 表 + 迁移 + admin 用户）。"""
+    init_schema()
 
-    # 创建 users 表（如果不存在）
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'viewer',
-            created_at TEXT,
-            active INTEGER DEFAULT 1
-        )
-    """)
 
-    # 创建 agents 表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS agents (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            instructions TEXT,
-            model TEXT DEFAULT 'agnes-2.0-flash',
-            tools TEXT DEFAULT '[]',
-            knowledge_base_ids TEXT DEFAULT '[]',
-            skill_ids TEXT DEFAULT '[]',
-            mcp_server_ids TEXT DEFAULT '[]',
-            active INTEGER DEFAULT 1,
-            created_at TEXT
-        )
-    """)
-
-    # 创建 workflows 表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS workflows (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            definition TEXT,
-            created_at TEXT
-        )
-    """)
-
-    # 创建 sessions 表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            agent_id TEXT NOT NULL,
-            title TEXT DEFAULT '',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    # 创建 messages 表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            metadata TEXT DEFAULT '{}',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-    """)
-
-    # 创建 memories 表
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            agent_id TEXT,
-            memory_type TEXT DEFAULT 'short',
-            content TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-        )
-    """)
-
-    # 创建 admin 用户（如果不存在）
-    import hashlib
-
-    admin_hash = hashlib.sha256(b"admin123").hexdigest()
-    cur.execute(
-        "INSERT OR IGNORE INTO users (id, username, password_hash, role, active) VALUES (?, ?, ?, ?, ?)",
-        ("admin_001", "admin", admin_hash, "admin", 1),
-    )
-
-    conn.commit()
-    conn.close()
-    logger.info("Database initialized")
+# ── 应用生命周期 ─────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时初始化数据库 + 安全校验。关闭时无特殊处理。"""
+    validate_security_config()
+    init_db()
+    seed_if_empty()
+    logger.info("Smart R&D Platform v8.0 started")
+    yield
+    logger.info("Smart R&D Platform v8.0 shutting down")
 
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
-app = FastAPI(title="智能研发平台 v7.0", version="7.0.0")
+app = FastAPI(title="智能研发平台 v8.0", version="8.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -214,48 +99,14 @@ app.add_middleware(
 # ── 健康检查 ──────────────────────────────────────────────────
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "7.0.0"}
+    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "8.0.0"}
 
 
 # ── 认证 ──────────────────────────────────────────────────────
 @app.post("/api/auth/login")
-async def login(req: dict):
-    username = req.get("username", "")
-    password = req.get("password", "")
-
-    if not username or not password:
-        raise HTTPException(400, "用户名和密码不能为空")
-
-    conn = get_db()
-    user = conn.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
-    conn.close()
-
-    if not user:
-        raise HTTPException(401, "用户名或密码错误")
-
-    import hashlib
-
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-    if user["password_hash"] != password_hash:
-        raise HTTPException(401, "用户名或密码错误")
-
-    token = create_token(
-        {
-            "user_id": user["id"],
-            "sub": user["username"],
-            "role": user["role"],
-        }
-    )
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": {
-            "id": user["id"],
-            "username": user["username"],
-            "role": user["role"],
-        },
-    }
+@limiter.limit("5 per minute")
+async def login(request: Request, req: LoginRequest):
+    return login_user(req.username, req.password)
 
 
 # ── Agent 管理 ────────────────────────────────────────────────
@@ -269,51 +120,50 @@ async def list_agents(current_user: dict = require_auth()):
 
 
 @app.post("/api/agents")
-async def create_agent(req: dict, current_user: dict = require_auth()):
+async def create_agent(req: AgentCreateRequest, current_user: dict = require_auth()):
     """创建 Agent"""
-    name = req.get("name", "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
-
     conn = get_db()
     agent_id = f"agent_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO agents (id, name, description, instructions, model, tools, knowledge_base_ids, skill_ids, mcp_server_ids, active, created_at) 
+        """INSERT INTO agents (id, name, description, instructions, model, tools, knowledge_base_ids, skill_ids, mcp_server_ids, active, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
         (
             agent_id,
-            name,
-            req.get("description", ""),
-            req.get("instructions", ""),
-            req.get("model", "agnes-2.5-flash"),
-            json.dumps(req.get("tools", [])),
-            json.dumps(req.get("knowledge_base_ids", [])),
-            json.dumps(req.get("skill_ids", [])),
-            json.dumps(req.get("mcp_server_ids", [])),
+            req.name,
+            req.description,
+            req.instructions,
+            req.model,
+            json.dumps(req.tools),
+            json.dumps(req.knowledge_base_ids),
+            json.dumps(req.skill_ids),
+            json.dumps(req.mcp_server_ids),
             datetime.now().isoformat(),
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": agent_id, "name": name}
+    return {"id": agent_id, "name": req.name}
 
 
 @app.put("/api/agents/{agent_id}")
-async def update_agent(agent_id: str, req: dict, current_user: dict = require_auth()):
+async def update_agent(agent_id: str, req: AgentUpdateRequest, current_user: dict = require_auth()):
     """更新 Agent"""
     conn = get_db()
-    fields = ["name", "description", "instructions", "model", "active"]
-    list_fields = ["tools", "knowledge_base_ids", "skill_ids", "mcp_server_ids"]
     updates = []
     vals = []
-    for f in fields:
-        if f in req:
+    for f in ["name", "description", "instructions", "model"]:
+        v = getattr(req, f, None)
+        if v is not None:
             updates.append(f"{f}=?")
-            vals.append(req[f])
-    for f in list_fields:
-        if f in req:
+            vals.append(v)
+    if req.active is not None:
+        updates.append("active=?")
+        vals.append(1 if req.active else 0)
+    for f in ["tools", "knowledge_base_ids", "skill_ids", "mcp_server_ids"]:
+        v = getattr(req, f, None)
+        if v is not None:
             updates.append(f"{f}=?")
-            vals.append(json.dumps(req[f]))
+            vals.append(json.dumps(v))
     if not updates:
         raise HTTPException(400, "无更新字段")
     vals.append(agent_id)
@@ -340,50 +190,119 @@ async def list_workflows(current_user: dict = require_auth()):
     conn = get_db()
     workflows = conn.execute("SELECT * FROM workflows ORDER BY created_at DESC").fetchall()
     conn.close()
-    return [dict(w) for w in workflows]
+    result = []
+    for w in workflows:
+        d = dict(w)
+        d["status"] = "active" if d.get("active") else "inactive"
+        try:
+            d["nodes"] = json.loads(d.get("steps") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            d["nodes"] = []
+        result.append(d)
+    return result
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_workflow(workflow_id: str, current_user: dict = require_auth()):
+    """获取工作流详情"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM workflows WHERE id=?", (workflow_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "工作流不存在")
+    d = dict(row)
+    d["status"] = "active" if d.get("active") else "inactive"
+    try:
+        nodes = json.loads(d.get("steps") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        nodes = []
+    try:
+        edges = json.loads(d.get("connections") or "[]")
+        if not isinstance(edges, list):
+            edges = []
+    except (json.JSONDecodeError, TypeError):
+        edges = []
+    d["nodes"] = nodes
+    d["definition"] = {"nodes": nodes, "edges": edges}
+    return d
 
 
 @app.post("/api/workflows")
-async def create_workflow(req: dict, current_user: dict = require_auth()):
+async def create_workflow(req: WorkflowCreateRequest, current_user: dict = require_auth()):
     """创建工作流"""
     import uuid
 
     workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
+    # 处理 definition 字段（前端编辑器可能发送 WorkflowDefinition 对象或 JSON 字符串）
+    steps = req.steps
+    connections = req.connections
+    if req.definition is not None:
+        defn = req.definition
+        if isinstance(defn, str):
+            try:
+                defn = json.loads(defn)
+            except json.JSONDecodeError:
+                defn = {}
+        if hasattr(defn, "nodes"):
+            steps = steps or defn.nodes
+            connections = connections or defn.edges
+        elif isinstance(defn, dict):
+            steps = steps or defn.get("nodes", [])
+            connections = connections or defn.get("edges", [])
     conn = get_db()
     conn.execute(
         """INSERT INTO workflows (id, name, description, steps, connections, created_at, active)
            VALUES (?, ?, ?, ?, ?, ?, 1)""",
         (
             workflow_id,
-            req.get("name", ""),
-            req.get("description", ""),
-            json.dumps(req.get("steps", req.get("definition", {}).get("nodes", []))),
-            json.dumps(req.get("connections", {})),
+            req.name,
+            req.description,
+            json.dumps(steps or []),
+            json.dumps(connections or []),
             datetime.now().isoformat(),
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": workflow_id, "name": req.get("name", "")}
+    return {"id": workflow_id, "name": req.name}
 
 
 @app.put("/api/workflows/{workflow_id}")
-async def update_workflow(workflow_id: str, req: dict, current_user: dict = require_auth()):
+async def update_workflow(workflow_id: str, req: WorkflowUpdateRequest, current_user: dict = require_auth()):  # noqa: C901
     """更新工作流"""
     conn = get_db()
-    fields = ["name", "description"]
     updates = []
     vals = []
-    for f in fields:
-        if f in req:
-            updates.append(f"{f}=?")
-            vals.append(req[f])
-    if "steps" in req:
+    if req.name is not None:
+        updates.append("name=?")
+        vals.append(req.name)
+    if req.description is not None:
+        updates.append("description=?")
+        vals.append(req.description)
+    if req.steps is not None:
         updates.append("steps=?")
-        vals.append(json.dumps(req["steps"]))
-    if "connections" in req:
+        vals.append(json.dumps(req.steps))
+    if req.connections is not None:
         updates.append("connections=?")
-        vals.append(json.dumps(req["connections"]))
+        vals.append(json.dumps(req.connections))
+    # 前端编辑器发送 definition 字段（JSON 字符串或对象），含 nodes 和 edges
+    if req.definition is not None:
+        defn = req.definition
+        if isinstance(defn, str):
+            try:
+                defn = json.loads(defn)
+            except json.JSONDecodeError:
+                defn = {}
+        if hasattr(defn, "nodes"):
+            updates.append("steps=?")
+            vals.append(json.dumps(defn.nodes))
+            updates.append("connections=?")
+            vals.append(json.dumps(defn.edges))
+        elif isinstance(defn, dict):
+            updates.append("steps=?")
+            vals.append(json.dumps(defn.get("nodes", [])))
+            updates.append("connections=?")
+            vals.append(json.dumps(defn.get("edges", [])))
     if not updates:
         raise HTTPException(400, "无更新字段")
     vals.append(workflow_id)
@@ -417,11 +336,8 @@ async def list_teams(current_user: dict = require_auth()):
 
 
 @app.post("/api/teams")
-async def create_team(req: dict, current_user: dict = require_auth()):
+async def create_team(req: TeamCreateRequest, current_user: dict = require_auth()):
     """创建 Team"""
-    name = req.get("name", "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
     conn = get_db()
     team_id = f"team_{int(time.time() * 1000)}"
     conn.execute(
@@ -429,43 +345,43 @@ async def create_team(req: dict, current_user: dict = require_auth()):
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             team_id,
-            name,
-            req.get("description", ""),
-            req.get("mode", "coordinate"),
-            json.dumps(req.get("members", [])),
-            req.get("instructions", ""),
-            1 if req.get("respond_directly", False) else 0,
+            req.name,
+            req.description,
+            req.mode,
+            json.dumps(req.members),
+            req.instructions,
+            1 if req.respond_directly else 0,
             datetime.now().isoformat(),
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": team_id, "name": name}
+    return {"id": team_id, "name": req.name}
 
 
-@app.put("/api/teams/<team_id>")
-async def update_team(team_id: str, req: dict, current_user: dict = require_auth()):
+@app.put("/api/teams/{team_id}")
+async def update_team(team_id: str, req: TeamUpdateRequest, current_user: dict = require_auth()):
     """更新 Team"""
     conn = get_db()
     conn.execute(
         """UPDATE teams SET name=?, description=?, mode=?, members=?, instructions=?, respond_directly=?
            WHERE id=?""",
         (
-            req.get("name", ""),
-            req.get("description", ""),
-            req.get("mode", "coordinate"),
-            json.dumps(req.get("members", [])),
-            req.get("instructions", ""),
-            1 if req.get("respond_directly", False) else 0,
+            req.name or "",
+            req.description or "",
+            req.mode or "coordinate",
+            json.dumps(req.members or []),
+            req.instructions or "",
+            1 if req.respond_directly else 0,
             team_id,
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": team_id, "name": req.get("name", "")}
+    return {"id": team_id, "name": req.name or ""}
 
 
-@app.delete("/api/teams/<team_id>")
+@app.delete("/api/teams/{team_id}")
 async def delete_team(team_id: str, current_user: dict = require_auth()):
     """删除 Team"""
     conn = get_db()
@@ -486,24 +402,50 @@ async def list_skills(current_user: dict = require_auth()):
 
 
 @app.post("/api/skills")
-async def create_skill(req: dict, current_user: dict = require_auth()):
+async def create_skill(req: SkillCreateRequest, current_user: dict = require_auth()):
     """创建 Skill"""
-    name = req.get("name", "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
     conn = get_db()
     skill_id = f"skill_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO skills (id, name, description, content, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (skill_id, name, req.get("description", ""), req.get("content", ""), datetime.now().isoformat()),
+        """INSERT INTO skills (id, name, description, content, `references`, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            skill_id,
+            req.name,
+            req.description,
+            req.content,
+            req.references,
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
-    return {"id": skill_id, "name": name}
+    return {"id": skill_id, "name": req.name}
 
 
-@app.delete("/api/skills/<skill_id>")
+@app.put("/api/skills/{skill_id}")
+async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dict = require_auth()):
+    """更新 Skill"""
+    conn = get_db()
+    updates = []
+    values = []
+    for field in ["name", "description", "content", "references"]:
+        v = getattr(req, field, None)
+        if v is not None:
+            updates.append(f"{field}=?")
+            if isinstance(v, (list, dict)):
+                v = json.dumps(v, ensure_ascii=False)
+            values.append(v)
+    if not updates:
+        raise HTTPException(400, "没有需要更新的字段")
+    values.append(skill_id)
+    conn.execute(f"UPDATE skills SET {','.join(updates)} WHERE id=?", values)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": skill_id}
+
+
+@app.delete("/api/skills/{skill_id}")
 async def delete_skill(skill_id: str, current_user: dict = require_auth()):
     """删除 Skill"""
     conn = get_db()
@@ -524,11 +466,8 @@ async def list_knowledge_bases(current_user: dict = require_auth()):
 
 
 @app.post("/api/knowledge-bases")
-async def create_knowledge_base(req: dict, current_user: dict = require_auth()):
+async def create_knowledge_base(req: KnowledgeBaseCreateRequest, current_user: dict = require_auth()):
     """创建知识库"""
-    name = req.get("name", "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
     conn = get_db()
     kb_id = f"kb_{int(time.time() * 1000)}"
     conn.execute(
@@ -536,21 +475,21 @@ async def create_knowledge_base(req: dict, current_user: dict = require_auth()):
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             kb_id,
-            name,
-            req.get("type", "file"),
-            req.get("path", ""),
-            req.get("url", ""),
-            json.dumps(req.get("filter", {})),
-            req.get("top_k", 5),
+            req.name,
+            req.type or req.source_type or "file",
+            req.path or req.source_path or "",
+            req.url,
+            json.dumps(req.filter),
+            req.top_k,
             datetime.now().isoformat(),
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": kb_id, "name": name}
+    return {"id": kb_id, "name": req.name}
 
 
-@app.delete("/api/knowledge-bases/<kb_id>")
+@app.delete("/api/knowledge-bases/{kb_id}")
 async def delete_knowledge_base(kb_id: str, current_user: dict = require_auth()):
     """删除知识库"""
     conn = get_db()
@@ -560,6 +499,41 @@ async def delete_knowledge_base(kb_id: str, current_user: dict = require_auth())
     return {"success": True}
 
 
+@app.put("/api/knowledge-bases/{kb_id}")
+async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdateRequest, current_user: dict = require_auth()):
+    """更新知识库"""
+    conn = get_db()
+    updates = []
+    vals = []
+    if req.name is not None:
+        updates.append("name=?")
+        vals.append(req.name)
+    # type 和 source_type 都映射到数据库的 type 列
+    db_type = req.type or req.source_type
+    if db_type is not None:
+        updates.append("type=?")
+        vals.append(db_type)
+    # path 和 source_path 都映射到数据库的 path 列
+    db_path = req.path or req.source_path
+    if db_path is not None:
+        updates.append("path=?")
+        vals.append(db_path)
+    if req.url is not None:
+        updates.append("url=?")
+        vals.append(req.url)
+    if req.top_k is not None:
+        updates.append("top_k=?")
+        vals.append(req.top_k)
+    if not updates:
+        raise HTTPException(400, "无更新字段")
+    updates.append("created_at=created_at")
+    vals.append(kb_id)
+    conn.execute(f"UPDATE knowledge_bases SET {', '.join(updates)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": kb_id}
+
+
 # ── MCP Servers 管理 ───────────────────────────────────────────
 @app.get("/api/mcp-servers")
 async def list_mcp_servers(current_user: dict = require_auth()):
@@ -567,15 +541,18 @@ async def list_mcp_servers(current_user: dict = require_auth()):
     conn = get_db()
     servers = conn.execute("SELECT * FROM mcp_servers ORDER BY created_at DESC").fetchall()
     conn.close()
-    return [dict(s) for s in servers]
+    result = []
+    for s in servers:
+        d = dict(s)
+        d["status"] = "active" if d.get("enabled") else "inactive"
+        d["transport"] = d.get("transport_type") or "stdio"
+        result.append(d)
+    return result
 
 
 @app.post("/api/mcp-servers")
-async def create_mcp_server(req: dict, current_user: dict = require_auth()):
+async def create_mcp_server(req: MCPServerCreateRequest, current_user: dict = require_auth()):
     """创建 MCP Server"""
-    name = req.get("name", "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
     conn = get_db()
     server_id = f"mcp_{int(time.time() * 1000)}"
     conn.execute(
@@ -583,22 +560,73 @@ async def create_mcp_server(req: dict, current_user: dict = require_auth()):
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             server_id,
-            name,
-            req.get("transport_type", "stdio"),
-            req.get("command", ""),
-            json.dumps(req.get("args", [])),
-            json.dumps(req.get("env", {})),
-            req.get("url", ""),
-            1 if req.get("enabled", True) else 0,
+            req.name,
+            req.transport_type,
+            req.command,
+            json.dumps(req.args),
+            json.dumps(req.env),
+            req.url,
+            1 if req.enabled else 0,
             datetime.now().isoformat(),
         ),
     )
     conn.commit()
     conn.close()
-    return {"id": server_id, "name": name}
+    return {"id": server_id, "name": req.name}
 
 
-@app.delete("/api/mcp-servers/<server_id>")
+@app.put("/api/mcp-servers/{server_id}")
+async def update_mcp_server(server_id: str, req: MCPServerUpdateRequest, current_user: dict = require_auth()):
+    """更新 MCP Server"""
+    conn = get_db()
+    updates = []
+    vals = []
+    if req.name is not None:
+        updates.append("name=?")
+        vals.append(req.name)
+    if req.command is not None:
+        updates.append("command=?")
+        vals.append(req.command)
+    if req.url is not None:
+        updates.append("url=?")
+        vals.append(req.url)
+    if req.env is not None:
+        updates.append("env=?")
+        vals.append(json.dumps(req.env))
+    if req.transport is not None or req.transport_type is not None:
+        updates.append("transport_type=?")
+        vals.append(req.transport_type or req.transport)
+    if req.args is not None:
+        updates.append("args=?")
+        vals.append(json.dumps(req.args))
+    if req.enabled is not None:
+        updates.append("enabled=?")
+        vals.append(1 if req.enabled else 0)
+    if not updates:
+        raise HTTPException(400, "无更新字段")
+    vals.append(server_id)
+    conn.execute(f"UPDATE mcp_servers SET {', '.join(updates)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": server_id}
+
+
+@app.post("/api/mcp-servers/{server_id}/toggle")
+async def toggle_mcp_server(server_id: str, current_user: dict = require_auth()):
+    """切换 MCP Server 启用状态"""
+    conn = get_db()
+    row = conn.execute("SELECT enabled FROM mcp_servers WHERE id=?", (server_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "MCP 服务器不存在")
+    new_val = 0 if row["enabled"] else 1
+    conn.execute("UPDATE mcp_servers SET enabled=? WHERE id=?", (new_val, server_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "enabled": bool(new_val), "status": "active" if new_val else "inactive"}
+
+
+@app.delete("/api/mcp-servers/{server_id}")
 async def delete_mcp_server(server_id: str, current_user: dict = require_auth()):
     """删除 MCP Server"""
     conn = get_db()
@@ -618,14 +646,11 @@ async def sandbox_list_images(current_user: dict = require_auth()):
 
 
 @app.post("/api/sandbox/images/pull")
-async def sandbox_pull_image(req: dict, current_user: dict = require_auth()):
+async def sandbox_pull_image(req: SandboxPullImageRequest, current_user: dict = require_auth()):
     """拉取镜像"""
-    image = (req.get("image") or "").strip()
-    if not image:
-        raise HTTPException(400, "镜像名不能为空")
     from sandbox import process_manager
 
-    return process_manager.pull_image(image)
+    return process_manager.pull_image(req.image)
 
 
 @app.get("/api/sandbox/services")
@@ -646,26 +671,34 @@ async def sandbox_list_projects(current_user: dict = require_auth()):
 
 
 @app.post("/api/sandbox/projects")
-async def sandbox_create_project(req: dict, current_user: dict = require_auth()):
+async def sandbox_create_project(req: SandboxProjectCreateRequest, current_user: dict = require_auth()):
     """创建沙箱项目"""
     from sandbox import process_manager
 
-    name = (req.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "名称不能为空")
     project_id = f"proj_{int(time.time() * 1000)}"
+    # 前端可能传字符串或列表，统一转为列表
+    raw_ports = req.ports
+    if isinstance(raw_ports, str):
+        ports = [p.strip() for p in raw_ports.split(",") if p.strip()]
+    else:
+        ports = raw_ports or []
+    raw_env = req.env
+    if isinstance(raw_env, str):
+        env = [e.strip() for e in raw_env.split(",") if e.strip()]
+    else:
+        env = raw_env or []
     config = {
-        "image": req.get("image", "python:3.12-alpine"),
-        "ports": req.get("ports", []),
-        "env": req.get("env", []),
-        "command": req.get("command"),
+        "image": req.image,
+        "ports": ports,
+        "env": env,
+        "command": req.command,
     }
     result = process_manager.create_container(project_id, config)
     conn = get_db()
     conn.execute(
         """INSERT INTO sandbox_projects (id, name, image, status, ports, config, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, name, config["image"], result.get("status", "created"),
+        (project_id, req.name, config["image"], result.get("status", "created"),
          json.dumps(config.get("ports", [])), json.dumps(config), datetime.now().isoformat()),
     )
     conn.commit()
@@ -718,13 +751,7 @@ app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)
 app.include_router(collab_engine_router)
-
-
-# ── 初始化 ─────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup():
-    init_db()
-    logger.info("Smart R&D Platform v7.0 started")
+app.include_router(realtime_router)
 
 
 if __name__ == "__main__":

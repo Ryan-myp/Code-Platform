@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
 """协作评论 + Skills 文件管理 API"""
 
-import json
 import logging
-import sqlite3
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from common.db import get_db
+from common.models import CommentCreateRequest, CommentLikeRequest, SkillFileCreateRequest, SkillFileUpdateRequest
+
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["协作评论"])
-
-PROJECT_DIR = Path(__file__).parent
-DB_PATH = PROJECT_DIR / "platform.db"
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
 
 
 # ══════════════════════════════════════════════════════════════
@@ -72,14 +61,11 @@ async def list_comments(target_type: str = None, target_id: str = None):
 
 
 @router.post("/api/comments")
-async def create_comment(req: dict):
+async def create_comment(req: CommentCreateRequest):
     """创建评论"""
-    content = (req.get("content") or "").strip()
-    if not content:
+    if not req.content:
         raise HTTPException(400, "评论内容不能为空")
-    target_type = req.get("target_type", "")
-    target_id = req.get("target_id", "")
-    if not target_type or not target_id:
+    if not req.target_type or not req.target_id:
         raise HTTPException(400, "target_type 和 target_id 不能为空")
 
     comment_id = f"cmt_{uuid.uuid4().hex[:12]}"
@@ -88,8 +74,8 @@ async def create_comment(req: dict):
     conn.execute(
         """INSERT INTO comments (id, content, author_id, parent_comment_id, target_type, target_id, created_at, updated_at, active)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-        (comment_id, content, req.get("author_id", "admin"), req.get("parent_comment_id"),
-         target_type, target_id, now, now),
+        (comment_id, req.content, req.author_id, req.parent_comment_id,
+         req.target_type, req.target_id, now, now),
     )
     conn.commit()
     conn.close()
@@ -107,9 +93,9 @@ async def delete_comment(comment_id: str):
 
 
 @router.post("/api/comments/{comment_id}/like")
-async def like_comment(comment_id: str, req: dict = None):
+async def like_comment(comment_id: str, req: CommentLikeRequest = None):
     """点赞评论"""
-    user_id = (req or {}).get("user_id", "admin")
+    user_id = (req or CommentLikeRequest()).user_id
     like_id = f"lk_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     existing = conn.execute(
@@ -146,31 +132,30 @@ async def list_skill_files(skill_id: str):
 
 
 @router.post("/api/skills/{skill_id}/files")
-async def create_skill_file(skill_id: str, req: dict):
+async def create_skill_file(skill_id: str, req: SkillFileCreateRequest):
     """创建 Skill 文件"""
-    filename = (req.get("filename") or "").strip()
-    if not filename:
+    if not req.filename:
         raise HTTPException(400, "文件名不能为空")
-    file_id = f"sf_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
     conn = get_db()
-    conn.execute(
-        """INSERT INTO skills_files (id, skill_id, folder, filename, content, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (file_id, skill_id, req.get("folder", "references"), filename, req.get("content", ""), now, now),
+    cur = conn.execute(
+        """INSERT INTO skills_files (skill_id, folder, filename, content, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (skill_id, req.folder, req.filename, req.content, now, now),
     )
     conn.commit()
+    file_id = cur.lastrowid
     conn.close()
-    return {"id": file_id, "filename": filename}
+    return {"id": file_id, "filename": req.filename}
 
 
 @router.put("/api/skills/{skill_id}/files/{file_id}")
-async def update_skill_file(skill_id: str, file_id: str, req: dict):
+async def update_skill_file(skill_id: str, file_id: str, req: SkillFileUpdateRequest):
     """更新 Skill 文件"""
     conn = get_db()
     conn.execute(
         "UPDATE skills_files SET content=?, updated_at=? WHERE id=? AND skill_id=?",
-        (req.get("content", ""), datetime.now().isoformat(), file_id, skill_id),
+        (req.content, datetime.now().isoformat(), file_id, skill_id),
     )
     conn.commit()
     conn.close()
@@ -187,22 +172,4 @@ async def delete_skill_file(skill_id: str, file_id: str):
     return {"success": True}
 
 
-@router.put("/api/skills/{skill_id}")
-async def update_skill(skill_id: str, req: dict):
-    """更新 Skill"""
-    conn = get_db()
-    fields = ["name", "description", "content", "references", "templates", "scripts", "assets"]
-    updates = []
-    vals = []
-    for f in fields:
-        if f in req:
-            updates.append(f"{f}=?")
-            v = req[f]
-            vals.append(json.dumps(v) if isinstance(v, (list, dict)) else v)
-    if not updates:
-        raise HTTPException(400, "无更新字段")
-    vals.append(skill_id)
-    conn.execute(f"UPDATE skills SET {', '.join(updates)} WHERE id=?", vals)
-    conn.commit()
-    conn.close()
-    return {"success": True, "id": skill_id}
+

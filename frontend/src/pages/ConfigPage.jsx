@@ -1,105 +1,143 @@
-import React, { useState, useEffect } from 'react'
-import { 
-  Settings, Save, Loader2, CheckCircle2, AlertCircle, 
-  Key, Globe, Cpu, RefreshCw, Eye, EyeOff
+import React, { useState, useEffect, useCallback } from 'react'
+import {
+  Settings, Save, RefreshCw, Eye, EyeOff, Key, Globe, Cpu,
+  CheckCircle2, Wifi,
 } from 'lucide-react'
+import { api } from '../lib/api'
+import { useToast } from '../lib/toast'
+import { formatDateTime } from '../lib/format'
+import {
+  Button, PageHeader, Badge, PageLoading, ErrorState,
+} from '../components/ui'
+
+// 掩码占位符（与后端脱敏返回一致）
+const MASKED_PREFIX = '••••'
+const DEFAULT_API_URL = 'https://api.agnes-ai.cn/v1'
+const DEFAULT_MODEL = 'agnes-2.5-flash'
+
+const MODEL_OPTIONS = [
+  { value: 'agnes-2.5-flash', label: 'agnes-2.5-flash (推荐)' },
+  { value: 'agnes-2.5-pro', label: 'agnes-2.5-pro' },
+  { value: 'gpt-4o', label: 'gpt-4o' },
+  { value: 'claude-3-5-sonnet', label: 'claude-3-5-sonnet' },
+  { value: 'glm-4', label: 'glm-4' },
+  { value: 'qwen-max', label: 'qwen-max' },
+]
 
 export default function ConfigPage() {
+  const toast = useToast()
   const [apiKey, setApiKey] = useState('')
-  const [apiUrl, setApiUrl] = useState('')
-  const [modelName, setModelName] = useState('')
+  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL)
+  const [modelName, setModelName] = useState(DEFAULT_MODEL)
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [success, setSuccess] = useState(false)
-  const [error, setError] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [config, setConfig] = useState(null)
+  const [errors, setErrors] = useState({})
 
-  // 加载配置
-  useEffect(() => {
-    fetchConfig()
+  const fetchConfig = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await api.get('/api/config')
+      const data = res.data
+      setConfig(data)
+      setApiUrl(data.api_url || data.agnes_api_base || DEFAULT_API_URL)
+      setModelName(data.model_name || DEFAULT_MODEL)
+      // 已配置则展示掩码占位，留空表示不修改
+      setApiKey(data.api_key || data.agnes_api_key || '')
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  const fetchConfig = async () => {
-    try {
-      const res = await fetch('/api/config')
-      const data = await res.json()
-      setConfig(data)
-      if (data.has_api_key) setApiKey('••••••••••••')
-      setApiUrl(data.api_url || 'https://api.agnes-ai.cn/v1')
-      setModelName(data.model_name || 'agnes-2.5-flash')
-    } catch (err) {
-      setError('加载配置失败')
-    }
+  useEffect(() => {
+    fetchConfig()
+  }, [fetchConfig])
+
+  const isKeyMasked = apiKey.startsWith(MASKED_PREFIX)
+
+  const validate = () => {
+    const e = {}
+    if (!apiUrl.trim()) e.apiUrl = 'API URL 不能为空'
+    else if (!/^https?:\/\//i.test(apiUrl.trim())) e.apiUrl = 'API URL 需以 http:// 或 https:// 开头'
+    if (!modelName.trim()) e.modelName = '请选择默认模型'
+    setErrors(e)
+    return Object.keys(e).length === 0
   }
 
   const handleSave = async () => {
-    if (!apiUrl.trim()) {
-      setError('API URL 不能为空')
+    if (!validate()) {
+      toast.error('请修正表单中的错误')
       return
     }
-
     setSaving(true)
-    setError('')
-    setSuccess(false)
-
     try {
-      const response = await fetch('/api/config/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          api_key: apiKey === '••••••••••••' ? '' : apiKey,
-          api_url: apiUrl,
-          model_name: modelName || 'agnes-2.5-flash'
-        })
-      })
-
-      if (response.ok) {
-        setSuccess(true)
-        setTimeout(() => setSuccess(false), 3000)
-        fetchConfig()
-      } else {
-        setError('保存失败，请检查后端服务')
+      // 掩码占位表示不修改 API Key
+      const payload = {
+        api_url: apiUrl.trim(),
+        model_name: modelName.trim(),
+        api_key: isKeyMasked ? '' : apiKey.trim(),
       }
-    } catch (err) {
-      setError('连接失败：' + err.message)
+      await api.post('/api/config/save', payload)
+      toast.success('配置保存成功')
+      fetchConfig()
+    } catch (e) {
+      toast.error(`保存失败：${e.message}`)
     } finally {
       setSaving(false)
     }
   }
 
+  const handleTest = async () => {
+    if (!apiUrl.trim() || !/^https?:\/\//i.test(apiUrl.trim())) {
+      toast.error('请先填写合法的 API URL')
+      return
+    }
+    if (!isKeyMasked && !apiKey.trim()) {
+      toast.error('请先填写 API Key')
+      return
+    }
+    setTesting(true)
+    try {
+      // 先保存最新输入，再探测后端连通性
+      await api.post('/api/config/save', {
+        api_url: apiUrl.trim(),
+        model_name: modelName.trim(),
+        api_key: isKeyMasked ? '' : apiKey.trim(),
+      })
+      await api.get('/api/config')
+      toast.success('连接测试通过：后端服务正常，配置已生效')
+      fetchConfig()
+    } catch (e) {
+      toast.error(`连接测试失败：${e.message}`)
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  if (loading) return <PageLoading />
+  if (error) return <ErrorState message={`加载配置失败：${error.message}`} onRetry={fetchConfig} />
+
+  const keyConfigured = isKeyMasked || (config?.api_key && config.api_key.startsWith(MASKED_PREFIX))
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">系统配置</h1>
-          <p className="text-gray-500 mt-1">配置 AI 模型接入信息和系统参数</p>
-        </div>
-        <button
-          onClick={fetchConfig}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl hover:bg-gray-50"
-        >
-          <RefreshCw className="w-4 h-4" />
-          刷新
-        </button>
-      </div>
+      <PageHeader
+        title="系统配置"
+        description="配置 AI 模型接入信息和系统参数"
+        icon={Settings}
+        iconColor="from-blue-500 to-indigo-600"
+        actions={
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchConfig}>刷新</Button>
+        }
+      />
 
-      {/* Success/Error Messages */}
-      {success && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-          配置保存成功！
-        </div>
-      )}
-      
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl flex items-center gap-2">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
-          {error}
-        </div>
-      )}
-
-      {/* Configuration Card */}
+      {/* 配置卡 */}
       <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -108,7 +146,7 @@ export default function ConfigPage() {
           </h2>
           <p className="text-sm text-gray-500 mt-1">配置 Agnes AI API 接入信息</p>
         </div>
-        
+
         <div className="p-6 space-y-6">
           {/* API Key */}
           <div>
@@ -122,17 +160,19 @@ export default function ConfigPage() {
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="sk-xxxxxxxxxxxx"
-                className="w-full px-4 py-2.5 pr-12 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                className={`w-full px-4 py-2.5 pr-12 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all font-mono ${errors.apiKey ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'}`}
               />
               <button
+                type="button"
                 onClick={() => setShowKey(!showKey)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-lg"
+                title={showKey ? '隐藏' : '显示'}
               >
                 {showKey ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              {apiKey === '••••••••••••' ? 'API Key 已配置' : '留空则不修改'}
+              {isKeyMasked ? 'API Key 已配置（留空或保留掩码则不修改）' : '留空则不修改'}
             </p>
           </div>
 
@@ -140,80 +180,78 @@ export default function ConfigPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Globe className="w-4 h-4 inline mr-1" />
-              API URL
+              API URL <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
               placeholder="https://api.agnes-ai.cn/v1"
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+              className={`w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all font-mono ${errors.apiUrl ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'}`}
             />
-            <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>
+            {errors.apiUrl
+              ? <p className="text-xs text-red-500 mt-1">{errors.apiUrl}</p>
+              : <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>}
           </div>
 
-          {/* Model Name */}
+          {/* 默认模型 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Settings className="w-4 h-4 inline mr-1" />
-              默认模型
+              默认模型 <span className="text-red-500">*</span>
             </label>
             <select
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className={`w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${errors.modelName ? 'border-red-300' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'}`}
             >
-              <option value="agnes-2.5-flash">agnes-2.5-flash (推荐)</option>
-              <option value="agnes-2.5-pro">agnes-2.5-pro</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="claude-3-5-sonnet">claude-3-5-sonnet</option>
+              {MODEL_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
             <p className="text-xs text-gray-500 mt-1">Agent 默认使用的模型</p>
           </div>
 
-          {/* Status */}
-          {config && (
-            <div className="bg-gray-50 rounded-xl p-4">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">当前状态</h4>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">API Key:</span>
-                  <span className={`ml-2 ${config.has_api_key ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {config.has_api_key ? '已配置' : '未配置'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500">API URL:</span>
-                  <span className="ml-2 font-mono text-xs">{config.api_url || '未配置'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">默认模型:</span>
-                  <span className="ml-2">{config.model_name || '未配置'}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">版本:</span>
-                  <span className="ml-2">v7.0</span>
-                </div>
+          {/* 当前状态 */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-3">当前状态</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">API Key:</span>
+                {keyConfigured
+                  ? <Badge status="active" dot label="已配置" />
+                  : <Badge status="inactive" dot label="未配置" />}
+              </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-gray-500 flex-shrink-0">API URL:</span>
+                <span className="font-mono text-xs text-gray-700 truncate">{config?.api_url || config?.agnes_api_base || '未配置'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">默认模型:</span>
+                <span className="text-gray-700">{config?.model_name || '未配置'}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">版本:</span>
+                <span className="text-gray-700">v7.0</span>
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            <span>保存配置</span>
-          </button>
+        <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3">
+          <Button variant="secondary" icon={Wifi} loading={testing} onClick={handleTest}>
+            测试连接
+          </Button>
+          <Button variant="primary" icon={Save} loading={saving} onClick={handleSave}>
+            保存配置
+          </Button>
         </div>
       </div>
 
-      {/* Tips */}
+      {/* 提示 */}
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-        <h4 className="text-sm font-medium text-amber-800 mb-2">💡 获取 API Key</h4>
+        <h4 className="text-sm font-medium text-amber-800 mb-2 flex items-center gap-1.5">
+          <CheckCircle2 className="w-4 h-4" />
+          获取 API Key
+        </h4>
         <p className="text-sm text-amber-700">
           访问{' '}
           <a href="https://api.agnes-ai.cn" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-900">
@@ -222,6 +260,12 @@ export default function ConfigPage() {
           {' '}注册账号并创建 API Key。免费额度足够个人使用。
         </p>
       </div>
+
+      {config?.updated_at && (
+        <p className="text-xs text-gray-400 text-center">
+          上次更新：{formatDateTime(config.updated_at)}
+        </p>
+      )}
     </div>
   )
 }

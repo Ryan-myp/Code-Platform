@@ -3,94 +3,25 @@
 
 import json
 import logging
-import os
-import sqlite3
 import sys
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-import requests
 from fastapi import APIRouter, HTTPException
+
+from common.config import load_config
+from common.db import get_db
+from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["对话执行"])
 
 PROJECT_DIR = Path(__file__).parent
-DB_PATH = PROJECT_DIR / "platform.db"
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
-MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.5-flash")
-
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def normalize_api_base(base: str) -> str:
-    base = base.strip()
-    if base.endswith("/chat/completions"):
-        base = base[: -len("/chat/completions")]
-    if base.endswith("/v1"):
-        return base
-    return base.rstrip("/") + "/v1"
-
-
-def load_config():
-    global AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("SELECT key, value FROM config").fetchall()
-        conn.close()
-        for k, v in rows:
-            if k == "agnes_api_key" and v:
-                AGNES_API_KEY = v.strip()
-            elif k == "agnes_api_base" and v:
-                AGNES_API_BASE = normalize_api_base(v)
-            elif k == "model_name" and v:
-                MODEL_NAME = v.strip()
-    except Exception:
-        pass
-
-
+# 模块加载时从 config 表加载 LLM 配置
 load_config()
-
-
-def call_llm(system_prompt: str, user_prompt: str, max_tokens: int = 2000) -> str:
-    """调用 Agnes LLM"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-    url = f"{AGNES_API_BASE}/chat/completions"
-    try:
-        resp = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MODEL_NAME,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": 0.5,
-            },
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            logger.error(f"LLM call failed: {resp.status_code} {resp.text[:400]}")
-            raise HTTPException(500, f"LLM 调用失败: {resp.status_code} {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"LLM call exception: {e}")
-        raise HTTPException(500, f"LLM 调用异常: {str(e)}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -160,13 +91,14 @@ async def add_conversation_message(conv_id: str, req: dict):
         raise HTTPException(400, "内容不能为空")
     now = datetime.now().isoformat()
     conn = get_db()
-    conn.execute(
+    cur = conn.execute(
         """INSERT INTO messages (conversation_id, role, content, timestamp)
            VALUES (?, ?, ?, ?)""",
         (conv_id, role, content, now),
     )
     conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
     conn.commit()
+    msg_id = cur.lastrowid
     conn.close()
     return {"id": msg_id}
 
@@ -208,19 +140,7 @@ async def run_agent(agent_id: str, req: dict):
         except Exception:
             pass
 
-    try:
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO usage_logs (id, timestamp, task_type, input_length, output_length, response_time, success)
-               VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            (f"ul_{int(time.time() * 1000)}", datetime.now().isoformat(), "agent_run",
-             len(message), len(result), round(time.time() - start, 3)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
+    log_usage("agent_run", len(message), len(result), time.time() - start)
     return {"result": result, "agent_id": agent_id, "elapsed": round(time.time() - start, 2)}
 
 
@@ -236,8 +156,8 @@ async def run_team(team_id: str, req: dict):
 
     conn = get_db()
     team = conn.execute("SELECT * FROM teams WHERE id=?", (team_id,)).fetchone()
-    conn.close()
     if not team:
+        conn.close()
         raise HTTPException(404, "Team 不存在")
 
     members = json.loads(team["members"] or "[]")
@@ -255,6 +175,7 @@ async def run_team(team_id: str, req: dict):
             member_info = "\n".join(member_names)
         except Exception:
             pass
+    conn.close()
 
     prompt = f"团队指令: {system}\n\n团队成员:\n{member_info or '（无成员信息）'}\n\n任务: {message}"
     result = call_llm(system, prompt, max_tokens=2000)
@@ -275,19 +196,24 @@ async def run_workflow(workflow_id: str, req: dict):
         raise HTTPException(404, "Workflow 不存在")
 
     steps_raw = wf["steps"] if "steps" in wf.keys() else ""
-    connections_raw = wf["connections"] if "connections" in wf.keys() else ""
     definition = json.loads(steps_raw or "[]") if steps_raw else []
-    connections = json.loads(connections_raw or "{}") if connections_raw else {}
     nodes = definition if isinstance(definition, list) else definition.get("nodes", [])
 
     # 尝试用完整 executor
     try:
-        sys.path.insert(0, str(PROJECT_DIR))
-        from workflows.executor import WorkflowExecutor
+        from workflows.executor import executor as _executor
 
-        executor = WorkflowExecutor()
-        result = executor.run(workflow_id, {"message": message})
-        return {"result": result, "workflow_id": workflow_id, "engine": "executor"}
+        run_id = await _executor.execute(workflow_id, {"message": message})
+        # 取出运行记录摘要返回
+        conn = get_db()
+        run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+        conn.close()
+        return {
+            "result": run_id,
+            "run": dict(run) if run else None,
+            "workflow_id": workflow_id,
+            "engine": "executor",
+        }
     except Exception as e:
         logger.warning(f"workflow executor unavailable, simple run: {e}")
 

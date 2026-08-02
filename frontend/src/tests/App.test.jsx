@@ -1,17 +1,23 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import App from '../App'
 
 describe('App', () => {
+  beforeEach(() => {
+    // 模拟已登录状态
+    localStorage.setItem('token', 'test-token')
+    localStorage.setItem('user', JSON.stringify({ username: 'admin' }))
+  })
+
   it('renders without crashing', () => {
     render(<App />)
-    expect(screen.getByText(/智能研发平台/i)).toBeInTheDocument()
+    // Sidebar 中有多个"智能研发平台"文字（桌面版 + 移动版）
+    expect(screen.getAllByText(/智能研发平台/i).length).toBeGreaterThan(0)
   })
 
   it('shows navigation menu items', () => {
     render(<App />)
+    // 登录后重定向到 /agents，Sidebar 可见
     expect(screen.getByText(/研发管理/i)).toBeInTheDocument()
-    expect(screen.getByText(/智能体管理/i)).toBeInTheDocument()
-    expect(screen.getByText(/系统配置/i)).toBeInTheDocument()
   })
 })

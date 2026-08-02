@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from datetime import datetime
 from io import BytesIO
 
@@ -25,18 +26,50 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from common.config import load_config
+from common.db import get_db
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/image-factory", tags=["图片工厂"])
 
-# 配置
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
-AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
+# 配置：走 common.config 单一来源（运行时可被 config 表覆盖）
+load_config()
+from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
+
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), "image_factory")
 TEMPLATE_DIR = os.path.join(IMAGE_DIR, "templates")
 
 os.makedirs(IMAGE_DIR, exist_ok=True)
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
+
+
+def _save_artifact(filename: str, project_id: str, prompt: str, extra_meta: dict | None = None) -> str:
+    """将生成的图片产物登记到 artifacts 表，返回 artifact id。
+
+    - type=image，media_url 指向 /api/image-factory/images/{filename} 的相对路径
+    - metadata 含 prompt + 额外字段（size/model 等）
+    - 失败静默（不影响主流程）
+    """
+    art_id = f"art_{uuid.uuid4().hex[:12]}"
+    meta = {"prompt": prompt, "filename": filename}
+    if extra_meta:
+        meta.update(extra_meta)
+    try:
+        conn = get_db()
+        conn.execute(
+            """INSERT INTO artifacts
+               (id, project_id, type, content, version, author, created_at, active, media_url, metadata)
+               VALUES (?, ?, 'image', ?, 'v1', 'image_factory', ?, 1, ?, ?)""",
+            (art_id, project_id or "", json.dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False),
+             datetime.now().isoformat(), f"/api/image-factory/images/{filename}",
+             json.dumps(meta, ensure_ascii=False)),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"_save_artifact skipped: {e}")
+    return art_id
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────
@@ -153,6 +186,7 @@ async def text_to_image(
     model: str = Form("agnes-image-2.1-flash"),
     batch_size: int = Form(1),
     n: int = Form(1),
+    project_id: str = Form(""),
 ):
     """
     文生图 - 支持批量生成
@@ -163,6 +197,7 @@ async def text_to_image(
     - model: 模型名称
     - batch_size: 批量生成数量 (1-4)
     - n: 每批次生成数量
+    - project_id: 关联项目 ID（可选，写入 artifacts 表用于项目空间聚合）
     """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
@@ -199,8 +234,11 @@ async def text_to_image(
                         img_resp = requests.get(image_url, timeout=60)
                         img = Image.open(io.BytesIO(img_resp.content))
                         filename = save_image(img)
+                        art_id = _save_artifact(filename, project_id, prompt,
+                                                {"size": size_str, "model": model})
                         results.append(
-                            {"id": filename, "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
+                            {"id": filename, "artifact_id": art_id,
+                             "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
                         )
             else:
                 results.append({"error": f"生成失败：{data}", "prompt": prompt})
@@ -209,7 +247,7 @@ async def text_to_image(
             logger.error(f"文生图失败：{e}")
             results.append({"error": f"生成失败：{str(e)}", "prompt": prompt})
 
-    return {"results": results, "total": len(results), "prompt": prompt}
+    return {"results": results, "total": len(results), "prompt": prompt, "project_id": project_id}
 
 
 # ── 图生图 API ────────────────────────────────────────────────
@@ -220,6 +258,7 @@ async def image_to_image(
     size: str = Form("1024x1024"),
     strength: float = Form(0.35),
     model: str = Form("agnes-image-2.1-flash"),
+    project_id: str = Form(""),
 ):
     """图生图 - 基于输入图片生成新图片"""
     if not AGNES_API_KEY:
@@ -246,12 +285,16 @@ async def image_to_image(
                 img_resp = requests.get(image_url, timeout=60)
                 result_img = Image.open(io.BytesIO(img_resp.content))
                 filename = save_image(result_img)
-                return {"id": filename, "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
+                art_id = _save_artifact(filename, project_id, prompt,
+                                        {"size": size, "model": model, "strength": strength})
+                return {"id": filename, "artifact_id": art_id,
+                        "url": f"/api/image-factory/images/{filename}", "prompt": prompt,
+                        "project_id": project_id}
 
         return JSONResponse(status_code=500, content={"error": "生成失败", "response": data})
     except Exception as e:
         logger.error(f"图生图失败：{e}")
-        raise HTTPException(500, f"生成失败：{str(e)}")
+        raise HTTPException(500, f"生成失败：{str(e)}") from e
 
 
 # ── 编辑 API ──────────────────────────────────────────────────
@@ -357,7 +400,7 @@ async def text_overlay(
 
     try:
         font = get_font(font_size)
-    except:
+    except Exception:
         font = ImageFont.load_default()
 
     # 解析颜色
@@ -487,7 +530,7 @@ async def add_watermark(
 
     try:
         font = get_font(font_size)
-    except:
+    except Exception:
         font = ImageFont.load_default()
 
     # 计算水印位置
@@ -709,6 +752,7 @@ async def virtual_try_on(
     description: str = Form(""),
     style: str = Form("casual"),  # casual, formal, sporty, fashion
     background: str = Form("beach"),  # beach, city, space, studio, etc.
+    project_id: str = Form(""),
 ):
     """
     虚拟试衣功能
@@ -722,7 +766,7 @@ async def virtual_try_on(
         person_content = await person_image.read()
         clothing_content = await clothing_image.read()
 
-        img = Image.open(BytesIO(clothing_content))
+        _img = Image.open(BytesIO(clothing_content))
 
         # 生成描述性提示词
         style_prompts = {
@@ -744,9 +788,10 @@ async def virtual_try_on(
         # 用多模态文本模型自动识别衣物特征（颜色/款式/面料/图案）
         clothing_description = description
         try:
+            from common.config import MODEL_NAME
             clothing_data_uri_desc = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
             analyze_payload = {
-                "model": os.environ.get("MODEL_NAME", "agnes-2.5-flash"),
+                "model": MODEL_NAME,
                 "messages": [
                     {
                         "role": "user",
@@ -768,9 +813,8 @@ async def virtual_try_on(
                 ],
                 "max_tokens": 200,
             }
-            api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
             analyze_resp = requests.post(
-                f"{api_base}/chat/completions",
+                f"{AGNES_API_BASE}/chat/completions",
                 headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
                 json=analyze_payload,
                 timeout=60,
@@ -796,8 +840,6 @@ async def virtual_try_on(
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
         # 调用 Agnes AI 多图合成 API（messages 多模态格式，理解更准确）
-        api_base = os.environ.get("AGNES_API_BASE", "https://api.agnes-ai.cn/v1")
-
         messages_content = [
             {
                 "type": "image_url",
@@ -828,7 +870,7 @@ async def virtual_try_on(
         ]
 
         response = requests.post(
-            f"{api_base}/images/generations",
+            f"{AGNES_API_BASE}/images/generations",
             headers={
                 "Authorization": f"Bearer {AGNES_API_KEY}",
                 "Content-Type": "application/json",
@@ -866,12 +908,16 @@ async def virtual_try_on(
             raise HTTPException(500, f"生成失败: {data}")
 
         filename = save_image(result_img)
+        art_id = _save_artifact(filename, project_id, prompt,
+                                {"style": style, "background": background, "feature": "try-on"})
         return {
             "id": filename,
+            "artifact_id": art_id,
             "url": f"/api/image-factory/images/{filename}",
             "prompt": prompt,
             "style": style,
             "background": background,
+            "project_id": project_id,
         }
 
     except HTTPException:
