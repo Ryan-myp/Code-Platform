@@ -2,7 +2,7 @@ import React from 'react'
 import {
   BookOpen, FileText, Code2, TestTube2, TerminalSquare, Settings, Bot, Users, Layers,
   ChevronDown, ChevronRight, Menu, X, Brain, Database, Wrench, Server, ListTodo,
-  Puzzle, MessageSquare, Sparkles, Play, Image as ImageIcon
+  Puzzle, MessageSquare, Sparkles, Play, Image as ImageIcon, Film, Music
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
