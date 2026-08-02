@@ -134,7 +134,7 @@ async def get_conversation(conv_id: str):
     conn = get_db()
     row = conn.execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone()
     msgs = conn.execute(
-        "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC", (conv_id,)
+        "SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)
     ).fetchall()
     conn.close()
     if not row:
@@ -146,7 +146,7 @@ async def get_conversation(conv_id: str):
 async def get_conversation_messages(conv_id: str):
     conn = get_db()
     msgs = conn.execute(
-        "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC", (conv_id,)
+        "SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)
     ).fetchall()
     conn.close()
     return [dict(m) for m in msgs]
@@ -158,13 +158,12 @@ async def add_conversation_message(conv_id: str, req: dict):
     content = req.get("content", "")
     if not content:
         raise HTTPException(400, "内容不能为空")
-    msg_id = f"msg_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
     conn = get_db()
     conn.execute(
-        """INSERT INTO messages (id, conversation_id, role, content, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (msg_id, conv_id, role, content, now),
+        """INSERT INTO messages (conversation_id, role, content, timestamp)
+           VALUES (?, ?, ?, ?)""",
+        (conv_id, role, content, now),
     )
     conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
     conn.commit()
@@ -200,8 +199,8 @@ async def run_agent(agent_id: str, req: dict):
             conn = get_db()
             now = datetime.now().isoformat()
             conn.execute(
-                """INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)""",
-                (f"msg_{uuid.uuid4().hex[:12]}", conv_id, "assistant", result, now),
+                """INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?)""",
+                (conv_id, "assistant", result, now),
             )
             conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
             conn.commit()
