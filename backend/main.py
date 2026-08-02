@@ -23,6 +23,9 @@ load_dotenv()
 from image_factory import router as image_factory_router
 from video_factory import router as video_factory_router
 from music_factory import router as music_factory_router
+from prd_engine import router as prd_engine_router
+from chat_engine import router as chat_engine_router
+from sessions import router as sessions_router
 
 # ── 配置 ──────────────────────────────────────────────────────
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -312,13 +315,14 @@ async def create_workflow(req: dict, current_user: dict = require_auth()):
     workflow_id = f"wf_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     conn.execute(
-        """INSERT INTO workflows (id, name, description, definition, created_at)
-           VALUES (?, ?, ?, ?, ?)""",
+        """INSERT INTO workflows (id, name, description, steps, connections, created_at, active)
+           VALUES (?, ?, ?, ?, ?, ?, 1)""",
         (
             workflow_id,
             req.get("name", ""),
             req.get("description", ""),
-            json.dumps(req.get("definition", {})),
+            json.dumps(req.get("steps", req.get("definition", {}).get("nodes", []))),
+            json.dumps(req.get("connections", {})),
             datetime.now().isoformat(),
         ),
     )
@@ -328,38 +332,7 @@ async def create_workflow(req: dict, current_user: dict = require_auth()):
 
 
 # ── 会话管理 ──────────────────────────────────────────────────
-@app.get("/api/sessions")
-async def list_sessions(agent_id: str = None, current_user: dict = require_auth()):
-    """获取会话列表"""
-    conn = get_db()
-    if agent_id:
-        sessions = conn.execute(
-            "SELECT * FROM sessions WHERE agent_id=? ORDER BY created_at DESC", (agent_id,)
-        ).fetchall()
-    else:
-        sessions = conn.execute("SELECT * FROM sessions ORDER BY created_at DESC").fetchall()
-    conn.close()
-    return [dict(s) for s in sessions]
-
-
-@app.post("/api/sessions")
-async def create_session(req: dict, current_user: dict = require_auth()):
-    """创建新会话"""
-    import uuid
-
-    session_id = f"session_{uuid.uuid4().hex[:12]}"
-    agent_id = req.get("agent_id", "")
-    title = req.get("title", "")
-    conn = get_db()
-    conn.execute(
-        """INSERT INTO sessions (id, agent_id, title, created_at)
-           VALUES (?, ?, ?, ?)""",
-        (session_id, agent_id, title, datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
-    return {"session_id": session_id}
-
+# 会话/消息/记忆 API 已迁移至 sessions.py router（/api/sessions/*）
 
 # ── Team 管理 ───────────────────────────────────────────────────
 @app.get("/api/teams")
@@ -563,9 +536,115 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
     return {"success": True}
 
 
+# ── 沙箱管理 ───────────────────────────────────────────────────
+@app.get("/api/sandbox/images")
+async def sandbox_list_images(current_user: dict = require_auth()):
+    """列出沙箱镜像"""
+    from sandbox import process_manager
+
+    return {"images": process_manager.list_images()}
+
+
+@app.post("/api/sandbox/images/pull")
+async def sandbox_pull_image(req: dict, current_user: dict = require_auth()):
+    """拉取镜像"""
+    image = (req.get("image") or "").strip()
+    if not image:
+        raise HTTPException(400, "镜像名不能为空")
+    from sandbox import process_manager
+
+    return process_manager.pull_image(image)
+
+
+@app.get("/api/sandbox/services")
+async def sandbox_services(current_user: dict = require_auth()):
+    """获取预置服务模板"""
+    from sandbox import SERVICE_TEMPLATES
+
+    return {"services": SERVICE_TEMPLATES}
+
+
+@app.get("/api/sandbox/projects")
+async def sandbox_list_projects(current_user: dict = require_auth()):
+    """列出沙箱项目"""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM sandbox_projects ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/sandbox/projects")
+async def sandbox_create_project(req: dict, current_user: dict = require_auth()):
+    """创建沙箱项目"""
+    from sandbox import process_manager
+
+    name = (req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    project_id = f"proj_{int(time.time() * 1000)}"
+    config = {
+        "image": req.get("image", "python:3.12-alpine"),
+        "ports": req.get("ports", []),
+        "env": req.get("env", []),
+        "command": req.get("command"),
+    }
+    result = process_manager.create_container(project_id, config)
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO sandbox_projects (id, name, image, status, ports, config, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, name, config["image"], result.get("status", "created"),
+         json.dumps(config.get("ports", [])), json.dumps(config), datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": project_id, **result}
+
+
+@app.get("/api/sandbox/projects/{project_id}")
+async def sandbox_get_project(project_id: str, current_user: dict = require_auth()):
+    """获取沙箱项目状态"""
+    from sandbox import process_manager
+
+    status = process_manager.get_status(project_id)
+    return {"id": project_id, "status": status or {"state": "unknown"}}
+
+
+@app.post("/api/sandbox/projects/{project_id}/start")
+async def sandbox_start_project(project_id: str, current_user: dict = require_auth()):
+    """启动沙箱项目"""
+    from sandbox import process_manager
+
+    return process_manager.start_container(project_id)
+
+
+@app.post("/api/sandbox/projects/{project_id}/stop")
+async def sandbox_stop_project(project_id: str, current_user: dict = require_auth()):
+    """停止沙箱项目"""
+    from sandbox import process_manager
+
+    return process_manager.stop_container(project_id)
+
+
+@app.delete("/api/sandbox/projects/{project_id}")
+async def sandbox_delete_project(project_id: str, current_user: dict = require_auth()):
+    """删除沙箱项目"""
+    from sandbox import process_manager
+
+    result = process_manager.remove_container(project_id)
+    conn = get_db()
+    conn.execute("DELETE FROM sandbox_projects WHERE id=?", (project_id,))
+    conn.commit()
+    conn.close()
+    return result
+
+
 app.include_router(image_factory_router)
 app.include_router(video_factory_router)
 app.include_router(music_factory_router)
+app.include_router(prd_engine_router)
+app.include_router(chat_engine_router)
+app.include_router(sessions_router)
 
 
 # ── 初始化 ─────────────────────────────────────────────────────

@@ -19,6 +19,8 @@ def get_db():
 def init_db():
     """初始化会话表"""
     conn = get_db()
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
@@ -146,6 +148,60 @@ def get_memories(session_id: str, agent_id: str = None) -> list:
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# ══════════════════════════════════════════════════════════════
+# FastAPI 路由
+# ══════════════════════════════════════════════════════════════
+
+from fastapi import APIRouter, HTTPException
+
+router = APIRouter(tags=["会话"])
+
+
+@router.get("/api/sessions")
+async def api_list_sessions(agent_id: str = None):
+    """获取会话列表"""
+    return list_sessions(agent_id)
+
+
+@router.post("/api/sessions")
+async def api_create_session(req: dict):
+    """创建会话"""
+    agent_id = req.get("agent_id", "")
+    if not agent_id:
+        raise HTTPException(400, "agent_id 不能为空")
+    session_id = create_session(agent_id, req.get("title", ""))
+    return {"session_id": session_id, "agent_id": agent_id}
+
+
+@router.get("/api/sessions/{session_id}/messages")
+async def api_get_messages(session_id: str):
+    """获取会话消息"""
+    return get_messages(session_id)
+
+
+@router.post("/api/sessions/{session_id}/messages")
+async def api_add_message(session_id: str, req: dict):
+    """添加消息"""
+    content = req.get("content", "")
+    if not content:
+        raise HTTPException(400, "内容不能为空")
+    msg_id = add_message(session_id, req.get("role", "user"), content, req.get("metadata"))
+    return {"id": msg_id, "session_id": session_id}
+
+
+@router.delete("/api/sessions/{session_id}")
+async def api_delete_session(session_id: str):
+    """删除会话"""
+    delete_session(session_id)
+    return {"success": True}
+
+
+@router.get("/api/sessions/{session_id}/memories")
+async def api_get_memories(session_id: str, agent_id: str = None):
+    """获取会话记忆"""
+    return get_memories(session_id, agent_id)
 
 
 # 初始化
