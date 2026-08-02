@@ -505,6 +505,10 @@ async def get_config():
     # 脱敏 API Key
     if cfg.get("agnes_api_key"):
         cfg["agnes_api_key"] = "••••••••••••" + cfg["agnes_api_key"][-4:]
+    # 兼容前端字段名
+    cfg.setdefault("api_url", cfg.get("agnes_api_base", ""))
+    cfg.setdefault("api_key", cfg.get("agnes_api_key", ""))
+    cfg.setdefault("model_name", cfg.get("model_name", "agnes-2.5-flash"))
     return cfg
 
 

@@ -26,6 +26,7 @@ from music_factory import router as music_factory_router
 from prd_engine import router as prd_engine_router
 from chat_engine import router as chat_engine_router
 from sessions import router as sessions_router
+from collab_engine import router as collab_engine_router
 
 # ── 配置 ──────────────────────────────────────────────────────
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -284,7 +285,7 @@ async def create_agent(req: dict, current_user: dict = require_auth()):
             name,
             req.get("description", ""),
             req.get("instructions", ""),
-            req.get("model", "agnes-2.0-flash"),
+            req.get("model", "agnes-2.5-flash"),
             json.dumps(req.get("tools", [])),
             json.dumps(req.get("knowledge_base_ids", [])),
             json.dumps(req.get("skill_ids", [])),
@@ -295,6 +296,41 @@ async def create_agent(req: dict, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return {"id": agent_id, "name": name}
+
+
+@app.put("/api/agents/{agent_id}")
+async def update_agent(agent_id: str, req: dict, current_user: dict = require_auth()):
+    """更新 Agent"""
+    conn = get_db()
+    fields = ["name", "description", "instructions", "model", "active"]
+    list_fields = ["tools", "knowledge_base_ids", "skill_ids", "mcp_server_ids"]
+    updates = []
+    vals = []
+    for f in fields:
+        if f in req:
+            updates.append(f"{f}=?")
+            vals.append(req[f])
+    for f in list_fields:
+        if f in req:
+            updates.append(f"{f}=?")
+            vals.append(json.dumps(req[f]))
+    if not updates:
+        raise HTTPException(400, "无更新字段")
+    vals.append(agent_id)
+    conn.execute(f"UPDATE agents SET {', '.join(updates)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": agent_id}
+
+
+@app.delete("/api/agents/{agent_id}")
+async def delete_agent(agent_id: str, current_user: dict = require_auth()):
+    """删除 Agent"""
+    conn = get_db()
+    conn.execute("DELETE FROM agents WHERE id=?", (agent_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
 
 
 # ── Workflow 管理 ──────────────────────────────────────────────
@@ -329,6 +365,42 @@ async def create_workflow(req: dict, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return {"id": workflow_id, "name": req.get("name", "")}
+
+
+@app.put("/api/workflows/{workflow_id}")
+async def update_workflow(workflow_id: str, req: dict, current_user: dict = require_auth()):
+    """更新工作流"""
+    conn = get_db()
+    fields = ["name", "description"]
+    updates = []
+    vals = []
+    for f in fields:
+        if f in req:
+            updates.append(f"{f}=?")
+            vals.append(req[f])
+    if "steps" in req:
+        updates.append("steps=?")
+        vals.append(json.dumps(req["steps"]))
+    if "connections" in req:
+        updates.append("connections=?")
+        vals.append(json.dumps(req["connections"]))
+    if not updates:
+        raise HTTPException(400, "无更新字段")
+    vals.append(workflow_id)
+    conn.execute(f"UPDATE workflows SET {', '.join(updates)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": workflow_id}
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow(workflow_id: str, current_user: dict = require_auth()):
+    """删除工作流"""
+    conn = get_db()
+    conn.execute("DELETE FROM workflows WHERE id=?", (workflow_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
 
 
 # ── 会话管理 ──────────────────────────────────────────────────
@@ -645,6 +717,7 @@ app.include_router(music_factory_router)
 app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)
+app.include_router(collab_engine_router)
 
 
 # ── 初始化 ─────────────────────────────────────────────────────

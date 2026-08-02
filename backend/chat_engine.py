@@ -370,6 +370,7 @@ BUILTIN_PLUGINS = [
 @router.get("/api/plugins")
 async def list_plugins():
     """获取插件列表"""
+    plugins = []
     # 尝试加载真实 registry
     try:
         sys.path.insert(0, str(PROJECT_DIR))
@@ -377,31 +378,50 @@ async def list_plugins():
 
         registered = registry.list_all()
         if registered:
-            return registered
+            plugins = registered
     except Exception:
         pass
-    return BUILTIN_PLUGINS
+    if not plugins:
+        plugins = BUILTIN_PLUGINS
+
+    # 按类别分组
+    categories = []
+    seen = set()
+    for p in plugins:
+        cat = p.get("category", "其他")
+        if cat not in seen:
+            seen.add(cat)
+            categories.append(cat)
+
+    return {
+        "plugins": plugins,
+        "categories": categories,
+        "total": len(plugins),
+    }
 
 
 @router.post("/api/plugins/{plugin_name}/execute")
 async def execute_plugin(plugin_name: str, req: dict):
     """执行插件"""
+    # 兼容 {input_data: {...}} 和扁平结构
+    input_data = req.get("input_data", {}) if isinstance(req.get("input_data"), dict) else req
+
     # 尝试真实 registry
     try:
         sys.path.insert(0, str(PROJECT_DIR))
         from plugin_registry import registry
 
-        result = registry.execute(plugin_name, req)
+        result = registry.execute(plugin_name, input_data)
         return {"status": "success", "result": result}
     except Exception as e:
         logger.warning(f"plugin registry execute failed: {e}")
 
     # 内置插件映射到 prd_engine 端点逻辑
     mapping = {
-        "biz-review": ("/api/prd/review", req),
-        "biz-technical-design": ("/api/prd/technical-design", req),
-        "biz-test-cases": ("/api/prd/test-cases", req),
-        "biz-code-scan": ("/api/prd/generate-code", req),
+        "biz-review": ("/api/prd/review", input_data),
+        "biz-technical-design": ("/api/prd/technical-design", input_data),
+        "biz-test-cases": ("/api/prd/test-cases", input_data),
+        "biz-code-scan": ("/api/prd/generate-code", input_data),
         "image-factory": None,
         "video-factory": None,
         "music-factory": None,
