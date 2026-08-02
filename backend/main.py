@@ -84,6 +84,9 @@ async def lifespan(app: FastAPI):
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
 app = FastAPI(title="智能研发平台 v8.0", version="8.0.0", lifespan=lifespan)
+
+# workflow 写入防抖（阻断旧版前端自动保存循环）
+_WF_LAST_WRITE: dict[str, float] = {}
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -306,6 +309,18 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdateRequest, current_
     if not updates:
         raise HTTPException(400, "无更新字段")
     vals.append(workflow_id)
+
+    # 防抖保护：1.5s 内同一 workflow 的重复写入直接跳过（阻断旧页面循环）
+    import time as _time
+
+    now = _time.time()
+    key = f"wf_write:{workflow_id}"
+    last = _WF_LAST_WRITE.get(key, 0)
+    if now - last < 1.5:
+        conn.close()
+        return {"success": True, "id": workflow_id, "deduped": True}
+    _WF_LAST_WRITE[key] = now
+
     conn.execute(f"UPDATE workflows SET {', '.join(updates)} WHERE id=?", vals)
     conn.commit()
     conn.close()
