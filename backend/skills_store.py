@@ -246,6 +246,18 @@ def ensure_root(skill_id: str) -> None:
     skill_root(skill_id).mkdir(parents=True, exist_ok=True)
 
 
+def ensure_standard_dirs(skill_id: str) -> None:
+    """创建标准目录结构（scripts/references/examples/assets），幂等。
+
+    标准 Agent Skills 目录：SKILL.md + 四个可选子目录，即使为空也创建，
+    保证界面目录树与导出 ZIP 的结构完整一致。
+    """
+    root = skill_root(skill_id)
+    root.mkdir(parents=True, exist_ok=True)
+    for d in STANDARD_DIRS:
+        (root / d).mkdir(exist_ok=True)
+
+
 # ══════════════════════════════════════════════════════════════
 # ZIP 导入 / 导出
 # ══════════════════════════════════════════════════════════════
@@ -409,12 +421,18 @@ def migrate_legacy() -> int:
             logger.warning("migrate_legacy 跳过非法 skill_id: %r", s.get("id"))
             continue
         if not (root / "SKILL.md").exists():
-            root.mkdir(parents=True, exist_ok=True)
+            ensure_standard_dirs(s["id"])
             write_file(s["id"], "SKILL.md", render_skill_markdown(s))
             refs = _clean_legacy_text(s.get("references"))
             if refs:
                 write_file(s["id"], "references/references.md", refs)
             migrated += 1
+        else:
+            # 已存在但缺少标准子目录的存量 skill，幂等补建
+            try:
+                ensure_standard_dirs(s["id"])
+            except (ValueError, OSError):
+                pass
 
     # skills_files 表存量落盘（幂等：目标文件已存在则跳过）
     seen = set()

@@ -25,6 +25,8 @@ const PAGE_PATH_TO_ID = {
   '/sandbox': 'sandbox',
   '/plugins': 'plugins',
   '/chat': 'chat',
+  '/publish': 'publish',
+  '/miniapp': 'miniapp',
 }
 
 export default function useAccess() {

@@ -80,8 +80,10 @@ from common.models import (  # noqa: E402
 )
 import skills_store  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
+from miniapp import router as miniapp_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
+from publishing import router as publishing_router  # noqa: E402
 from realtime import router as realtime_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
@@ -1150,15 +1152,15 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
     conn.commit()
     conn.close()
     try:
-        skills_store.ensure_root(skill_id)
-        if (req.content or "").strip():
-            skills_store.write_file(
-                skill_id,
-                "SKILL.md",
-                skills_store.render_skill_markdown({
-                    "name": req.name, "description": req.description, "content": req.content,
-                }),
-            )
+        # 标准目录结构：SKILL.md + scripts/references/examples/assets
+        skills_store.ensure_standard_dirs(skill_id)
+        skills_store.write_file(
+            skill_id,
+            "SKILL.md",
+            skills_store.render_skill_markdown({
+                "name": req.name, "description": req.description, "content": req.content,
+            }),
+        )
     except (ValueError, OSError) as e:
         raise HTTPException(500, f"初始化 Skill 目录失败：{e}") from e
     return {"id": skill_id, "name": req.name}
@@ -1255,6 +1257,7 @@ async def import_skill(req: dict, current_user: dict = require_auth()):
     )
     conn.commit()
     conn.close()
+    skills_store.ensure_standard_dirs(skill_id)
     skills_store.write_file(skill_id, "SKILL.md", markdown)
     return {"id": skill_id, "name": name, "description": parsed["description"]}
 
@@ -1283,6 +1286,7 @@ async def import_skill_zip(file: UploadFile = File(...), current_user: dict = re
     )
     conn.commit()
     conn.close()
+    skills_store.ensure_standard_dirs(skill_id)
     imported = skills_store.extract_zip_to(skill_id, content)
     return {"id": skill_id, "name": imported["name"], "imported": imported["imported"]}
 
@@ -2209,6 +2213,8 @@ async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: d
 app.include_router(image_factory_router)
 app.include_router(video_factory_router)
 app.include_router(music_factory_router)
+app.include_router(miniapp_router)
+app.include_router(publishing_router)
 app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)

@@ -416,6 +416,32 @@ _SCHEMA_STATEMENTS = [
         last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, tool_id)
     )""",
+
+    # ── 内容发布中心（公众号/抖音/快手） ──────────────────────
+    # 第三方平台账号配置（自动发布用；secret 存库、读取时脱敏）
+    """CREATE TABLE IF NOT EXISTS publish_accounts (
+        id TEXT PRIMARY KEY, platform TEXT NOT NULL,  -- wechat/douyin/kuaishou
+        name TEXT DEFAULT '', app_id TEXT DEFAULT '', app_secret TEXT DEFAULT '',
+        access_token TEXT DEFAULT '', token_expires_at TEXT DEFAULT '',
+        configured INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT, active INTEGER DEFAULT 1
+    )""",
+    # 发布记录（引导模式也记录，便于追溯）
+    """CREATE TABLE IF NOT EXISTS publish_records (
+        id TEXT PRIMARY KEY, user_id TEXT DEFAULT '', platform TEXT NOT NULL,
+        content_type TEXT NOT NULL,  -- article/image/video
+        title TEXT DEFAULT '', content TEXT DEFAULT '', topics TEXT DEFAULT '[]',
+        asset_urls TEXT DEFAULT '[]', account_id TEXT DEFAULT '',
+        mode TEXT DEFAULT 'guide',  -- guide=引导式 / auto=自动发布
+        status TEXT DEFAULT 'pending',  -- pending/success/failed
+        platform_post_id TEXT DEFAULT '', error TEXT DEFAULT '',
+        created_at TEXT
+    )""",
+    # 小程序项目（AI 生成）
+    """CREATE TABLE IF NOT EXISTS miniapp_projects (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, template TEXT DEFAULT 'custom',
+        requirement TEXT DEFAULT '', files TEXT DEFAULT '{}',
+        model TEXT DEFAULT '', created_at TEXT
+    )""",
 ]
 
 _INDEX_STATEMENTS = [

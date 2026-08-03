@@ -41,7 +41,7 @@ function TreeNode({ node, depth = 0, expanded, onToggle, selectedPath, onSelect,
     return (
       <div>
         <button
-          onClick={() => onToggle(node.path)}
+          onClick={() => { onToggle(node.path); onSelect(node) }}
           className={`w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-left text-sm transition-colors ${
             isSelected ? 'bg-violet-50 text-violet-700' : 'text-gray-700 hover:bg-gray-100'
           }`}
@@ -76,7 +76,7 @@ function TreeNode({ node, depth = 0, expanded, onToggle, selectedPath, onSelect,
       className={`w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-left text-sm transition-colors ${
         isSelected ? 'bg-violet-50 text-violet-700' : 'text-gray-600 hover:bg-gray-100'
       }`}
-      style={{ paddingLeft: 8 + depth * 14 + 16 }}
+      style={{ paddingLeft: 8 + depth * 14 }}
     >
       {node.name === 'SKILL.md' ? (
         <FileText className="w-4 h-4 text-violet-500 flex-shrink-0" />
@@ -424,7 +424,7 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
                     if (e.key === 'Enter') handleCreate()
                     if (e.key === 'Escape') setCreating(null)
                   }}
-                  placeholder={creating === 'folder' ? '目录名' : '文件名'}
+                  placeholder={`${creating === 'folder' ? '目录名' : '文件名'}（创建于 ${targetDir || '根目录'}/）`}
                   className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
                 />
                 <button onClick={handleCreate} className="p-1.5 rounded-lg text-violet-600 hover:bg-violet-50" title="确认"><Check className="w-4 h-4" /></button>

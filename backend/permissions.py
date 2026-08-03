@@ -36,6 +36,8 @@ PAGES = [
     {"id": "sandbox", "path": "/sandbox", "label": "沙箱运行"},
     {"id": "plugins", "path": "/plugins", "label": "插件市场"},
     {"id": "chat", "path": "/chat", "label": "智能协作"},
+    {"id": "publish", "path": "/publish", "label": "发布中心"},
+    {"id": "miniapp", "path": "/miniapp", "label": "小程序工坊"},
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊

@@ -5,7 +5,8 @@ import {
   ChevronDown, ChevronRight, Menu, X, Play, Image as ImageIcon, Film, Music,
   Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell,
   Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
-  Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search
+  Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
+  Send, Smartphone
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -57,6 +58,8 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/copywriting', label: '文案工厂', icon: PenTool, pageId: 'copywriting' },
         { path: '/translation', label: '翻译中心', icon: Languages, pageId: 'translation' },
         { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
+        { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish' },
+        { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp' },
       ] },
     { key: 'office', label: '效率工具箱', icon: Wrench, color: 'from-orange-500 to-red-600',
       items: [

@@ -5,7 +5,7 @@ import {
   Wrench, Server, Settings, MessageSquare, Brain, FileText, CheckCircle2,
   Bell, Zap, Users, Play, ArrowRight, Home, Shield, GitBranch,
   PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2,
-  Code2, Puzzle, Rocket, RefreshCcw
+  Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone
 } from 'lucide-react'
 import api from '../lib/api'
 
@@ -35,6 +35,8 @@ const COMMANDS = [
   { id: 'nav-music', label: '音乐工厂', description: 'AI 音乐生成', icon: Music, path: '/music-factory', category: '创作' },
   { id: 'nav-copywriting', label: '文案工厂', description: 'AI 文案生成', icon: PenTool, path: '/copywriting', category: '创作' },
   { id: 'nav-translation', label: '翻译中心', description: 'AI 多语言翻译', icon: Languages, path: '/translation', category: '创作' },
+  { id: 'nav-publish', label: '发布中心', description: '文章/图片/视频一键发布公众号、抖音、快手', icon: Send, path: '/publish', category: '创作' },
+  { id: 'nav-miniapp', label: '小程序工坊', description: 'AI 生成微信小程序项目，模板 + 自定义', icon: Smartphone, path: '/miniapp', category: '创作' },
 
   // 办公效率
   { id: 'nav-tool-hub', label: '效率工具箱', description: 'AI 效率工具集合', icon: Wrench, path: '/tool-hub', category: '办公' },

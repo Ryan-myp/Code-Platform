@@ -4,6 +4,7 @@ import {
   FileText, RefreshCw, LayoutGrid, List as ListIcon,
   Link2, Code2, PenTool, BarChart3, ShieldCheck,
   Sparkles, BookOpen, Upload, FolderOpen, FileArchive,
+  Folder, FileCode2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -53,6 +54,23 @@ function guessCategory(skill) {
   return 'general'
 }
 
+// 标准目录结构（展示顺序固定，保证与 Agent Skills 规范一致）
+const STRUCTURE_DIRS = ['scripts', 'references', 'examples', 'assets']
+
+function StructureRow({ dirCounts }) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-[11px] text-gray-400">
+      <span className="inline-flex items-center gap-1"><FileText className="w-3 h-3 text-violet-400" />SKILL.md</span>
+      {STRUCTURE_DIRS.map((d) => (
+        <span key={d} className="inline-flex items-center gap-1">
+          <FolderOpen className="w-3 h-3 text-amber-400" />{d}
+          {dirCounts[d] > 0 && <span className="text-gray-500 font-medium">{dirCounts[d]}</span>}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
   const initial = skill.name?.[0]?.toUpperCase() || 'S'
   const category = skill.category || guessCategory(skill)
@@ -72,6 +90,7 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
             </span>
           </div>
           <p className="text-sm text-gray-500 truncate">{skill.description || '暂无描述'}</p>
+          <div className="mt-1.5"><StructureRow dirCounts={dirCounts} /></div>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
           {skill.content ? <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" />有内容</span> : null}
@@ -129,7 +148,9 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
         </div>
       </div>
 
-      <p className="text-sm text-gray-600 line-clamp-2 mb-4 flex-1">{skill.description || '暂无描述'}</p>
+      <p className="text-sm text-gray-600 line-clamp-2 mb-3 flex-1">{skill.description || '暂无描述'}</p>
+
+      <div className="mb-4"><StructureRow dirCounts={dirCounts} /></div>
 
       <div className="flex items-center justify-between pt-3 border-t border-gray-100">
         <span className="text-xs text-gray-400">{formatRelativeTime(skill.created_at)}</span>
@@ -143,9 +164,35 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
   )
 }
 
+// 只读目录树（编辑弹窗内展示标准结构，不含交互操作）
+function StaticTree({ node, depth = 0, rootName }) {
+  const isDir = node.type === 'dir'
+  const icon = isDir ? <FolderOpen className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+    : node.name === 'SKILL.md' ? <FileText className="w-3.5 h-3.5 text-violet-400 flex-shrink-0" />
+    : <FileCode2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 py-1" style={{ paddingLeft: depth * 14 }}>
+        {icon}
+        <span className={`truncate ${isDir ? 'font-medium text-gray-600' : 'font-mono text-xs text-gray-500'}`}>
+          {node.path === '' ? rootName : node.name}
+        </span>
+        {isDir && node.file_count > 0 && (
+          <span className="text-[10px] px-1 rounded-full bg-gray-200/70 text-gray-500 flex-shrink-0">{node.file_count}</span>
+        )}
+      </div>
+      {(node.children || []).map((child) => (
+        <StaticTree key={child.path} node={child} depth={depth + 1} rootName={rootName} />
+      ))}
+    </div>
+  )
+}
+
 function SkillFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const [form, setForm] = useState({ name: '', description: '', content: '', references: '' })
   const [errors, setErrors] = useState({})
+  const [tree, setTree] = useState(null)
+  const [treeLoading, setTreeLoading] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -167,6 +214,15 @@ function SkillFormModal({ open, onClose, onSubmit, editing, defaults, loading })
       setForm({ name: '', description: '', content: '', references: '' })
     }
     setErrors({})
+    // 编辑模式加载标准目录树（只读展示）
+    setTree(null)
+    if (editing?.id) {
+      setTreeLoading(true)
+      api.get(`/api/skills/${editing.id}/files/tree`)
+        .then((res) => setTree(res.data))
+        .catch(() => setTree(null))
+        .finally(() => setTreeLoading(false))
+    }
   }, [open, editing, defaults])
 
   const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
@@ -221,6 +277,33 @@ function SkillFormModal({ open, onClose, onSubmit, editing, defaults, loading })
           <textarea value={form.references} onChange={(e) => setField('references', e.target.value)} rows={3} placeholder="输入参考文档、链接或其他 Skill 名称，每行一个…" className={inputCls(false)} />
           <p className="text-xs text-gray-400 mt-1">用于在对话中引用相关知识或其他 Skill</p>
         </div>
+
+        {/* 标准目录结构（只读） */}
+        {editing ? (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">标准目录结构</label>
+            <div className="bg-gray-50 rounded-xl p-3 max-h-44 overflow-y-auto">
+              {treeLoading ? (
+                <p className="text-xs text-gray-400">加载中…</p>
+              ) : tree ? (
+                <StaticTree node={tree} rootName={editing.name} />
+              ) : (
+                <p className="text-xs text-gray-400">目录结构加载失败</p>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">
+              目录为只读展示，文件增删请在「查看」中操作
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2.5">
+            <Folder className="w-4 h-4 text-violet-500 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-violet-600 leading-relaxed">
+              创建后将自动生成标准目录结构：<code className="font-mono">SKILL.md</code> +{' '}
+              <code className="font-mono">scripts/ references/ examples/ assets/</code>，与 Agent Skills 规范一致
+            </p>
+          </div>
+        )}
       </div>
     </Modal>
   )

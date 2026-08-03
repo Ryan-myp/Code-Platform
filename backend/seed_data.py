@@ -463,26 +463,9 @@ def _insert_artifacts(conn):
     logger.info("Artifacts seeded: %d rows", len(artifacts))
 
 
-def _insert_global_tasks(conn):
-    tasks = [
-        ("task_demo1", "完善用户认证模块", "实现 JWT 认证和刷新令牌机制", "in_progress", "P1", "", json.dumps(["backend", "auth"]), "proj-1", "", "admin", "admin", _NOW, _NOW, "", 1),
-        ("task_demo2", "优化首页加载性能", "减少首屏加载时间到 2s 以内", "todo", "P2", "", json.dumps(["frontend", "performance"]), "proj-2", "", "admin", "", _NOW, _NOW, "", 1),
-        ("task_demo3", "编写 API 文档", "使用 Swagger 生成完整的 API 文档", "todo", "P2", "", json.dumps(["documentation"]), "proj-1", "", "admin", "", _NOW, _NOW, "", 1),
-    ]
-    for t in tasks:
-        if _row_exists(conn, "global_tasks", t[0]):
-            continue
-        conn.execute(
-            """INSERT INTO global_tasks (id, title, description, status, priority, due_date, tags, project_id, agent_id, created_by, assigned_to, created_at, updated_at, completed_at, active)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", t,
-        )
-    logger.info("Global tasks seeded: %d rows", len(tasks))
-
-
 def _insert_notifications(conn):
     notifications = [
         ("notif_welcome", "info", "欢迎使用小团智能平台 v9.0", "平台已升级到 v9.0，新增了工作台、任务中心和通知中心等功能", "", "", "all", _NOW, 0, ""),
-        ("notif_task", "task", "新任务已创建", "任务「完善用户认证模块」已分配给你", "global_task", "task_demo1", "all", _NOW, 0, ""),
     ]
     for n in notifications:
         if _row_exists(conn, "notifications", n[0]):
@@ -508,7 +491,6 @@ def seed_if_empty():
         _insert_projects(conn)
         _insert_sandbox_projects(conn)
         _insert_artifacts(conn)
-        _insert_global_tasks(conn)
         _insert_notifications(conn)
         conn.commit()
         logger.info("Seed data inserted successfully")

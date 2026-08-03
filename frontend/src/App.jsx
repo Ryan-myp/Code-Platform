@@ -53,6 +53,9 @@ const HelpPage = lazy(() => import('./pages/HelpPage'))
 const RecordsPage = lazy(() => import('./pages/RecordsPage'))
 // v9.2 商业版
 const MembershipPage = lazy(() => import('./pages/MembershipPage'))
+// v9.3 内容发布 + 小程序开发
+const PublishingPage = lazy(() => import('./pages/PublishingPage'))
+const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
 
 // 页面级加载骨架（懒加载期间展示）
 function PageFallback() {
@@ -183,6 +186,9 @@ export default function App() {
                     {/* v9.0 Phase 3: 内容创作 */}
                     <Route path="/copywriting" element={<AccessGuard path="/copywriting"><CopywritingPage /></AccessGuard>} />
                     <Route path="/translation" element={<AccessGuard path="/translation"><TranslationPage /></AccessGuard>} />
+                    {/* v9.3 内容发布 + 小程序开发 */}
+                    <Route path="/publish" element={<AccessGuard path="/publish"><PublishingPage /></AccessGuard>} />
+                    <Route path="/miniapp" element={<AccessGuard path="/miniapp"><MiniAppPage /></AccessGuard>} />
                     {/* v9.0 Phase 4: 运营分析 */}
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/ab-testing" element={<ABTestingPage />} />

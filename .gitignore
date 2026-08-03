@@ -37,6 +37,12 @@ out/
 *.sqlite3
 data/
 
+# ─── 运行时数据目录（用户创建的内容，不入库） ────────────────
+backend/skills_files/
+backend/uploads/
+backend/image_factory/
+backend/.hermes/
+
 # ─── Environment & Secrets ──────────────────────────────────────
 .env
 .env.local
@@ -60,6 +66,7 @@ logs/
 
 # ─── Artifacts (generated docs) ─────────────────────────────────
 backend/artifacts/*.md
+backend/artifacts/*/
 !backend/artifacts/.gitkeep
 
 # ─── CI/CD ──────────────────────────────────────────────────────
