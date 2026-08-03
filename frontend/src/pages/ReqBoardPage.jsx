@@ -5,6 +5,7 @@ import {
   Edit2, Trash2,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
@@ -230,13 +231,17 @@ function RequirementDetailModal({ req, onClose }) {
         {req.prd_text && (
           <details>
             <summary className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">查看 PRD</summary>
-            <div className="mt-2 prose prose-sm max-w-none p-3 bg-gray-50 rounded-lg border border-gray-200 whitespace-pre-wrap font-mono text-xs">{req.prd_text}</div>
+            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <MarkdownRenderer content={req.prd_text} />
+            </div>
           </details>
         )}
         {req.review_report && (
           <details>
             <summary className="cursor-pointer text-sm font-medium text-emerald-600 hover:text-emerald-700">查看审查报告</summary>
-            <div className="mt-2 prose prose-sm max-w-none p-3 bg-gray-50 rounded-lg border border-gray-200 whitespace-pre-wrap font-mono text-xs">{req.review_report}</div>
+            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <MarkdownRenderer content={req.review_report} />
+            </div>
           </details>
         )}
       </div>

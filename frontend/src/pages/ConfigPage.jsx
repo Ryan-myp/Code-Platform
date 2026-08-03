@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Settings, Save, RefreshCw, Eye, EyeOff, Key, Globe, Cpu,
-  CheckCircle2, Wifi,
+  CheckCircle2, Wifi, Plus, Trash2, Loader2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -15,15 +15,6 @@ const MASKED_PREFIX = '••••'
 const DEFAULT_API_URL = 'https://api.agnes-ai.cn/v1'
 const DEFAULT_MODEL = 'agnes-2.5-flash'
 
-const MODEL_OPTIONS = [
-  { value: 'agnes-2.5-flash', label: 'agnes-2.5-flash (推荐)' },
-  { value: 'agnes-2.5-pro', label: 'agnes-2.5-pro' },
-  { value: 'gpt-4o', label: 'gpt-4o' },
-  { value: 'claude-3-5-sonnet', label: 'claude-3-5-sonnet' },
-  { value: 'glm-4', label: 'glm-4' },
-  { value: 'qwen-max', label: 'qwen-max' },
-]
-
 export default function ConfigPage() {
   const toast = useToast()
   const [apiKey, setApiKey] = useState('')
@@ -36,6 +27,15 @@ export default function ConfigPage() {
   const [error, setError] = useState(null)
   const [config, setConfig] = useState(null)
   const [errors, setErrors] = useState({})
+  // 模型列表管理（每个模型可独立配置 base_url / api_key 多供应商接入）
+  const [models, setModels] = useState([])
+  const [newModelName, setNewModelName] = useState('')
+  const [newModelBaseUrl, setNewModelBaseUrl] = useState('')
+  const [newModelKey, setNewModelKey] = useState('')
+  const [addingModel, setAddingModel] = useState(false)
+  const [deletingModel, setDeletingModel] = useState('')
+  const [editingModel, setEditingModel] = useState(null) // 编辑弹窗
+  const [savingModel, setSavingModel] = useState(false)
 
   const fetchConfig = useCallback(async () => {
     setLoading(true)
@@ -46,6 +46,7 @@ export default function ConfigPage() {
       setConfig(data)
       setApiUrl(data.api_url || data.agnes_api_base || DEFAULT_API_URL)
       setModelName(data.model_name || DEFAULT_MODEL)
+      setModels(Array.isArray(data.models) ? data.models : [])
       // 已配置则展示掩码占位，留空表示不修改
       setApiKey(data.api_key || data.agnes_api_key || '')
     } catch (e) {
@@ -117,6 +118,64 @@ export default function ConfigPage() {
       toast.error(`连接测试失败：${e.message}`)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const handleAddModel = async () => {
+    const name = newModelName.trim()
+    if (!name) {
+      toast.error('请输入模型名称')
+      return
+    }
+    setAddingModel(true)
+    try {
+      const res = await api.post('/api/config/models', {
+        name,
+        note: '',
+        base_url: newModelBaseUrl.trim(),
+        api_key: newModelKey.trim(),
+      })
+      setModels(res.data.models)
+      setNewModelName('')
+      setNewModelBaseUrl('')
+      setNewModelKey('')
+      toast.success(`模型 ${name} 已添加`)
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '添加模型失败')
+    } finally {
+      setAddingModel(false)
+    }
+  }
+
+  const handleUpdateModel = async () => {
+    if (!editingModel) return
+    setSavingModel(true)
+    try {
+      const res = await api.put(`/api/config/models/${encodeURIComponent(editingModel.name)}`, {
+        note: editingModel.note || '',
+        base_url: (editingModel.base_url || '').trim(),
+        api_key: editingModel.new_key || '', // 留空 = 保持不变
+      })
+      setModels(res.data.models)
+      toast.success(`模型 ${editingModel.name} 已更新`)
+      setEditingModel(null)
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '更新失败')
+    } finally {
+      setSavingModel(false)
+    }
+  }
+
+  const handleDeleteModel = async (name) => {
+    setDeletingModel(name)
+    try {
+      await api.delete(`/api/config/models/${encodeURIComponent(name)}`)
+      toast.success(`模型 ${name} 已移除`)
+      fetchConfig() // 刷新列表与默认模型（可能被自动回退）
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '移除模型失败')
+    } finally {
+      setDeletingModel('')
     }
   }
 
@@ -194,7 +253,99 @@ export default function ConfigPage() {
               : <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>}
           </div>
 
-          {/* 默认模型 */}
+          {/* 模型列表（每个模型独立配置 base_url / api_key，多供应商接入） */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Cpu className="w-4 h-4 inline mr-1" />
+              模型列表
+            </label>
+            <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 overflow-hidden">
+              {models.length === 0 ? (
+                <p className="px-4 py-3 text-xs text-gray-400">加载中…</p>
+              ) : (
+                models.map((m) => (
+                  <div key={m.name} className="flex items-center gap-3 px-4 py-2.5">
+                    <Cpu className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5">
+                        <span className="text-sm font-medium text-gray-800">{m.name}</span>
+                        {m.note && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500">{m.note}</span>}
+                        {m.name === modelName && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">默认</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-0.5 text-[11px] text-gray-400 font-mono">
+                        <span className="truncate max-w-[220px]">
+                          {m.base_url ? m.base_url : 'API 地址：继承全局'}
+                        </span>
+                        <span className="flex-shrink-0">
+                          {m.api_key ? `Key：${m.api_key}` : 'Key：继承全局'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setEditingModel({ ...m, new_key: '' })}
+                      className="p-1.5 rounded-lg text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                      title={`编辑 ${m.name}`}
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteModel(m.name)}
+                      disabled={deletingModel === m.name}
+                      className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                      title={`移除 ${m.name}`}
+                    >
+                      {deletingModel === m.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="space-y-2 mt-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newModelName}
+                  onChange={(e) => setNewModelName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddModel()}
+                  placeholder="模型名称，如 gpt-4o / deepseek-v3"
+                  className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                <input
+                  type="text"
+                  value={newModelBaseUrl}
+                  onChange={(e) => setNewModelBaseUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddModel()}
+                  placeholder="API 地址（留空=继承全局）"
+                  className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={newModelKey}
+                  onChange={(e) => setNewModelKey(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddModel()}
+                  placeholder="该模型的 API Key（留空=继承全局）"
+                  className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                <button
+                  onClick={handleAddModel}
+                  disabled={addingModel}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-60 flex-shrink-0"
+                >
+                  {addingModel ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  添加模型
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-1.5">
+              每个模型可配置独立的 API 地址与密钥（如智谱 / DeepSeek / 豆包均为不同服务商）；留空则使用上方全局 API Key / URL。切换模型时自动使用对应供应商的地址与密钥
+            </p>
+          </div>
+
+          {/* 默认模型（从模型列表中选择） */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Settings className="w-4 h-4 inline mr-1" />
@@ -205,9 +356,13 @@ export default function ConfigPage() {
               onChange={(e) => setModelName(e.target.value)}
               className={`w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${errors.modelName ? 'border-red-300' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'}`}
             >
-              {MODEL_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {models.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}{m.note ? `（${m.note}）` : ''}
+                </option>
+              ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">Agent 默认使用的模型</p>
+            <p className="text-xs text-gray-500 mt-1">Agent 默认使用的模型，保存后所有 AI 功能立即生效</p>
           </div>
 
           {/* 当前状态 */}
@@ -260,6 +415,72 @@ export default function ConfigPage() {
           {' '}注册账号并创建 API Key。免费额度足够个人使用。
         </p>
       </div>
+
+      {/* 编辑模型弹窗 */}
+      {editingModel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setEditingModel(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-900 mb-1">编辑模型配置</h3>
+            <p className="text-xs text-gray-400 mb-5 font-mono">{editingModel.name}</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">备注</label>
+                <input
+                  type="text"
+                  value={editingModel.note || ''}
+                  onChange={(e) => setEditingModel({ ...editingModel, note: e.target.value })}
+                  placeholder="如：DeepSeek / 智谱 GLM / 豆包"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  API 地址（留空=继承全局）
+                </label>
+                <input
+                  type="text"
+                  value={editingModel.base_url || ''}
+                  onChange={(e) => setEditingModel({ ...editingModel, base_url: e.target.value })}
+                  placeholder="如 https://api.deepseek.com/v1"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  当前：{editingModel.base_url ? editingModel.base_url : '继承全局（' + (config?.api_url || config?.agnes_api_base || '未配置') + '）'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  API Key（留空=保持不变）
+                </label>
+                <input
+                  type="password"
+                  value={editingModel.new_key || ''}
+                  onChange={(e) => setEditingModel({ ...editingModel, new_key: e.target.value })}
+                  placeholder={editingModel.api_key ? `已配置（${editingModel.api_key}），留空则不变` : '未配置，留空则继承全局 Key'}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setEditingModel(null)}
+                disabled={savingModel}
+                className="px-4 py-2 text-sm rounded-xl text-gray-500 hover:bg-gray-100 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleUpdateModel}
+                disabled={savingModel}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl bg-blue-500 text-white font-medium hover:bg-blue-600 disabled:opacity-60 transition-colors"
+              >
+                {savingModel && <Loader2 className="w-4 h-4 animate-spin" />}
+                保存修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {config?.updated_at && (
         <p className="text-xs text-gray-400 text-center">

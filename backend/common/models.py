@@ -18,6 +18,47 @@ class LoginRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════
+# 全局智能助手（浮动机器人）
+# ══════════════════════════════════════════════════════════════
+
+class AssistantChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000, description="用户消息")
+    history: list[dict] = Field(default_factory=list, description="最近对话历史（最多 10 条）")
+
+
+# ══════════════════════════════════════════════════════════════
+# 认证（商业版：注册 / 资料 / 密码 / 分享）
+# ══════════════════════════════════════════════════════════════
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=2, max_length=20, pattern=r"^[\w\u4e00-\u9fa5-]+$", description="用户名")
+    password: str = Field(..., min_length=6, max_length=64, description="密码")
+    invite_code: str = Field("", description="邀请码（可选）")
+    share_ref: str = Field("", description="分享来源码（可选，用于渠道转化统计）")
+
+
+class OrderCreateRequest(BaseModel):
+    plan: str = Field(..., description="会员套餐：pro / vip")
+    coupon_code: str = Field("", description="优惠码（可选）")
+
+
+class ProfileUpdateRequest(BaseModel):
+    nickname: str | None = Field(None, max_length=30, description="昵称")
+    avatar: str | None = Field(None, max_length=500, description="头像 URL")
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str = Field(..., description="原密码")
+    new_password: str = Field(..., min_length=6, max_length=64, description="新密码")
+
+
+class ShareCreateRequest(BaseModel):
+    content_type: str = Field("text", description="内容类型：text/markdown")
+    title: str = Field("", max_length=100, description="标题")
+    content: str = Field(..., description="分享内容")
+
+
+# ══════════════════════════════════════════════════════════════
 # Agent
 # ══════════════════════════════════════════════════════════════
 
@@ -117,13 +158,8 @@ class SkillUpdateRequest(BaseModel):
     references: str | None = None
 
 
-class SkillFileCreateRequest(BaseModel):
-    filename: str = Field(..., min_length=1, description="文件名")
-    folder: str = "references"
-    content: str = ""
-
-
-class SkillFileUpdateRequest(BaseModel):
+class SkillFileWriteRequest(BaseModel):
+    """写入 Skill 文件（新建/更新），路径通过 URL query 参数 path 传入。"""
     content: str = ""
 
 
@@ -133,13 +169,16 @@ class SkillFileUpdateRequest(BaseModel):
 
 class KnowledgeBaseCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="知识库名称")
-    type: str = "file"
+    type: str = "file"  # file / url / db
     path: str = ""
     url: str = ""
     source_type: str | None = None
     source_path: str | None = None
     filter: dict[str, Any] = {}
     top_k: int = 5
+    description: str = ""
+    subtype: str = "general"
+    config: dict[str, Any] = {}  # db 连接配置：{engine,host,port,user,password,database,table}
 
 
 class KnowledgeBaseUpdateRequest(BaseModel):
@@ -150,6 +189,9 @@ class KnowledgeBaseUpdateRequest(BaseModel):
     source_path: str | None = None
     url: str | None = None
     top_k: int | None = None
+    description: str | None = None
+    subtype: str | None = None
+    config: dict[str, Any] | None = None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -163,6 +205,8 @@ class MCPServerCreateRequest(BaseModel):
     args: list[str] = []
     env: dict[str, str] = {}
     url: str = ""
+    auth_type: str = "none"  # none / bearer / basic / api_key
+    auth_config: dict[str, Any] = {}  # {token} / {username,password} / {header_name,key}
     enabled: bool = True
 
 
@@ -174,6 +218,8 @@ class MCPServerUpdateRequest(BaseModel):
     transport: str | None = None
     transport_type: str | None = None
     args: list[str] | None = None
+    auth_type: str | None = None
+    auth_config: dict[str, Any] | None = None
     enabled: bool | None = None
 
 

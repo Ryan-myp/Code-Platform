@@ -107,10 +107,42 @@ async def get_home_recent(current_user: dict = require_auth()):
         ).fetchall():
             recent_notifications.append(dict(row))
 
+        # 最近的需求（AI 工作台流水线状态）
+        recent_requirements = []
+        for row in conn.execute(
+            "SELECT id, name, status, priority, prd_text, review_report, tech_design, test_cases, code, code_review, pipeline_status, updated_at "
+            "FROM requirements WHERE active=1 ORDER BY updated_at DESC LIMIT 5"
+        ).fetchall():
+            r = dict(row)
+            try:
+                r["pipeline_status"] = json.loads(r.get("pipeline_status") or "{}")
+            except Exception:
+                r["pipeline_status"] = {}
+            recent_requirements.append(r)
+
+        # 最近的流水线（部署状态）
+        recent_pipelines = []
+        for row in conn.execute(
+            "SELECT * FROM pipelines WHERE active=1 ORDER BY updated_at DESC LIMIT 5"
+        ).fetchall():
+            p = dict(row)
+            try:
+                p["config"] = json.loads(p.get("config") or "{}")
+            except Exception:
+                p["config"] = {}
+            run = conn.execute(
+                "SELECT status, started_at, finished_at FROM pipeline_runs WHERE pipeline_id=? ORDER BY started_at DESC LIMIT 1",
+                (p["id"],),
+            ).fetchone()
+            p["last_run"] = dict(run) if run else None
+            recent_pipelines.append(p)
+
         return {
             "tasks": recent_tasks,
             "projects": recent_projects,
             "notifications": recent_notifications,
+            "requirements": recent_requirements,
+            "pipelines": recent_pipelines,
         }
     finally:
         conn.close()

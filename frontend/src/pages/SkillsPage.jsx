@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Wrench, Plus, Trash2, Search, Edit2, Eye,
   FileText, RefreshCw, LayoutGrid, List as ListIcon,
   Link2, Code2, PenTool, BarChart3, ShieldCheck,
-  Sparkles, BookOpen,
+  Sparkles, BookOpen, Upload, FolderOpen, FileArchive,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
-import { formatRelativeTime, formatDateTime } from '../lib/format'
+import { formatRelativeTime } from '../lib/format'
 import {
   Modal, Button, Empty, SkeletonGrid, ErrorState, PageHeader, ConfirmDialog,
 } from '../components/ui'
+import SkillExplorer from '../components/SkillExplorer'
 
 const isThisMonth = (val) => {
   if (!val) return false
@@ -57,6 +58,7 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
   const category = skill.category || guessCategory(skill)
   const catMeta = SKILL_CATEGORIES.find(c => c.value === category) || SKILL_CATEGORIES[5]
   const refCount = skill.references ? (skill.references.split('\n').filter(l => l.trim()).length) : 0
+  const dirCounts = skill.dir_counts || {}
 
   if (viewMode === 'list') {
     return (
@@ -74,6 +76,9 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
         <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
           {skill.content ? <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" />有内容</span> : null}
           {refCount > 0 ? <span className="flex items-center gap-1"><Link2 className="w-3.5 h-3.5" />{refCount} 引用</span> : null}
+          {['scripts', 'references', 'examples', 'assets'].filter((d) => dirCounts[d] > 0).map((d) => (
+            <span key={d} className="flex items-center gap-1"><FolderOpen className="w-3.5 h-3.5" />{d}: {dirCounts[d]}</span>
+          ))}
           <span>{formatRelativeTime(skill.created_at)}</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -111,6 +116,16 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
               <Link2 className="w-3 h-3" />{refCount}
             </span>
           )}
+          {skill.file_count > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-600 rounded-full text-xs">
+              <FolderOpen className="w-3 h-3" />{skill.file_count} 文件
+            </span>
+          )}
+          {['scripts', 'references', 'examples', 'assets'].filter((d) => dirCounts[d] > 0).map((d) => (
+            <span key={d} className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-50 text-violet-600 rounded-full text-xs">
+              <FolderOpen className="w-3 h-3" />{d}: {dirCounts[d]}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -211,69 +226,6 @@ function SkillFormModal({ open, onClose, onSubmit, editing, defaults, loading })
   )
 }
 
-function SkillDetailModal({ open, onClose, skill, onEdit, onDelete }) {
-  if (!skill) return null
-  const category = skill.category || guessCategory(skill)
-  const catMeta = SKILL_CATEGORIES.find(c => c.value === category) || SKILL_CATEGORIES[5]
-  const refCount = skill.references ? (skill.references.split('\n').filter(l => l.trim()).length) : 0
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={skill.name}
-      size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>关闭</Button>
-          <Button icon={Edit2} onClick={() => { onEdit(skill); onClose() }}>编辑</Button>
-          <Button variant="danger" icon={Trash2} onClick={() => { onDelete(skill); onClose() }}>删除</Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 pb-4 border-b border-gray-100">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0">
-            {skill.name?.[0]?.toUpperCase() || 'S'}
-          </div>
-          <div className="min-w-0">
-            <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}>
-                {catMeta.label}
-              </span>
-              <p className="text-xs text-gray-500">创建于 {formatDateTime(skill.created_at)}</p>
-            </div>
-          </div>
-        </div>
-
-        {skill.description && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">描述</p>
-            <p className="text-sm text-gray-700">{skill.description}</p>
-          </div>
-        )}
-
-        {skill.content && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">内容</p>
-            <pre className="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-64 overflow-y-auto">{skill.content}</pre>
-          </div>
-        )}
-
-        {skill.references && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
-              <Link2 className="w-3 h-3" /> 引用 / 参考（{refCount}）
-            </p>
-            <div className="bg-emerald-50 rounded-xl p-4 text-sm text-gray-700 max-h-48 overflow-y-auto whitespace-pre-wrap">{skill.references}</div>
-          </div>
-        )}
-      </div>
-    </Modal>
-  )
-}
-
 export default function SkillsPage() {
   const toast = useToast()
   const [items, setItems] = useState([])
@@ -288,6 +240,11 @@ export default function SkillsPage() {
   const [viewTarget, setViewTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [formDefaults, setFormDefaults] = useState(null)
+  // 标准 SKILL.md 导入
+  const [showImport, setShowImport] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
+  const zipInputRef = useRef(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -318,6 +275,44 @@ export default function SkillsPage() {
 
   const openCreate = () => { setEditingSkill(null); setFormDefaults(null); setShowForm(true) }
   const openEdit = (skill) => { setEditingSkill(skill); setShowForm(true) }
+
+  const handleImport = async () => {
+    const text = importText.trim()
+    if (!text) {
+      toast.error('请粘贴 SKILL.md 内容')
+      return
+    }
+    setImporting(true)
+    try {
+      const res = await api.post('/api/skills/import', { markdown: text })
+      toast.success(`Skill「${res.data.name}」导入成功`)
+      setShowImport(false)
+      setImportText('')
+      loadData()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '导入失败')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleImportZip = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await api.post('/api/skills/import-zip', fd)
+      toast.success(`Skill「${res.data.name}」导入成功（${res.data.imported} 个文件）`)
+      loadData()
+    } catch (err) {
+      toast.error(err.message || 'ZIP 导入失败')
+    } finally {
+      setImporting(false)
+      if (zipInputRef.current) zipInputRef.current.value = ''
+    }
+  }
 
   const handleSubmit = async (payload) => {
     setSaving(true)
@@ -367,7 +362,14 @@ export default function SkillsPage() {
         description="创建和管理 AI 技能，定义 Agent 的行为和能力"
         icon={Wrench}
         iconColor="from-violet-500 to-purple-600"
-        actions={<Button variant="primary" icon={Plus} onClick={openCreate}>新建 Skill</Button>}
+        actions={
+          <>
+            <Button variant="secondary" icon={FileArchive} loading={importing} onClick={() => zipInputRef.current?.click()}>导入 ZIP</Button>
+            <Button variant="secondary" icon={Upload} onClick={() => setShowImport(true)}>导入 SKILL.md</Button>
+            <Button variant="primary" icon={Plus} onClick={openCreate}>新建 Skill</Button>
+            <input ref={zipInputRef} type="file" accept=".zip" className="hidden" onChange={handleImportZip} />
+          </>
+        }
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -464,9 +466,43 @@ export default function SkillsPage() {
         </div>
       )}
 
+      {/* 标准 SKILL.md 导入弹窗 */}
+      <Modal
+        open={showImport}
+        onClose={() => { setShowImport(false); setImportText('') }}
+        title="导入标准 SKILL.md"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setShowImport(false); setImportText('') }}>取消</Button>
+            <Button icon={Upload} onClick={handleImport} loading={importing}>导入</Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500 leading-relaxed">
+            支持 Agent Skills 标准格式（Anthropic / Claude Code / Qoder 等），自动解析 frontmatter 中的
+            <code className="mx-1 px-1 py-0.5 bg-gray-100 rounded font-mono text-[11px]">name</code> 与
+            <code className="mx-1 px-1 py-0.5 bg-gray-100 rounded font-mono text-[11px]">description</code>：
+          </p>
+          <pre className="bg-gray-50 rounded-xl p-3 text-[11px] font-mono text-gray-500 overflow-x-auto">{`---
+name: 技能名称
+description: 技能描述
+---
+技能正文（Markdown）…`}</pre>
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            rows={12}
+            placeholder="粘贴 SKILL.md 内容…"
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all font-mono text-sm"
+          />
+        </div>
+      </Modal>
+
       <SkillFormModal open={showForm} onClose={() => { setShowForm(false); setEditingSkill(null); setFormDefaults(null) }} onSubmit={handleSubmit} editing={editingSkill} defaults={formDefaults} loading={saving} />
 
-      <SkillDetailModal open={!!viewTarget} onClose={() => setViewTarget(null)} skill={viewTarget} onEdit={openEdit} onDelete={setDeleteTarget} />
+      <SkillExplorer open={!!viewTarget} onClose={() => setViewTarget(null)} skill={viewTarget} onEdit={openEdit} onDelete={setDeleteTarget} onChanged={loadData} />
 
       <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="确认删除 Skill" message={<>确定要删除 Skill「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。</>} confirmLabel="确认删除" />
     </div>

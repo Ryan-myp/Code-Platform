@@ -419,8 +419,8 @@ export default function ImageFactoryPage() {
       {/* Generate Tab */}
       {activeTab === 'generate' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-6">
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium text-gray-700">提示词 <span className="text-red-500">*</span></label>
@@ -518,7 +518,7 @@ export default function ImageFactoryPage() {
             </div>
 
             {/* Results */}
-            <div>
+            <div className="lg:col-span-2">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900">生成结果</h3>
                 {generatedImages.length > 1 && (
@@ -564,8 +564,8 @@ export default function ImageFactoryPage() {
       {/* Template Tab */}
       {activeTab === 'template' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-6">
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">选择模板</label>
                 {templates.length === 0 ? (
@@ -604,7 +604,7 @@ export default function ImageFactoryPage() {
               </Button>
             </div>
 
-            <div>
+            <div className="lg:col-span-2">
               <h3 className="font-medium text-gray-900 mb-4">预览</h3>
               {rendering ? (
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
@@ -717,8 +717,8 @@ export default function ImageFactoryPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-6">
           <h2 className="text-lg font-semibold text-gray-900">虚拟试衣</h2>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-6">
               {/* Person Upload */}
               <div>
                 <div className="flex items-center justify-between mb-3">
@@ -820,7 +820,7 @@ export default function ImageFactoryPage() {
             </div>
 
             {/* Result */}
-            <div className="space-y-4">
+            <div className="lg:col-span-2 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-gray-900">试穿效果</h3>
                 {tryOnResult && (

@@ -95,6 +95,29 @@ _SCHEMA_STATEMENTS = [
         role TEXT DEFAULT 'user', created_at TEXT, active INTEGER DEFAULT 1
     )""",
 
+    # ── 结果分享（商业版：引流传播） ────────────────────────
+    """CREATE TABLE IF NOT EXISTS shares (
+        id TEXT PRIMARY KEY, share_code TEXT UNIQUE NOT NULL,
+        user_id TEXT NOT NULL, content_type TEXT DEFAULT 'text',
+        title TEXT DEFAULT '', content TEXT DEFAULT '',
+        created_at TEXT, views INTEGER DEFAULT 0
+    )""",
+
+    # ── 会员订单（商业版：支付闭环） ────────────────────────
+    """CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, plan TEXT NOT NULL,
+        amount REAL DEFAULT 0, status TEXT DEFAULT 'pending',
+        voucher TEXT DEFAULT '', remark TEXT DEFAULT '',
+        created_at TEXT, reviewed_at TEXT, reviewed_by TEXT DEFAULT ''
+    )""",
+
+    # ── 资源可见性（v9.3：内容权限 / 灰度发布） ─────────────
+    """CREATE TABLE IF NOT EXISTS resource_visibility (
+        resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
+        visible_to TEXT DEFAULT 'all', updated_at TEXT,
+        PRIMARY KEY (resource_type, resource_id)
+    )""",
+
     # ── Agent / Team / Workflow ─────────────────────────────
     """CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
@@ -162,6 +185,7 @@ _SCHEMA_STATEMENTS = [
         project_id TEXT DEFAULT '', creator TEXT DEFAULT '',
         prd_text TEXT DEFAULT '', review_report TEXT DEFAULT '',
         tech_design TEXT DEFAULT '', test_cases TEXT DEFAULT '', code TEXT DEFAULT '',
+        code_review TEXT DEFAULT '', pipeline_status TEXT DEFAULT '{}',
         version INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT, active INTEGER DEFAULT 1
     )""",
     """CREATE TABLE IF NOT EXISTS tasks (
@@ -198,7 +222,8 @@ _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, transport_type TEXT DEFAULT 'stdio',
         command TEXT DEFAULT '', args TEXT DEFAULT '[]', env TEXT DEFAULT '{}',
-        url TEXT DEFAULT '', enabled INTEGER DEFAULT 1, created_at TEXT
+        url TEXT DEFAULT '', auth_type TEXT DEFAULT 'none', auth_config TEXT DEFAULT '{}',
+        enabled INTEGER DEFAULT 1, created_at TEXT
     )""",
     """CREATE TABLE IF NOT EXISTS expert_roles (
         id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
@@ -258,6 +283,20 @@ _SCHEMA_STATEMENTS = [
         read INTEGER DEFAULT 0, user_id TEXT DEFAULT 'all',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP, read_at TEXT DEFAULT ''
     )""",
+    # 优惠券/折扣码（商业版：营销）
+    """CREATE TABLE IF NOT EXISTS coupons (
+        id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL,
+        discount_type TEXT NOT NULL DEFAULT 'fixed', value REAL NOT NULL,
+        max_uses INTEGER DEFAULT 1, used_count INTEGER DEFAULT 0,
+        active INTEGER DEFAULT 1, expires_at TEXT,
+        created_at TEXT, created_by TEXT DEFAULT ''
+    )""",
+    # 分享页访问埋点（商业版：渠道分析）
+    """CREATE TABLE IF NOT EXISTS share_visits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, share_id TEXT NOT NULL,
+        source TEXT DEFAULT 'direct', referer TEXT DEFAULT '',
+        visited_at TEXT
+    )""",
     # 仪表盘组件配置
     """CREATE TABLE IF NOT EXISTS dashboard_widgets (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL DEFAULT 'default',
@@ -275,6 +314,12 @@ _SCHEMA_STATEMENTS = [
         status TEXT DEFAULT 'idle', last_run TEXT DEFAULT '',
         created_by TEXT DEFAULT 'admin', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP, active INTEGER DEFAULT 1
+    )""",
+    # 流水线运行记录
+    """CREATE TABLE IF NOT EXISTS pipeline_runs (
+        id TEXT PRIMARY KEY, pipeline_id TEXT NOT NULL, status TEXT DEFAULT 'running',
+        log TEXT DEFAULT '', started_at TEXT, finished_at TEXT,
+        FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
     )""",
     # 代码生成记录
     """CREATE TABLE IF NOT EXISTS code_generations (
@@ -385,6 +430,9 @@ _INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read)",
     "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_dashboard_widgets_user ON dashboard_widgets(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code)",
+    "CREATE INDEX IF NOT EXISTS idx_share_visits_share ON share_visits(share_id)",
+    "CREATE INDEX IF NOT EXISTS idx_share_visits_time ON share_visits(visited_at)",
 ]
 
 
@@ -454,8 +502,54 @@ def migrate() -> None:
         _add_column_if_missing(conn, "artifacts", "duration", "REAL DEFAULT 0")
         _add_column_if_missing(conn, "artifacts", "metadata", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "sandbox_projects", "image", "TEXT DEFAULT ''")
+        # 流水线产物：代码审查结果留存（AI 工作台 review_code 阶段）
+        _add_column_if_missing(conn, "requirements", "code_review", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "requirements", "pipeline_status", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "sandbox_projects", "ports", "TEXT DEFAULT '[]'")
         _add_column_if_missing(conn, "sandbox_projects", "config", "TEXT DEFAULT '{}'")
+        # v9.1 商业版：用户资料 / 会员 / 额度
+        _add_column_if_missing(conn, "users", "avatar", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "users", "nickname", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "users", "membership", "TEXT DEFAULT 'free'")
+        _add_column_if_missing(conn, "users", "membership_expires", "TEXT")
+        _add_column_if_missing(conn, "users", "daily_quota", "INTEGER DEFAULT 30")
+        _add_column_if_missing(conn, "users", "used_today", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "users", "last_quota_date", "TEXT")
+        _add_column_if_missing(conn, "users", "total_usage", "INTEGER DEFAULT 0")
+        # v9.1：工具记录归属用户（记录中心按用户隔离）
+        _add_column_if_missing(conn, "tool_records", "user_id", "TEXT DEFAULT ''")
+        # v9.2：邀请码分销体系
+        _add_column_if_missing(conn, "users", "invite_code", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "users", "invited_by", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "users", "bonus_quota", "INTEGER DEFAULT 0")
+        # v9.4 商业版：订单优惠券 / 分享转化来源
+        _add_column_if_missing(conn, "orders", "coupon_code", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "orders", "original_amount", "REAL DEFAULT 0")
+        _add_column_if_missing(conn, "users", "share_from", "TEXT DEFAULT ''")
+        # v9.5：MCP 授权验证 / 知识库连接配置
+        _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
+        _add_column_if_missing(conn, "mcp_servers", "auth_config", "TEXT DEFAULT '{}'")
+        _add_column_if_missing(conn, "knowledge_bases", "config", "TEXT DEFAULT '{}'")
+        _add_column_if_missing(conn, "knowledge_bases", "description", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "knowledge_bases", "subtype", "TEXT DEFAULT 'general'")
+        # 一句话全自动流水线：AI 工作台 AutoRun 进度记录
+        conn.execute("""CREATE TABLE IF NOT EXISTS auto_runs (
+            id TEXT PRIMARY KEY,
+            requirement_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            language TEXT DEFAULT 'python',
+            status TEXT DEFAULT 'running',
+            current_stage TEXT DEFAULT '',
+            stage_progress TEXT DEFAULT '{}',
+            log TEXT DEFAULT '',
+            pipeline_id TEXT DEFAULT '',
+            port INTEGER DEFAULT 0,
+            error TEXT DEFAULT '',
+            created_by TEXT DEFAULT '',
+            created_at TEXT,
+            updated_at TEXT,
+            finished_at TEXT
+        )""")
         conn.commit()
     finally:
         conn.close()

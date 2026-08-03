@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from common.config import BIZ_DELIVERY_DIR, load_config
+from common.config import BIZ_DELIVERY_DIR, DEFAULT_MODELS, load_config
 from common.db import get_db
 from common.llm import call_llm, log_usage
 
@@ -246,7 +246,17 @@ async def list_requirements():
     conn = get_db()
     rows = conn.execute("SELECT * FROM requirements WHERE active=1 ORDER BY updated_at DESC").fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [_parse_req(r) for r in rows]
+
+
+def _parse_req(row):
+    """需求行转 dict，并把 pipeline_status JSON 字符串解析为对象。"""
+    r = dict(row)
+    try:
+        r["pipeline_status"] = json.loads(r.get("pipeline_status") or "{}")
+    except Exception:
+        r["pipeline_status"] = {}
+    return r
 
 
 @router.post("/api/requirements")
@@ -277,7 +287,7 @@ async def get_requirement(req_id: str):
     conn.close()
     if not row:
         raise HTTPException(404, "需求不存在")
-    return dict(row)
+    return _parse_req(row)
 
 
 @router.put("/api/requirements/{req_id}")
@@ -312,15 +322,30 @@ async def delete_requirement(req_id: str):
 
 @router.post("/api/requirements/{req_id}/pipeline-output")
 async def save_pipeline_output(req_id: str, req: dict):
-    """保存流水线阶段输出（AI 工作台调用）"""
+    """保存流水线阶段输出（AI 工作台调用）。
+
+    同时更新 pipeline_status：当前阶段标记 fresh，下游阶段标记 stale（需求变更传播）。
+    """
     stage = req.get("stage") or ""
     content = req.get("content") or ""
-    field_map = {"prd": "prd_text", "review": "review_report", "td": "tech_design", "test": "test_cases", "code": "code"}
+    field_map = {"prd": "prd_text", "review": "review_report", "td": "tech_design", "test": "test_cases", "code": "code", "code_review": "code_review", "review_code": "code_review"}
     field = field_map.get(stage)
     if not field:
         raise HTTPException(400, f"未知阶段: {stage}")
     conn = get_db()
     conn.execute(f"UPDATE requirements SET {field}=?, updated_at=? WHERE id=?", (content, datetime.now().isoformat(), req_id))
+    # 流水线状态：当前阶段 fresh，下游全部 stale（上游变更后下游产物需重新生成）
+    STAGE_ORDER = ["prd", "review", "td", "test", "code", "review_code"]
+    row = conn.execute("SELECT pipeline_status FROM requirements WHERE id=?", (req_id,)).fetchone()
+    ps = {}
+    if row and row["pipeline_status"]:
+        ps = json.loads(row["pipeline_status"])
+    now = datetime.now().isoformat()
+    ps[stage] = {"status": "fresh", "updated_at": now}
+    if stage in STAGE_ORDER:
+        for s in STAGE_ORDER[STAGE_ORDER.index(stage) + 1:]:
+            ps[s] = {"status": "stale", "updated_at": ps.get(s, {}).get("updated_at", "")}
+    conn.execute("UPDATE requirements SET pipeline_status=? WHERE id=?", (json.dumps(ps, ensure_ascii=False), req_id))
     conn.commit()
     conn.close()
     return {"success": True, "stage": stage}
@@ -438,7 +463,127 @@ async def get_config():
     cfg.setdefault("api_url", cfg.get("agnes_api_base", ""))
     cfg.setdefault("api_key", cfg.get("agnes_api_key", ""))
     cfg.setdefault("model_name", cfg.get("model_name", "agnes-2.5-flash"))
+    # 模型列表（config 表未配置时返回内置默认）；api_key 脱敏
+    models = _get_models()
+    for m in models:
+        if m.get("api_key"):
+            m["api_key"] = _mask_key(m["api_key"])
+    cfg["models"] = models
     return cfg
+
+
+def _mask_key(key: str) -> str:
+    """脱敏 API Key：保留前 6 / 后 4 位。"""
+    key = key.strip()
+    if len(key) <= 10:
+        return "••••" + key[-2:]
+    return key[:6] + "••••••" + key[-4:]
+
+
+def _get_models() -> list[dict]:
+    """读取模型列表（原文含 api_key）：config 表 model_list（JSON），空则回退内置默认。"""
+    conn = get_db()
+    row = conn.execute("SELECT value FROM config WHERE key='model_list'").fetchone()
+    conn.close()
+    raw = row["value"] if row else ""
+    if raw:
+        try:
+            models = json.loads(raw)
+            if isinstance(models, list) and models and all("name" in m for m in models):
+                return models
+        except (ValueError, TypeError):
+            pass
+    return [dict(m) for m in DEFAULT_MODELS]
+
+
+@router.post("/api/config/models")
+async def add_model(req: dict):
+    """添加模型到模型列表（自动去重）；支持每个模型独立配置 base_url / api_key。"""
+    name = (req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "模型名称不能为空")
+    if len(name) > 100:
+        raise HTTPException(400, "模型名称过长（最多 100 字符）")
+    note = (req.get("note") or "").strip()[:50]
+    base_url = (req.get("base_url") or "").strip()
+    api_key = (req.get("api_key") or "").strip()
+    models = _get_models()
+    if any(m.get("name") == name for m in models):
+        raise HTTPException(400, f"模型 {name} 已存在（如需修改请使用更新）")
+    models.append({"name": name, "note": note, "base_url": base_url, "api_key": api_key})
+    _save_models(models)
+    return {"models": _mask_models(models)}
+
+
+@router.put("/api/config/models/{name}")
+async def update_model(name: str, req: dict):
+    """更新模型配置（note / base_url / api_key）；api_key 传空 = 保持不变。"""
+    models = _get_models()
+    target = next((m for m in models if m.get("name") == name), None)
+    if not target:
+        raise HTTPException(404, f"模型 {name} 不存在")
+    if "note" in req:
+        target["note"] = (req.get("note") or "").strip()[:50]
+    if "base_url" in req:
+        target["base_url"] = (req.get("base_url") or "").strip()
+    if req.get("api_key"):  # 留空 = 保持原样
+        target["api_key"] = req["api_key"].strip()
+    _save_models(models)
+    return {"models": _mask_models(models)}
+
+
+def _save_models(models: list[dict]) -> None:
+    """持久化模型列表到 config 表。"""
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO config (key, value) VALUES ('model_list', ?) ON CONFLICT(key) DO UPDATE SET value=?",
+        (json.dumps(models, ensure_ascii=False), json.dumps(models, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _mask_models(models: list[dict]) -> list[dict]:
+    """返回脱敏副本（不修改原列表）。"""
+    out = []
+    for m in models:
+        c = dict(m)
+        if c.get("api_key"):
+            c["api_key"] = _mask_key(c["api_key"])
+        out.append(c)
+    return out
+
+
+@router.delete("/api/config/models/{name}")
+async def delete_model(name: str):
+    """从模型列表移除；若删除的是当前默认模型则自动回退到列表第一个。"""
+    models = _get_models()
+    if not any(m.get("name") == name for m in models):
+        raise HTTPException(404, f"模型 {name} 不存在")
+    models = [m for m in models if m.get("name") != name]
+    conn = get_db()
+    if models:
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('model_list', ?) ON CONFLICT(key) DO UPDATE SET value=?",
+            (json.dumps(models, ensure_ascii=False), json.dumps(models, ensure_ascii=False)),
+        )
+    else:
+        # 删空 → 清空配置，回退内置默认列表
+        conn.execute("DELETE FROM config WHERE key='model_list'")
+    # 被删的是当前默认模型 → 自动回退（config 表未显式配置时按内置默认判断）
+    row = conn.execute("SELECT value FROM config WHERE key='model_name'").fetchone()
+    current_default = row["value"] if row and row["value"] else DEFAULT_MODELS[0]["name"]
+    if current_default == name:
+        fallback = (models[0]["name"] if models else DEFAULT_MODELS[0]["name"])
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES ('model_name', ?) ON CONFLICT(key) DO UPDATE SET value=?",
+            (fallback, fallback),
+        )
+    conn.commit()
+    conn.close()
+    load_config()
+    return {"models": _mask_models(models if models else [dict(m) for m in DEFAULT_MODELS])}
+
 
 
 @router.post("/api/config/save")

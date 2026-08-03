@@ -8,6 +8,7 @@
 import hashlib
 import logging
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -157,10 +158,543 @@ def login_user(username: str, password: str) -> dict:
             conn.close()
 
 
-def register_user(username: str, password: str) -> dict:
-    """注册新用户并返回登录结果。"""
-    create_user(username, password)
+def register_user(username: str, password: str, invite_code: str = "", share_from: str = "") -> dict:
+    """注册新用户（可选邀请码，双方各奖励一次性额度；可选分享来源用于转化统计）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        inviter = None
+        if invite_code:
+            inviter = conn.execute(
+                "SELECT * FROM users WHERE invite_code=? AND active=1", (invite_code.strip().upper(),)
+            ).fetchone()
+            if not inviter:
+                raise ValueError("邀请码无效")
+        existing = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if existing:
+            raise ValueError(f"用户名已存在: {username}")
+        uid = _gen_user_id()
+        # 分享转化来源：仅在分享码真实存在时记录
+        share_ref = share_from.strip()
+        if share_ref and not conn.execute("SELECT id FROM shares WHERE share_code=?", (share_ref,)).fetchone():
+            share_ref = ""
+        conn.execute(
+            """INSERT INTO users (id, username, password_hash, role, active, created_at, invite_code, invited_by, share_from)
+               VALUES (?, ?, ?, 'user', 1, ?, ?, ?, ?)""",
+            (uid, username, hash_password(password), datetime.now().isoformat(),
+             _gen_invite_code(), inviter["id"] if inviter else "", share_ref),
+        )
+        if inviter:
+            # 双方各奖励一次性额度
+            conn.execute("UPDATE users SET bonus_quota=bonus_quota+? WHERE id=?", (INVITE_REWARD, uid))
+            conn.execute("UPDATE users SET bonus_quota=bonus_quota+? WHERE id=?", (INVITE_REWARD, inviter["id"]))
+        conn.commit()
+    finally:
+        conn.close()
     return login_user(username, password)
+
+
+# ══════════════════════════════════════════════════════════════
+# 用户资料 / 额度（商业版）
+# ══════════════════════════════════════════════════════════════
+
+# 会员等级对应的每日免费额度
+MEMBERSHIP_QUOTA = {"free": 30, "pro": 200, "vip": 9999}
+
+# 会员套餐定价（元 / 30 天），与前端会员中心一致
+MEMBERSHIP_PLANS = {
+    "pro": {
+        "name": "专业版", "price": 19.9, "days": 30, "daily_quota": 200,
+        "features": ["每日 200 次生成额度", "全部工具畅用", "专属客服支持"],
+    },
+    "vip": {
+        "name": "至尊版", "price": 99.0, "days": 30, "daily_quota": 9999,
+        "features": ["无限生成额度", "全部工具畅用", "专属客服支持", "新功能抢先体验"],
+    },
+}
+
+# 邀请注册双方各奖励的一次性额度（不随天重置）
+INVITE_REWARD = 5
+
+
+def _effective_membership(row: dict) -> str:
+    """会员到期自动降级为 free（读取视角，不落库）。"""
+    m = row.get("membership") or "free"
+    if m != "free":
+        exp = row.get("membership_expires")
+        if exp and exp <= datetime.now().isoformat():
+            return "free"
+    return m
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _load_user(user_id: str) -> dict | None:
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        # 惰性落库降级：会员已到期 → 立即降级为 free（与 _effective_membership 读取视角保持一致）
+        m = d.get("membership") or "free"
+        if m != "free":
+            exp = d.get("membership_expires")
+            if exp and exp <= datetime.now().isoformat():
+                conn.execute(
+                    "UPDATE users SET membership='free', membership_expires=NULL, daily_quota=NULL WHERE id=?",
+                    (user_id,),
+                )
+                conn.commit()
+                d["membership"] = "free"
+                d["membership_expires"] = None
+                d["daily_quota"] = None
+                logger.info("membership expired, user %s downgraded to free", user_id)
+        return d
+    finally:
+        conn.close()
+
+
+def get_user_profile(user_id: str) -> dict:
+    """返回用户完整资料（含会员与额度），user_id 可能为 None（老 token）。"""
+    if not user_id:
+        return {"username": "guest", "role": "viewer", "membership": "free"}
+    row = _load_user(user_id)
+    if not row:
+        return {"username": "guest", "role": "viewer", "membership": "free"}
+    # 跨天自动重置每日已用次数
+    used_today = row.get("used_today") or 0
+    if row.get("last_quota_date") != _today():
+        used_today = 0
+    membership = _effective_membership(row)
+    bonus = row.get("bonus_quota") or 0
+    daily_quota = row.get("daily_quota") or MEMBERSHIP_QUOTA.get(membership, 30)
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "nickname": row.get("nickname") or "",
+        "avatar": row.get("avatar") or "",
+        "role": row["role"],
+        "membership": membership,
+        "membership_expires": row.get("membership_expires"),
+        "daily_quota": daily_quota,
+        "bonus_quota": bonus,
+        "used_today": used_today,
+        "remaining_today": max(0, daily_quota + bonus - used_today),
+        "total_usage": row.get("total_usage") or 0,
+        "created_at": row.get("created_at"),
+    }
+
+
+def update_user_profile(user_id: str, nickname: str = None, avatar: str = None) -> dict:
+    """更新昵称/头像，返回最新资料。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        sets, params = [], []
+        if nickname is not None:
+            sets.append("nickname=?"); params.append(nickname[:30])
+        if avatar is not None:
+            sets.append("avatar=?"); params.append(avatar[:500])
+        if sets:
+            params.append(user_id)
+            conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", params)
+            conn.commit()
+        return get_user_profile(user_id)
+    finally:
+        conn.close()
+
+
+def change_password(user_id: str, old_password: str, new_password: str) -> None:
+    """修改密码。旧密码错误抛 HTTPException(400)。"""
+    row = _load_user(user_id)
+    if not row:
+        raise HTTPException(400, "用户不存在")
+    if not verify_password(old_password, row["password_hash"]):
+        raise HTTPException(400, "原密码错误")
+    if len(new_password) < 6:
+        raise HTTPException(400, "新密码至少 6 位")
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (hash_password(new_password), user_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def consume_quota(user_id: str) -> dict:
+    """额度扣减：返回 {allowed, remaining}。跨天自动重置。"""
+    if not user_id:
+        return {"allowed": True, "remaining": 9999}
+    row = _load_user(user_id)
+    if not row:
+        return {"allowed": True, "remaining": 9999}
+    # 管理员不受额度限制
+    if row.get("role") == "admin":
+        return {"allowed": True, "remaining": 9999}
+    today = _today()
+    membership = _effective_membership(row)
+    daily_quota = row.get("daily_quota") or MEMBERSHIP_QUOTA.get(membership, 30)
+    # 会员无限制
+    if membership == "vip":
+        return {"allowed": True, "remaining": 9999}
+    bonus = row.get("bonus_quota") or 0
+    available = daily_quota + bonus
+    used = 0 if row.get("last_quota_date") != today else (row.get("used_today") or 0)
+    if used >= available:
+        return {"allowed": False, "remaining": 0, "daily_quota": daily_quota}
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET used_today=?, last_quota_date=?, total_usage=total_usage+1 WHERE id=?",
+            (used + 1, today, user_id),
+        )
+        conn.commit()
+        return {"allowed": True, "remaining": max(0, available - used - 1), "daily_quota": daily_quota}
+    finally:
+        conn.close()
+
+
+def get_quota_info(user_id: str) -> dict:
+    """查询当前额度信息（不扣减），含会员到期提醒数据。"""
+    profile = get_user_profile(user_id)
+    _maybe_send_expiry_notice(user_id)  # 惰性发送到期提醒（≤3 天，去重）
+    # 会员剩余天数（含到期日当天，用于前端到期提醒）
+    exp = profile.get("membership_expires")
+    days_left = None
+    if exp and profile["membership"] != "free":
+        try:
+            days_left = max(0, (datetime.fromisoformat(exp).date() - datetime.now().date()).days + 1)
+        except ValueError:
+            days_left = None
+    return {
+        "membership": profile["membership"],
+        "membership_expires": exp,
+        "membership_days_left": days_left,
+        "username": profile.get("username", ""),
+        "daily_quota": profile["daily_quota"],
+        "bonus_quota": profile["bonus_quota"],
+        "used_today": profile["used_today"],
+        "remaining_today": profile["remaining_today"],
+        "total_usage": profile["total_usage"],
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# 结果分享（商业版：引流传播）
+# ══════════════════════════════════════════════════════════════
+
+def create_share(user_id: str, content_type: str, title: str, content: str) -> dict:
+    """创建分享记录，返回带 share_code 的分享信息。"""
+    import secrets
+
+    from common.db import get_db
+
+    share_id = f"share_{uuid.uuid4().hex[:12]}"
+    share_code = secrets.token_urlsafe(10)
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO shares (id, share_code, user_id, content_type, title, content, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (share_id, share_code, user_id, content_type, title[:100], content, datetime.now().isoformat()),
+        )
+        conn.commit()
+        return {"id": share_id, "share_code": share_code, "content_type": content_type,
+                "title": title[:100], "created_at": datetime.now().isoformat()}
+    finally:
+        conn.close()
+
+
+def get_share(share_code: str) -> dict | None:
+    """按 share_code 查询分享内容（访问时 +1 浏览量）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM shares WHERE share_code=?", (share_code,)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE shares SET views=views+1 WHERE id=?", (row["id"],))
+        conn.commit()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def _maybe_send_expiry_notice(user_id: str) -> None:
+    """惰性发送会员到期提醒站内信：距到期 ≤3 天时触发，target_id 存到期日期去重。"""
+    row = _load_user(user_id)
+    if not row:
+        return
+    m = row.get("membership") or "free"
+    exp = row.get("membership_expires")
+    if m == "free" or not exp:
+        return
+    try:
+        days_left = (datetime.fromisoformat(exp).date() - datetime.now().date()).days
+    except ValueError:
+        return
+    if days_left > 3:
+        return
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        key = f"expiry:{exp[:10]}"
+        dup = conn.execute(
+            "SELECT id FROM notifications WHERE user_id=? AND type='membership_expiry' AND target_id=?",
+            (row["username"], key),
+        ).fetchone()
+        if dup:
+            return
+        plan_name = MEMBERSHIP_PLANS.get(m, {}).get("name", m)
+        title = f"会员将于 {exp[:10]} 到期" if days_left > 0 else "会员今日到期"
+        content = (
+            f"您的{plan_name}会员还剩 {days_left} 天到期" if days_left > 0
+            else f"您的{plan_name}会员今日到期"
+        ) + "，到期后将自动降级为免费版，建议尽快续费以免影响使用。"
+        conn.execute(
+            """INSERT INTO notifications (id, type, title, content, target_type, target_id, user_id, created_at)
+               VALUES (?, 'membership_expiry', ?, ?, 'membership', ?, ?, ?)""",
+            (f"notif_{uuid.uuid4().hex[:12]}", title, content, key, row["username"], datetime.now().isoformat()),
+        )
+        conn.commit()
+        logger.info("expiry notice sent to %s (%s days left)", row["username"], days_left)
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# 会员订单（商业版：支付闭环）
+# ══════════════════════════════════════════════════════════════
+
+# 订单超时自动关闭：pending 7 天未提交凭证 / paid 14 天未审核 → expired
+ORDER_EXPIRE_DAYS = {"pending": 7, "paid": 14}
+
+# ── 优惠券 / 折扣码 ───────────────────────────────────────────
+
+def validate_coupon(code: str) -> dict:
+    """校验优惠券：存在 / 启用 / 未过期 / 未超用。无效抛 HTTPException(400)。"""
+    from common.db import get_db
+
+    code = (code or "").strip()
+    if not code:
+        raise HTTPException(400, "请填写优惠码")
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM coupons WHERE code=?", (code.upper(),)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(400, "优惠码不存在")
+    c = dict(row)
+    if not c.get("active"):
+        raise HTTPException(400, "优惠码已停用")
+    exp = c.get("expires_at")
+    if exp and exp < datetime.now().isoformat():
+        raise HTTPException(400, "优惠码已过期")
+    if (c.get("used_count") or 0) >= (c.get("max_uses") or 1):
+        raise HTTPException(400, "优惠码已被用完")
+    return c
+
+
+def coupon_discount(price: float, coupon: dict) -> float:
+    """按优惠券类型计算折扣后金额。"""
+    if not coupon:
+        return price
+    value = float(coupon.get("value") or 0)
+    if coupon.get("discount_type") == "percent":
+        return round(max(0.0, price * (100 - min(value, 99)) / 100), 2)
+    return round(max(0.0, price - value), 2)
+
+
+def expire_stale_orders() -> int:
+    """惰性关闭超时订单（查询/创建订单时自动触发），返回关闭数量。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        now = datetime.now()
+        cur = conn.execute(
+            """UPDATE orders SET status='expired'
+               WHERE status IN ('pending', 'paid')
+                 AND ((status='pending' AND created_at < ?)
+                   OR (status='paid' AND created_at < ?))""",
+            (
+                (now - timedelta(days=ORDER_EXPIRE_DAYS["pending"])).isoformat(),
+                (now - timedelta(days=ORDER_EXPIRE_DAYS["paid"])).isoformat(),
+            ),
+        )
+        n = cur.rowcount
+        if n:
+            conn.commit()
+            logger.info("%s stale orders auto-expired", n)
+        return n
+    finally:
+        conn.close()
+
+
+def create_order(user_id: str, plan: str, coupon_code: str = "") -> dict:
+    """创建会员订单；同一用户仅允许 1 个待处理订单。可选优惠码抵扣。"""
+    if plan not in MEMBERSHIP_PLANS:
+        raise HTTPException(400, "无效的会员套餐")
+    expire_stale_orders()  # 先清理超时旧单，避免阻塞新订单
+    coupon = validate_coupon(coupon_code) if coupon_code else None
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        pending = conn.execute(
+            "SELECT id FROM orders WHERE user_id=? AND status IN ('pending','paid')", (user_id,)
+        ).fetchone()
+        if pending:
+            raise HTTPException(400, "您已有待处理订单，请等待管理员审核")
+        order_id = f"order_{uuid.uuid4().hex[:12]}"
+        plan_info = MEMBERSHIP_PLANS[plan]
+        original = plan_info["price"]
+        amount = coupon_discount(original, coupon)
+        conn.execute(
+            """INSERT INTO orders (id, user_id, plan, amount, original_amount, coupon_code, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            (order_id, user_id, plan, amount, original, coupon["code"] if coupon else "", datetime.now().isoformat()),
+        )
+        if coupon:
+            conn.execute("UPDATE coupons SET used_count=used_count+1 WHERE id=?", (coupon["id"],))
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+def get_my_orders(user_id: str) -> list[dict]:
+    """我的订单（倒序）。"""
+    expire_stale_orders()  # 惰性关闭超时订单
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 50", (user_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def submit_voucher(order_id: str, user_id: str, voucher: str, remark: str = "") -> dict:
+    """提交支付凭证（截图路径或说明），订单 pending → paid（待审核）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not row or row["user_id"] != user_id:
+            raise HTTPException(404, "订单不存在")
+        if row["status"] != "pending":
+            raise HTTPException(400, "当前订单状态不可提交凭证")
+        conn.execute(
+            "UPDATE orders SET voucher=?, remark=?, status='paid' WHERE id=?",
+            (voucher[:500], remark[:200], order_id),
+        )
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+def review_order(order_id: str, reviewer_id: str, approve: bool) -> dict:
+    """管理员审核订单：通过则开通对应会员（30 天），拒绝则关闭订单。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "订单不存在")
+        if row["status"] != "paid":
+            raise HTTPException(400, "仅可审核已提交凭证的订单")
+        if approve:
+            plan = MEMBERSHIP_PLANS.get(row["plan"])
+            if not plan:
+                raise HTTPException(400, "套餐无效")
+            expires = (datetime.now() + timedelta(days=plan["days"])).isoformat()
+            conn.execute(
+                "UPDATE users SET membership=?, membership_expires=?, daily_quota=? WHERE id=?",
+                (row["plan"], expires, plan["daily_quota"], row["user_id"]),
+            )
+        else:
+            # 拒绝订单 → 回退优惠码占用次数
+            if row["coupon_code"]:
+                conn.execute(
+                    "UPDATE coupons SET used_count=MAX(0, used_count-1) WHERE code=?",
+                    (row["coupon_code"],),
+                )
+        conn.execute(
+            "UPDATE orders SET status=?, reviewed_at=?, reviewed_by=? WHERE id=?",
+            ("approved" if approve else "rejected", datetime.now().isoformat(), reviewer_id, order_id),
+        )
+        conn.commit()
+        return dict(conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone())
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# 邀请码分销（商业版：引流）
+# ══════════════════════════════════════════════════════════════
+
+_INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 去除易混淆字符
+
+
+def _gen_invite_code() -> str:
+    return "".join(secrets.choice(_INVITE_ALPHABET) for _ in range(8))
+
+
+def get_invite_info(user_id: str) -> dict:
+    """邀请信息：我的邀请码 / 已邀请人数 / 奖励规则。"""
+    from common.db import get_db
+
+    row = _load_user(user_id)
+    if not row:
+        raise HTTPException(404, "用户不存在")
+    code = row.get("invite_code") or ""
+    if not code:
+        conn = get_db()
+        try:
+            code = _gen_invite_code()
+            conn.execute("UPDATE users SET invite_code=? WHERE id=?", (code, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT username, created_at FROM users WHERE invited_by=? ORDER BY created_at DESC LIMIT 100",
+            (user_id,),
+        ).fetchall()
+        invited = [dict(r) for r in rows]
+    finally:
+        conn.close()
+    return {
+        "invite_code": code,
+        "invited_count": len(invited),
+        "reward_per_invite": INVITE_REWARD,
+        "invited_users": invited,
+    }
 
 
 def ensure_admin_user() -> None:

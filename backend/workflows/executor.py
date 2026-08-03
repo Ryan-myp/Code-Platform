@@ -293,6 +293,9 @@ class WorkflowExecutor:
 
         try:
             results = {}
+            # 注入输入数据，使节点配置可通过 ${input.message} 引用工作流输入
+            if input_data:
+                results["input"] = input_data
             node_map = {n["id"]: n for n in nodes}
             processed = set()
 
@@ -399,6 +402,8 @@ class WorkflowExecutor:
             return await self.execute_prd_node(config, previous_results)
         elif node_type == "business":
             return await self.execute_business_node(config, previous_results)
+        elif node_type == "output":
+            return await self.execute_output_node(config, previous_results)
         else:
             return {"status": "unknown_type", "type": node_type}
 
@@ -559,6 +564,21 @@ class WorkflowExecutor:
         seconds = float(config.get("seconds", 1))
         await asyncio.sleep(seconds)
         return {"status": "delayed", "seconds": seconds}
+
+    # ── Output 节点：汇总上游结果作为工作流最终输出 ────────────
+    async def execute_output_node(self, config: dict, previous_results: dict) -> dict:
+        """输出节点：把上游最后一个成功节点的结果作为最终输出。"""
+        success = {
+            k: v for k, v in previous_results.items()
+            if k != "input" and isinstance(v, dict) and v.get("status") == "success"
+        }
+        if not success:
+            return {"status": "error", "message": "没有可输出的上游结果"}
+        _, last = next(reversed(success.items()))
+        for key in ("result", "lyrics", "content", "text"):
+            if last.get(key):
+                return {"status": "success", "result": last[key], "source": key}
+        return {"status": "success", **last}
 
     # ── Image 节点：调 Agnes /images/generations ─────────────
     async def execute_image_node(self, config: dict, previous_results: dict) -> dict:

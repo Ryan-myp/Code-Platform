@@ -4,8 +4,8 @@ import {
   FileText, TrendingUp, Share2, Mail, Megaphone, Package, Newspaper, BookOpen,
   Trash2, Star, Tag,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import ShareButton from '../components/ShareButton'
 import { Card, Button, Badge, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -177,7 +177,7 @@ export default function CopywritingPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：输入区 */}
         <div className="space-y-4">
           {/* 文案类型 */}
@@ -185,7 +185,7 @@ export default function CopywritingPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-pink-500" /> 文案类型
             </h3>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {TYPES.map(t => {
                 const Icon = t.icon
                 return (
@@ -285,7 +285,7 @@ export default function CopywritingPage() {
         </div>
 
         {/* 右侧：结果区 */}
-        <div className="space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <Card className="min-h-[400px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -293,6 +293,7 @@ export default function CopywritingPage() {
               </h3>
               {result && (
                 <div className="flex items-center gap-2">
+                  <ShareButton content={result} title="文案生成结果" contentType="copywriting" />
                   <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                     {copied ? '已复制' : '复制'}
                   </Button>
@@ -300,9 +301,7 @@ export default function CopywritingPage() {
               )}
             </div>
             {result ? (
-              <div className="prose prose-sm max-w-none text-gray-700">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
-              </div>
+              <MarkdownRenderer content={result} />
             ) : (
               <Empty icon={PenTool} title="等待生成" description="输入需求后点击生成" />
             )}

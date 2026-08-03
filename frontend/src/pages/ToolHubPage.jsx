@@ -11,7 +11,8 @@ import {
   Presentation, Table, Code, Briefcase, Mic, DollarSign,
   Zap, Star, Clock, ArrowRight, Filter, Grid3X3, List,
   Flame, Rocket, Award, Briefcase as BriefcaseIcon, Building2, FlaskConical,
-  Tag, Palette, PenTool, MessageSquare, Layout
+  Tag, Palette, PenTool, MessageSquare, Layout,
+  Lock
 } from 'lucide-react'
 
 const ICON_MAP = {
@@ -201,13 +202,21 @@ export default function ToolHubPage() {
                 return (
                   <div
                     key={tool.id}
-                    onClick={() => navigate(tool.type === 'app' ? tool.path : `/tool/${tool.id}`)}
-                    className="group relative bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-brand-300 transition-all cursor-pointer"
+                    onClick={() => navigate(tool.locked ? '/membership' : (tool.type === 'app' ? tool.path : `/tool/${tool.id}`))}
+                    className={`group relative bg-white rounded-xl border border-gray-200 p-4 transition-all cursor-pointer ${
+                      tool.locked ? 'hover:border-amber-300 hover:shadow-lg' : 'hover:shadow-lg hover:border-brand-300'
+                    }`}
                   >
                     <div className="absolute -top-1 -right-1">
                       <Star className="w-5 h-5 text-yellow-400 fill-yellow-400" />
                     </div>
-                    <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${colors.bg} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform`}>
+                    {tool.locked && (
+                      <div className="absolute top-2 right-8 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 bg-amber-50 rounded flex items-center gap-0.5">
+                        <Lock className="w-3 h-3" />
+                        {tool.requires === 'vip' ? '至尊会员' : '专业会员'}
+                      </div>
+                    )}
+                    <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${colors.bg} flex items-center justify-center mb-2 group-hover:scale-110 transition-transform ${tool.locked ? 'opacity-60' : ''}`}>
                       <Icon className="w-5 h-5 text-white" />
                     </div>
                     <div className="font-medium text-sm text-gray-900">{tool.name}</div>
@@ -446,14 +455,25 @@ export default function ToolHubPage() {
 // 工具卡片组件
 function ToolCard({ tool, colors, viewMode, isFavorite, onToggleFavorite, onClick }) {
   const Icon = ICON_MAP[tool.icon] || Sparkles
+  const navigate = useNavigate()
+  const locked = tool.locked
+  const handleClick = () => {
+    if (locked) {
+      navigate('/membership')
+      return
+    }
+    onClick()
+  }
   
   if (viewMode === 'list') {
     return (
       <div
-        onClick={onClick}
-        className="flex items-center gap-4 bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md hover:border-brand-300 transition-all cursor-pointer group"
+        onClick={handleClick}
+        className={`flex items-center gap-4 bg-white rounded-xl border border-gray-200 p-4 transition-all group ${
+          locked ? 'cursor-pointer hover:border-amber-300 hover:shadow-md' : 'hover:shadow-md hover:border-brand-300 cursor-pointer'
+        }`}
       >
-        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors.bg} flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform`}>
+        <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors.bg} flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform ${locked ? 'opacity-60' : ''}`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
         <div className="flex-1 min-w-0">
@@ -462,18 +482,26 @@ function ToolCard({ tool, colors, viewMode, isFavorite, onToggleFavorite, onClic
             {tool.type === 'app' && (
               <Badge variant="info" size="sm">专业版</Badge>
             )}
+            {locked && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full">
+                <Lock className="w-3 h-3" />
+                {tool.requires === 'vip' ? '至尊会员' : '专业会员'}
+              </span>
+            )}
           </div>
           <div className="text-sm text-gray-500 truncate">{tool.description}</div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onToggleFavorite}
-            className={`p-1.5 rounded-lg transition-colors ${isFavorite ? 'text-yellow-500 bg-yellow-50' : 'text-gray-300 hover:text-yellow-500 hover:bg-yellow-50'}`}
-          >
-            <Star className={`w-4 h-4 ${isFavorite ? 'fill-yellow-500' : ''}`} />
-          </button>
+          {!locked && (
+            <button
+              onClick={onToggleFavorite}
+              className={`p-1.5 rounded-lg transition-colors ${isFavorite ? 'text-yellow-500 bg-yellow-50' : 'text-gray-300 hover:text-yellow-500 hover:bg-yellow-50'}`}
+            >
+              <Star className={`w-4 h-4 ${isFavorite ? 'fill-yellow-500' : ''}`} />
+            </button>
+          )}
           <Badge variant="outline" className={colors.text}>{tool.category}</Badge>
-          <ArrowRight className="w-4 h-4 text-gray-400 group-hover:text-brand-500 group-hover:translate-x-1 transition-all" />
+          <ArrowRight className={`w-4 h-4 ${locked ? 'text-amber-400' : 'text-gray-400 group-hover:text-brand-500 group-hover:translate-x-1'} transition-all`} />
         </div>
       </div>
     )
@@ -481,31 +509,41 @@ function ToolCard({ tool, colors, viewMode, isFavorite, onToggleFavorite, onClic
   
   return (
     <div
-      onClick={onClick}
-      className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-lg hover:border-brand-300 transition-all cursor-pointer group relative"
+      onClick={handleClick}
+      className={`bg-white rounded-xl border border-gray-200 p-4 transition-all group relative ${
+        locked ? 'cursor-pointer hover:border-amber-300 hover:shadow-lg' : 'hover:shadow-lg hover:border-brand-300 cursor-pointer'
+      }`}
     >
       {/* 收藏按钮 */}
-      <button
-        onClick={onToggleFavorite}
-        className={`absolute top-2 right-2 p-1.5 rounded-lg transition-colors z-10 ${
-          isFavorite ? 'text-yellow-500 bg-yellow-50' : 'text-gray-300 opacity-0 group-hover:opacity-100 hover:text-yellow-500 hover:bg-yellow-50'
-        }`}
-      >
-        <Star className={`w-4 h-4 ${isFavorite ? 'fill-yellow-500' : ''}`} />
-      </button>
-      {tool.type === 'app' && !isFavorite && (
+      {!locked && (
+        <button
+          onClick={onToggleFavorite}
+          className={`absolute top-2 right-2 p-1.5 rounded-lg transition-colors z-10 ${
+            isFavorite ? 'text-yellow-500 bg-yellow-50' : 'text-gray-300 opacity-0 group-hover:opacity-100 hover:text-yellow-500 hover:bg-yellow-50'
+          }`}
+        >
+          <Star className={`w-4 h-4 ${isFavorite ? 'fill-yellow-500' : ''}`} />
+        </button>
+      )}
+      {locked && (
+        <div className="absolute top-2 right-2 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 bg-amber-50 rounded flex items-center gap-0.5 z-10">
+          <Lock className="w-3 h-3" />
+          {tool.requires === 'vip' ? '至尊会员' : '专业会员'}
+        </div>
+      )}
+      {tool.type === 'app' && !isFavorite && !locked && (
         <div className="absolute top-2 right-2 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 bg-brand-50 rounded">
           专业版
         </div>
       )}
-      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${colors.bg} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform`}>
+      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${colors.bg} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform ${locked ? 'opacity-60' : ''}`}>
         <Icon className="w-5 h-5 text-white" />
       </div>
       <div className="font-medium text-gray-900 mb-1">{tool.name}</div>
       <div className="text-xs text-gray-500 line-clamp-2 mb-2">{tool.description}</div>
       <div className="flex items-center justify-between">
         <span className={`text-xs ${colors.text}`}>{tool.category}</span>
-        <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-brand-500 group-hover:translate-x-1 transition-all" />
+        <ArrowRight className={`w-4 h-4 ${locked ? 'text-amber-400' : 'text-gray-300 group-hover:text-brand-500 group-hover:translate-x-1'} transition-all`} />
       </div>
     </div>
   )

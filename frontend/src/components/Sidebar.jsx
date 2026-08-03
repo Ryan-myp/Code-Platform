@@ -5,16 +5,21 @@ import {
   ChevronDown, ChevronRight, Menu, X, Play, Image as ImageIcon, Film, Music,
   Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell,
   Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
-  Presentation, Table2, TrendingUp
+  Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
 import { useToast } from '../lib/toast'
+import useQuota from '../hooks/useQuota'
+import useAccess from '../hooks/useAccess'
+import ModelSwitcher from './ModelSwitcher'
 
 export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout }) {
   const location = useLocation()
   const activePath = location.pathname
   const toast = useToast()
+  const { quota } = useQuota()
+  const { getPageStatusById } = useAccess()
   const [confirmLogout, setConfirmLogout] = useState(false)
 
   const navItems = [
@@ -22,48 +27,58 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       items: [
         { path: '/home', label: '首页', icon: Home },
         { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
+        { path: '/records', label: '记录中心', icon: HistoryIcon },
         { path: '/notifications', label: '通知中心', icon: Bell },
+        { path: '/membership', label: '会员中心', icon: Crown },
       ] },
     { key: 'rdm', label: '研发管理', icon: Code2, color: 'from-brand-500 to-brand-600',
       items: [
-        { path: '/board', label: '需求看板', icon: ListTodo },
-        { path: '/workspace', label: 'AI 工作台', icon: Sparkles },
-        { path: '/projects', label: '项目空间', icon: FolderKanban },
-        { path: '/artifacts', label: '成果仓库', icon: FileText },
-        { path: '/pipelines', label: 'CI/CD 流水线', icon: GitBranch },
-        { path: '/sandbox', label: '沙箱运行', icon: Play },
-        { path: '/code-gen', label: '代码生成', icon: Code2 },
-        { path: '/code-review', label: '代码审查', icon: Shield },
+        { path: '/board', label: '需求看板', icon: ListTodo, group: '需求与项目' },
+        { path: '/workspace', label: 'AI 工作台', icon: Sparkles, group: '需求与项目' },
+        { path: '/projects', label: '项目空间', icon: FolderKanban, group: '需求与项目' },
+        { path: '/artifacts', label: '成果仓库', icon: FileText, group: '需求与项目' },
+        { path: '/sandbox', label: '沙箱运行', icon: Play, pageId: 'sandbox', group: '代码研发' },
+        { path: '/pipelines', label: 'CI/CD 流水线', icon: GitBranch, group: '部署运维' },
       ] },
     { key: 'agent', label: '智能体管理', icon: Bot, color: 'from-emerald-500 to-teal-600',
       items: [
-        { path: '/agents', label: 'Agent 列表', icon: Bot },
+        { path: '/agents', label: 'Agent 列表', icon: Bot, pageId: 'agents' },
         { path: '/teams', label: 'Team 管理', icon: Users },
-        { path: '/workflows', label: 'Workflow 管理', icon: Layers },
-      ] },
-    { key: 'factory', label: '创作工厂', icon: Wand2, color: 'from-accent-500 to-blue-600',
-      items: [
-        { path: '/image-factory', label: '图片工厂', icon: ImageIcon },
-        { path: '/video-factory', label: '视频工厂', icon: Film },
-        { path: '/music-factory', label: '音乐工厂', icon: Music },
-        { path: '/copywriting', label: '文案工厂', icon: PenTool },
-        { path: '/translation', label: '翻译中心', icon: Languages },
-      ] },
-    { key: 'office', label: '效率工具箱', icon: Wrench, color: 'from-orange-500 to-red-600',
-      items: [
-        { path: '/tool-hub', label: '全部工具', icon: Wrench },
-      ] },
-    { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
-      items: [
-        { path: '/config', label: '模型配置', icon: Settings },
+        { path: '/workflows', label: 'Workflow 管理', icon: Layers, pageId: 'workflows' },
         { path: '/knowledge-bases', label: '知识库', icon: Database },
         { path: '/skills', label: 'Skills', icon: Wrench },
         { path: '/mcp-servers', label: 'MCP Servers', icon: Server },
       ] },
+    { key: 'factory', label: '创作工厂', icon: Wand2, color: 'from-accent-500 to-blue-600',
+      items: [
+        { path: '/image-factory', label: '图片工厂', icon: ImageIcon, pageId: 'image-factory' },
+        { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
+        { path: '/music-factory', label: '音乐工厂', icon: Music, pageId: 'music-factory' },
+        { path: '/copywriting', label: '文案工厂', icon: PenTool, pageId: 'copywriting' },
+        { path: '/translation', label: '翻译中心', icon: Languages, pageId: 'translation' },
+        { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
+      ] },
+    { key: 'office', label: '效率工具箱', icon: Wrench, color: 'from-orange-500 to-red-600',
+      items: [
+        { path: '/tool-hub', label: '全部工具', icon: Wrench },
+        { path: '/excel', label: 'Excel 助手', icon: Table2, pageId: 'excel' },
+        { path: '/stock', label: '股票分析', icon: TrendingUp, pageId: 'stock' },
+      ] },
+    { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
+      items: [
+        { path: '/config', label: '模型配置', icon: Settings },
+        ...(user?.role === 'admin'
+          ? [{ path: '/admin', label: '管理后台', icon: Shield }]
+          : []),
+      ] },
+    { key: 'help', label: '帮助中心', icon: HelpCircle, color: 'from-sky-500 to-blue-600',
+      items: [
+        { path: '/help', label: '使用帮助', icon: HelpCircle },
+      ] },
     { key: 'plugins', label: '插件市场', icon: Puzzle, color: 'from-pink-500 to-rose-600',
-      items: [{ path: '/plugins', label: '插件列表', icon: Puzzle }] },
+      items: [{ path: '/plugins', label: '插件列表', icon: Puzzle, pageId: 'plugins' }] },
     { key: 'chat', label: '智能协作', icon: MessageSquare, color: 'from-violet-500 to-purple-600',
-      items: [{ path: '/chat', label: '任务对话', icon: MessageSquare }] },
+      items: [{ path: '/chat', label: '任务对话', icon: MessageSquare, pageId: 'chat' }] },
     { key: 'evolution', label: '平台自进化', icon: Brain, color: 'from-indigo-500 to-blue-600',
       items: [{ path: '/evolution', label: '自进化中心', icon: Brain }] },
   ]
@@ -87,7 +102,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
   const renderNav = (onNavigate) => (
     <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
       {navItems.map((menu) => {
-        const isActiveMenu = menu.items.some((i) => activePath.startsWith(i.path))
+        // 按可见性过滤入口（admin 设置 hidden / 仅限他人时不在侧边栏展示）
+        const visibleItems = menu.items.filter((i) => !i.pageId || getPageStatusById(i.pageId).visible)
+        if (visibleItems.length === 0) return null
+        const isActiveMenu = visibleItems.some((i) => activePath.startsWith(i.path))
         return (
           <div key={menu.key} className="mb-1">
             <button
@@ -108,23 +126,38 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
             </button>
             {expandedMenus[menu.key] && (
               <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink-200/60 pl-3 py-0.5">
-                {menu.items.map((item) => {
+                {visibleItems.map((item, idx) => {
+                  const showGroup = item.group && item.group !== visibleItems[idx - 1]?.group
+                  const pageStatus = item.pageId ? getPageStatusById(item.pageId) : null
+                  const locked = !!pageStatus?.locked
                   const active = activePath === item.path || (item.path !== '/agents' && activePath.startsWith(item.path))
                   return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={onNavigate}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
-                        active
-                          ? 'bg-brand-100 text-brand-700 font-medium shadow-soft'
-                          : 'text-ink-500 hover:bg-ink-50 hover:text-ink-800 hover:translate-x-0.5'
-                      }`}
-                    >
-                      <item.icon className={`w-3.5 h-3.5 ${active ? 'text-brand-600' : 'text-ink-400'}`} />
-                      <span>{item.label}</span>
-                      {active && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-500" />}
-                    </Link>
+                    <React.Fragment key={item.path}>
+                      {showGroup && (
+                        <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-400/70">
+                          {item.group}
+                        </div>
+                      )}
+                      <Link
+                        to={locked ? '/membership' : item.path}
+                        onClick={onNavigate}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-150 ${
+                          locked
+                            ? 'text-ink-400 hover:bg-amber-50 hover:text-amber-600'
+                            : active
+                              ? 'bg-brand-100 text-brand-700 font-medium shadow-soft'
+                              : 'text-ink-500 hover:bg-ink-50 hover:text-ink-800 hover:translate-x-0.5'
+                        }`}
+                      >
+                        <item.icon className={`w-3.5 h-3.5 ${locked ? 'text-amber-400' : active ? 'text-brand-600' : 'text-ink-400'}`} />
+                        <span>{item.label}</span>
+                        {locked ? (
+                          <Lock className="w-3 h-3 text-amber-500 ml-auto" />
+                        ) : (
+                          active && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-500" />
+                        )}
+                      </Link>
+                    </React.Fragment>
                   )
                 })}
               </div>
@@ -135,19 +168,20 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
     </nav>
   )
 
-  const renderUser = () => (
+  const renderUser = (onNavigate) => (
     <div className="px-3 py-3 border-t border-ink-100 bg-gradient-to-b from-ink-50/50 to-transparent">
+      <ModelSwitcher />
       {user && (
         <div className="flex items-center justify-between mb-2 px-1">
-          <div className="flex items-center gap-2.5 min-w-0">
+          <Link to="/profile" onClick={onNavigate} className="flex items-center gap-2.5 min-w-0 group">
             <div className="w-9 h-9 bg-gradient-to-br from-brand-500 to-brand-700 rounded-xl flex items-center justify-center shadow-soft flex-shrink-0">
               <span className="text-white text-sm font-semibold">{user.username?.[0]?.toUpperCase()}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink-800 truncate">{user.username}</p>
+              <p className="text-sm font-semibold text-ink-800 truncate group-hover:text-brand-600 transition-colors">{user.nickname || user.username}</p>
               <p className="text-xs text-ink-500 capitalize">{user.role}</p>
             </div>
-          </div>
+          </Link>
           <button
             onClick={() => setConfirmLogout(true)}
             className="p-2 hover:bg-red-50 rounded-lg transition-colors text-ink-400 hover:text-red-500"
@@ -156,6 +190,34 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
             <LogOut className="w-4 h-4" />
           </button>
         </div>
+      )}
+      {user && quota && (
+        <Link
+          to="/profile"
+          onClick={onNavigate}
+          className="flex items-center justify-between px-3 py-2 rounded-xl bg-brand-50/60 border border-brand-100/80 hover:bg-brand-50 transition-colors"
+        >
+          <span className="text-xs text-ink-600 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-brand-500" />
+            今日额度
+          </span>
+          <span className={`text-xs font-semibold ${quota.remaining_today >= 9999 ? 'text-amber-600' : quota.remaining_today <= 5 ? 'text-red-500' : 'text-brand-600'}`}>
+            {quota.remaining_today >= 9999 ? '无限' : `剩 ${quota.remaining_today} 次`}
+          </span>
+        </Link>
+      )}
+      {user && (
+        <Link
+          to="/membership"
+          onClick={onNavigate}
+          className="flex items-center justify-between px-3 py-2 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 hover:from-amber-100 hover:to-orange-100 transition-colors"
+        >
+          <span className="text-xs text-ink-700 flex items-center gap-1.5">
+            <Crown className="w-3.5 h-3.5 text-amber-500" />
+            升级会员
+          </span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500 text-white">¥19.9 起</span>
+        </Link>
       )}
       <div className="flex items-center justify-center gap-1 text-xs text-ink-400 pt-2">
         <Zap className="w-3 h-3 text-brand-400" />
@@ -182,6 +244,15 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
               </div>
             </Link>
           </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('open-command-palette'))}
+            className="mt-3 w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-ink-50 border border-ink-200/60 hover:bg-brand-50 hover:border-brand-200 text-ink-500 hover:text-brand-600 transition-all group"
+            title="全局搜索（⌘K / Ctrl+K）"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="text-xs">搜索需求 / 命令 / 工具…</span>
+            <kbd className="ml-auto px-1.5 py-0.5 text-[10px] bg-white border border-ink-200 rounded font-mono">⌘K</kbd>
+          </button>
           {renderNav()}
           {renderUser()}
         </div>
@@ -218,7 +289,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
                 </button>
               </div>
               {renderNav(() => setSidebarOpen(false))}
-              {renderUser()}
+              {renderUser(() => setSidebarOpen(false))}
             </div>
           </div>
         </div>

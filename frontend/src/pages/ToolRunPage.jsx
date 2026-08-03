@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { Card, Button, Badge, Empty } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
-import ReactMarkdown from 'react-markdown'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import useQuota from '../hooks/useQuota'
+import ShareButton from '../components/ShareButton'
+import ExportButton from '../components/ExportButton'
 import {
   ArrowLeft, Play, Copy, Check, Clock, History, Sparkles,
   FileText, ClipboardList, Mail, Target, Users,
   Heart, Video, Calendar,
   GraduationCap, BookOpen, GitBranch, Layers,
   Search, UserCircle, Megaphone, TrendingUp, BarChart,
-  Settings, ChevronDown, Upload, X, Download
+  Settings, ChevronDown, Upload, X, Download, Zap, Lock, Crown
 } from 'lucide-react'
 
 const ICON_MAP = {
@@ -35,6 +38,7 @@ export default function ToolRunPage() {
   const { toolId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
+  const { quota } = useQuota()
   
   const [tool, setTool] = useState(null)
   const [input, setInput] = useState('')
@@ -176,6 +180,34 @@ export default function ToolRunPage() {
     )
   }
 
+  // 锁定工具（需要会员等级）：展示会员引导页
+  if (tool.locked) {
+    const label = tool.requires === 'vip' ? '至尊会员' : '专业会员'
+    return (
+      <div className="flex-1 overflow-auto bg-gray-50">
+        <div className="max-w-md mx-auto py-20 text-center">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-glow">
+            <Lock className="w-8 h-8 text-white" />
+          </div>
+          <h2 className="text-xl font-semibold text-ink-900 mb-2">「{tool.name}」为{label}专属</h2>
+          <p className="text-sm text-ink-500 mb-8 leading-relaxed">
+            开通会员即可使用该工具，同时解锁全部会员权益与更高额度。
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            <Button variant="secondary" onClick={() => navigate('/tool-hub')}>
+              <ArrowLeft className="w-4 h-4 mr-1.5" />
+              返回工具库
+            </Button>
+            <Button onClick={() => navigate('/membership')}>
+              <Crown className="w-4 h-4 mr-1.5" />
+              立即开通
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const Icon = ICON_MAP[tool.icon] || Sparkles
   const categoryColor = CATEGORY_COLORS[tool.category] || 'from-gray-500 to-gray-600'
   const templates = tool.templates || []
@@ -200,6 +232,22 @@ export default function ToolRunPage() {
             <p className="text-sm text-gray-500">{tool.description}</p>
           </div>
           <Badge variant="info">{tool.category}</Badge>
+          {quota && (
+            <Link
+              to="/profile"
+              title="查看额度详情"
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                quota.remaining_today >= 9999
+                  ? 'text-amber-600 border-amber-200 bg-amber-50'
+                  : quota.remaining_today <= 5
+                    ? 'text-red-500 border-red-200 bg-red-50'
+                    : 'text-brand-600 border-brand-200 bg-brand-50'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              {quota.remaining_today >= 9999 ? '无限额度' : `剩余 ${quota.remaining_today} 次`}
+            </Link>
+          )}
           <button
             onClick={() => setShowHistory(!showHistory)}
             className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
@@ -307,10 +355,8 @@ export default function ToolRunPage() {
                 </div>
               </Card>
             )}
-          </div>
 
-          {/* 中间：输入区 */}
-          <div className="lg:col-span-1">
+            {/* 输入区 */}
             <Card className="!p-0 overflow-hidden h-full flex flex-col">
               <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <span className="text-sm font-medium text-gray-700">输入内容</span>
@@ -359,12 +405,14 @@ export default function ToolRunPage() {
           </div>
 
           {/* 右侧：结果区 */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-2">
             <Card className="!p-0 overflow-hidden h-full flex flex-col min-h-[500px]">
               <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <span className="text-sm font-medium text-gray-700">生成结果</span>
                 {result && (
                   <div className="flex items-center gap-2">
+                    <ShareButton content={result} title={`${tool.name} 生成结果`} />
+                    <ExportButton content={result} title={`${tool.name}-${new Date().toISOString().slice(0, 10)}`} />
                     <button
                       onClick={handleCopy}
                       className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-brand-600 hover:bg-gray-100 rounded transition-colors"
@@ -382,27 +430,7 @@ export default function ToolRunPage() {
                     <p className="text-sm text-gray-500">AI 正在生成中...</p>
                   </div>
                 ) : result ? (
-                  <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown
-                      components={{
-                        h1: ({children}) => <h1 className="text-xl font-bold text-gray-900 mb-3">{children}</h1>,
-                        h2: ({children}) => <h2 className="text-lg font-semibold text-gray-800 mt-4 mb-2">{children}</h2>,
-                        h3: ({children}) => <h3 className="text-base font-medium text-gray-700 mt-3 mb-1">{children}</h3>,
-                        p: ({children}) => <p className="text-sm text-gray-600 mb-2 leading-relaxed">{children}</p>,
-                        ul: ({children}) => <ul className="list-disc list-inside text-sm text-gray-600 mb-2 space-y-1">{children}</ul>,
-                        ol: ({children}) => <ol className="list-decimal list-inside text-sm text-gray-600 mb-2 space-y-1">{children}</ol>,
-                        li: ({children}) => <li className="text-sm text-gray-600">{children}</li>,
-                        strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                        code: ({children}) => <code className="px-1 py-0.5 bg-gray-100 rounded text-xs text-pink-600">{children}</code>,
-                        pre: ({children}) => <pre className="p-3 bg-gray-900 rounded-lg overflow-x-auto mb-2"><code className="text-xs text-gray-100">{children}</code></pre>,
-                        table: ({children}) => <div className="overflow-x-auto mb-2"><table className="min-w-full text-sm border border-gray-200">{children}</table></div>,
-                        th: ({children}) => <th className="px-3 py-2 bg-gray-50 border border-gray-200 font-medium text-gray-700">{children}</th>,
-                        td: ({children}) => <td className="px-3 py-2 border border-gray-200 text-gray-600">{children}</td>,
-                      }}
-                    >
-                      {result}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownRenderer content={result} />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-gray-400">
                     <Sparkles className="w-12 h-12 mb-3 opacity-50" />

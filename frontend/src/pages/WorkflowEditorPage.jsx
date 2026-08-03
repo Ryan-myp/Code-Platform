@@ -4,24 +4,29 @@ import {
   Plus, Trash2, Play, Save, Download,
   GitBranch, GitMerge, Code2, Globe,
   Zap, FileText, Clock,
+  Image as ImageIcon, Video, Music,
+  CheckCircle2, XCircle,
   ZoomIn, ZoomOut, RefreshCw, ChevronLeft,
   Undo2, Redo2, X, Workflow,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
 import { Modal, Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
 
-// 节点类型定义
+// 节点类型定义（与后端 workflows/executor.py 支持的节点一一对应）
 const NODE_TYPES = {
-  agent: { label: 'Agent', icon: GitBranch, color: 'purple', config: { agent_id: '' } },
+  agent: { label: 'Agent', icon: GitBranch, color: 'purple', config: { agent_id: '', message: '' } },
   http: { label: 'HTTP 请求', icon: Globe, color: 'blue', config: { url: '', method: 'GET', headers: '{}' } },
   condition: { label: '条件判断', icon: GitMerge, color: 'orange', config: { expression: '' } },
   parallel: { label: '并行执行', icon: Zap, color: 'green', config: {} },
   code: { label: '代码执行', icon: Code2, color: 'gray', config: { code: '', language: 'python' } },
   delay: { label: '延迟等待', icon: Clock, color: 'yellow', config: { seconds: 1 } },
+  image: { label: '图片生成', icon: ImageIcon, color: 'pink', config: { prompt: '', size: '1024x1024', model: 'agnes-image-2.1-flash' } },
+  video: { label: '视频生成', icon: Video, color: 'blue', config: { prompt: '', duration: 5, width: 1152, height: 768 } },
+  music: { label: '音乐歌词', icon: Music, color: 'yellow', config: { theme: '', style: 'pop', language: 'zh', mood: 'happy' } },
+  prd: { label: 'PRD 流程', icon: FileText, color: 'orange', config: { stage: 'generate', prd_text: '', tech_design: '', language: 'python' } },
   output: { label: '输出节点', icon: FileText, color: 'pink', config: {} },
 }
 
@@ -56,6 +61,7 @@ export default function WorkflowEditorPage() {
   const [showRunDialog, setShowRunDialog] = useState(false)
   const [runInput, setRunInput] = useState('')
   const [deleteNodeTarget, setDeleteNodeTarget] = useState(null)
+  const [agents, setAgents] = useState([])
 
   // 画布交互
   const [dragging, setDragging] = useState(null)
@@ -116,6 +122,13 @@ export default function WorkflowEditorPage() {
   useEffect(() => {
     loadWorkflow()
   }, [loadWorkflow])
+
+  // 加载 Agent 列表（供 agent 节点下拉选择）
+  useEffect(() => {
+    api.get('/api/agents')
+      .then((res) => setAgents(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setAgents([]))
+  }, [])
 
   // ── 历史记录：监听 nodes/edges 变化，防抖提交 ──
   useEffect(() => {
@@ -339,6 +352,10 @@ export default function WorkflowEditorPage() {
   // 运行工作流
   const runWorkflow = async () => {
     if (!workflow) return
+    if (nodes.length === 0) {
+      toast.error('请先在画布中添加节点')
+      return
+    }
     if (!runInput.trim()) {
       toast.error('请输入执行内容')
       return
@@ -727,7 +744,7 @@ export default function WorkflowEditorPage() {
               <Empty
                 icon={Workflow}
                 title="画布为空"
-                description="从左侧节点栏点击添加节点，开始编排你的工作流"
+                description="从左侧节点栏点击添加节点，支持 Agent / 图片 / 视频 / 音乐 / PRD 等节点编排"
               />
             </div>
           )}
@@ -745,7 +762,7 @@ export default function WorkflowEditorPage() {
 
           {/* 快捷键提示 */}
           <div className="absolute bottom-3 right-3 px-2.5 py-1.5 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-lg text-[10px] text-gray-400 hidden md:block">
-            拖拽节点移动 · 点击右侧圆点连线（支持分支） · 点击连线删除 · Del 删除节点 · Ctrl+Z 撤销
+            拖拽移动 · 右侧圆点连线（支持分支） · 点击连线删除 · Del 删除 · Ctrl+Z 撤销 · ${"{input}"} 引用输入
           </div>
         </div>
       </div>
@@ -782,16 +799,42 @@ export default function WorkflowEditorPage() {
             </div>
 
             {selectedNodeData.type === 'agent' && (
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Agent ID</label>
-                <input
-                  type="text"
-                  value={selectedNodeData.config.agent_id || ''}
-                  onChange={(e) => updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)}
-                  placeholder="输入 Agent ID"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">选择 Agent</label>
+                  {agents.length > 0 ? (
+                    <select
+                      value={selectedNodeData.config.agent_id || ''}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    >
+                      <option value="">通用智能助手（不指定）</option>
+                      {agents.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={selectedNodeData.config.agent_id || ''}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)}
+                      placeholder="输入 Agent ID"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">执行指令</label>
+                  <textarea
+                    value={selectedNodeData.config.message ?? ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'message', e.target.value)}
+                    rows={3}
+                    placeholder="留空则使用工作流输入；可引用上游结果 ${'{node_x.result}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">留空默认使用工作流的输入内容</p>
+                </div>
+              </>
             )}
 
             {selectedNodeData.type === 'http' && (
@@ -881,6 +924,187 @@ export default function WorkflowEditorPage() {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                 />
               </div>
+            )}
+
+            {selectedNodeData.type === 'image' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">画面描述</label>
+                  <textarea
+                    value={selectedNodeData.config.prompt || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)}
+                    rows={3}
+                    placeholder="描述要生成的图片，如：${'{input.message}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">可引用上游节点结果，如 ${'{node_1.result}'}</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">图片尺寸</label>
+                  <select
+                    value={selectedNodeData.config.size || '1024x1024'}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'size', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  >
+                    <option value="1024x1024">1024×1024（方形）</option>
+                    <option value="768x1024">768×1024（竖版）</option>
+                    <option value="1024x768">1024×768（横版）</option>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {selectedNodeData.type === 'video' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">视频描述</label>
+                  <textarea
+                    value={selectedNodeData.config.prompt || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)}
+                    rows={3}
+                    placeholder="描述视频内容，如：${'{input.message}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">时长（秒）</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={selectedNodeData.config.duration ?? 5}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'duration', parseInt(e.target.value) || 5)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">宽度</label>
+                    <input
+                      type="number"
+                      value={selectedNodeData.config.width ?? 1152}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'width', parseInt(e.target.value) || 1152)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">高度</label>
+                    <input
+                      type="number"
+                      value={selectedNodeData.config.height ?? 768}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'height', parseInt(e.target.value) || 768)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {selectedNodeData.type === 'music' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">歌词主题</label>
+                  <input
+                    type="text"
+                    value={selectedNodeData.config.theme || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'theme', e.target.value)}
+                    placeholder="如：${'{input.message}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">曲风</label>
+                    <select
+                      value={selectedNodeData.config.style || 'pop'}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'style', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    >
+                      {['pop', 'rock', 'folk', 'electronic', 'country', 'rap', 'jazz', 'classical'].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">语言</label>
+                    <select
+                      value={selectedNodeData.config.language || 'zh'}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'language', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    >
+                      <option value="zh">中文</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">情感基调</label>
+                  <select
+                    value={selectedNodeData.config.mood || 'happy'}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'mood', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  >
+                    {['happy', 'sad', 'energetic', 'calm', 'romantic'].map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            {selectedNodeData.type === 'prd' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">流程阶段</label>
+                  <select
+                    value={selectedNodeData.config.stage || 'generate'}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'stage', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  >
+                    <option value="generate">生成 PRD</option>
+                    <option value="review">评审 PRD</option>
+                    <option value="td">技术设计</option>
+                    <option value="test">生成测试用例</option>
+                    <option value="code">生成代码</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">PRD 文本</label>
+                  <textarea
+                    value={selectedNodeData.config.prd_text || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prd_text', e.target.value)}
+                    rows={4}
+                    placeholder="需求描述，可引用 ${'{input.message}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                {(selectedNodeData.config.stage === 'test' || selectedNodeData.config.stage === 'code') && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">技术设计</label>
+                    <textarea
+                      value={selectedNodeData.config.tech_design || ''}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'tech_design', e.target.value)}
+                      rows={3}
+                      placeholder="技术方案描述"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  </div>
+                )}
+                {selectedNodeData.config.stage === 'code' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">代码语言</label>
+                    <select
+                      value={selectedNodeData.config.language || 'python'}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'language', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    >
+                      {['python', 'javascript', 'java', 'go', 'typescript'].map((l) => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </>
             )}
 
             {selectedNodeData.type === 'parallel' && (
@@ -996,14 +1220,43 @@ export default function WorkflowEditorPage() {
                 {runResult.run.started_at && <div>开始: {formatDateTime(runResult.run.started_at)}</div>}
               </div>
             )}
-            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 max-h-[50vh] overflow-y-auto">
-              <div className="prose-sm max-w-none [&_pre]:my-2 [&_pre]:p-3 [&_pre]:bg-gray-900 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_pre_code]:text-gray-100 [&_code]:px-1 [&_code]:rounded [&_code]:bg-gray-200">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {typeof runResult.result === 'string'
-                    ? runResult.result
-                    : '```json\n' + JSON.stringify(runResult.result, null, 2) + '\n```'}
-                </ReactMarkdown>
+            {runResult.nodes?.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">节点执行情况</p>
+                {runResult.nodes.map((n, idx) => (
+                  <div key={idx} className={`p-3 rounded-xl border ${n.status === 'error' ? 'border-red-200 bg-red-50/60' : 'border-gray-200 bg-white'}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-gray-700">{n.label || n.node_id}</span>
+                      {n.status === 'error' ? (
+                        <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                      )}
+                    </div>
+                    <p className={`text-xs leading-relaxed ${n.status === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+                      {n.summary}
+                    </p>
+                  </div>
+                ))}
               </div>
+            )}
+            {/* 图片生成结果直接预览 */}
+            {(() => {
+              const m = typeof runResult.result === 'string'
+                ? runResult.result.match(/\/api\/image-factory\/images\/[\w.-]+/)
+                : null
+              return m ? (
+                <img src={m[0]} alt="生成的图片" className="rounded-lg border border-gray-200 w-full" />
+              ) : null
+            })()}
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 max-h-[50vh] overflow-y-auto">
+              <MarkdownRenderer
+                content={
+                  typeof runResult.result === 'string'
+                    ? runResult.result
+                    : '```json\n' + JSON.stringify(runResult.result, null, 2) + '\n```'
+                }
+              />
             </div>
           </div>
         ) : null}

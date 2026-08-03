@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Shield, Play, Copy, Check, Clock } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../components/ui'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import ShareButton from '../components/ShareButton'
+import { Card, Button, Badge, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -37,12 +39,14 @@ export default function CodeReviewPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">AI 代码审查</h1>
-        <p className="text-sm text-gray-500 mt-1">粘贴代码，AI 分析代码质量、潜在 bug 和优化建议</p>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
+      <PageHeader
+        title="AI 代码审查"
+        description="粘贴代码，AI 分析代码质量、潜在 bug 和优化建议"
+        icon={Shield}
+        iconColor="from-amber-500 to-orange-600"
+      />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-1">
           <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <Shield className="w-5 h-5 text-amber-500" /> 待审查代码
           </h2>
@@ -65,13 +69,18 @@ export default function CodeReviewPage() {
             </Button>
           </div>
         </Card>
-        <Card>
+        <Card className="lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">审查报告</h2>
-            {result && <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>{copied ? '已复制' : '复制'}</Button>}
+            {result && (
+              <div className="flex items-center gap-2">
+                <ShareButton content={result} title="代码审查报告" contentType="code-review" />
+                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>{copied ? '已复制' : '复制'}</Button>
+              </div>
+            )}
           </div>
           {result ? (
-            <div className="bg-gray-50 rounded-lg p-4 text-sm whitespace-pre-wrap text-gray-700 max-h-96 overflow-auto">{result}</div>
+            <MarkdownRenderer content={result} className="max-h-96 overflow-auto" />
           ) : (
             <Empty icon={Shield} title="等待审查" description="粘贴代码后点击审查按钮" />
           )}

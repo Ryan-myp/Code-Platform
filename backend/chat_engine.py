@@ -150,6 +150,14 @@ async def run_agent(agent_id: str, req: dict):
 
 @router.post("/api/teams/{team_id}/run")
 async def run_team(team_id: str, req: dict):
+    """运行 Team：按协作模式调度成员 Agent 执行，并汇总结果。
+
+    - coordinate（协调）：所有成员并行执行 → 协调者汇总最终答案
+    - sequential（顺序）：成员按顺序执行，上一步输出作为下一步输入
+    - parallel（并行）：所有成员并行执行，返回各自结果
+    """
+    import asyncio
+
     message = (req.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "消息不能为空")
@@ -161,25 +169,93 @@ async def run_team(team_id: str, req: dict):
         raise HTTPException(404, "Team 不存在")
 
     members = json.loads(team["members"] or "[]")
-    system = team["instructions"] or "你是一个团队协作助手"
-    member_info = ""
-    if members:
-        try:
-            member_names = []
-            for m in members:
-                mid = m if isinstance(m, str) else m.get("id")
-                if mid:
-                    row = conn.execute("SELECT name, instructions FROM agents WHERE id=?", (mid,)).fetchone()
-                    if row:
-                        member_names.append(f"- {row['name']}: {row['instructions'][:200]}")
-            member_info = "\n".join(member_names)
-        except Exception:
-            pass
+    member_ids = [m if isinstance(m, str) else m.get("id") for m in members]
+    member_ids = [mid for mid in member_ids if mid]
+    agents = []
+    if member_ids:
+        placeholders = ",".join("?" * len(member_ids))
+        rows = conn.execute(
+            f"SELECT id, name, instructions, model FROM agents WHERE id IN ({placeholders}) AND active=1",
+            member_ids,
+        ).fetchall()
+        agents = [dict(r) for r in rows]
     conn.close()
 
-    prompt = f"团队指令: {system}\n\n团队成员:\n{member_info or '（无成员信息）'}\n\n任务: {message}"
-    result = call_llm(system, prompt, max_tokens=2000)
-    return {"result": result, "team_id": team_id}
+    mode = (team["mode"] or "coordinate").lower()
+    team_instructions = team["instructions"] or "你是一个团队协作助手"
+    start = time.time()
+
+    async def _run_member(agent: dict, task: str, extra_context: str = "") -> dict:
+        """单个成员 Agent 执行：系统指令 = 团队成员指令 + 团队协作规则。"""
+        system = agent["instructions"] or "你是一个智能助手"
+        if team_instructions:
+            system = f"{system}\n\n## 团队协作规则\n{team_instructions}"
+        prompt = f"团队任务：{task}"
+        if extra_context:
+            prompt += f"\n\n前序成员产出（供参考）：\n{extra_context}"
+        try:
+            result = call_llm(system, prompt, max_tokens=2000)
+            return {"agent_id": agent["id"], "name": agent["name"], "result": result}
+        except Exception as e:
+            return {"agent_id": agent["id"], "name": agent["name"], "result": f"（执行失败：{e}）", "error": str(e)}
+
+    member_results = []
+    coordinator_result = ""
+    if not agents:
+        # 无成员：直接用团队指令执行
+        result = call_llm(team_instructions, message, max_tokens=2000)
+        coordinator_result = result
+    elif mode == "sequential":
+        # 顺序执行：上一步输出作为下一步上下文
+        context = ""
+        for agent in agents:
+            r = await _run_member(agent, message, context)
+            member_results.append(r)
+            context += f"\n【{r['name']} 的产出】\n{r['result'][:1500]}"
+        # 汇总：由最后一个成员生成最终答案（上下文已包含全部产出）
+        coordinator_result = member_results[-1]["result"] if member_results else ""
+    elif mode == "parallel":
+        # 并行执行：各自独立完成，直接返回成员结果拼接
+        member_results = await asyncio.gather(*[_run_member(a, message) for a in agents])
+        coordinator_result = "\n\n".join(f"### {r['name']}\n{r['result']}" for r in member_results)
+    else:
+        # coordinate：成员并行产出 → 协调者汇总
+        member_results = await asyncio.gather(*[_run_member(a, message) for a in agents])
+        digest = "\n\n".join(f"### {r['name']} 的产出\n{r['result'][:1200]}" for r in member_results)
+        coordinator_system = (
+            f"你是团队协调者。请汇总以下团队成员对任务的产出，给出统一的最终答案。\n"
+            f"## 团队协作规则\n{team_instructions}"
+        )
+        coordinator_result = call_llm(
+            coordinator_system,
+            f"团队任务：{message}\n\n## 成员产出\n{digest}",
+            max_tokens=2000,
+        )
+
+    log_usage("team_run", len(message), len(coordinator_result), time.time() - start)
+    return {
+        "result": coordinator_result,
+        "team_id": team_id,
+        "mode": mode,
+        "members": member_results,
+        "elapsed": round(time.time() - start, 2),
+    }
+
+
+def _wf_node_summary(res: dict) -> str:
+    """把节点执行结果整理成可读文本。"""
+    if not isinstance(res, dict):
+        return str(res)
+    if res.get("status") == "error":
+        return f"节点执行失败：{res.get('message', '未知错误')}"
+    for key in ("result", "lyrics", "content", "text"):
+        if res.get(key):
+            return str(res[key])
+    if res.get("url"):
+        return f"生成成功：{res['url']}\n\n提示词：{res.get('prompt', '')}"
+    if res.get("video_id"):
+        return f"视频任务已创建：{res['video_id']}（预计 {res.get('estimated_time', '?')} 秒完成）"
+    return "```json\n" + json.dumps(res, ensure_ascii=False, default=str) + "\n```"
 
 
 @router.post("/api/workflows/{workflow_id}/run")
@@ -204,15 +280,77 @@ async def run_workflow(workflow_id: str, req: dict):
         from workflows.executor import executor as _executor
 
         run_id = await _executor.execute(workflow_id, {"message": message})
-        # 取出运行记录摘要返回
+        # 取出运行记录与各节点结果，整理成可读摘要返回
         conn = get_db()
         run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
         conn.close()
+        run_dict = dict(run) if run else None
+        output_data = {}
+        if run_dict:
+            try:
+                output_data = json.loads(run_dict.get("output_data") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                output_data = {}
+        if not isinstance(output_data, dict):
+            output_data = {}
+
+        # 节点 id → 显示名映射
+        node_labels = {}
+        for n in nodes:
+            if isinstance(n, dict) and n.get("id"):
+                node_labels[n["id"]] = n.get("label") or n.get("name") or n["id"]
+
+        # 每个节点的摘要（按执行顺序稳定排序）
+        node_results = []
+        for nid, res in output_data.items():
+            if nid == "input":
+                continue  # 注入的输入数据不当作节点展示
+            if not isinstance(res, dict):
+                res = {"status": "success", "result": str(res)}
+            node_results.append({
+                "node_id": nid,
+                "label": node_labels.get(nid, nid),
+                "status": res.get("status", "success"),
+                "summary": _wf_node_summary(res),
+            })
+
+        # 最终结果：优先输出节点，其次最后一个成功的节点，再退回错误信息
+        final_result = None
+        for nid in node_labels:
+            r = output_data.get(nid)
+            if isinstance(r, dict) and r.get("status") == "success":
+                final_result = r
+                break
+        if final_result is None:
+            for r in reversed(list(output_data.values())):
+                if isinstance(r, dict) and r.get("status") == "success":
+                    final_result = r
+                    break
+        if final_result is None:
+            for r in output_data.values():
+                if isinstance(r, dict) and r.get("status") == "error":
+                    final_result = r
+                    break
+        if final_result is None:
+            final_result = {"status": "error", "message": "工作流未产生任何输出，请检查节点配置与连线"}
+
+        # 计算耗时
+        elapsed = None
+        try:
+            if run_dict and run_dict.get("started_at") and run_dict.get("completed_at"):
+                start = datetime.fromisoformat(run_dict["started_at"])
+                end = datetime.fromisoformat(run_dict["completed_at"])
+                elapsed = round((end - start).total_seconds(), 2)
+        except (ValueError, TypeError):
+            elapsed = None
+
         return {
-            "result": run_id,
-            "run": dict(run) if run else None,
+            "result": _wf_node_summary(final_result),
+            "nodes": node_results,
+            "run": run_dict,
             "workflow_id": workflow_id,
             "engine": "executor",
+            "elapsed": elapsed,
         }
     except Exception as e:
         logger.warning(f"workflow executor unavailable, simple run: {e}")

@@ -4,8 +4,8 @@ import {
   Users, Layers, Palette, Sparkles, Trash2, Briefcase, GraduationCap,
   Rocket, BarChart3, Lightbulb,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import ShareButton from '../components/ShareButton'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -175,7 +175,7 @@ export default function PPTFactoryPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：配置区 */}
         <div className="space-y-4">
           {/* 场景模板 */}
@@ -183,7 +183,7 @@ export default function PPTFactoryPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-500" /> 快速模板
             </h3>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {TEMPLATES.map((tpl, i) => (
                 <button key={i} onClick={() => applyTemplate(tpl)}
                   className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all text-left">
@@ -203,7 +203,7 @@ export default function PPTFactoryPage() {
               {/* 类型 */}
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">演示类型</label>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {PPT_TYPES.map(t => {
                     const Icon = t.icon
                     return (
@@ -240,7 +240,7 @@ export default function PPTFactoryPage() {
               {/* 设计主题 */}
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">设计主题</label>
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {THEMES.map(t => (
                     <button key={t.value} onClick={() => setTheme(t.value)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-all ${
@@ -298,16 +298,19 @@ export default function PPTFactoryPage() {
         </div>
 
         {/* 右侧：结果区 */}
-        <div className="space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <Card className="min-h-[400px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Presentation className="w-4 h-4 text-orange-500" /> 生成结果
               </h3>
               {result && (
-                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
-                  {copied ? '已复制' : '复制'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ShareButton content={result} title="PPT 大纲生成结果" contentType="ppt" />
+                  <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
+                    {copied ? '已复制' : '复制'}
+                  </Button>
+                </div>
               )}
             </div>
             {slides.length > 0 ? (
@@ -326,9 +329,7 @@ export default function PPTFactoryPage() {
                 ))}
               </div>
             ) : result ? (
-              <div className="prose prose-sm max-w-none text-gray-700">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
-              </div>
+              <MarkdownRenderer content={result} />
             ) : (
               <Empty icon={Presentation} title="等待生成" description="输入主题后点击生成" />
             )}

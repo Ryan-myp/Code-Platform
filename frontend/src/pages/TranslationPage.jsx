@@ -4,8 +4,8 @@ import {
   FileText, Globe, Scale, Stethoscope, BookOpen, Briefcase, Code2,
   Trash2, Sparkles, FileUp, Star, ListOrdered, BookMarked, Plus,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import ShareButton from '../components/ShareButton'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -190,7 +190,7 @@ export default function TranslationPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：输入区 */}
         <div className="space-y-4">
           {/* 语言选择 + 领域 */}
@@ -215,7 +215,7 @@ export default function TranslationPage() {
             {/* 领域模式 */}
             <div className="mb-3">
               <label className="block text-xs font-medium text-gray-500 mb-1.5">翻译领域</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {DOMAINS.map(d => {
                   const Icon = d.icon
                   return (
@@ -235,7 +235,7 @@ export default function TranslationPage() {
             {/* 翻译风格 */}
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">翻译风格</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 {STYLES.map(s => (
                   <button key={s.value} onClick={() => setStyle(s.value)}
                     className={`px-3 py-2 rounded-lg text-xs border transition-all text-center ${
@@ -256,7 +256,7 @@ export default function TranslationPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-500" /> 快捷模板
             </h3>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {TEMPLATES.map((tpl, i) => (
                 <button key={i} onClick={() => applyTemplate(tpl)}
                   className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-left">
@@ -333,16 +333,19 @@ export default function TranslationPage() {
         </div>
 
         {/* 右侧：结果区 */}
-        <div className="space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <Card className="min-h-[400px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Languages className="w-4 h-4 text-blue-500" /> {batchMode ? '批量翻译结果' : '翻译结果'}
               </h3>
               {(result || batchResults.length > 0) && (
-                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
-                  {copied ? '已复制' : '复制'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ShareButton content={result || batchResults.map((r) => `**${r.original}**\n\n${r.translated}`).join('\n\n---\n\n')} title="翻译结果" contentType="translation" />
+                  <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
+                    {copied ? '已复制' : '复制'}
+                  </Button>
+                </div>
               )}
             </div>
             {batchMode && batchResults.length > 0 ? (
@@ -350,16 +353,12 @@ export default function TranslationPage() {
                 {batchResults.map((r, i) => (
                   <div key={i} className="p-3 bg-gray-50 rounded-lg">
                     <div className="text-xs text-blue-600 font-medium mb-1">第{i + 1}段</div>
-                    <div className="prose prose-sm max-w-none text-gray-700">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{r}</ReactMarkdown>
-                    </div>
+                    <MarkdownRenderer content={r} />
                   </div>
                 ))}
               </div>
             ) : result ? (
-              <div className="prose prose-sm max-w-none text-gray-700">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
-              </div>
+              <MarkdownRenderer content={result} />
             ) : (
               <Empty icon={Languages} title="等待翻译" description="输入文本后点击翻译" />
             )}

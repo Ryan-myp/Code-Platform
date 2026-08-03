@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Card, Button, Badge, Empty } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
-import ReactMarkdown from 'react-markdown'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
   Search, TrendingUp, TrendingDown, DollarSign, BarChart3,
   LineChart, Activity, PieChart, Play, Pause, RefreshCw,
@@ -378,9 +378,7 @@ export default function StockAnalysisPage() {
                   <BarChart3 className="w-4 h-4" />
                   AI 分析报告
                 </h3>
-                <div className="prose prose-sm max-w-none">
-                  <ReactMarkdown>{analysis}</ReactMarkdown>
-                </div>
+                <MarkdownRenderer content={analysis} />
               </Card>
             )}
           </>

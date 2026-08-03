@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { formatDateTime, formatRelativeTime } from '../lib/format'
 import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
@@ -374,9 +375,9 @@ export default function ArtifactsPage() {
             </div>
             <div>
               <p className="text-xs text-gray-500 mb-2 flex items-center gap-1"><FileText className="w-3.5 h-3.5" />内容</p>
-              <pre className="whitespace-pre-wrap text-sm font-mono text-gray-800 bg-gray-50 p-4 rounded-xl border max-h-[55vh] overflow-auto leading-relaxed">
-                {selected.content || selected.content_preview || '无内容'}
-              </pre>
+              <div className="bg-gray-50 p-4 rounded-xl border max-h-[55vh] overflow-auto">
+                <MarkdownRenderer content={selected.content || selected.content_preview || '无内容'} />
+              </div>
             </div>
           </div>
         )}

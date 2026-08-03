@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""collab_engine 单元测试 — 评论 CRUD、点赞、Skill 文件管理。"""
+"""collab_engine 单元测试 — 评论 CRUD、点赞、Skill 文件管理（文件系统语义）。"""
 
 import asyncio
+import io
 import sys
 from pathlib import Path
 
@@ -187,70 +188,162 @@ def test_unlike_comment(test_db_path):
 
 
 # ══════════════════════════════════════════════════════════════
-# Skill 文件管理
+# Skill 文件管理（标准目录结构：SKILL.md + scripts/references/examples/assets）
 # ══════════════════════════════════════════════════════════════
 
-def test_create_skill_file(test_db_path):
-    """创建 Skill 文件"""
-    from collab_engine import create_skill_file
-    from common.models import SkillFileCreateRequest
+def test_write_and_read_skill_file(test_db_path):
+    """写入并读取 Skill 文件（自动创建父目录）"""
+    from collab_engine import read_skill_file, write_skill_file
+    from common.models import SkillFileWriteRequest
+    from skills_store import skill_root
 
-    _seed_skill("skill_file_1")
-    req = SkillFileCreateRequest(folder="src", filename="main.py", content="print('hello')")
-    result = run(create_skill_file("skill_file_1", req))
-    assert "id" in result
-    assert result["filename"] == "main.py"
+    _seed_skill("skill_fs_1")
+    result = run(write_skill_file(
+        "skill_fs_1", "scripts/main.py",
+        SkillFileWriteRequest(content="print('hello')"),
+    ))
+    assert result["path"] == "scripts/main.py"
+    # 文件系统断言：真实落盘 + 自动建父目录
+    assert (skill_root("skill_fs_1") / "scripts" / "main.py").is_file()
 
-
-def test_create_skill_file_empty_filename(test_db_path):
-    """空文件名应拒绝（Pydantic 在模型构造时校验）"""
-    from common.models import SkillFileCreateRequest
-
-    with pytest.raises(Exception):
-        SkillFileCreateRequest(folder="src", filename="", content="print('hello')")
-
-
-def test_list_skill_files(test_db_path):
-    """列出 Skill 文件"""
-    from collab_engine import create_skill_file, list_skill_files
-    from common.models import SkillFileCreateRequest
-
-    _seed_skill("skill_file_3")
-    run(create_skill_file("skill_file_3", SkillFileCreateRequest(folder="src", filename="a.py", content="a")))
-    run(create_skill_file("skill_file_3", SkillFileCreateRequest(folder="src", filename="b.py", content="b")))
-
-    result = run(list_skill_files("skill_file_3"))
-    assert len(result) == 2
+    data = run(read_skill_file("skill_fs_1", "scripts/main.py"))
+    assert data["is_text"] is True
+    assert data["content"] == "print('hello')"
+    assert data["path"] == "scripts/main.py"
 
 
-def test_update_skill_file(test_db_path):
-    """更新 Skill 文件"""
-    from collab_engine import create_skill_file, list_skill_files, update_skill_file
-    from common.models import SkillFileCreateRequest, SkillFileUpdateRequest
+def test_write_skill_md_syncs_db(test_db_path):
+    """写入 SKILL.md 时同步 DB 元数据（name/description/content）"""
+    from collab_engine import write_skill_file
+    from common.db import get_db
+    from common.models import SkillFileWriteRequest
 
-    _seed_skill("skill_file_4")
-    created = run(create_skill_file("skill_file_4",
-        SkillFileCreateRequest(folder="src", filename="main.py", content="original")))
-    file_id = created["id"]
+    _seed_skill("skill_md_1")
+    md = "---\nname: 新名字\ndescription: 新描述\n---\n\n# 正文内容"
+    result = run(write_skill_file("skill_md_1", "SKILL.md", SkillFileWriteRequest(content=md)))
+    assert result["synced_db"] is True
 
-    run(update_skill_file("skill_file_4", str(file_id),
-        SkillFileUpdateRequest(content="updated content")))
+    conn = get_db()
+    row = conn.execute("SELECT name, description, content FROM skills WHERE id='skill_md_1'").fetchone()
+    conn.close()
+    assert row["name"] == "新名字"
+    assert row["description"] == "新描述"
+    assert "正文内容" in row["content"]
 
-    files = run(list_skill_files("skill_file_4"))
-    assert files[0]["content"] == "updated content"
+
+def test_skill_file_tree_and_stats(test_db_path):
+    """目录树 + 分目录统计（scripts/references/examples/assets）"""
+    from skills_store import list_tree, write_file
+
+    _seed_skill("skill_tree_1")
+    write_file("skill_tree_1", "SKILL.md", "# 技能")
+    write_file("skill_tree_1", "scripts/run.py", "print(1)")
+    write_file("skill_tree_1", "references/usage.md", "用法")
+    write_file("skill_tree_1", "examples/demo.py", "demo")
+    write_file("skill_tree_1", "notes/private.md", "自定义目录")
+
+    tree = list_tree("skill_tree_1")
+    assert tree["file_count"] == 5
+    assert tree["dir_counts"] == {"scripts": 1, "references": 1, "examples": 1, "assets": 0}
+    dirs = {c["name"]: c for c in tree["children"] if c["type"] == "dir"}
+    assert set(dirs) == {"scripts", "references", "examples", "notes"}
+    assert dirs["scripts"]["file_count"] == 1
+    assert dirs["scripts"]["children"][0]["path"] == "scripts/run.py"
 
 
 def test_delete_skill_file(test_db_path):
-    """删除 Skill 文件"""
-    from collab_engine import create_skill_file, delete_skill_file, list_skill_files
-    from common.models import SkillFileCreateRequest
+    """删除文件与目录（递归）"""
+    from fastapi import HTTPException
 
-    _seed_skill("skill_file_5")
-    created = run(create_skill_file("skill_file_5",
-        SkillFileCreateRequest(folder="src", filename="to_delete.py", content="x")))
-    file_id = created["id"]
+    from collab_engine import delete_skill_file, read_skill_file
+    from skills_store import skill_root, write_file
 
-    run(delete_skill_file("skill_file_5", str(file_id)))
+    _seed_skill("skill_del_1")
+    write_file("skill_del_1", "scripts/a.py", "a")
+    write_file("skill_del_1", "scripts/b.py", "b")
 
-    files = run(list_skill_files("skill_file_5"))
-    assert len(files) == 0
+    run(delete_skill_file("skill_del_1", "scripts/a.py"))
+    assert not (skill_root("skill_del_1") / "scripts" / "a.py").exists()
+    with pytest.raises(HTTPException) as ei:
+        run(read_skill_file("skill_del_1", "scripts/a.py"))
+    assert ei.value.status_code == 404
+
+    # 删除整个目录
+    run(delete_skill_file("skill_del_1", "scripts"))
+    assert not (skill_root("skill_del_1") / "scripts").exists()
+    # 删除不存在的路径 → 404
+    with pytest.raises(HTTPException) as ei2:
+        run(delete_skill_file("skill_del_1", "scripts"))
+    assert ei2.value.status_code == 404
+
+
+def test_create_skill_folder_idempotent(test_db_path):
+    """创建目录（幂等）"""
+    from collab_engine import create_skill_folder
+    from skills_store import skill_root
+
+    _seed_skill("skill_dir_1")
+    run(create_skill_folder("skill_dir_1", "examples/子目录"))
+    assert (skill_root("skill_dir_1") / "examples" / "子目录").is_dir()
+    # 重复创建不报错
+    run(create_skill_folder("skill_dir_1", "examples/子目录"))
+
+
+def test_upload_skill_file(test_db_path):
+    """上传文件到指定目录（folder 语义）"""
+    from starlette.datastructures import UploadFile
+
+    from collab_engine import read_skill_file, upload_skill_file
+
+    _seed_skill("skill_up_1")
+    f = UploadFile(file=io.BytesIO(b"print('hello')"), filename="tool.py")
+    result = run(upload_skill_file("skill_up_1", f, "scripts"))
+    assert result["path"] == "scripts/tool.py"
+
+    data = run(read_skill_file("skill_up_1", "scripts/tool.py"))
+    assert data["content"] == "print('hello')"
+
+
+def test_read_binary_file(test_db_path):
+    """二进制文件（图片等）读取返回 is_text=False"""
+    from collab_engine import read_skill_file
+    from skills_store import write_file
+
+    _seed_skill("skill_bin_1")
+    write_file("skill_bin_1", "assets/logo.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+    data = run(read_skill_file("skill_bin_1", "assets/logo.png"))
+    assert data["is_text"] is False
+    assert data["content"] == ""
+    assert data["size"] == 72
+
+
+def test_path_traversal_rejected(test_db_path):
+    """路径穿越请求（../、绝对路径、空段）全部拒绝"""
+    from fastapi import HTTPException
+
+    from collab_engine import (create_skill_folder, delete_skill_file,
+                               read_skill_file, write_skill_file)
+    from common.models import SkillFileWriteRequest
+    from skills_store import resolve_path
+
+    _seed_skill("skill_trav_1")
+    # 底层 resolve_path 直接抛 ValueError
+    with pytest.raises(ValueError):
+        resolve_path("skill_trav_1", "../../etc/passwd")
+
+    # 接口层转为 400
+    for bad in ("../../etc/passwd", "scripts/../../evil", "..", "/etc/passwd", "a//b", "a/./b"):
+        with pytest.raises(HTTPException) as ei:
+            run(write_skill_file("skill_trav_1", bad, SkillFileWriteRequest(content="x")))
+        assert ei.value.status_code == 400
+        with pytest.raises(HTTPException) as ei2:
+            run(read_skill_file("skill_trav_1", bad))
+        assert ei2.value.status_code == 400
+        with pytest.raises(HTTPException) as ei3:
+            run(delete_skill_file("skill_trav_1", bad))
+        assert ei3.value.status_code == 400
+        with pytest.raises(HTTPException) as ei4:
+            run(create_skill_folder("skill_trav_1", bad))
+        assert ei4.value.status_code == 400
+    # 目录内未被写入任何文件
+    assert not (resolve_path("skill_trav_1", "") / "etc").exists()

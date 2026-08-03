@@ -4,6 +4,7 @@
 业务模块应 `from common.config import ...` 而非各自定义 load_config / normalize_api_base。
 """
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -37,6 +38,20 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
 # 统一默认 base（消除旧代码 .cn / .com 漂移），仍可被 config 表覆盖
 AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.5-flash")
+
+# 内置默认模型列表（config 表未配置 model_list 时使用，供全局模型切换 / Agent 创建下拉）
+# base_url 留空 = 继承全局 AGNES_API_BASE；api_key 留空 = 继承全局 AGNES_API_KEY（.env / config 表）
+# 多供应商模型需各自配置 base_url + api_key（均为 OpenAI 兼容 /chat/completions）
+DEFAULT_MODELS = [
+    {"name": "agnes-2.5-flash", "note": "推荐", "base_url": "", "api_key": ""},
+    {"name": "agnes-2.5-pro", "note": "", "base_url": "", "api_key": ""},
+    {"name": "agnes-2.5-mini", "note": "轻量快速", "base_url": "", "api_key": ""},
+    {"name": "agnes-vision", "note": "视觉理解", "base_url": "", "api_key": ""},
+    {"name": "deepseek-v3", "note": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": ""},
+    {"name": "glm-4-plus", "note": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": ""},
+    {"name": "doubao-seed-1.6", "note": "豆包·火山方舟", "base_url": "https://ark.cn-beijing.volces.com/api/v3", "api_key": ""},
+    {"name": "qwen-max", "note": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": ""},
+]
 
 # ── 安全配置 ──────────────────────────────────────────────
 _DEFAULT_SECRET_KEY = "your-super-secret-change-in-prod"
@@ -75,15 +90,23 @@ def normalize_api_base(base: str) -> str:
     return base.rstrip("/") + "/v1"
 
 
+def normalize_model_base(base: str) -> str:
+    """规范化模型级 base_url：去尾部 /chat/completions 与斜杠，保留供应商原始路径（不加 /v1）。"""
+    base = (base or "").strip()
+    if base.endswith("/chat/completions"):
+        base = base[: -len("/chat/completions")]
+    return base.rstrip("/")
+
+
 def load_config() -> dict:
     """从 config 表加载配置，覆盖模块级全局变量。返回当前配置 dict。"""
     global AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME
     try:
-        from common.db import get_db
+        # 独立连接：避免关闭线程复用池连接，影响 async 端点中后续 get_db 的使用
+        from common.db import get_db_context
 
-        conn = get_db()
-        rows = conn.execute("SELECT key, value FROM config").fetchall()
-        conn.close()
+        with get_db_context() as conn:
+            rows = conn.execute("SELECT key, value FROM config").fetchall()
         for k, v in rows:
             if not v:
                 continue
@@ -105,3 +128,41 @@ def load_config() -> dict:
 def get_llm_config() -> tuple[str, str, str]:
     """返回 (api_key, api_base, model_name) 元组，供 call_llm 使用。"""
     return AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME
+
+
+def get_model_list() -> list[dict]:
+    """读取当前生效的模型列表（config 表 model_list，空则内置默认）。"""
+    try:
+        # 独立连接：避免关闭线程复用池连接，影响 async 端点中后续 get_db 的使用
+        from common.db import get_db_context
+
+        with get_db_context() as conn:
+            row = conn.execute("SELECT value FROM config WHERE key='model_list'").fetchone()
+        raw = row["value"] if row else ""
+        if raw:
+            models = json.loads(raw)
+            if isinstance(models, list) and models and all("name" in m for m in models):
+                return models
+    except Exception:
+        pass
+    return [dict(m) for m in DEFAULT_MODELS]
+
+
+def get_model_config(model_name: str | None = None) -> dict:
+    """返回某模型的调用配置 {model, api_key, api_base}：
+
+    - 在模型列表中命中 → 用其 base_url / api_key（留空则继承全局）
+    - 未命中 → 全局配置（AGNES_API_KEY / AGNES_API_BASE）
+    """
+    load_config()  # 确保 config 表覆盖已生效
+    name = (model_name or MODEL_NAME).strip()
+    for m in get_model_list():
+        if m.get("name") == name:
+            base = normalize_model_base(m.get("base_url") or "")
+            key = (m.get("api_key") or "").strip()
+            return {
+                "model": name,
+                "api_key": key or AGNES_API_KEY,
+                "api_base": base or AGNES_API_BASE,
+            }
+    return {"model": name, "api_key": AGNES_API_KEY, "api_base": AGNES_API_BASE}

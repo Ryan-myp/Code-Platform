@@ -2,13 +2,16 @@
 """协作评论 + Skills 文件管理 API"""
 
 import logging
+import mimetypes
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 
+import skills_store
 from common.db import get_db
-from common.models import CommentCreateRequest, CommentLikeRequest, SkillFileCreateRequest, SkillFileUpdateRequest
+from common.models import CommentCreateRequest, CommentLikeRequest, SkillFileWriteRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["协作评论"])
@@ -117,59 +120,123 @@ async def like_comment(comment_id: str, req: CommentLikeRequest = None):
 
 
 # ══════════════════════════════════════════════════════════════
-# Skills 文件管理
+# Skills 文件管理（标准目录结构：SKILL.md + scripts/references/examples/assets）
+# ══════════════════════════════════════════════════════════════
+# Skills 文件接口（文件系统语义）
 # ══════════════════════════════════════════════════════════════
 
-@router.get("/api/skills/{skill_id}/files")
-async def list_skill_files(skill_id: str):
-    """列出 Skill 的文件"""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM skills_files WHERE skill_id=? ORDER BY folder, filename", (skill_id,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+def _normalize_rel(raw: str) -> str:
+    """规范化相对路径：拒绝绝对路径（/ 开头），交给 resolve_path 做防穿越校验。"""
+    rel = (raw or "").strip().replace("\\", "/")
+    if rel.startswith("/"):
+        raise HTTPException(400, "path 不能是绝对路径")
+    rel = rel.strip("/")
+    if not rel or rel == ".":
+        raise HTTPException(400, "path 不能为空")
+    return rel
 
 
-@router.post("/api/skills/{skill_id}/files")
-async def create_skill_file(skill_id: str, req: SkillFileCreateRequest):
-    """创建 Skill 文件"""
-    if not req.filename:
+@router.get("/api/skills/{skill_id}/files/tree")
+async def get_skill_file_tree(skill_id: str):
+    """获取 Skill 目录树（递归）+ 分目录统计。"""
+    try:
+        return skills_store.list_tree(skill_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/api/skills/{skill_id}/file")
+async def read_skill_file(skill_id: str, path: str = ""):
+    """读取 Skill 文件内容（文本文件返回 content，二进制返回 is_text=False）。"""
+    try:
+        return skills_store.read_file(skill_id, path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/api/skills/{skill_id}/file/raw")
+async def read_skill_file_raw(skill_id: str, path: str = ""):
+    """读取原始文件字节流（图片/二进制预览）。"""
+    try:
+        target = skills_store.resolve_path(skill_id, path)
+        if not target.is_file():
+            raise HTTPException(404, f"文件不存在: {path}")
+        data = target.read_bytes()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return Response(content=data, media_type=media_type)
+
+
+@router.put("/api/skills/{skill_id}/file")
+async def write_skill_file(skill_id: str, path: str, req: SkillFileWriteRequest):
+    """新建/更新 Skill 文件（自动创建父目录）。编辑 SKILL.md 时同步 DB 元数据。"""
+    rel = _normalize_rel(path)
+    if rel.lower() == "skill.md":
+        if not req.content.strip():
+            raise HTTPException(400, "SKILL.md 内容不能为空")
+        try:
+            result = skills_store.write_file(skill_id, rel, req.content)
+            skills_store.sync_db_from_skill_md(skill_id, req.content)
+        except FileNotFoundError as e:
+            raise HTTPException(404, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {**result, "synced_db": True}
+    try:
+        return skills_store.write_file(skill_id, rel, req.content)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.delete("/api/skills/{skill_id}/file")
+async def delete_skill_file(skill_id: str, path: str = ""):
+    """删除 Skill 文件或目录（递归）。"""
+    rel = _normalize_rel(path)
+    try:
+        skills_store.delete_path(skill_id, rel)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"success": True}
+
+
+@router.post("/api/skills/{skill_id}/folder")
+async def create_skill_folder(skill_id: str, path: str = ""):
+    """创建目录（幂等）。"""
+    rel = _normalize_rel(path)
+    try:
+        skills_store.mkdir(skill_id, rel)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"success": True}
+
+
+@router.post("/api/skills/{skill_id}/upload")
+async def upload_skill_file(
+    skill_id: str,
+    file: UploadFile = File(...),
+    folder: str = Form(""),
+):
+    """上传单个文件到 Skill 指定目录（folder 如 scripts / references）。"""
+    filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not filename:
         raise HTTPException(400, "文件名不能为空")
-    now = datetime.now().isoformat()
-    conn = get_db()
-    cur = conn.execute(
-        """INSERT INTO skills_files (skill_id, folder, filename, content, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (skill_id, req.folder, req.filename, req.content, now, now),
-    )
-    conn.commit()
-    file_id = cur.lastrowid
-    conn.close()
-    return {"id": file_id, "filename": req.filename}
-
-
-@router.put("/api/skills/{skill_id}/files/{file_id}")
-async def update_skill_file(skill_id: str, file_id: str, req: SkillFileUpdateRequest):
-    """更新 Skill 文件"""
-    conn = get_db()
-    conn.execute(
-        "UPDATE skills_files SET content=?, updated_at=? WHERE id=? AND skill_id=?",
-        (req.content, datetime.now().isoformat(), file_id, skill_id),
-    )
-    conn.commit()
-    conn.close()
-    return {"success": True}
-
-
-@router.delete("/api/skills/{skill_id}/files/{file_id}")
-async def delete_skill_file(skill_id: str, file_id: str):
-    """删除 Skill 文件"""
-    conn = get_db()
-    conn.execute("DELETE FROM skills_files WHERE id=? AND skill_id=?", (file_id, skill_id))
-    conn.commit()
-    conn.close()
-    return {"success": True}
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "文件不能超过 10MB")
+    folder_raw = (folder or "").strip()
+    if folder_raw.startswith("/"):
+        raise HTTPException(400, "folder 不能是绝对路径")
+    folder_clean = folder_raw.strip("/")
+    rel = _normalize_rel(f"{folder_clean}/{filename}" if folder_clean else filename)
+    try:
+        return skills_store.write_file(skill_id, rel, content)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 

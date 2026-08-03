@@ -3,6 +3,7 @@ import {
   Server, Plus, Trash2, Edit2, Search,
   Terminal, Globe, RefreshCw, Play, Square,
   Wifi, WifiOff, LayoutGrid, List as ListIcon,
+  KeyRound, User, Cable, Loader2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -14,6 +15,15 @@ import {
 const TRANSPORTS = [
   { value: 'stdio', label: 'stdio (标准输入输出)', icon: Terminal },
   { value: 'sse', label: 'SSE (Server-Sent Events)', icon: Globe },
+  { value: 'http', label: 'HTTP (Streamable)', icon: Globe },
+]
+
+// 认证方式
+const AUTH_TYPES = [
+  { value: 'none', label: '无认证', icon: Wifi },
+  { value: 'bearer', label: 'Bearer Token', icon: KeyRound },
+  { value: 'basic', label: 'Basic 认证', icon: User },
+  { value: 'api_key', label: 'API Key 请求头', icon: KeyRound },
 ]
 
 // 将后端返回的 args（可能是 JSON 字符串或数组）转为空格分隔的可读字符串
@@ -39,10 +49,14 @@ function parseArgs(str) {
   return s.split(/\s+/)
 }
 
+// 认证方式标签
+const AUTH_LABELS = { bearer: 'Bearer', basic: 'Basic', api_key: 'API Key' }
+
 // MCP 服务器卡片
-function MCPServerCard({ server, onEdit, onDelete, onToggle, viewMode }) {
+function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, viewMode }) {
   const isActive = server.status === 'active'
   const transport = server.transport || server.transport_type || 'stdio'
+  const authType = server.auth_type || 'none'
 
   if (viewMode === 'list') {
     return (
@@ -58,16 +72,29 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, viewMode }) {
             <Badge status={isActive ? 'active' : 'inactive'} dot />
           </div>
           <p className="text-sm text-gray-500 truncate font-mono text-xs">
-            {transport === 'sse' ? (server.url || '-') : (server.command || '-')}
+            {transport === 'stdio' ? (server.command || '-') : (server.url || '-')}
           </p>
         </div>
         <div className="hidden sm:flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
           <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-mono">{transport}</span>
+          {authType !== 'none' && (
+            <span className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg flex items-center gap-1" title="已配置授权验证">
+              <KeyRound className="w-3 h-3" />{AUTH_LABELS[authType] || authType}
+            </span>
+          )}
           <span className="flex items-center gap-1">
             {isActive ? <Wifi className="w-3.5 h-3.5 text-emerald-500" /> : <WifiOff className="w-3.5 h-3.5 text-gray-400" />}
           </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => onTest?.(server)}
+            disabled={testing === server.id}
+            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+            title="测试连接"
+          >
+            {testing === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cable className="w-4 h-4" />}
+          </button>
           <button
             onClick={() => onToggle(server)}
             className={`p-2 rounded-lg transition-colors ${
@@ -110,6 +137,11 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, viewMode }) {
         <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-mono flex-shrink-0">
           {transport}
         </span>
+        {authType !== 'none' && (
+          <span className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-xs font-mono flex-shrink-0 flex items-center gap-1" title="已配置授权验证">
+            <KeyRound className="w-3 h-3" />{AUTH_LABELS[authType] || authType}
+          </span>
+        )}
       </div>
 
       <div className="space-y-2 text-sm text-gray-600 mb-4 flex-1">
@@ -137,6 +169,14 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, viewMode }) {
         <span className="text-xs text-gray-400">{formatRelativeTime(server.created_at)}</span>
         <div className="flex items-center gap-1">
           <button
+            onClick={() => onTest?.(server)}
+            disabled={testing === server.id}
+            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+            title="测试连接"
+          >
+            {testing === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cable className="w-4 h-4" />}
+          </button>
+          <button
             onClick={() => onToggle(server)}
             className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               isActive ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
@@ -161,21 +201,39 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, viewMode }) {
 function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
   const [form, setForm] = useState({
     name: '', transport_type: 'stdio', command: '', args: '', url: '',
+    auth_type: 'none', auth_token: '', auth_username: '', auth_password: '',
+    auth_header: 'X-API-Key', auth_key: '', env: '',
   })
   const [errors, setErrors] = useState({})
 
   useEffect(() => {
     if (!open) return
     if (editing) {
+      // auth_config 为后端脱敏值：凭证留空 = 保持不变
+      const ac = editing.auth_config || {}
+      const envStr = editing.env && typeof editing.env === 'object'
+        ? Object.entries(editing.env).map(([k, v]) => `${k}=${v}`).join('\n')
+        : ''
       setForm({
         name: editing.name || '',
         transport_type: editing.transport_type || editing.transport || 'stdio',
         command: editing.command || '',
         args: argsToString(editing.args),
         url: editing.url || '',
+        auth_type: editing.auth_type || 'none',
+        auth_token: '',
+        auth_username: ac.username || '',
+        auth_password: '',
+        auth_header: ac.header_name || 'X-API-Key',
+        auth_key: '',
+        env: envStr,
       })
     } else {
-      setForm({ name: '', transport_type: 'stdio', command: '', args: '', url: '' })
+      setForm({
+        name: '', transport_type: 'stdio', command: '', args: '', url: '',
+        auth_type: 'none', auth_token: '', auth_username: '', auth_password: '',
+        auth_header: 'X-API-Key', auth_key: '', env: '',
+      })
     }
     setErrors({})
   }, [open, editing])
@@ -192,18 +250,41 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
       if (!form.url.trim()) e.url = '请输入 URL'
       else if (!/^https?:\/\//i.test(form.url.trim())) e.url = 'URL 需以 http(s):// 开头'
     }
+    if (form.auth_type === 'bearer' && !form.auth_token.trim()) e.auth_token = '请输入 Token'
+    if (form.auth_type === 'basic' && !form.auth_username.trim()) e.auth_username = '请输入用户名'
+    if (form.auth_type === 'api_key' && !form.auth_key.trim()) e.auth_key = '请输入 API Key'
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   const handleSubmit = () => {
     if (!validate()) return
+    // 认证配置：编辑时凭证留空 = 保持不变；auth_type 为 none = 清空
+    let authConfig
+    if (form.auth_type === 'none') {
+      authConfig = {}
+    } else if (form.auth_type === 'bearer') {
+      authConfig = { token: form.auth_token.trim() }
+    } else if (form.auth_type === 'basic') {
+      authConfig = { username: form.auth_username.trim(), password: form.auth_password }
+    } else {
+      authConfig = { header_name: form.auth_header.trim() || 'X-API-Key', key: form.auth_key.trim() }
+    }
+    // env 多行 key=value 解析
+    const env = {}
+    ;(form.env || '').split('\n').forEach((line) => {
+      const i = line.indexOf('=')
+      if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+    })
     const payload = {
       name: form.name.trim(),
       transport_type: form.transport_type,
       command: form.transport_type === 'stdio' ? form.command.trim() : '',
       args: form.transport_type === 'stdio' ? parseArgs(form.args) : [],
-      url: form.transport_type === 'sse' ? form.url.trim() : '',
+      url: form.transport_type === 'stdio' ? '' : form.url.trim(),
+      auth_type: form.auth_type,
+      auth_config: authConfig,
+      env,
     }
     onSubmit(payload)
   }
@@ -212,6 +293,8 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
     `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
       err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-orange-500/20 focus:border-orange-500'
     }`
+
+  const maskedPlaceholder = (val) => (editing && val ? `${val}（留空不修改）` : '')
 
   return (
     <Modal
@@ -289,12 +372,115 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
               type="text"
               value={form.url}
               onChange={(e) => setField('url', e.target.value)}
-              placeholder="例如：http://localhost:3001/sse"
+              placeholder="例如：http://localhost:3001/mcp"
               className={inputCls(errors.url)}
             />
             {errors.url && <p className="text-xs text-red-500 mt-1">{errors.url}</p>}
           </div>
         )}
+
+        {/* 认证设置（authorized 验证） */}
+        <div className="border border-gray-200 rounded-xl p-4 space-y-3 bg-orange-50/30">
+          <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+            <KeyRound className="w-4 h-4 text-orange-500" />
+            认证设置
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">认证方式</label>
+            <select
+              value={form.auth_type}
+              onChange={(e) => setField('auth_type', e.target.value)}
+              className={inputCls(false)}
+            >
+              {AUTH_TYPES.map((a) => (
+                <option key={a.value} value={a.value}>{a.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {form.auth_type === 'bearer' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Bearer Token</label>
+              <input
+                type="password"
+                value={form.auth_token}
+                onChange={(e) => setField('auth_token', e.target.value)}
+                placeholder={maskedPlaceholder(editing?.auth_config?.token) || 'sk-xxx'}
+                className={inputCls(errors.auth_token)}
+              />
+              {errors.auth_token && <p className="text-xs text-red-500 mt-1">{errors.auth_token}</p>}
+            </div>
+          )}
+
+          {form.auth_type === 'basic' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">用户名</label>
+                <input
+                  type="text"
+                  value={form.auth_username}
+                  onChange={(e) => setField('auth_username', e.target.value)}
+                  placeholder="admin"
+                  className={inputCls(errors.auth_username)}
+                />
+                {errors.auth_username && <p className="text-xs text-red-500 mt-1">{errors.auth_username}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">密码</label>
+                <input
+                  type="password"
+                  value={form.auth_password}
+                  onChange={(e) => setField('auth_password', e.target.value)}
+                  placeholder={maskedPlaceholder(editing?.auth_config?.password) || '••••••'}
+                  className={inputCls(false)}
+                />
+              </div>
+            </div>
+          )}
+
+          {form.auth_type === 'api_key' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">请求头名称</label>
+                <input
+                  type="text"
+                  value={form.auth_header}
+                  onChange={(e) => setField('auth_header', e.target.value)}
+                  placeholder="X-API-Key"
+                  className={inputCls(false)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">API Key</label>
+                <input
+                  type="password"
+                  value={form.auth_key}
+                  onChange={(e) => setField('auth_key', e.target.value)}
+                  placeholder={maskedPlaceholder(editing?.auth_config?.key) || 'sk-xxx'}
+                  className={inputCls(errors.auth_key)}
+                />
+                {errors.auth_key && <p className="text-xs text-red-500 mt-1">{errors.auth_key}</p>}
+              </div>
+            </>
+          )}
+
+          <p className="text-xs text-gray-400">
+            {form.auth_type === 'none'
+              ? '连接时不会携带任何认证信息'
+              : '调用 / 测试该 MCP 服务时会自动注入对应认证头'}
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">环境变量（每行 KEY=value）</label>
+          <textarea
+            value={form.env}
+            onChange={(e) => setField('env', e.target.value)}
+            rows={3}
+            placeholder="API_KEY=sk-xxx&#10;REGION=cn"
+            className={`${inputCls(false)} font-mono text-xs`}
+          />
+        </div>
       </div>
     </Modal>
   )
@@ -313,6 +499,7 @@ export default function MCPServersPage() {
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [togglingId, setTogglingId] = useState(null)
+  const [testingId, setTestingId] = useState(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -371,6 +558,23 @@ export default function MCPServersPage() {
     }
   }
 
+  const handleTest = async (server) => {
+    setTestingId(server.id)
+    try {
+      const res = await api.post(`/api/mcp-servers/${server.id}/test`)
+      const d = res.data
+      if (d.ok) {
+        toast.success(d.tools?.length ? `${d.detail}，工具：${d.tools.slice(0, 5).join('、')}` : (d.detail || '连接正常'))
+      } else {
+        toast.error(d.error || '连接失败')
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '测试失败')
+    } finally {
+      setTestingId(null)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleteTarget) return false
     try {
@@ -404,6 +608,8 @@ export default function MCPServersPage() {
     { label: '已连接', value: items.filter((s) => s.status === 'active').length, icon: Wifi, color: 'from-emerald-500 to-green-600' },
     { label: 'stdio 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'stdio').length, icon: Terminal, color: 'from-blue-500 to-cyan-600' },
     { label: 'SSE 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'sse').length, icon: Globe, color: 'from-purple-500 to-pink-600' },
+    { label: '已启用认证', value: items.filter((s) => (s.auth_type || 'none') !== 'none').length, icon: KeyRound, color: 'from-orange-500 to-amber-600' },
+    { label: 'HTTP 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'http').length, icon: Globe, color: 'from-rose-500 to-red-600' },
   ]
 
   return (
@@ -419,7 +625,7 @@ export default function MCPServersPage() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {stats.map((stat, idx) => (
           <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200">
             <div className="flex items-center justify-between">
@@ -456,6 +662,7 @@ export default function MCPServersPage() {
             <option value="all">全部类型</option>
             <option value="stdio">stdio</option>
             <option value="sse">SSE</option>
+            <option value="http">HTTP</option>
           </select>
           <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData} title="刷新">
             刷新
@@ -503,6 +710,8 @@ export default function MCPServersPage() {
               onEdit={openEdit}
               onDelete={setDeleteTarget}
               onToggle={handleToggle}
+              onTest={handleTest}
+              testing={testingId}
               viewMode="grid"
             />
           ))}
@@ -516,6 +725,8 @@ export default function MCPServersPage() {
               onEdit={openEdit}
               onDelete={setDeleteTarget}
               onToggle={handleToggle}
+              onTest={handleTest}
+              testing={testingId}
               viewMode="list"
             />
           ))}

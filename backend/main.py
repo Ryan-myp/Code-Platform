@@ -4,16 +4,27 @@
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
 """
 
+import base64
+import io
 import json
 import logging
 import os
+import re
+import shutil
+import sqlite3
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from urllib.parse import quote, urlparse
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -21,21 +32,45 @@ from slowapi.util import get_remote_address
 # 加载 .env 文件
 load_dotenv()
 
+from admin_api import router as admin_api_router  # noqa: E402
 from chat_engine import router as chat_engine_router  # noqa: E402
 from collab_engine import router as collab_engine_router  # noqa: E402
-from common.auth import login_user, require_auth  # noqa: E402
+from common.auth import (  # noqa: E402
+    change_password,
+    consume_quota,
+    create_order,
+    create_share,
+    decode_access_token,
+    get_invite_info,
+    get_my_orders,
+    get_quota_info,
+    get_share,
+    get_user_profile,
+    login_user,
+    register_user,
+    require_auth,
+    submit_voucher,
+    update_user_profile,
+)
 from common.config import ALLOWED_ORIGINS, validate_security_config  # noqa: E402
 from common.db import get_db, init_schema  # noqa: E402
+from common.llm import call_llm_async, log_usage  # noqa: E402
 from common.models import (  # noqa: E402
     AgentCreateRequest,
     AgentUpdateRequest,
+    AssistantChatRequest,
+    ChangePasswordRequest,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseUpdateRequest,
     LoginRequest,
     MCPServerCreateRequest,
     MCPServerUpdateRequest,
+    OrderCreateRequest,
+    ProfileUpdateRequest,
+    RegisterRequest,
     SandboxProjectCreateRequest,
     SandboxPullImageRequest,
+    ShareCreateRequest,
     SkillCreateRequest,
     SkillUpdateRequest,
     TeamCreateRequest,
@@ -43,6 +78,7 @@ from common.models import (  # noqa: E402
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
+import skills_store  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
@@ -77,6 +113,7 @@ async def lifespan(app: FastAPI):
     validate_security_config()
     init_db()
     seed_if_empty()
+    skills_store.migrate_legacy()
     logger.info("Smart R&D Platform v8.0 started")
     yield
     logger.info("Smart R&D Platform v8.0 shutting down")
@@ -85,10 +122,39 @@ async def lifespan(app: FastAPI):
 # ── FastAPI 应用 ──────────────────────────────────────────────
 app = FastAPI(title="小团智能平台 v8.0", version="8.0.0", lifespan=lifespan)
 
+# 支付凭证上传目录（静态可访问，管理后台预览）
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ── 全局异常兜底：任何未捕获错误返回友好 JSON，不泄露堆栈 ──────
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试或联系管理员"})
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    """请求参数校验失败 → 提取第一条错误，返回中文可读提示"""
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    loc = first.get("loc", [])
+    msg = first.get("msg", "")
+    field = str(loc[-1]) if loc else ""
+    if field in ("body", "query"):
+        hint = "请求参数不合法"
+    else:
+        hint = f"参数「{field}」不合法"
+    if "required" in str(msg):
+        hint = f"缺少必填参数「{field}」"
+    logger.warning("Validation error %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=422, content={"detail": hint, "errors": errors[:5]})
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,10 +165,81 @@ app.add_middleware(
 )
 
 
+# ── 额度扣减中间件（商业版） ─────────────────────────────────
+# 命中的 AI 生成类端点，每次调用扣减 1 次用户当日额度（vip/admin 不限）。
+_QUOTA_PATHS = (
+    "/api/tools/run",
+    "/api/code/generate",
+    "/api/code/review",
+    "/api/copywriting/generate",
+    "/api/translation/translate",
+    "/api/ppt/generate",
+    "/api/prd/generate",
+    "/api/prd/review",
+    "/api/prd/technical-design",
+    "/api/prd/test-cases",
+    "/api/prd/generate-code",
+    "/api/prd/code-chat",
+    "/api/image-factory/generate/",
+    "/api/image-factory/edit/",
+    "/api/image-factory/template/render",
+    "/api/image-factory/try-on/generate",
+    "/api/video-factory/generate",
+    "/api/music-factory/lyrics/generate",
+    "/api/music-factory/music/generate",
+    "/api/music-factory/tts/sing",
+    "/api/auto-run",
+)
+
+# 后缀匹配（/run、/execute 结尾的 AI 执行端点）
+_QUOTA_SUFFIXES = ("/run", "/execute")
+
+
+@app.middleware("http")
+async def quota_middleware(request: Request, call_next):
+    """AI 生成端点统一扣减额度，额度不足返回 402。"""
+    path = request.url.path
+    if request.method == "POST" and (path.startswith(_QUOTA_PATHS) or path.endswith(_QUOTA_SUFFIXES)):
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                payload = decode_access_token(auth_header[7:])
+                user_id = payload.get("user_id")
+                if user_id:
+                    result = consume_quota(user_id)
+                    if not result.get("allowed"):
+                        return JSONResponse(
+                            status_code=402,
+                            content={
+                                "detail": "今日免费额度已用完，升级会员可继续使用（剩余 0 次）"
+                            },
+                        )
+            except HTTPException:
+                pass  # token 无效由端点鉴权兜底返回 401
+    return await call_next(request)
+
+
 # ── 健康检查 ──────────────────────────────────────────────────
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "8.0.0"}
+
+
+# 分享访问埋点
+
+def _record_share_visit(share_id: str, source: str, referer: str) -> None:
+    """写入分享访问埋点（渠道分析用）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO share_visits (share_id, source, referer, visited_at) VALUES (?, ?, ?, ?)",
+            (share_id, source, referer, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ── 认证 ──────────────────────────────────────────────────────
@@ -112,14 +249,414 @@ async def login(request: Request, req: LoginRequest):
     return login_user(req.username, req.password)
 
 
+@app.post("/api/auth/register")
+@limiter.limit("3 per minute")
+async def register(request: Request, req: RegisterRequest):
+    """注册新用户（可选邀请码/分享来源，各自触发奖励或转化统计）。"""
+    try:
+        return register_user(req.username, req.password, req.invite_code, req.share_ref)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+# ══════════════════════════════════════════════════════════════
+# 全局智能助手（页面右下角浮动机器人）
+# ══════════════════════════════════════════════════════════════
+_ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小团」，热情、专业、靠谱，用简体中文回答用户关于平台使用的一切问题。
+
+# 平台简介
+小团智能平台是一个 AI 赋能各行各业的智能工作平台，提供研发管理、创作工厂、效率工具箱、个人中心四大板块，从需求到部署全流程 AI 驱动。
+
+# 功能地图（用户可通过左侧导航直达）
+1. 研发管理：需求看板 /board、AI 工作台 /workspace（一句话全自动：PRD 编写→审查→技术方案→测试用例→代码生成→代码审查→一键部署沙箱）、项目空间 /projects、流水线 /pipelines、Agent 智能体 /agents、Team 团队协作 /teams、Workflow 工作流编排 /workflows（拖拽节点编排，支持 Agent/图片/视频/音乐/PRD 等节点）、知识库 /knowledge-bases（支持上传文档、检索）、Skills /skills、MCP 服务器 /mcp-servers、沙箱运行 /sandbox、全局任务 /tasks。
+2. 创作工厂：图片生成 /image-factory、视频生成 /video-factory、音乐生成 /music-factory、文案创作 /copywriting、翻译 /translation、PPT 生成 /ppt-factory。
+3. 效率工具箱：/tool-hub 提供 30+ 覆盖职场办公、自媒体、学习研究的 AI 工具；另有 Excel 处理 /excel、股票分析 /stock、AB 实验 /ab-testing、数据看板 /dashboard。
+4. 个人中心：/profile 查看每日额度、修改昵称头像密码；会员 /membership 升级套餐；使用记录 /records；帮助中心 /help（含新手引导回放）。
+
+# 常见问题速查
+- 注册登录：登录页点「注册」，用户名 2-20 位、密码至少 6 位；默认管理员 admin / admin123。
+- 每日额度：免费 30 次/天，专业版 200 次，至尊版无限；每次 AI 调用消耗 1 次；每天 0 点重置；可在 /profile 查看。
+- 额度用完：联系平台管理员开通会员，或等次日 0 点重置。
+- 快速找功能：按 ⌘K / Ctrl+K 打开全局搜索，或点击左侧边栏顶部搜索框。
+- 分享结果：工具结果区点「分享」生成公开链接，对方无需登录即可查看。
+- 切换模型：在「系统配置 → 模型配置」查看/调整；部分工具支持高级选项切换模型。
+- 修改密码：个人中心 → 修改密码，填原密码+新密码。
+- 部署失败：系统自动 AI 诊断修复（拉日志→定位根因→改码→重建→健康检查，最多 3 轮），也可在沙箱运行页手动触发。
+- 新手引导：帮助中心可重播，首次登录自动弹出。
+
+# 回复规范
+- 用简体中文，简洁清晰，优先用短段落和列表；可适当使用 Markdown（标题/列表/加粗）。
+- 回答使用问题时可给出对应菜单路径或页面入口，帮助用户快速找到功能。
+- 用户问「你能做什么」时，简明介绍你的能力并给出示例问题。
+- 涉及账号安全、会员购买等敏感问题时，引导联系管理员（admin@xiaotuan.ai）。
+- 不确定的信息不要编造，如实说明并建议查阅帮助中心或联系管理员。"""
+
+
+@app.post("/api/assistant/chat")
+@limiter.limit("10 per minute")
+async def assistant_chat(request: Request, req: AssistantChatRequest, current_user: dict = require_auth()):
+    """全局浮动机器人对话：基于平台知识回答用户问题。"""
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(400, "消息不能为空")
+
+    # 拼接最近对话历史（最多 10 条），保持上下文连贯
+    parts = []
+    for m in (req.history or [])[-10:]:
+        role = "用户" if m.get("role") == "user" else "助手"
+        content = (m.get("content") or "").strip()
+        if content:
+            parts.append(f"{role}: {content[:500]}")
+    user_prompt = "\n\n".join(parts)
+    if user_prompt:
+        user_prompt += f"\n\n用户最新问题: {message}"
+    else:
+        user_prompt = message
+
+    start = time.time()
+    try:
+        result = await call_llm_async(_ASSISTANT_SYSTEM, user_prompt, max_tokens=1500, temperature=0.5)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"助手服务异常: {str(e)}") from e
+    elapsed = round(time.time() - start, 2)
+    log_usage("assistant_chat", len(user_prompt), len(result), elapsed)
+    return {"result": result, "elapsed": elapsed}
+
+
+@app.get("/api/auth/me")
+async def get_me(current_user: dict = require_auth()):
+    """当前用户资料（含会员与额度）。"""
+    return get_user_profile(current_user.get("user_id"))
+
+
+@app.put("/api/auth/me")
+async def update_me(req: ProfileUpdateRequest, current_user: dict = require_auth()):
+    """更新昵称/头像。"""
+    return update_user_profile(current_user.get("user_id"), nickname=req.nickname, avatar=req.avatar)
+
+
+@app.put("/api/auth/password")
+async def change_pwd(req: ChangePasswordRequest, current_user: dict = require_auth()):
+    """修改密码。"""
+    change_password(current_user.get("user_id"), req.old_password, req.new_password)
+    return {"message": "密码已更新"}
+
+
+@app.get("/api/auth/quota")
+async def quota(current_user: dict = require_auth()):
+    """当前额度信息。"""
+    return get_quota_info(current_user.get("user_id"))
+
+
+# ── 结果分享（商业版：引流传播） ─────────────────────────────
+@app.post("/api/shares")
+async def create_share_api(req: ShareCreateRequest, current_user: dict = require_auth()):
+    """创建分享，返回 share_code。"""
+    return create_share(current_user.get("user_id"), req.content_type, req.title, req.content)
+
+
+@app.get("/api/shares/{share_code}")
+async def get_share_api(share_code: str, request: Request, src: str = ""):
+    """公开访问分享内容（无需登录，浏览量 +1，记录访问埋点）。"""
+    share = get_share(share_code)
+    if not share:
+        raise HTTPException(404, "分享不存在或已失效")
+    # 埋点：来源渠道优先取 query src / utm_source，其次 Referer 域名，默认 direct
+    source = (src or request.query_params.get("utm_source", "")).strip()[:32]
+    referer = request.headers.get("referer", "")[:200]
+    if not source:
+        if referer:
+            try:
+                host = urlparse(referer).hostname or ""
+                source = host if host not in ("localhost", "127.0.0.1") else "direct"
+            except ValueError:
+                source = "direct"
+        else:
+            source = "direct"
+    _record_share_visit(share["id"], source, referer)
+    return share
+
+
+@app.get("/share/{share_code}", response_class=HTMLResponse)
+async def share_seo_page(share_code: str):
+    """分享页 SEO 渲染：为爬虫/社交平台返回带 og meta 的 HTML。
+
+    nginx 将 /share/* 代理到本端点；普通浏览器会立即跳转到前端 SPA
+    （?share=code 由 App.jsx 解析），抓取器则读到完整 meta 信息。
+    """
+    share = get_share(share_code)
+    if not share:
+        return HTMLResponse(
+            """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">"""
+            """<title>分享内容不存在 - 小团智能平台</title>"""
+            """<meta http-equiv="refresh" content="0; url=/"></head><body></body></html>""",
+            status_code=404,
+        )
+    title = (share.get("title") or "分享内容")[:80]
+    desc = ((share.get("content") or "").replace("#", " ").replace("\n", " ").strip())[:200]
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} - 小团智能平台</title>
+<meta name="description" content="{desc}">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{desc}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="小团智能平台">
+<meta property="og:url" content="/share/{share_code}">
+<meta property="og:locale" content="zh_CN">
+<meta http-equiv="refresh" content="0; url=/?share={share_code}">
+<script>location.replace("/?share={share_code}")</script>
+</head>
+<body>
+<article style="max-width:720px;margin:40px auto;font-family:system-ui;padding:0 20px">
+<h1>{title}</h1>
+<p>{desc}</p>
+<p><a href="/?share={share_code}">查看完整内容</a></p>
+</article>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+# ── 会员套餐 / 订单（商业版：支付闭环） ─────────────────────
+@app.get("/api/membership/plans")
+async def membership_plans():
+    """会员套餐列表（公开，前端渲染套餐卡片）。"""
+    from common.auth import MEMBERSHIP_PLANS, MEMBERSHIP_QUOTA
+
+    plans = {"free": {"name": "免费版", "price": 0, "daily_quota": MEMBERSHIP_QUOTA["free"],
+                      "features": ["每日 30 次生成额度", "全部工具基础使用", "标准响应速度"]}}
+    for key, info in MEMBERSHIP_PLANS.items():
+        plans[key] = {**info, "daily_quota": info["daily_quota"]}
+    return plans
+
+
+@app.post("/api/orders")
+async def create_order_api(req: OrderCreateRequest, current_user: dict = require_auth()):
+    """创建会员订单（同一时间仅 1 个待处理订单，可选优惠码抵扣）。"""
+    return create_order(current_user.get("user_id"), req.plan, req.coupon_code)
+
+
+@app.get("/api/orders")
+async def my_orders(current_user: dict = require_auth()):
+    """我的订单列表（倒序）。"""
+    return get_my_orders(current_user.get("user_id"))
+
+
+@app.post("/api/orders/{order_id}/voucher")
+async def submit_voucher_api(
+    order_id: str,
+    file: UploadFile | None = File(None),
+    remark: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """提交支付凭证（截图 + 备注），订单进入待审核。"""
+    voucher = ""
+    if file and file.filename:
+        ext = os.path.splitext(file.filename or "")[1][:10] or ".png"
+        name = f"v_{uuid.uuid4().hex[:12]}{ext}"
+        path = os.path.join(UPLOAD_DIR, "vouchers", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        content = await file.read()
+        if len(content) > 5 * 1024 * 1024:
+            raise HTTPException(400, "凭证图片不能超过 5MB")
+        with open(path, "wb") as f:
+            f.write(content)
+        voucher = f"/uploads/vouchers/{name}"
+    if not voucher and not remark.strip():
+        raise HTTPException(400, "请上传支付凭证截图或填写转账说明")
+    return submit_voucher(order_id, current_user.get("user_id"), voucher, remark)
+
+
+# ── 收款码配置（商业版：扫码支付） ──────────────────────────
+PAYMENT_QR_KEY = "payment_qr"
+
+
+def _get_payment_qr() -> str:
+    """当前收款码路径（config 表，空串表示未配置）。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT value FROM config WHERE key=?", (PAYMENT_QR_KEY,)).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row else ""
+
+
+@app.get("/api/membership/payment-qr")
+async def membership_payment_qr(current_user: dict = require_auth()):
+    """当前收款码（登录用户可见，会员中心扫码支付展示）。"""
+    return {"url": _get_payment_qr()}
+
+
+@app.get("/api/admin/payment-qr")
+async def admin_payment_qr(current_user: dict = require_auth()):
+    """管理员查看收款码配置。"""
+    from admin_api import _check_admin
+
+    _check_admin(current_user)
+    return {"url": _get_payment_qr()}
+
+
+@app.post("/api/admin/payment-qr")
+async def admin_upload_payment_qr(
+    file: UploadFile = File(...),
+    current_user: dict = require_auth(),
+):
+    """上传收款码图片（png/jpg/jpeg/webp，最多 5MB）。"""
+    from admin_api import _check_admin
+
+    _check_admin(current_user)
+    if not file.filename:
+        raise HTTPException(400, "请选择收款码图片")
+    ext = os.path.splitext(file.filename)[1].lower()[:10]
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(400, "仅支持 png / jpg / jpeg / webp 图片")
+    name = f"qr_{uuid.uuid4().hex[:12]}{ext}"
+    path = os.path.join(UPLOAD_DIR, "qr", name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "收款码图片不能超过 5MB")
+    with open(path, "wb") as f:
+        f.write(content)
+    url = f"/uploads/qr/{name}"
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO config (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+            (PAYMENT_QR_KEY, url),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"url": url, "message": "收款码已更新"}
+
+
+@app.delete("/api/admin/payment-qr")
+async def admin_remove_payment_qr(current_user: dict = require_auth()):
+    """移除收款码配置。"""
+    from admin_api import _check_admin
+
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM config WHERE key=?", (PAYMENT_QR_KEY,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"message": "收款码已移除"}
+
+
+# ── 邀请码分销（商业版：引流） ───────────────────────────────
+@app.get("/api/invite")
+async def invite_info(current_user: dict = require_auth()):
+    """我的邀请码 / 已邀请用户 / 奖励规则。"""
+    return get_invite_info(current_user.get("user_id"))
+
+
+@app.get("/api/invite/leaderboard")
+async def invite_leaderboard(limit: int = 10, current_user: dict = require_auth()):
+    """邀请排行榜：邀请人数 Top N（仅展示有邀请记录的用户）+ 我的排名。"""
+    limit = max(3, min(limit, 50))
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT u.id, u.username, u.nickname, COUNT(i.id) AS invites
+               FROM users u LEFT JOIN users i ON i.invited_by = u.id
+               GROUP BY u.id
+               ORDER BY invites DESC, u.created_at ASC""",
+        ).fetchall()
+    finally:
+        conn.close()
+    board = []
+    my_rank = None
+    me_id = str(current_user.get("user_id"))
+    for idx, r in enumerate(rows, 1):
+        invites = int(r["invites"])
+        if str(r["id"]) == me_id:
+            my_rank = idx
+        if invites > 0 and len(board) < limit:
+            board.append(
+                {
+                    "rank": len(board) + 1,
+                    "username": r["username"],
+                    "nickname": r["nickname"] or r["username"],
+                    "invites": invites,
+                }
+            )
+    # 若我的排名在榜单外，附带返回（前端展示“我的排名”）
+    my_invites = next((int(r["invites"]) for r in rows if str(r["id"]) == me_id), 0)
+    return {"board": board, "my_rank": my_rank, "my_invites": my_invites}
+
+
+# ── 内容权限（v9.3：页面可见性 / 灰度发布） ─────────────────
+@app.get("/api/access/pages")
+async def access_pages(current_user: dict = require_auth()):
+    """当前用户可见的页面列表（Sidebar / 路由守卫使用）。"""
+    from permissions import PAGES, access_status, get_visibility_map, load_user_ctx
+
+    vis_map = get_visibility_map("page")
+    user_ctx = load_user_ctx(current_user)
+    result = []
+    for p in PAGES:
+        status = access_status(user_ctx, vis_map.get(p["id"], "all"))
+        if not status["visible"]:
+            continue
+        item = {**p}
+        if status.get("locked"):
+            item["locked"] = True
+            item["requires"] = status["requires"]
+        result.append(item)
+    return result
+
+
 # ── Agent 管理 ────────────────────────────────────────────────
 @app.get("/api/agents")
 async def list_agents(current_user: dict = require_auth()):
-    """获取所有 Agent"""
+    """获取所有 Agent（含绑定资源统计与最近运行信息）"""
     conn = get_db()
     agents = conn.execute("SELECT * FROM agents ORDER BY created_at DESC").fetchall()
+    # 会话统计：会话数近似执行次数，最新会话时间作为 last_run
+    run_stats = {}
+    try:
+        rows = conn.execute(
+            "SELECT agent_id, COUNT(*) cnt, MAX(updated_at) last_run FROM conversations GROUP BY agent_id"
+        ).fetchall()
+        for r in rows:
+            run_stats[r["agent_id"]] = {"execution_count": r["cnt"], "last_run": r["last_run"]}
+    except Exception:
+        pass
     conn.close()
-    return [dict(a) for a in agents]
+    result = []
+    for a in agents:
+        d = dict(a)
+
+        def _parse_list(raw):
+            try:
+                v = json.loads(raw or "[]")
+                return v if isinstance(v, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+
+        tools = _parse_list(d.get("tools"))
+        kbs = _parse_list(d.get("knowledge_base_ids"))
+        skills = _parse_list(d.get("skill_ids"))
+        mcps = _parse_list(d.get("mcp_server_ids"))
+        st = run_stats.get(d["id"], {})
+        d["tool_count"] = len(tools)
+        d["kb_count"] = len(kbs)
+        d["skill_count"] = len(skills)
+        d["mcp_count"] = len(mcps)
+        d["execution_count"] = st.get("execution_count", 0)
+        d["last_run"] = st.get("last_run")
+        result.append(d)
+    return result
 
 
 @app.post("/api/agents")
@@ -184,6 +721,121 @@ async def delete_agent(agent_id: str, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+# ── Agent 模板（agent_templates/ 标准目录）────────────────────
+_AGENT_TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_templates")
+
+# 模板中文名与展示元信息（无映射时回退 frontmatter name）
+_AGENT_TEMPLATE_META = {
+    "architect-agent": {"name": "架构师 Agent", "tag": "analysis", "desc": "技术方案、系统架构、技术选型"},
+    "dba-agent": {"name": "DBA 数据库 Agent", "tag": "analysis", "desc": "数据建模、SQL 优化、备份恢复"},
+    "dev-agent": {"name": "开发工程师 Agent", "tag": "coding", "desc": "代码生成、重构、审查"},
+    "pm-agent": {"name": "产品经理 Agent", "tag": "analysis", "desc": "PRD 编写、需求分析、用户故事"},
+    "qa-agent": {"name": "测试工程师 Agent", "tag": "coding", "desc": "测试用例、自动化测试、质量保障"},
+    "sre-agent": {"name": "SRE 运维 Agent", "tag": "service", "desc": "部署、监控、故障排查"},
+    "tech-writer-agent": {"name": "技术写手 Agent", "tag": "writing", "desc": "文档生成、API 文档、用户手册"},
+    "ui-designer-agent": {"name": "UI/UX 设计师 Agent", "tag": "analysis", "desc": "界面设计、交互原型、设计规范"},
+}
+
+
+def _parse_agent_template_file(skill_path: str) -> dict | None:
+    """解析 SKILL.md：提取 frontmatter（name/description）+ Instructions 正文。"""
+    try:
+        with open(skill_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    fm = {}
+    body = text
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            for line in parts[1].strip().splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    fm[k.strip()] = v.strip()
+            body = parts[2]
+    raw_name = fm.get("name", "").strip()
+    if not raw_name:
+        return None
+    # Instructions：取 `## Instructions` 标题后的正文（截取到下一个二级标题）
+    instructions = ""
+    idx = body.find("## Instructions")
+    if idx >= 0:
+        rest = body[idx + len("## Instructions"):]
+        next_h2 = rest.find("\n## ")
+        instructions = rest[:next_h2].strip() if next_h2 >= 0 else rest.strip()
+    if not instructions:
+        instructions = body.strip()[:2000]
+    meta = _AGENT_TEMPLATE_META.get(raw_name, {})
+    return {
+        "name": raw_name,
+        "label": meta.get("name") or fm.get("label") or raw_name.replace("-", " ").title(),
+        "description": fm.get("description", ""),
+        "tag": meta.get("tag", "general"),
+        "instructions": instructions,
+        "title": (body.strip().splitlines() or [""])[0].lstrip("# ").strip(),
+    }
+
+
+@app.get("/api/agent-templates")
+async def list_agent_templates(current_user: dict = require_auth()):
+    """获取 Agent 模板列表（来自 agent_templates/ 标准目录）。"""
+    templates = []
+    if not os.path.isdir(_AGENT_TEMPLATES_DIR):
+        return []
+    for sub in sorted(os.listdir(_AGENT_TEMPLATES_DIR)):
+        skill_path = os.path.join(_AGENT_TEMPLATES_DIR, sub, "SKILL.md")
+        if not os.path.isfile(skill_path):
+            continue
+        tpl = _parse_agent_template_file(skill_path)
+        if tpl:
+            templates.append(tpl)
+    return templates
+
+
+@app.post("/api/agent-templates/{template_name}/create")
+async def create_agent_from_template(template_name: str, current_user: dict = require_auth()):
+    """从模板一键创建 Agent：解析 SKILL.md 的 Instructions 作为系统指令。"""
+    if not template_name or "/" in template_name or ".." in template_name:
+        raise HTTPException(400, "模板名不合法")
+    skill_path = None
+    if os.path.isdir(_AGENT_TEMPLATES_DIR):
+        for sub in os.listdir(_AGENT_TEMPLATES_DIR):
+            candidate = os.path.join(_AGENT_TEMPLATES_DIR, sub, "SKILL.md")
+            if os.path.isfile(candidate):
+                tpl = _parse_agent_template_file(candidate)
+                if tpl and tpl["name"] == template_name:
+                    skill_path = candidate
+                    break
+    if not skill_path:
+        raise HTTPException(404, f"模板不存在：{template_name}")
+    tpl = _parse_agent_template_file(skill_path)
+    if not tpl:
+        raise HTTPException(400, "模板解析失败")
+
+    conn = get_db()
+    agent_id = f"agent_{int(time.time() * 1000)}"
+    conn.execute(
+        """INSERT INTO agents (id, name, description, instructions, model, tools, knowledge_base_ids, skill_ids, mcp_server_ids, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+        (
+            agent_id,
+            tpl["label"],
+            tpl["description"] or tpl["title"],
+            tpl["instructions"],
+            "agnes-2.5-flash",
+            "[]",
+            "[]",
+            "[]",
+            "[]",
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": agent_id, "name": tpl["label"], "template": template_name}
 
 
 # ── Workflow 管理 ──────────────────────────────────────────────
@@ -442,19 +1094,45 @@ async def delete_team(team_id: str, current_user: dict = require_auth()):
     return {"success": True}
 
 
-# ── Skills 管理 ─────────────────────────────────────────────────
+# ── Skills 管理（标准 Agent Skills 目录结构）───────────────────
 @app.get("/api/skills")
 async def list_skills(current_user: dict = require_auth()):
-    """获取所有 Skills"""
+    """获取所有 Skills（含文件系统统计）"""
     conn = get_db()
     skills = conn.execute("SELECT * FROM skills ORDER BY created_at DESC").fetchall()
     conn.close()
-    return [dict(s) for s in skills]
+    stats = skills_store.scan_stats()
+    result = []
+    for s in skills:
+        d = dict(s)
+        st = stats.get(d["id"], {"file_count": 0, "dir_counts": {}})
+        d["file_count"] = st["file_count"]
+        d["dir_counts"] = st.get("dir_counts", {})
+        result.append(d)
+    return result
+
+
+@app.get("/api/skills/{skill_id}")
+async def get_skill(skill_id: str, current_user: dict = require_auth()):
+    """获取单个 Skill 详情（含文件统计）"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Skill 不存在")
+    d = dict(row)
+    try:
+        tree = skills_store.list_tree(skill_id)
+        d["file_count"] = tree["file_count"]
+        d["dir_counts"] = tree["dir_counts"]
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return d
 
 
 @app.post("/api/skills")
 async def create_skill(req: SkillCreateRequest, current_user: dict = require_auth()):
-    """创建 Skill"""
+    """创建 Skill（落库 + 初始化标准目录结构）"""
     conn = get_db()
     skill_id = f"skill_{int(time.time() * 1000)}"
     conn.execute(
@@ -471,12 +1149,52 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
     )
     conn.commit()
     conn.close()
+    try:
+        skills_store.ensure_root(skill_id)
+        if (req.content or "").strip():
+            skills_store.write_file(
+                skill_id,
+                "SKILL.md",
+                skills_store.render_skill_markdown({
+                    "name": req.name, "description": req.description, "content": req.content,
+                }),
+            )
+    except (ValueError, OSError) as e:
+        raise HTTPException(500, f"初始化 Skill 目录失败：{e}") from e
     return {"id": skill_id, "name": req.name}
+
+
+def _sync_skill_meta_to_fs(skill_id: str, skill: dict, fields_updated: set) -> None:
+    """将 DB 元数据同步到标准目录：SKILL.md 与 references/references.md。
+
+    - name/description 更新：重写 frontmatter，保留磁盘正文（文件浏览器可能更新过）
+    - content 更新：整体重写 SKILL.md（以 DB 为准）
+    - references 更新：同步 references/references.md（空值删除）
+    """
+    if fields_updated & {"name", "description", "content"}:
+        existing = skills_store.read_skill_md(skill_id)
+        if "content" in fields_updated:
+            body = skill.get("content") or ""
+        else:
+            body = skills_store.parse_skill_markdown(existing)["content"] if existing else (skill.get("content") or "")
+        md = skills_store.render_skill_markdown({
+            "name": skill["name"], "description": skill["description"], "content": body,
+        })
+        skills_store.write_file(skill_id, "SKILL.md", md)
+    if "references" in fields_updated:
+        refs = (skill.get("references") or "").strip()
+        if refs:
+            skills_store.write_file(skill_id, "references/references.md", refs)
+        else:
+            try:
+                skills_store.delete_path(skill_id, "references/references.md")
+            except FileNotFoundError:
+                pass
 
 
 @app.put("/api/skills/{skill_id}")
 async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dict = require_auth()):
-    """更新 Skill"""
+    """更新 Skill（元数据 + 同步标准目录文件）"""
     conn = get_db()
     updates = []
     values = []
@@ -491,39 +1209,260 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
         raise HTTPException(400, "没有需要更新的字段")
     values.append(skill_id)
     conn.execute(f"UPDATE skills SET {','.join(updates)} WHERE id=?", values)
+    row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
     conn.commit()
     conn.close()
+    if not row:
+        raise HTTPException(404, "Skill 不存在")
+    try:
+        _sync_skill_meta_to_fs(skill_id, dict(row), {u for u in updates if u in ("name", "description", "content", "references")})
+    except (ValueError, OSError) as e:
+        raise HTTPException(500, f"同步 Skill 文件失败：{e}") from e
     return {"success": True, "id": skill_id}
 
 
 @app.delete("/api/skills/{skill_id}")
 async def delete_skill(skill_id: str, current_user: dict = require_auth()):
-    """删除 Skill"""
+    """删除 Skill（含标准目录）"""
     conn = get_db()
     conn.execute("DELETE FROM skills WHERE id=?", (skill_id,))
     conn.commit()
     conn.close()
+    try:
+        skills_store.delete_path(skill_id, "")
+    except (ValueError, FileNotFoundError):
+        pass
     return {"success": True}
 
 
+# ── 标准 SKILL.md 支持（导入 / 导出 / ZIP 打包）────────────────
+@app.post("/api/skills/import")
+async def import_skill(req: dict, current_user: dict = require_auth()):
+    """导入标准 SKILL.md 文本：自动解析 frontmatter 创建 Skill 并落盘。"""
+    markdown = (req.get("markdown") or "").strip()
+    if not markdown:
+        raise HTTPException(400, "SKILL.md 内容不能为空")
+    parsed = skills_store.parse_skill_markdown(markdown)
+    name = (parsed["name"] or req.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "无法识别 Skill 名称（请在 frontmatter 中提供 name）")
+    conn = get_db()
+    skill_id = f"skill_{int(time.time() * 1000)}"
+    conn.execute(
+        """INSERT INTO skills (id, name, description, content, `references`, created_at)
+           VALUES (?, ?, ?, ?, '', ?)""",
+        (skill_id, name, parsed["description"], parsed["content"], datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    skills_store.write_file(skill_id, "SKILL.md", markdown)
+    return {"id": skill_id, "name": name, "description": parsed["description"]}
+
+
+@app.post("/api/skills/import-zip")
+async def import_skill_zip(file: UploadFile = File(...), current_user: dict = require_auth()):
+    """导入标准 Skill 目录 zip 包（SKILL.md + scripts/references/examples/assets 等）。"""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "ZIP 文件为空")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "ZIP 包不能超过 20MB")
+    try:
+        parsed = skills_store.parse_skill_zip(content)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    name = (parsed["name"] or "").strip()
+    if not name:
+        raise HTTPException(400, "SKILL.md 缺少 frontmatter name，无法识别技能名称")
+    conn = get_db()
+    skill_id = f"skill_{int(time.time() * 1000)}"
+    conn.execute(
+        """INSERT INTO skills (id, name, description, content, `references`, created_at)
+           VALUES (?, ?, ?, '', '', ?)""",
+        (skill_id, name, parsed["description"], datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    imported = skills_store.extract_zip_to(skill_id, content)
+    return {"id": skill_id, "name": imported["name"], "imported": imported["imported"]}
+
+
+@app.get("/api/skills/{skill_id}/export")
+async def export_skill(skill_id: str, current_user: dict = require_auth()):
+    """导出为标准 SKILL.md 文本（优先读取磁盘，兼容任意 Agent 工具）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Skill 不存在")
+    disk = skills_store.read_skill_md(skill_id)
+    if disk is not None:
+        return {"filename": f"{row['name']}/SKILL.md", "content": disk}
+    return {
+        "filename": f"{row['name']}/SKILL.md",
+        "content": skills_store.render_skill_markdown(dict(row)),
+    }
+
+
+@app.get("/api/skills/{skill_id}/export-zip")
+async def export_skill_zip(skill_id: str, current_user: dict = require_auth()):
+    """导出整个 Skill 目录为 zip 包（标准结构，可直接用于其他 Agent 工具）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Skill 不存在")
+    try:
+        data, filename = skills_store.export_zip(skill_id, row["name"])
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    # Content-Disposition 需 latin-1 安全：中文名走 RFC 5987 filename* 编码
+    try:
+        filename.encode("latin-1")
+        ascii_name = filename
+    except UnicodeEncodeError:
+        ascii_name = "skill.zip"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+            )
+        },
+    )
+
+
 # ── 知识库管理 ──────────────────────────────────────────────────
+def _mask_kb_config(cfg: dict) -> dict:
+    """脱敏知识库连接配置（password 掩码）。"""
+    cfg = dict(cfg or {})
+    if cfg.get("password"):
+        cfg["password"] = "••••••"
+    return cfg
+
+
+def _kb_connect(cfg: dict):
+    """建立数据库连接，返回 (conn, cursor, error)。支持 sqlite / mysql / postgres。"""
+    engine = (cfg.get("engine") or "sqlite").lower()
+    try:
+        if engine == "sqlite":
+            path = (cfg.get("database") or "").strip()
+            if not path:
+                return None, None, "未配置数据库文件路径"
+            if not os.path.exists(path):
+                return None, None, f"数据库文件不存在：{path}"
+            conn = sqlite3.connect(path, timeout=5)
+            return conn, conn.cursor(), None
+        if engine == "mysql":
+            try:
+                import pymysql
+            except ImportError:
+                return None, None, "未安装 pymysql 驱动（pip install pymysql）"
+            conn = pymysql.connect(
+                host=cfg.get("host") or "localhost",
+                port=int(cfg.get("port") or 3306),
+                user=cfg.get("user") or "",
+                password=cfg.get("password") or "",
+                database=cfg.get("database") or "",
+                charset="utf8mb4",
+                connect_timeout=5,
+            )
+            return conn, conn.cursor(), None
+        if engine == "postgres":
+            try:
+                import psycopg2
+            except ImportError:
+                return None, None, "未安装 psycopg2 驱动（pip install psycopg2-binary）"
+            conn = psycopg2.connect(
+                host=cfg.get("host") or "localhost",
+                port=int(cfg.get("port") or 5432),
+                user=cfg.get("user") or "",
+                password=cfg.get("password") or "",
+                dbname=cfg.get("database") or "",
+                connect_timeout=5,
+            )
+            return conn, conn.cursor(), None
+        return None, None, f"不支持的数据库引擎：{engine}"
+    except Exception as e:
+        return None, None, f"连接失败：{e}"
+
+
+def _kb_list_tables(cursor, engine: str) -> list[str]:
+    """列出数据库中的表（最多 50 张）。"""
+    try:
+        if engine == "sqlite":
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        elif engine == "mysql":
+            cursor.execute("SHOW TABLES")
+        else:
+            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() ORDER BY table_name")
+        return [r[0] for r in cursor.fetchall()][:50]
+    except Exception:
+        return []
+
+
 @app.get("/api/knowledge-bases")
 async def list_knowledge_bases(current_user: dict = require_auth()):
-    """获取所有知识库"""
+    """获取所有知识库（连接配置脱敏；file/db 类型附文档统计）"""
     conn = get_db()
     kbs = conn.execute("SELECT * FROM knowledge_bases ORDER BY created_at DESC").fetchall()
     conn.close()
-    return [dict(kb) for kb in kbs]
+    result = []
+    for kb in kbs:
+        d = dict(kb)
+        try:
+            cfg = json.loads(d.get("config") or "{}") or {}
+        except (ValueError, TypeError):
+            cfg = {}
+        d["config"] = _mask_kb_config(cfg)
+        kb_type = d.get("type") or "file"
+        doc_count, total_size = 0, 0
+        if kb_type == "file" and d.get("path"):
+            p = d["path"]
+            if os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    for fn in files:
+                        try:
+                            total_size += os.path.getsize(os.path.join(root, fn))
+                            doc_count += 1
+                        except OSError:
+                            pass
+            elif os.path.isfile(p):
+                try:
+                    total_size = os.path.getsize(p)
+                    doc_count = 1
+                except OSError:
+                    pass
+        elif kb_type == "db":
+            db_conn, cursor, _err = _kb_connect(cfg)
+            if db_conn:
+                try:
+                    table = (cfg.get("table") or "").strip()
+                    if table:
+                        cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
+                        row = cursor.fetchone()
+                        doc_count = row[0] if row else 0
+                except Exception:
+                    pass
+                finally:
+                    db_conn.close()
+        d["doc_count"] = doc_count
+        d["total_size"] = total_size
+        result.append(d)
+    return result
 
 
 @app.post("/api/knowledge-bases")
 async def create_knowledge_base(req: KnowledgeBaseCreateRequest, current_user: dict = require_auth()):
-    """创建知识库"""
+    """创建知识库（file / url / db；db 类型需提供 config 连接配置）"""
     conn = get_db()
     kb_id = f"kb_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO knowledge_bases (id, name, type, path, url, filter, top_k, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO knowledge_bases (id, name, type, path, url, filter, top_k, description, subtype, config, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             kb_id,
             req.name,
@@ -532,6 +1471,9 @@ async def create_knowledge_base(req: KnowledgeBaseCreateRequest, current_user: d
             req.url,
             json.dumps(req.filter),
             req.top_k,
+            req.description or "",
+            req.subtype or "general",
+            json.dumps(req.config or {}),
             datetime.now().isoformat(),
         ),
     )
@@ -552,7 +1494,7 @@ async def delete_knowledge_base(kb_id: str, current_user: dict = require_auth())
 
 @app.put("/api/knowledge-bases/{kb_id}")
 async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdateRequest, current_user: dict = require_auth()):
-    """更新知识库"""
+    """更新知识库（config 传 None = 不变；传 {} = 清空）"""
     conn = get_db()
     updates = []
     vals = []
@@ -575,6 +1517,15 @@ async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdateRequest, cur
     if req.top_k is not None:
         updates.append("top_k=?")
         vals.append(req.top_k)
+    if req.description is not None:
+        updates.append("description=?")
+        vals.append(req.description)
+    if req.subtype is not None:
+        updates.append("subtype=?")
+        vals.append(req.subtype)
+    if req.config is not None:
+        updates.append("config=?")
+        vals.append(json.dumps(req.config))
     if not updates:
         raise HTTPException(400, "无更新字段")
     updates.append("created_at=created_at")
@@ -585,10 +1536,339 @@ async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdateRequest, cur
     return {"success": True, "id": kb_id}
 
 
+@app.post("/api/knowledge-bases/test-connection")
+async def test_kb_connection(req: dict, current_user: dict = require_auth()):
+    """测试知识库连接（无需先保存）：file 检查路径；url 检查可达性；db 测试连接并列出表。"""
+    kb_type = (req.get("type") or "file").strip()
+    cfg = req.get("config") or {}
+    if kb_type == "file":
+        p = (req.get("path") or "").strip()
+        if not p:
+            return {"ok": False, "error": "未配置文件路径"}
+        if not os.path.exists(p):
+            return {"ok": False, "error": f"路径不存在：{p}"}
+        if os.path.isdir(p):
+            count = sum(len(files) for _, _, files in os.walk(p))
+            return {"ok": True, "detail": f"目录存在，共 {count} 个文件", "doc_count": count}
+        return {"ok": True, "detail": f"文件存在（{os.path.getsize(p)} 字节）", "doc_count": 1}
+    if kb_type == "url":
+        url = (req.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "error": "未配置 URL"}
+        try:
+            resp = httpx.get(url, timeout=8, follow_redirects=True)
+            return {"ok": resp.status_code < 400, "detail": f"HTTP {resp.status_code}", "doc_count": 1}
+        except Exception as e:
+            return {"ok": False, "error": f"访问失败：{e}"}
+    if kb_type == "db":
+        db_conn, cursor, err = _kb_connect(cfg)
+        if err:
+            return {"ok": False, "error": err}
+        try:
+            tables = _kb_list_tables(cursor, (cfg.get("engine") or "sqlite").lower())
+            return {"ok": True, "detail": f"连接成功，共 {len(tables)} 张表", "tables": tables}
+        finally:
+            db_conn.close()
+    return {"ok": False, "error": f"不支持的类型：{kb_type}"}
+
+
+@app.post("/api/knowledge-bases/{kb_id}/test")
+async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()):
+    """测试知识库：file 检查路径；url 检查可达性；db 测试连接并列出表。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "知识库不存在")
+    d = dict(row)
+    kb_type = d.get("type") or "file"
+    try:
+        cfg = json.loads(d.get("config") or "{}") or {}
+    except (ValueError, TypeError):
+        cfg = {}
+    if kb_type == "file":
+        p = (d.get("path") or "").strip()
+        if not p:
+            return {"ok": False, "error": "未配置文件路径"}
+        if not os.path.exists(p):
+            return {"ok": False, "error": f"路径不存在：{p}"}
+        if os.path.isdir(p):
+            count = sum(len(files) for _, _, files in os.walk(p))
+            return {"ok": True, "detail": f"目录存在，共 {count} 个文件", "doc_count": count}
+        return {"ok": True, "detail": f"文件存在（{os.path.getsize(p)} 字节）", "doc_count": 1}
+    if kb_type == "url":
+        url = (d.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "error": "未配置 URL"}
+        try:
+            resp = httpx.get(url, timeout=8, follow_redirects=True)
+            return {"ok": resp.status_code < 400, "detail": f"HTTP {resp.status_code}", "doc_count": 1}
+        except Exception as e:
+            return {"ok": False, "error": f"访问失败：{e}"}
+    if kb_type == "db":
+        db_conn, cursor, err = _kb_connect(cfg)
+        if err:
+            return {"ok": False, "error": err}
+        try:
+            tables = _kb_list_tables(cursor, (cfg.get("engine") or "sqlite").lower())
+            return {"ok": True, "detail": f"连接成功，共 {len(tables)} 张表", "tables": tables}
+        finally:
+            db_conn.close()
+    return {"ok": False, "error": f"不支持的类型：{kb_type}"}
+
+
+@app.get("/api/knowledge-bases/{kb_id}/search")
+async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):
+    """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
+    q = (q or "").strip()
+    if not q:
+        raise HTTPException(400, "检索关键词不能为空")
+    limit = max(1, min(limit or 5, 20))
+    conn = get_db()
+    row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "知识库不存在")
+    d = dict(row)
+    kb_type = d.get("type") or "file"
+    try:
+        cfg = json.loads(d.get("config") or "{}") or {}
+    except (ValueError, TypeError):
+        cfg = {}
+    if kb_type == "db":
+        db_conn, cursor, err = _kb_connect(cfg)
+        if err:
+            raise HTTPException(400, err)
+        try:
+            engine = (cfg.get("engine") or "sqlite").lower()
+            table = (cfg.get("table") or "").strip()
+            if not table:
+                tables = _kb_list_tables(cursor, engine)
+                if not tables:
+                    raise HTTPException(400, "数据库中无可用表，请在连接配置中选择表")
+                table = tables[0]
+            # 获取列
+            if engine == "sqlite":
+                cursor.execute(f'PRAGMA table_info("{table}")')
+                cols = [r[1] for r in cursor.fetchall()]
+            elif engine == "mysql":
+                cursor.execute(f"SHOW COLUMNS FROM `{table}`")
+                cols = [r[0] for r in cursor.fetchall()]
+            else:
+                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+                cols = [r[0] for r in cursor.fetchall()]
+            text_cols = [c for c in cols if c and c.lower() not in ("id", "created_at", "updated_at")]
+            if not text_cols:
+                text_cols = cols
+            place = "%s" if engine == "mysql" else "?"
+            cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols)
+            cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT {place}', [f"%{q}%"] * len(text_cols) + [limit])
+            rows = cursor.fetchall()
+            hits = []
+            for r in rows:
+                item = {}
+                for i, c in enumerate(cols):
+                    if i < len(r):
+                        v = r[i]
+                        item[c] = str(v)[:300] if v is not None else ""
+                hits.append(item)
+            return {"ok": True, "hits": hits, "count": len(hits), "table": table}
+        except Exception as e:
+            raise HTTPException(400, f"检索失败：{e}")
+        finally:
+            try:
+                db_conn.close()
+            except Exception:
+                pass
+    if kb_type == "file":
+        p = (d.get("path") or "").strip()
+        if not p or not os.path.exists(p):
+            raise HTTPException(400, "文件路径不存在")
+        files = [p] if os.path.isfile(p) else []
+        if not files:
+            for root, _, fns in os.walk(p):
+                for fn in fns:
+                    if fn.lower().endswith((".txt", ".md", ".csv", ".log")):
+                        files.append(os.path.join(root, fn))
+        hits = []
+        for fp in files:
+            try:
+                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read(200000)
+            except OSError:
+                continue
+            matched = [ln.strip() for ln in content.splitlines() if q.lower() in ln.lower()]
+            if matched:
+                hits.append({
+                    "file": os.path.basename(fp),
+                    "path": fp,
+                    "matches": matched[:5],
+                    "match_count": len(matched),
+                })
+            if len(hits) >= limit:
+                break
+        return {"ok": True, "hits": hits, "count": len(hits)}
+    raise HTTPException(400, "该类型知识库暂不支持内容检索（db / file 支持）")
+
+
+# ── 知识库文档管理（上传 / 列表 / 删除）─────────────────────
+_KB_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "kb")
+_KB_ALLOWED_EXT = {
+    ".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".html", ".htm",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+}
+_KB_MAX_UPLOAD = 20 * 1024 * 1024  # 20MB
+
+
+def _safe_kb_filename(filename: str) -> str:
+    """清洗上传文件名：去除路径与非法字符，保留可读名称。"""
+    name = os.path.basename((filename or "").replace("\\", "/"))
+    name = re.sub(r"[^\w\u4e00-\u9fa5.\-]", "_", name)
+    return name[:120] or f"doc_{int(time.time() * 1000)}"
+
+
+@app.post("/api/knowledge-bases/upload")
+async def upload_kb_document(file: UploadFile = File(...), current_user: dict = require_auth()):
+    """上传知识库文档：保存到 uploads/kb/，返回可用于创建 file 类型知识库的路径。"""
+    os.makedirs(_KB_UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _KB_ALLOWED_EXT:
+        raise HTTPException(400, f"不支持的文件类型：{ext or '(无扩展名)'}（支持 {', '.join(sorted(_KB_ALLOWED_EXT))}）")
+    content = await file.read()
+    if len(content) > _KB_MAX_UPLOAD:
+        raise HTTPException(400, "文件过大，单个文件不能超过 20MB")
+    if not content:
+        raise HTTPException(400, "文件内容为空")
+    # 保留原始名 + 短随机前缀，避免重名覆盖
+    safe_name = _safe_kb_filename(file.filename)
+    stored = f"{int(time.time() * 1000)}_{safe_name}"
+    dest = os.path.join(_KB_UPLOAD_DIR, stored)
+    with open(dest, "wb") as f:
+        f.write(content)
+    return {
+        "path": dest,
+        "filename": safe_name,
+        "size": len(content),
+        "detail": f"已上传 {safe_name}（{len(content) / 1024:.1f} KB），可直接用于创建知识库",
+    }
+
+
+@app.get("/api/knowledge-bases/{kb_id}/documents")
+async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):
+    """列出知识库文档：file 类型扫描目录/文件；db 类型返回表信息；url 返回空。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "知识库不存在")
+    d = dict(row)
+    kb_type = d.get("type") or "file"
+    docs = []
+    if kb_type == "file":
+        p = (d.get("path") or "").strip()
+        if p and os.path.isdir(p):
+            for fn in sorted(os.listdir(p)):
+                fp = os.path.join(p, fn)
+                if os.path.isfile(fp):
+                    try:
+                        docs.append({"name": fn, "path": fp, "size": os.path.getsize(fp),
+                                     "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat()})
+                    except OSError:
+                        continue
+        elif p and os.path.isfile(p):
+            try:
+                docs.append({"name": os.path.basename(p), "path": p, "size": os.path.getsize(p),
+                             "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat()})
+            except OSError:
+                pass
+    elif kb_type == "db":
+        try:
+            cfg = json.loads(d.get("config") or "{}") or {}
+            db_conn, cursor, err = _kb_connect(cfg)
+            if db_conn and not err:
+                try:
+                    tables = _kb_list_tables(cursor, (cfg.get("engine") or "sqlite").lower())
+                    docs = [{"name": t, "path": t, "size": 0, "mtime": "", "is_table": True} for t in tables]
+                finally:
+                    db_conn.close()
+        except Exception:
+            pass
+    return {"type": kb_type, "docs": docs, "count": len(docs)}
+
+
+@app.delete("/api/knowledge-bases/{kb_id}/documents")
+async def delete_kb_document(kb_id: str, filename: str = "", current_user: dict = require_auth()):
+    """删除知识库中的文档（仅限该知识库路径下的文件，防目录穿越）。"""
+    if not filename:
+        raise HTTPException(400, "请指定要删除的文件名")
+    conn = get_db()
+    row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "知识库不存在")
+    d = dict(row)
+    if (d.get("type") or "file") != "file":
+        raise HTTPException(400, "仅 file 类型知识库支持删除文档")
+    base = (d.get("path") or "").strip()
+    if not base or not os.path.isdir(base):
+        raise HTTPException(400, "知识库目录不存在")
+    target = os.path.realpath(os.path.join(base, os.path.basename(filename)))
+    base_real = os.path.realpath(base)
+    if not target.startswith(base_real + os.sep):
+        raise HTTPException(400, "文件名不合法")
+    if not os.path.isfile(target):
+        raise HTTPException(404, "文件不存在")
+    os.remove(target)
+    return {"success": True, "filename": os.path.basename(target)}
+
+
 # ── MCP Servers 管理 ───────────────────────────────────────────
+def _mask_auth_config(auth_type: str, cfg: dict) -> dict:
+    """脱敏认证配置（列表/详情返回，不泄露密钥）。"""
+    cfg = cfg or {}
+    if auth_type == "bearer" and cfg.get("token"):
+        t = cfg["token"]
+        return {"token": (t[:6] + "••••••" + t[-4:]) if len(t) > 12 else "••••••••"}
+    if auth_type == "basic" and cfg.get("username"):
+        return {"username": cfg["username"], "password": "••••••"}
+    if auth_type == "api_key" and cfg.get("key"):
+        k = cfg["key"]
+        return {"header_name": cfg.get("header_name") or "X-API-Key", "key": (k[:6] + "••••••" + k[-4:]) if len(k) > 12 else "••••••••"}
+    return dict(cfg)
+
+
+def _mcp_auth_headers(auth_type: str, cfg: dict) -> dict:
+    """根据认证配置生成请求头（供测试连接 / 未来调用使用）。"""
+    cfg = cfg or {}
+    if auth_type == "bearer" and cfg.get("token"):
+        return {"Authorization": f"Bearer {cfg['token']}"}
+    if auth_type == "basic" and cfg.get("username"):
+        raw = f"{cfg['username']}:{cfg.get('password', '')}"
+        return {"Authorization": "Basic " + base64.b64encode(raw.encode()).decode()}
+    if auth_type == "api_key" and cfg.get("key"):
+        return {cfg.get("header_name") or "X-API-Key": cfg["key"]}
+    return {}
+
+
+def _parse_mcp_response(text: str):
+    """解析 MCP 响应：兼容纯 JSON 与 SSE（data: {...} 行）。"""
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("data:") and line[5:].strip():
+            try:
+                return json.loads(line[5:].strip())
+            except ValueError:
+                continue
+    return None
+
+
 @app.get("/api/mcp-servers")
 async def list_mcp_servers(current_user: dict = require_auth()):
-    """获取所有 MCP Servers"""
+    """获取所有 MCP Servers（认证配置脱敏）"""
     conn = get_db()
     servers = conn.execute("SELECT * FROM mcp_servers ORDER BY created_at DESC").fetchall()
     conn.close()
@@ -597,18 +1877,23 @@ async def list_mcp_servers(current_user: dict = require_auth()):
         d = dict(s)
         d["status"] = "active" if d.get("enabled") else "inactive"
         d["transport"] = d.get("transport_type") or "stdio"
+        try:
+            auth_cfg = json.loads(d.get("auth_config") or "{}") or {}
+        except (ValueError, TypeError):
+            auth_cfg = {}
+        d["auth_config"] = _mask_auth_config(d.get("auth_type") or "none", auth_cfg)
         result.append(d)
     return result
 
 
 @app.post("/api/mcp-servers")
 async def create_mcp_server(req: MCPServerCreateRequest, current_user: dict = require_auth()):
-    """创建 MCP Server"""
+    """创建 MCP Server（支持认证配置：none/bearer/basic/api_key）"""
     conn = get_db()
     server_id = f"mcp_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO mcp_servers (id, name, transport_type, command, args, env, url, enabled, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO mcp_servers (id, name, transport_type, command, args, env, url, auth_type, auth_config, enabled, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             server_id,
             req.name,
@@ -617,6 +1902,8 @@ async def create_mcp_server(req: MCPServerCreateRequest, current_user: dict = re
             json.dumps(req.args),
             json.dumps(req.env),
             req.url,
+            req.auth_type or "none",
+            json.dumps(req.auth_config or {}),
             1 if req.enabled else 0,
             datetime.now().isoformat(),
         ),
@@ -628,7 +1915,7 @@ async def create_mcp_server(req: MCPServerCreateRequest, current_user: dict = re
 
 @app.put("/api/mcp-servers/{server_id}")
 async def update_mcp_server(server_id: str, req: MCPServerUpdateRequest, current_user: dict = require_auth()):
-    """更新 MCP Server"""
+    """更新 MCP Server（auth_config 传空字典 = 清空认证）"""
     conn = get_db()
     updates = []
     vals = []
@@ -650,6 +1937,12 @@ async def update_mcp_server(server_id: str, req: MCPServerUpdateRequest, current
     if req.args is not None:
         updates.append("args=?")
         vals.append(json.dumps(req.args))
+    if req.auth_type is not None:
+        updates.append("auth_type=?")
+        vals.append(req.auth_type)
+    if req.auth_config is not None:
+        updates.append("auth_config=?")
+        vals.append(json.dumps(req.auth_config))
     if req.enabled is not None:
         updates.append("enabled=?")
         vals.append(1 if req.enabled else 0)
@@ -685,6 +1978,70 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+@app.post("/api/mcp-servers/{server_id}/test")
+async def test_mcp_server(server_id: str, current_user: dict = require_auth()):
+    """测试 MCP 连接：stdio 检查命令可执行；SSE/HTTP 执行 JSON-RPC initialize 握手（自动注入认证头）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "MCP 服务器不存在")
+    d = dict(row)
+    transport = d.get("transport_type") or "stdio"
+    try:
+        auth_cfg = json.loads(d.get("auth_config") or "{}") or {}
+    except (ValueError, TypeError):
+        auth_cfg = {}
+    headers = _mcp_auth_headers(d.get("auth_type") or "none", auth_cfg)
+
+    if transport == "stdio":
+        cmd = (d.get("command") or "").strip()
+        if not cmd:
+            return {"ok": False, "error": "未配置启动命令"}
+        prog = cmd.split()[0]
+        if not (shutil.which(prog) or os.path.exists(prog)):
+            return {"ok": False, "error": f"找不到可执行命令：{prog}"}
+        return {"ok": True, "detail": f"命令可执行：{cmd}", "tools": []}
+
+    url = (d.get("url") or "").strip()
+    if not url:
+        return {"ok": False, "error": "未配置 URL"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            init_payload = {
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "clientInfo": {"name": "xiaotuan", "version": "1.0"},
+                },
+            }
+            resp = await client.post(
+                url, json=init_payload,
+                headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            data = _parse_mcp_response(resp.text)
+            if not data or "result" not in data:
+                return {"ok": True, "detail": "服务响应正常（未识别到 JSON-RPC 结果）", "tools": []}
+            server_info = data.get("result", {}).get("serverInfo", {}) or {}
+            # 获取工具列表
+            tools = []
+            try:
+                resp2 = await client.post(
+                    url, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                    headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+                )
+                data2 = _parse_mcp_response(resp2.text)
+                tools = [t.get("name", "?") for t in (data2.get("result", {}).get("tools", []) if data2 else [])]
+            except Exception:
+                pass
+            name = server_info.get("name", "")
+            return {"ok": True, "detail": f"initialize 握手成功（{name or 'MCP 服务'}）", "tools": tools}
+    except Exception as e:
+        return {"ok": False, "error": f"连接失败：{e}"}
 
 
 # ── 沙箱管理 ───────────────────────────────────────────────────
@@ -769,6 +2126,19 @@ async def sandbox_get_project(project_id: str, current_user: dict = require_auth
 @app.post("/api/sandbox/projects/{project_id}/start")
 async def sandbox_start_project(project_id: str, current_user: dict = require_auth()):
     """启动沙箱项目"""
+    # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
+    if project_id.startswith("deploy-"):
+        import subprocess
+        from datetime import datetime
+        container = f"sandbox-{project_id[len('deploy-'):]}"
+        r = subprocess.run(["podman", "start", container], capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
+        conn = get_db()
+        conn.execute("UPDATE sandbox_projects SET status='running', updated_at=? WHERE id=?", (datetime.now().isoformat(), project_id))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "container": container}
     from sandbox import process_manager
 
     return process_manager.start_container(project_id)
@@ -777,6 +2147,19 @@ async def sandbox_start_project(project_id: str, current_user: dict = require_au
 @app.post("/api/sandbox/projects/{project_id}/stop")
 async def sandbox_stop_project(project_id: str, current_user: dict = require_auth()):
     """停止沙箱项目"""
+    # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
+    if project_id.startswith("deploy-"):
+        import subprocess
+        from datetime import datetime
+        container = f"sandbox-{project_id[len('deploy-'):]}"
+        r = subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
+        conn = get_db()
+        conn.execute("UPDATE sandbox_projects SET status='stopped', updated_at=? WHERE id=?", (datetime.now().isoformat(), project_id))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "container": container}
     from sandbox import process_manager
 
     return process_manager.stop_container(project_id)
@@ -785,6 +2168,17 @@ async def sandbox_stop_project(project_id: str, current_user: dict = require_aut
 @app.delete("/api/sandbox/projects/{project_id}")
 async def sandbox_delete_project(project_id: str, current_user: dict = require_auth()):
     """删除沙箱项目"""
+    # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
+    if project_id.startswith("deploy-"):
+        import subprocess
+        container = f"sandbox-{project_id[len('deploy-'):]}"
+        subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
+        subprocess.run(["podman", "rm", container], capture_output=True, text=True, timeout=30)
+        conn = get_db()
+        conn.execute("DELETE FROM sandbox_projects WHERE id=?", (project_id,))
+        conn.commit()
+        conn.close()
+        return {"status": "success", "container": container}
     from sandbox import process_manager
 
     result = process_manager.remove_container(project_id)
@@ -793,6 +2187,23 @@ async def sandbox_delete_project(project_id: str, current_user: dict = require_a
     conn.commit()
     conn.close()
     return result
+
+
+@app.get("/api/sandbox/projects/{project_id}/logs")
+async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: dict = require_auth()):
+    """获取沙箱项目/部署容器日志（tail 默认 200 行）"""
+    import subprocess as _sp
+    if project_id.startswith("deploy-"):
+        container = f"sandbox-{project_id[len('deploy-'):]}"
+        r = _sp.run(["podman", "logs", "--tail", str(tail), container], capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            return {"logs": [], "message": (r.stderr or "").strip() or f"容器 {container} 不存在或未启动"}
+        lines = r.stdout.splitlines()
+        return {"logs": lines, "container": container}
+    from sandbox import process_manager
+
+    logs = process_manager.get_logs(project_id, tail=tail)
+    return {"logs": logs, "container": f"sandbox-{project_id}"}
 
 
 app.include_router(image_factory_router)
@@ -819,6 +2230,9 @@ app.include_router(tool_hub_router)
 # v9.0: Stock Tools API
 from stock_tools import router as stock_tools_router
 app.include_router(stock_tools_router)
+
+# v9.1: 管理后台 API
+app.include_router(admin_api_router)
 
 
 if __name__ == "__main__":

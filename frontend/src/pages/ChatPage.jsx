@@ -5,8 +5,7 @@ import {
   Bot as BotIcon, ArrowRight, RefreshCw,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
@@ -624,8 +623,8 @@ function MessageBubble({ msg }) {
               })}
             </div>
           )}
-          <div className={`text-sm leading-relaxed ${isUser || isError ? 'whitespace-pre-wrap' : 'prose prose-sm max-w-none'}`}>
-            {isUser || isError ? msg.content : <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>}
+          <div className={`text-sm leading-relaxed ${isUser || isError ? 'whitespace-pre-wrap' : ''}`}>
+            {isUser || isError ? msg.content : <MarkdownRenderer content={msg.content} />}
           </div>
           <p className={`text-xs mt-1.5 ${isUser ? 'text-white/60' : 'text-gray-400'}`}>
             {formatRelativeTime(msg.timestamp)}

@@ -14,16 +14,62 @@ import {
   Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
 } from '../components/ui'
 
-// 工作流快速模板
+// 工作流快速模板（带完整节点编排，创建后即可运行）
 const WORKFLOW_TEMPLATES = [
-  { name: '需求评审流程', description: '从需求收集→评审→确认的标准化流程', icon: FileCheck, color: 'from-blue-500 to-indigo-600',
-    defaults: { name: '需求评审流程', description: '产品需求收集、技术评审、排期确认的标准化工作流' } },
-  { name: '代码发布流程', description: '代码审查→测试→部署的CI/CD流程', icon: GitBranch, color: 'from-emerald-500 to-green-600',
-    defaults: { name: '代码发布流程', description: '代码审查、自动化测试、灰度发布、全量上线的CI/CD工作流' } },
-  { name: '内容审核流程', description: '内容创建→审核→发布的管控流程', icon: Shield, color: 'from-amber-500 to-orange-600',
-    defaults: { name: '内容审核流程', description: '内容创建、多级审核、合规检查、定时发布的管控工作流' } },
-  { name: '客户 Onboarding', description: '新客户引导→配置→上线流程', icon: UserCheck, color: 'from-violet-500 to-purple-600',
-    defaults: { name: '客户 Onboarding', description: '新客户注册、需求对接、系统配置、培训上线的标准流程' } },
+  { name: '需求评审流程', description: '需求文档生成→评审→输出的标准化流程', icon: FileCheck, color: 'from-blue-500 to-indigo-600',
+    defaults: { name: '需求评审流程', description: '产品需求收集、技术评审、排期确认的标准化工作流' },
+    definition: {
+      nodes: [
+        { id: 'tpl_prd1', type: 'prd', label: '需求文档生成', x: 60, y: 160, config: { stage: 'generate', prd_text: '${input.message}', tech_design: '', language: 'python' } },
+        { id: 'tpl_prd2', type: 'prd', label: '需求评审', x: 300, y: 160, config: { stage: 'review', prd_text: '${tpl_prd1.result}', tech_design: '', language: 'python' } },
+        { id: 'tpl_out1', type: 'output', label: '评审结果输出', x: 540, y: 160, config: {} },
+      ],
+      edges: [
+        { id: 'e_prd1', from: 'tpl_prd1', to: 'tpl_prd2' },
+        { id: 'e_prd2', from: 'tpl_prd2', to: 'tpl_out1' },
+      ],
+    } },
+  { name: '代码发布流程', description: '发布计划→代码审查→质量判定→决策输出的 CI/CD 流程', icon: GitBranch, color: 'from-emerald-500 to-green-600',
+    defaults: { name: '代码发布流程', description: '代码审查、自动化测试、灰度发布、全量上线的CI/CD工作流' },
+    definition: {
+      nodes: [
+        { id: 'tpl_plan', type: 'agent', label: '发布计划制定', x: 60, y: 160, config: { agent_id: '', message: '${input.message}' } },
+        { id: 'tpl_review', type: 'agent', label: '代码审查', x: 300, y: 160, config: { agent_id: '', message: '请对以下发布计划进行代码审查并输出审查报告：\n${tpl_plan.result}' } },
+        { id: 'tpl_check', type: 'condition', label: '质量判定', x: 540, y: 160, config: { expression: "results['tpl_review'].status == 'success'" } },
+        { id: 'tpl_out2', type: 'output', label: '发布决策输出', x: 780, y: 160, config: {} },
+      ],
+      edges: [
+        { id: 'e_plan', from: 'tpl_plan', to: 'tpl_review' },
+        { id: 'e_review', from: 'tpl_review', to: 'tpl_check' },
+        { id: 'e_check', from: 'tpl_check', to: 'tpl_out2' },
+      ],
+    } },
+  { name: '内容审核流程', description: '内容创作→合规审核→发布的管控流程', icon: Shield, color: 'from-amber-500 to-orange-600',
+    defaults: { name: '内容审核流程', description: '内容创建、多级审核、合规检查、定时发布的管控工作流' },
+    definition: {
+      nodes: [
+        { id: 'tpl_create', type: 'agent', label: '内容创作', x: 60, y: 160, config: { agent_id: '', message: '请创作以下主题的内容：\n${input.message}' } },
+        { id: 'tpl_audit', type: 'agent', label: '合规审核', x: 300, y: 160, config: { agent_id: '', message: '请审核以下内容是否合规并输出审核结论：\n${tpl_create.result}' } },
+        { id: 'tpl_out3', type: 'output', label: '审核结果输出', x: 540, y: 160, config: {} },
+      ],
+      edges: [
+        { id: 'e_create', from: 'tpl_create', to: 'tpl_audit' },
+        { id: 'e_audit', from: 'tpl_audit', to: 'tpl_out3' },
+      ],
+    } },
+  { name: '客户 Onboarding', description: '需求分析→方案配置→上线计划输出', icon: UserCheck, color: 'from-violet-500 to-purple-600',
+    defaults: { name: '客户 Onboarding', description: '新客户注册、需求对接、系统配置、培训上线的标准流程' },
+    definition: {
+      nodes: [
+        { id: 'tpl_analyze', type: 'agent', label: '需求分析', x: 60, y: 160, config: { agent_id: '', message: '请分析以下客户需求并输出需求清单：\n${input.message}' } },
+        { id: 'tpl_plan2', type: 'agent', label: '方案配置', x: 300, y: 160, config: { agent_id: '', message: '根据以下需求清单输出系统配置与上线计划：\n${tpl_analyze.result}' } },
+        { id: 'tpl_out4', type: 'output', label: '上线计划输出', x: 540, y: 160, config: {} },
+      ],
+      edges: [
+        { id: 'e_analyze', from: 'tpl_analyze', to: 'tpl_plan2' },
+        { id: 'e_plan2', from: 'tpl_plan2', to: 'tpl_out4' },
+      ],
+    } },
 ]
 
 // 状态元数据
@@ -186,7 +232,7 @@ function WorkflowFormModal({ open, onClose, onSubmit, editing, defaults, loading
 
   const handleSubmit = () => {
     if (!validate()) return
-    onSubmit({ ...form, name: form.name.trim() })
+    onSubmit({ ...form, name: form.name.trim(), definition: defaults?.definition })
   }
 
   const setField = (key, val) => setForm((p) => ({ ...p, [key]: val }))
@@ -205,6 +251,12 @@ function WorkflowFormModal({ open, onClose, onSubmit, editing, defaults, loading
       }
     >
       <div className="space-y-4">
+        {defaults?.definition && !editing && (
+          <div className="p-3 rounded-xl bg-violet-50 border border-violet-200 text-xs text-violet-700 flex items-center gap-2">
+            <GitBranch className="w-4 h-4 flex-shrink-0" />
+            该模板已预置完整节点编排，创建后可直接点击「执行」体验
+          </div>
+        )}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
           <input
@@ -293,12 +345,16 @@ export default function WorkflowsPage() {
         await api.put(`/api/workflows/${editingWorkflow.id}`, formData)
         toast.success(`工作流「${formData.name}」已更新`)
       } else {
-        await api.post('/api/workflows', {
+        const res = await api.post('/api/workflows', {
           name: formData.name,
           description: formData.description,
-          definition: { nodes: [], edges: [] },
+          definition: formData.definition || { nodes: [], edges: [] },
         })
         toast.success(`工作流「${formData.name}」已创建`)
+        // 创建后直接进入编辑器编排 / 执行
+        setShowForm(false)
+        navigate(`/workflows/${res.data.id}`)
+        return
       }
       setShowForm(false)
       fetchWorkflows()
@@ -378,7 +434,7 @@ export default function WorkflowsPage() {
             {WORKFLOW_TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
-                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                onClick={() => { setFormDefaults({ ...tpl.defaults, definition: tpl.definition }); setShowForm(true) }}
                 className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
               >
                 <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>

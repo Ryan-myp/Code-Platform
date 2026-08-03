@@ -25,6 +25,11 @@ def setup_test_db():
         del sys.modules["config"]
     if "main" in sys.modules:
         del sys.modules["main"]
+    # 重定向 Skills 文件目录到临时目录（避免污染真实 backend/skills_files/）
+    from common import config as config_mod
+
+    skills_tmp = Path(db_path).parent / f"{Path(db_path).stem}_skills"
+    config_mod.SKILLS_DIR = skills_tmp
     from main import init_db
     init_db()
     yield db_path
@@ -37,6 +42,11 @@ def setup_test_db():
         os.unlink(db_path)
     except OSError:
         pass
+    # 清理临时 Skills 目录
+    import shutil
+
+    if skills_tmp.exists():
+        shutil.rmtree(skills_tmp, ignore_errors=True)
 
 
 @pytest.fixture

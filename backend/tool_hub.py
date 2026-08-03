@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any
 from common.db import get_db
 from common.auth import require_auth
 from common.llm import call_llm
+from permissions import access_status, get_visibility_map, load_user_ctx
 
 router = APIRouter()
 
@@ -6220,9 +6221,14 @@ class ToolRunRequest(BaseModel):
 
 @router.get("/api/tools")
 async def list_tools(current_user: dict = require_auth()):
-    """获取所有效率工具列表"""
+    """获取当前用户可见的效率工具列表（受内容权限控制）。"""
+    vis_map = get_visibility_map("tool")
+    user_ctx = load_user_ctx(current_user)
     tools = []
     for tool_id, tool in TOOL_DEFINITIONS.items():
+        status = access_status(user_ctx, vis_map.get(tool_id, "all"))
+        if not status["visible"]:
+            continue
         item = {
             "id": tool_id,
             "name": tool["name"],
@@ -6231,6 +6237,9 @@ async def list_tools(current_user: dict = require_auth()):
             "color": tool["color"],
             "description": tool["description"],
         }
+        if status.get("locked"):
+            item["locked"] = True
+            item["requires"] = status["requires"]
         if tool.get("type") == "app":
             item["type"] = "app"
             item["path"] = tool["path"]
@@ -6246,16 +6255,57 @@ async def list_tools(current_user: dict = require_auth()):
     return tools
 
 
+# ⚠️ 注意：/api/tools/stats 必须定义在 /api/tools/{tool_id} 之前，否则会被当作 tool_id 捕获（路由顺序陷阱）
+@router.get("/api/tools/stats")
+async def get_usage_stats(current_user: dict = require_auth()):
+    """获取工具使用统计"""
+    user_id = current_user.get("id", "default")
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT tool_id, use_count, last_used_at 
+               FROM tool_usage_stats WHERE user_id=? 
+               ORDER BY use_count DESC LIMIT 20""",
+            (user_id,)
+        ).fetchall()
+        stats = []
+        for row in rows:
+            tool_id = row["tool_id"]
+            if tool_id in TOOL_DEFINITIONS:
+                tool = TOOL_DEFINITIONS[tool_id]
+                stats.append({
+                    "tool_id": tool_id,
+                    "name": tool["name"],
+                    "category": tool["category"],
+                    "icon": tool["icon"],
+                    "color": tool["color"],
+                    "use_count": row["use_count"],
+                    "last_used_at": row["last_used_at"],
+                })
+        return stats
+    finally:
+        conn.close()
+
+
 @router.get("/api/tools/{tool_id}")
 async def get_tool(tool_id: str, current_user: dict = require_auth()):
-    """获取单个工具详情"""
+    """获取单个工具详情（无权限返回 404 防探测）。"""
     if tool_id not in TOOL_DEFINITIONS:
         raise HTTPException(404, "工具不存在")
+    vis_map = get_visibility_map("tool")
+    user_ctx = load_user_ctx(current_user)
+    status = access_status(user_ctx, vis_map.get(tool_id, "all"))
+    if not status["visible"]:
+        raise HTTPException(404, "工具不存在")
     tool = TOOL_DEFINITIONS[tool_id]
-    return {
+    result = {
         "id": tool_id,
         **tool,
     }
+    if status.get("locked"):
+        result["locked"] = True
+        result["requires"] = status["requires"]
+    return result
 
 
 @router.post("/api/tools/run")
@@ -6263,6 +6313,15 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
     """运行效率工具"""
     if data.tool_id not in TOOL_DEFINITIONS:
         raise HTTPException(404, "工具不存在")
+
+    # 内容权限兑底：不可见工具与不存在无异（404 防探测），锁定工具拒绝运行（403）
+    vis_map = get_visibility_map("tool")
+    user_ctx = load_user_ctx(current_user)
+    status = access_status(user_ctx, vis_map.get(data.tool_id, "all"))
+    if not status["visible"]:
+        raise HTTPException(404, "工具不存在")
+    if status.get("locked"):
+        raise HTTPException(403, "该工具暂未对你开放")
 
     tool = TOOL_DEFINITIONS[data.tool_id]
 
@@ -6286,21 +6345,24 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
     try:
         result = call_llm(
             "你是一个专业的AI助手，请根据用户的要求生成高质量内容。输出格式要清晰、结构化的Markdown。",
-            prompt
+            prompt,
+            model=data.model or None,
         )
 
         # 保存记录
         conn = get_db()
         try:
             record_id = f"tool_{uuid.uuid4().hex[:12]}"
+            # require_auth 依赖返回 user_id 字段（旧代码误用 id，恒为 default）
+            uid = current_user.get("user_id") or "default"
             conn.execute(
-                """INSERT INTO tool_records (id, tool_id, input, result, model, created_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (record_id, data.tool_id, json.dumps({"input": data.input, "params": data.params}), 
-                 result, data.model, datetime.now().isoformat())
+                """INSERT INTO tool_records (id, tool_id, input, result, model, created_at, user_id)
+                   VALUES (?,?,?,?,?,?,?) """,
+                (record_id, data.tool_id, json.dumps({"input": data.input, "params": data.params}),
+                 result, data.model, datetime.now().isoformat(), uid)
             )
             # 更新使用统计
-            user_id = current_user.get("id", "default")
+            user_id = uid
             stats_id = f"stat_{uuid.uuid4().hex[:12]}"
             existing_stat = conn.execute(
                 "SELECT id, use_count FROM tool_usage_stats WHERE user_id=? AND tool_id=?",
@@ -6335,13 +6397,14 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
 
 @router.get("/api/tools/{tool_id}/history")
 async def get_tool_history(tool_id: str, limit: int = 20, current_user: dict = require_auth()):
-    """获取工具使用历史"""
+    """获取工具使用历史（仅当前用户）"""
     conn = get_db()
     try:
+        uid = current_user.get("user_id") or "default"
         items = []
         for row in conn.execute(
-            "SELECT * FROM tool_records WHERE tool_id=? ORDER BY created_at DESC LIMIT ?",
-            (tool_id, limit)
+            "SELECT * FROM tool_records WHERE tool_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?",
+            (tool_id, uid, limit)
         ).fetchall():
             item = dict(row)
             # 解析 input JSON
@@ -6354,6 +6417,34 @@ async def get_tool_history(tool_id: str, limit: int = 20, current_user: dict = r
                 item["params"] = {}
             items.append(item)
         return items
+    finally:
+        conn.close()
+
+
+@router.get("/api/records")
+async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
+    """统一记录中心：工具使用记录 + 分享记录（仅当前用户）。"""
+    conn = get_db()
+    try:
+        uid = current_user.get("user_id") or "default"
+        tools = []
+        for row in conn.execute(
+            "SELECT * FROM tool_records WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (uid, min(limit, 100))
+        ).fetchall():
+            item = dict(row)
+            item["tool_name"] = TOOL_DEFINITIONS.get(item.get("tool_id"), {}).get("name", item.get("tool_id"))
+            try:
+                input_data = json.loads(item.get("input", "{}"))
+                item["input_text"] = input_data.get("input", "")
+            except Exception:
+                item["input_text"] = item.get("input", "")
+            tools.append(item)
+        shares = [dict(r) for r in conn.execute(
+            "SELECT * FROM shares WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
+            (uid,)
+        ).fetchall()]
+        return {"tools": tools, "shares": shares}
     finally:
         conn.close()
 
@@ -6562,36 +6653,5 @@ async def check_favorite(tool_id: str, current_user: dict = require_auth()):
             (user_id, tool_id)
         ).fetchone()
         return {"favorited": row is not None}
-    finally:
-        conn.close()
-
-
-@router.get("/api/tools/stats")
-async def get_usage_stats(current_user: dict = require_auth()):
-    """获取工具使用统计"""
-    user_id = current_user.get("id", "default")
-    conn = get_db()
-    try:
-        rows = conn.execute(
-            """SELECT tool_id, use_count, last_used_at 
-               FROM tool_usage_stats WHERE user_id=? 
-               ORDER BY use_count DESC LIMIT 20""",
-            (user_id,)
-        ).fetchall()
-        stats = []
-        for row in rows:
-            tool_id = row["tool_id"]
-            if tool_id in TOOL_DEFINITIONS:
-                tool = TOOL_DEFINITIONS[tool_id]
-                stats.append({
-                    "tool_id": tool_id,
-                    "name": tool["name"],
-                    "category": tool["category"],
-                    "icon": tool["icon"],
-                    "color": tool["color"],
-                    "use_count": row["use_count"],
-                    "last_used_at": row["last_used_at"],
-                })
-        return stats
     finally:
         conn.close()

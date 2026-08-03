@@ -196,6 +196,123 @@ def test_skill_crud(test_db_path, auth_headers):
     assert response.status_code == 200
 
 
+def test_skill_zip_import_export(test_db_path, auth_headers):
+    """Skill ZIP 导入/导出冒烟测试（标准目录结构）"""
+    import io
+    import zipfile
+
+    from fastapi.testclient import TestClient
+    from main import app
+
+    client = TestClient(app)
+    # 构造标准 skill zip（带公共顶层目录 demo-skill/）
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "demo-skill/SKILL.md",
+            "---\nname: 演示技能\ndescription: ZIP导入演示\n---\n\n# 演示技能正文",
+        )
+        zf.writestr("demo-skill/scripts/hello.py", "print('hello from zip')")
+        zf.writestr("demo-skill/references/notes.md", "参考资料")
+
+    # 导入
+    resp = client.post(
+        "/api/skills/import-zip",
+        files={"file": ("demo-skill.zip", buf.getvalue(), "application/zip")},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "演示技能"
+    assert data["imported"] == 3
+    skill_id = data["id"]
+    try:
+        # 目录树 + 分目录统计
+        tree_resp = client.get(f"/api/skills/{skill_id}/files/tree", headers=auth_headers)
+        assert tree_resp.status_code == 200
+        tree = tree_resp.json()
+        assert tree["file_count"] == 3
+        assert tree["dir_counts"] == {"scripts": 1, "references": 1, "examples": 0, "assets": 0}
+
+        # 读取导入的文件
+        file_resp = client.get(
+            f"/api/skills/{skill_id}/file", params={"path": "scripts/hello.py"}, headers=auth_headers
+        )
+        assert file_resp.status_code == 200
+        assert file_resp.json()["content"] == "print('hello from zip')"
+
+        # 列表接口携带 dir_counts（前端徽章）
+        list_resp = client.get("/api/skills", headers=auth_headers)
+        match = next((s for s in list_resp.json() if s["id"] == skill_id), None)
+        assert match is not None
+        assert match["dir_counts"]["scripts"] == 1
+
+        # 导出 zip 并校验内容
+        exp_resp = client.get(f"/api/skills/{skill_id}/export-zip", headers=auth_headers)
+        assert exp_resp.status_code == 200
+        assert exp_resp.headers.get("content-type") == "application/zip"
+        with zipfile.ZipFile(io.BytesIO(exp_resp.content)) as zf:
+            names = zf.namelist()
+        assert any(n.endswith("SKILL.md") for n in names)
+        assert any(n.endswith("scripts/hello.py") for n in names)
+        assert any(n.endswith("references/notes.md") for n in names)
+    finally:
+        client.delete(f"/api/skills/{skill_id}", headers=auth_headers)
+
+
+def test_skill_file_crud_and_path_traversal(test_db_path, auth_headers):
+    """Skill 文件接口 CRUD + 路径穿越拒绝"""
+    from fastapi.testclient import TestClient
+    from main import app
+
+    client = TestClient(app)
+    create_resp = client.post(
+        "/api/skills",
+        json={"name": "文件接口测试", "description": "", "content": "# 测试"},
+        headers=auth_headers,
+    )
+    assert create_resp.status_code == 200
+    skill_id = create_resp.json()["id"]
+    try:
+        # 新建文件（自动创建父目录）
+        put_resp = client.put(
+            f"/api/skills/{skill_id}/file",
+            params={"path": "scripts/run.py"},
+            json={"content": "print('run')"},
+            headers=auth_headers,
+        )
+        assert put_resp.status_code == 200
+
+        # 读取
+        get_resp = client.get(
+            f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["content"] == "print('run')"
+
+        # 删除后读取 → 404
+        del_resp = client.delete(
+            f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
+        )
+        assert del_resp.status_code == 200
+        get_resp2 = client.get(
+            f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
+        )
+        assert get_resp2.status_code == 404
+
+        # 路径穿越 → 400
+        for bad in ("../../etc/passwd", "..", "/etc/passwd"):
+            assert client.get(
+                f"/api/skills/{skill_id}/file", params={"path": bad}, headers=auth_headers
+            ).status_code == 400
+            assert client.put(
+                f"/api/skills/{skill_id}/file", params={"path": bad},
+                json={"content": "x"}, headers=auth_headers,
+            ).status_code == 400
+    finally:
+        client.delete(f"/api/skills/{skill_id}", headers=auth_headers)
+
+
 def test_config_get_endpoint(test_db_path):
     """测试获取配置端点（公开）"""
     from fastapi.testclient import TestClient

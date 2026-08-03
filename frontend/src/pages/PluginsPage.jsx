@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
   Badge, PageHeader,
@@ -236,12 +237,14 @@ export default function PluginsPage() {
                 <CheckCircle className="w-5 h-5" />
                 执行成功
               </div>
-              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-white p-4 rounded-lg border max-h-[55vh] overflow-auto">
-                {(() => {
-                  const out = testResult.output
-                  return typeof out === 'string' ? out : JSON.stringify(out, null, 2)
-                })()}
-              </pre>
+              <div className="bg-white p-4 rounded-lg border max-h-[55vh] overflow-auto">
+                <MarkdownRenderer
+                  content={(() => {
+                    const out = testResult.output
+                    return typeof out === 'string' ? out : JSON.stringify(out, null, 2)
+                  })()}
+                />
+              </div>
             </div>
           ) : (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4">

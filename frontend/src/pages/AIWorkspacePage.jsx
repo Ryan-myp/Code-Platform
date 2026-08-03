@@ -1,25 +1,37 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { useNavigate } from 'react-router-dom'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
   FileText, Code2, TestTube2, Send, Loader2, BookOpen, MessageSquare,
   Copy, Sparkles, Bot, User, Edit2, Save, X, FolderGit2, ListTodo,
-  Download, Layers, ArrowRight, RefreshCw,
+  Download, Layers, ArrowRight, RefreshCw, ShieldCheck, Rocket, ExternalLink,
+  CheckCircle2, XCircle, GitBranch, Wrench, Undo2,
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, copyToClipboard } from '../lib/format'
-import { Button, Empty, PageHeader } from '../components/ui'
+import { Button, Empty, PageHeader, Modal } from '../components/ui'
 
-const PIPELINE = ['prd', 'review', 'td', 'test', 'code']
+const PIPELINE = ['prd', 'review', 'td', 'test', 'code', 'review_code']
+
+// 流水线阶段顺序与产物字段映射（状态条可视化 + 需求变更传播）
+const PIPELINE_STAGES = [
+  { key: 'prd', label: 'PRD', field: 'prd_text' },
+  { key: 'review', label: 'PRD 审查', field: 'review_report' },
+  { key: 'td', label: '技术方案', field: 'tech_design' },
+  { key: 'test', label: '测试用例', field: 'test_cases' },
+  { key: 'code', label: '代码生成', field: 'code' },
+  { key: 'review_code', label: '代码审查', field: 'code_review' },
+]
 
 const TABS = {
   prd: { label: 'PRD 编写', icon: FileText, color: 'blue', next: 'review', nextLabel: '下一步: 审查' },
   review: { label: 'PRD 审查', icon: BookOpen, color: 'emerald', next: 'td', nextLabel: '下一步: 技术方案' },
   td: { label: '技术方案', icon: Code2, color: 'indigo', next: 'test', nextLabel: '下一步: 测试用例' },
   test: { label: '测试用例', icon: TestTube2, color: 'green', next: 'code', nextLabel: '下一步: 代码生成' },
-  code: { label: '代码生成', icon: Layers, color: 'purple' },
+  code: { label: '代码生成', icon: Layers, color: 'purple', next: 'review_code', nextLabel: '下一步: 代码审查' },
+  review_code: { label: '代码审查', icon: ShieldCheck, color: 'amber', next: 'code', nextLabel: '回到代码生成' },
 }
 
 // 全静态 class 名，避免 Tailwind purge 丢失动态颜色
@@ -29,6 +41,7 @@ const COLOR_MAP = {
   indigo: { from: 'from-indigo-600', to: 'to-purple-600', light: 'bg-indigo-50', border: 'border-indigo-100', text: 'text-indigo-700', icon: 'text-indigo-600', active: 'border-indigo-600 text-indigo-600', ring: 'focus:border-indigo-500 focus:ring-indigo-500/10' },
   green: { from: 'from-green-600', to: 'to-emerald-600', light: 'bg-green-50', border: 'border-green-100', text: 'text-green-700', icon: 'text-green-600', active: 'border-green-600 text-green-600', ring: 'focus:border-green-500 focus:ring-green-500/10' },
   purple: { from: 'from-purple-600', to: 'to-indigo-600', light: 'bg-purple-50', border: 'border-purple-100', text: 'text-purple-700', icon: 'text-purple-600', active: 'border-purple-600 text-purple-600', ring: 'focus:border-purple-500 focus:ring-purple-500/10' },
+  amber: { from: 'from-amber-500', to: 'to-orange-600', light: 'bg-amber-50', border: 'border-amber-100', text: 'text-amber-700', icon: 'text-amber-600', active: 'border-amber-500 text-amber-600', ring: 'focus:border-amber-500 focus:ring-amber-500/10' },
 }
 
 function initState() {
@@ -39,6 +52,7 @@ function initState() {
     prdText: '',
     userInput: '',
     techDesign: '',
+    codeText: '',
     language: 'go',
     loading: false,
     editingMsgIdx: null,
@@ -46,14 +60,376 @@ function initState() {
   }
 }
 
+// 一键部署进度弹窗：轮询流水线运行日志，展示构建/启动/健康检查进度；失败后支持 AI 诊断修复
+function DeployModal({ info, onClose }) {
+  const navigate = useNavigate()
+  const toast = useToast()
+  const [run, setRun] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [trackingRunId, setTrackingRunId] = useState(null)
+  const [fixing, setFixing] = useState(false)
+
+  useEffect(() => {
+    if (!info) return
+    setTrackingRunId(info.runId)
+    setRun(null)
+    setLoading(true)
+  }, [info])
+
+  useEffect(() => {
+    if (!info || !trackingRunId) return
+    let alive = true
+    let timer = null
+    const fetchRun = async () => {
+      try {
+        const res = await api.get(`/api/pipelines/${info.pipelineId}/runs`)
+        if (!alive) return
+        const found = (res.data || []).find((r) => r.id === trackingRunId) || null
+        setRun(found)
+        if (found && found.status !== 'running') clearInterval(timer)
+      } catch (e) {
+        // 轮询失败静默，下次重试
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    fetchRun()
+    timer = setInterval(fetchRun, 3000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [info, trackingRunId])
+
+  const status = run?.status || 'running'
+  const done = status === 'success'
+  const failed = status === 'failed'
+  const logText = run?.log || ''
+  // 部署失败后自动修复（config.auto_fix 开启）：同一运行内进入 AI 诊断修复循环
+  const autoFixing = status === 'running' && logText.includes('AI 诊断修复')
+  const fixRound = (logText.match(/第 (\d+)\/3 轮 AI 诊断修复/) || [])[1] || ''
+
+  const handleManualFix = async () => {
+    setFixing(true)
+    try {
+      const res = await api.post(`/api/pipelines/${info.pipelineId}/auto-fix`)
+      setTrackingRunId(res.data.id)
+      setRun(null)
+      setLoading(true)
+      toast.success('AI 诊断修复已启动，正在分析日志并修复…')
+    } catch (e) {
+      toast.error(`修复启动失败：${e.message}`)
+    } finally {
+      setFixing(false)
+    }
+  }
+
+  return (
+    <Modal open={!!info} onClose={onClose} title={`沙箱部署 - ${info?.name || ''}`} size="lg">
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          {done ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <CheckCircle2 className="w-3.5 h-3.5" /> 部署成功
+            </span>
+          ) : failed ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+              <XCircle className="w-3.5 h-3.5" /> 部署失败
+            </span>
+          ) : autoFixing ? (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> AI 自动修复中{fixRound ? `（第 ${fixRound}/3 轮）` : ''}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> 部署中（首次构建镜像约 1-3 分钟）
+            </span>
+          )}
+          {autoFixing && (
+            <span className="text-xs text-amber-600">AI 正在分析日志、修改代码并重新部署，全程可关闭弹窗后在流水线页跟踪</span>
+          )}
+        </div>
+
+        {done && (
+          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-emerald-800">服务已在沙箱容器中运行</p>
+              <p className="text-xs text-emerald-600 mt-0.5">可通过下方地址访问，也可在「CI/CD 流水线」「沙箱运行」中停止或管理</p>
+            </div>
+            <a
+              href={`http://localhost:${info.port}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors flex-shrink-0"
+            >
+              <ExternalLink className="w-3.5 h-3.5" /> 访问服务
+            </a>
+          </div>
+        )}
+
+        {failed && (
+          <div className="space-y-2">
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 leading-relaxed">
+              部署未成功。可点击「AI 诊断修复」自动分析日志、修改代码并重新部署（最多 3 轮），也可查看下方日志手动定位问题。
+            </div>
+            <button
+              onClick={handleManualFix}
+              disabled={fixing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm disabled:opacity-60"
+            >
+              {fixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+              {fixing ? '修复启动中…' : 'AI 诊断修复'}
+            </button>
+          </div>
+        )}
+
+        <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[45vh] whitespace-pre-wrap">
+          {loading ? '加载中…' : (run?.log || '（等待日志输出…）')}
+        </pre>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>关闭</Button>
+          <Button variant="gradient" icon={GitBranch} onClick={() => { onClose(); navigate('/pipelines') }}>去 CI/CD 流水线</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// 一句话全自动：输入功能描述 → 后台串行执行 6 阶段 + 自动部署，实时展示进度与日志
+const AUTO_RUN_STEPS = [
+  { key: 'prd', label: 'PRD 生成' },
+  { key: 'review', label: 'PRD 审查' },
+  { key: 'td', label: '技术方案' },
+  { key: 'test', label: '测试用例' },
+  { key: 'code', label: '代码生成' },
+  { key: 'review_code', label: '代码审查' },
+  { key: 'deploy', label: '沙箱部署' },
+]
+
+function AutoRunModal({ open, onClose }) {
+  const toast = useToast()
+  const [desc, setDesc] = useState('')
+  const [name, setName] = useState('')
+  const [language, setLanguage] = useState('python')
+  const [deploy, setDeploy] = useState(true)
+  const [starting, setStarting] = useState(false)
+  const [runId, setRunId] = useState(null)
+  const [run, setRun] = useState(null)
+
+  const isBusy = run && ['running', 'stopping'].includes(run.status)
+  const progress = run?.stage_progress || {}
+
+  // 阶段状态：done 完成 / running 进行中 / failed 失败 / skipped 跳过 / wait 等待
+  const stageState = (key) => {
+    if (progress[key] === 'done') return 'done'
+    if (progress[key] === 'running') return 'running'
+    if (progress[key] === 'failed') return 'failed'
+    if (progress[key] === 'skipped') return 'skipped'
+    if (run?.status === 'running' && run?.current_stage === key) return 'running'
+    if (run?.status === 'failed' && run?.current_stage === key) return 'failed'
+    return 'wait'
+  }
+
+  const startRun = async () => {
+    if (!desc.trim()) { toast.error('请先描述你想要做的功能'); return }
+    setStarting(true)
+    try {
+      const res = await api.post('/api/auto-run', {
+        name: name.trim() || undefined,
+        description: desc.trim(),
+        language,
+        deploy,
+        target_stage: 'deploy',
+      })
+      setRunId(res.data.run_id)
+      setRun({ status: 'running', current_stage: 'prd', stage_progress: {}, log: '流水线已启动…' })
+      toast.success('🚀 全自动流水线已启动，正在生成 PRD…')
+    } catch (e) {
+      toast.error(`启动失败：${e.message}`)
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  const stopRun = async () => {
+    try {
+      await api.post(`/api/auto-runs/${runId}/stop`)
+      toast.success('正在停止，将在当前阶段结束后生效')
+    } catch (e) {
+      toast.error(`停止失败：${e.message}`)
+    }
+  }
+
+  // 轮询运行进度
+  useEffect(() => {
+    if (!open || !runId) return
+    let alive = true
+    let timer = null
+    const fetchRun = async () => {
+      try {
+        const res = await api.get(`/api/auto-runs/${runId}`)
+        if (!alive) return
+        setRun(res.data)
+        if (['success', 'failed', 'stopped'].includes(res.data.status)) clearInterval(timer)
+      } catch { /* 轮询失败静默，下次重试 */ }
+    }
+    fetchRun()
+    timer = setInterval(fetchRun, 3000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [open, runId])
+
+  // 每次打开时重置（关闭后重新开始新流程）
+  useEffect(() => {
+    if (open) { setRunId(null); setRun(null) }
+  }, [open])
+
+  const close = () => { setRunId(null); setRun(null); onClose() }
+
+  return (
+    <Modal open={open} onClose={close}>
+      <div className="p-5 space-y-4 w-full max-w-2xl">
+        <div className="flex items-center gap-2.5">
+          <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-white" />
+          </span>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">一句话全自动</h2>
+            <p className="text-xs text-gray-500">说出你想要做的功能，AI 自动完成全部研发流程</p>
+          </div>
+        </div>
+
+        {!runId ? (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {['做一个待办事项网页应用，支持增删改查', '做一个天气查询小工具', '做一个记账本 API 服务'].map((ex) => (
+                <button
+                  key={ex}
+                  onClick={() => setDesc(ex)}
+                  className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 text-xs border border-indigo-100 hover:bg-indigo-100 transition-colors"
+                >
+                  {ex}
+                </button>
+              ))}
+            </div>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={4}
+              placeholder="例如：做一个待办事项管理网页应用，支持添加、编辑、删除和标记完成，数据保存在本地文件"
+              className="w-full p-3 text-sm border border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none resize-none"
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="应用名（可选，默认取描述）"
+                className="px-3 py-2 text-sm border border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none"
+              />
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="px-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none"
+              >
+                <option value="python">Python</option>
+                <option value="go">Go</option>
+                <option value="java">Java</option>
+                <option value="typescript">TypeScript</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={deploy} onChange={(e) => setDeploy(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
+              自动部署到沙箱（生成可访问的服务地址）
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={close}>取消</Button>
+              <Button variant="gradient" icon={Sparkles} onClick={startRun} disabled={starting}>
+                {starting ? '启动中…' : '开始全自动实现'}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* 7 步进度条 */}
+            <div className="grid grid-cols-7 gap-1.5">
+              {AUTO_RUN_STEPS.map((st) => {
+                const stt = stageState(st.key)
+                return (
+                  <div key={st.key} className="flex flex-col items-center gap-1.5">
+                    <span className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${
+                      stt === 'done' ? 'bg-emerald-500 border-emerald-500 text-white'
+                        : stt === 'running' ? 'bg-indigo-50 border-indigo-500 text-indigo-600'
+                        : stt === 'failed' ? 'bg-red-500 border-red-500 text-white'
+                        : stt === 'skipped' ? 'bg-gray-100 border-gray-300 text-gray-400'
+                        : 'bg-white border-gray-200 text-gray-300'
+                    }`}>
+                      {stt === 'done' ? <CheckCircle2 className="w-4 h-4" />
+                        : stt === 'running' ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : stt === 'failed' ? <XCircle className="w-4 h-4" />
+                        : <span className="text-[10px] font-medium">{stt === 'skipped' ? '—' : '·'}</span>}
+                    </span>
+                    <span className={`text-[10px] text-center leading-tight ${
+                      stt === 'done' ? 'text-emerald-700 font-medium' : stt === 'running' ? 'text-indigo-700 font-medium' : stt === 'failed' ? 'text-red-600 font-medium' : 'text-gray-400'
+                    }`}>{st.label}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* 状态汇总 */}
+            <div className="p-3.5 rounded-xl bg-gray-50 border border-gray-200 space-y-2">
+              {run?.status === 'success' ? (
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span className="text-sm font-medium text-emerald-700 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" /> 全流程完成！所有产物已保存到需求
+                  </span>
+                  {run.port > 0 && (
+                    <a href={`http://localhost:${run.port}`} target="_blank" rel="noreferrer"
+                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors">
+                      <ExternalLink className="w-3.5 h-3.5" /> 访问服务
+                    </a>
+                  )}
+                </div>
+              ) : run?.status === 'failed' ? (
+                <div className="text-sm text-red-700 flex items-start gap-1.5">
+                  <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>流程失败：{run.error || '未知错误'}（已完成阶段产物已保存，可在 AI 工作台中手动继续）</span>
+                </div>
+              ) : run?.status === 'stopped' ? (
+                <span className="text-sm font-medium text-amber-700 flex items-center gap-1.5">
+                  <XCircle className="w-4 h-4" /> 已手动停止（已完成阶段产物已保存）
+                </span>
+              ) : (
+                <span className="text-sm font-medium text-indigo-700 flex items-center gap-1.5">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {run?.status === 'stopping' ? '正在停止…' : 'AI 正在全流程自动实现中，请稍候（约 2-5 分钟）…'}
+                </span>
+              )}
+            </div>
+
+            {/* 日志 */}
+            <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[40vh] whitespace-pre-wrap">
+              {run?.log || '加载中…'}
+            </pre>
+
+            <div className="flex justify-end gap-2">
+              {isBusy && <Button variant="secondary" onClick={stopRun}>停止</Button>}
+              <Button variant="gradient" onClick={close}>关闭</Button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 export default function AIWorkspacePage() {
   const toast = useToast()
   const [tab, setTab] = useState('prd')
-  const [state, setState] = useState(() => ({ prd: initState(), review: initState(), td: initState(), test: initState(), code: initState() }))
+  const [state, setState] = useState(() => ({ prd: initState(), review: initState(), td: initState(), test: initState(), code: initState(), review_code: initState() }))
   const [requirements, setRequirements] = useState([])
   const [reqLoading, setReqLoading] = useState(true)
   const [reqError, setReqError] = useState(null)
   const [selectedReqId, setSelectedReqId] = useState(null)
+  const [deployInfo, setDeployInfo] = useState(null)
+  const [autoRunOpen, setAutoRunOpen] = useState(false)
   const messagesEndRef = useRef(null)
 
   const s = state[tab]
@@ -87,15 +463,43 @@ export default function AIWorkspacePage() {
 
   const selectedReq = requirements.find((r) => r.id === selectedReqId) || null
 
+  // 阶段状态：stale=上游变更需重新生成 / done=已有产物 / idle=未开始
+  const stageStatus = (key) => {
+    if (!selectedReq) return 'idle'
+    let ps = selectedReq.pipeline_status || {}
+    if (typeof ps === 'string') { try { ps = JSON.parse(ps) } catch { ps = {} } }
+    if (ps[key]?.status === 'stale') return 'stale'
+    const stage = PIPELINE_STAGES.find((s) => s.key === key)
+    return selectedReq[stage.field] ? 'done' : 'idle'
+  }
+
+  // 从需求产物预填目标标签的输入区（仅当输入区为空时，避免覆盖用户正在编辑的内容）
+  const prefillFromRequirement = (key, req) => {
+    if (!req) return
+    const patch = {}
+    if (key === 'prd' && !state.prd.userInput) patch.userInput = req.description || ''
+    else if (key === 'review' && !state.review.prdText) patch.prdText = req.prd_text || ''
+    else if (key === 'td' && !state.td.prdText) patch.prdText = req.review_report || req.prd_text || ''
+    else if (key === 'test') {
+      if (!state.test.prdText) patch.prdText = req.prd_text || ''
+      if (!state.test.techDesign) patch.techDesign = req.tech_design || ''
+    } else if (key === 'code' && !state.code.techDesign) patch.techDesign = req.tech_design || ''
+    else if (key === 'review_code' && !state.review_code.codeText) patch.codeText = req.code || ''
+    if (Object.keys(patch).length > 0) {
+      setState((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }))
+    }
+  }
+
+  const handleTabChange = (key) => {
+    setTab(key)
+    const req = requirements.find((r) => r.id === selectedReqId)
+    prefillFromRequirement(key, req)
+  }
+
   const handleSelectRequirement = (reqId) => {
     setSelectedReqId(reqId)
     const req = requirements.find((r) => r.id === reqId)
-    if (!req) return
-    if (tab === 'prd') update({ userInput: req.description || '' })
-    else if (tab === 'review') update({ prdText: req.prd_text || '' })
-    else if (tab === 'td') update({ prdText: req.review_report || req.prd_text || '' })
-    else if (tab === 'test') update({ prdText: req.prd_text || '', techDesign: req.tech_design || '' })
-    else if (tab === 'code') update({ techDesign: req.tech_design || '' })
+    prefillFromRequirement(tab, req)
   }
 
   const saveToRequirement = async (stage, content) => {
@@ -120,12 +524,12 @@ export default function AIWorkspacePage() {
   }
 
   // 使用函数式更新，修复原代码连续 addMessage 时丢失前一条消息的 bug
-  const addMessage = (role, content) => {
+  const addMessage = (role, content, meta = {}) => {
     setState((prev) => ({
       ...prev,
       [tab]: {
         ...prev[tab],
-        messages: [...prev[tab].messages, { role, content, timestamp: new Date().toISOString() }],
+        messages: [...prev[tab].messages, { role, content, timestamp: new Date().toISOString(), ...meta }],
       },
     }))
   }
@@ -165,6 +569,14 @@ export default function AIWorkspacePage() {
         addMessage('user', `语言: ${s.language}\n技术方案: ${s.techDesign}`)
         addMessage('assistant', result)
         await saveToRequirement('code', result)
+      } else if (tab === 'review_code') {
+        if (!s.codeText.trim()) { toast.error('请输入要审查的代码'); update({ loading: false }); return }
+        const result = await callApi('/api/code/review', { language: s.language, code: stripImages(s.codeText) })
+        addMessage('user', `语言: ${s.language}\n代码:\n${s.codeText}`)
+        addMessage('assistant', result)
+        update({ codeText: '' })
+        // 审查结果留存到需求，可回到代码生成或下次直接查看
+        await saveToRequirement('code_review', result)
       }
     } catch (e) {
       toast.error(`生成失败：${e.message}`)
@@ -185,6 +597,7 @@ export default function AIWorkspacePage() {
       else if (tab === 'review') { url = '/api/prd/review'; body = { prd_text: historyText, repo_path: s.repoPath } }
       else if (tab === 'td') { url = '/api/prd/technical-design'; body = { prd_text: historyText, repo_path: s.repoPath } }
       else if (tab === 'test') { url = '/api/prd/test-cases'; body = { prd_text: historyText, tech_design: s.techDesign } }
+      else if (tab === 'review_code') { url = '/api/code/review'; body = { language: s.language, code: historyText } }
       else { url = '/api/prd/code-chat'; body = { message: historyText, language: s.language } }
       const result = await callApi(url, body)
       addMessage('assistant', result)
@@ -199,18 +612,62 @@ export default function AIWorkspacePage() {
   const goNext = () => {
     const next = TABS[tab]?.next
     if (!next) return
-    const req = requirements.find((r) => r.id === selectedReqId)
     setTab(next)
-    if (req) {
-      const patch = {}
-      if (next === 'review' && req.prd_text) patch.prdText = req.prd_text
-      else if (next === 'td') patch.prdText = req.review_report || req.prd_text || ''
-      else if (next === 'test') { patch.prdText = req.prd_text || ''; patch.techDesign = req.tech_design || '' }
-      else if (next === 'code') patch.techDesign = req.tech_design || ''
-      if (Object.keys(patch).length > 0) {
-        setState((prev) => ({ ...prev, [next]: { ...prev[next], ...patch } }))
-      }
+    const req = requirements.find((r) => r.id === selectedReqId)
+    prefillFromRequirement(next, req)
+  }
+
+  // 从对话中提取待审查的代码（输入框优先，否则取最近一次用户提交的代码）
+  const extractReviewCode = () => {
+    if (s.codeText.trim()) return s.codeText.trim()
+    const userMsgs = s.messages.filter((m) => m.role === 'user')
+    const marker = '代码:\n'
+    for (let i = userMsgs.length - 1; i >= 0; i--) {
+      const idx = userMsgs[i].content.indexOf(marker)
+      if (idx >= 0) return userMsgs[i].content.slice(idx + marker.length).trim()
     }
+    return userMsgs[0]?.content || ''
+  }
+
+  // 根据审查意见修改代码：审查结果 → LLM 返回修改后的完整代码
+  const handleImprove = async (reviewMsg) => {
+    if (s.loading) return
+    const code = extractReviewCode()
+    if (!code) { toast.error('未找到待修改的代码，请先在左侧粘贴代码'); return }
+    update({ loading: true })
+    try {
+      addMessage('user', '请根据上面的审查意见修改代码')
+      const result = await callApi('/api/code/improve', { language: s.language, code, review: stripImages(reviewMsg.content) })
+      addMessage('assistant', result, { kind: 'improved' })
+    } catch (e) {
+      toast.error(`代码修改失败：${e.message}`)
+    } finally {
+      update({ loading: false })
+    }
+  }
+
+  // 把审查后的改进代码带回「代码生成」，可继续追问优化或重新部署
+  const handleBringToCode = async (improvedMsg) => {
+    const code = (improvedMsg.content || '').replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
+    if (!code) { toast.error('未解析到修改后的代码'); return }
+    setState((prev) => ({
+      ...prev,
+      code: {
+        ...prev.code,
+        messages: [
+          ...prev.code.messages,
+          {
+            role: 'user',
+            content: `（代码审查后修改的代码，可直接继续追问优化）\n\`\`\`${s.language}\n${code}\n\`\`\``,
+            timestamp: new Date().toISOString(),
+            meta: { from: 'review' },
+          },
+        ],
+      },
+    }))
+    await saveToRequirement('code', code)
+    setTab('code')
+    toast.success('已带回代码生成，可继续追问优化或重新部署')
   }
 
   const startEdit = (idx) => update({ editingMsgIdx: idx, editContent: s.messages[idx].content })
@@ -237,7 +694,34 @@ export default function AIWorkspacePage() {
     URL.revokeObjectURL(url)
   }
 
-  const canGenerate = tab === 'prd' ? s.userInput.trim() : tab === 'code' ? s.techDesign.trim() : s.prdText.trim()
+  // 一键部署到沙箱：代码落盘 → podman 构建镜像 → 启动容器 → 健康检查
+  const handleDeploy = async (codeText) => {
+    if (s.language !== 'python') {
+      toast.error('当前沙箱部署仅支持 Python 服务（后续支持更多语言）')
+      return
+    }
+    const clean = (codeText || '').replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
+    if (!clean) {
+      toast.error('无可部署代码，请先完成代码生成')
+      return
+    }
+    const base = (selectedReq?.name || 'ai-service').replace(/[^\w\-]+/g, '-').slice(0, 20) || 'ai-service'
+    const name = `${base}-${Math.random().toString(36).slice(2, 6)}`
+    try {
+      const res = await api.post('/api/deployments', {
+        name,
+        language: 'python',
+        code: clean,
+        requirement_id: selectedReqId || '',
+      })
+      setDeployInfo({ open: true, pipelineId: res.data.pipeline_id, runId: res.data.run_id, port: res.data.port, name: res.data.name })
+      toast.success('部署已启动，正在构建镜像…')
+    } catch (e) {
+      toast.error(`部署启动失败：${e.message}`)
+    }
+  }
+
+  const canGenerate = tab === 'prd' ? s.userInput.trim() : tab === 'code' ? s.techDesign.trim() : tab === 'review_code' ? s.codeText.trim() : s.prdText.trim()
   const generateBtnText = getGenerateBtnText()
   const chatPlaceholder = getChatPlaceholder()
 
@@ -249,6 +733,59 @@ export default function AIWorkspacePage() {
         icon={Sparkles}
       />
 
+      {/* 一句话全自动入口：小白用户只需说出功能，AI 全流程自动实现 */}
+      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 rounded-2xl p-5 text-white shadow-lg flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="flex-1">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Rocket className="w-5 h-5" /> 一句话全自动
+          </h3>
+          <p className="text-sm text-white/80 mt-1">
+            说出你想要的功能，AI 自动完成 PRD → 审查 → 技术方案 → 测试用例 → 代码 → 审查 → 部署 全流程，全程可视化跟踪
+          </p>
+        </div>
+        <button
+          onClick={() => setAutoRunOpen(true)}
+          className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-indigo-700 rounded-xl font-semibold text-sm hover:bg-indigo-50 transition-all shadow-md hover:shadow-lg flex-shrink-0"
+        >
+          <Sparkles className="w-4 h-4" /> 开始全自动实现
+        </button>
+      </div>
+
+      {/* 流水线状态条：6 阶段可视化，点击任意阶段跳转（关联需求时显示） */}
+      {selectedReq && (
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium flex-shrink-0">
+            <GitBranch className="w-3.5 h-3.5" /> 流水线进度
+          </div>
+          <div className="flex-1 flex items-center gap-1 overflow-x-auto">
+            {PIPELINE_STAGES.map((stage, idx) => {
+              const st = stageStatus(stage.key)
+              const active = tab === stage.key
+              return (
+                <React.Fragment key={stage.key}>
+                  {idx > 0 && (
+                    <div className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`} />
+                  )}
+                  <button
+                    onClick={() => handleTabChange(stage.key)}
+                    title={st === 'stale' ? '上游已变更，此阶段产物建议重新生成' : st === 'done' ? '已有产物，可查看或重新生成' : '尚未生成'}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
+                      active ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${
+                      st === 'stale' ? 'bg-amber-500' : st === 'done' ? 'bg-emerald-500' : 'bg-gray-300'
+                    }`} />
+                    {stage.label}
+                    {st === 'stale' && <span className="text-[10px] text-amber-600 font-semibold">需更新</span>}
+                  </button>
+                </React.Fragment>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {PIPELINE.map((key) => {
@@ -257,12 +794,15 @@ export default function AIWorkspacePage() {
           return (
             <button
               key={key}
-              onClick={() => setTab(key)}
+              onClick={() => handleTabChange(key)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 tab === key ? TColor.active : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
               <t.icon className="w-4 h-4" /> {t.label}
+              {stageStatus(key) === 'stale' && (
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">需更新</span>
+              )}
             </button>
           )
         })}
@@ -278,9 +818,12 @@ export default function AIWorkspacePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
+      <DeployModal info={deployInfo} onClose={() => setDeployInfo(null)} />
+      <AutoRunModal open={autoRunOpen} onClose={() => setAutoRunOpen(false)} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* 左：输入面板 */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
+        <div className="lg:col-span-1 bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
           <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 space-y-2">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
@@ -348,7 +891,7 @@ export default function AIWorkspacePage() {
         </div>
 
         {/* 右：对话面板 */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
           <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-purple-600" />
@@ -382,6 +925,21 @@ export default function AIWorkspacePage() {
                         {tab === 'code' && msg.role === 'assistant' && (
                           <button onClick={() => downloadCode(msg.content)} title="下载代码" className="p-0.5 hover:bg-black/10 rounded"><Download className="w-3 h-3" /></button>
                         )}
+                        {tab === 'code' && msg.role === 'assistant' && s.language === 'python' && (
+                          <button onClick={() => handleDeploy(msg.content)} title="部署到沙箱" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Rocket className="w-3 h-3" /></button>
+                        )}
+                        {tab === 'review_code' && msg.role === 'assistant' && msg.kind !== 'improved' && (
+                          <button onClick={() => handleImprove(msg)} title="按此审查意见修改代码" className="p-0.5 hover:bg-black/10 rounded text-amber-600"><Wrench className="w-3 h-3" /></button>
+                        )}
+                        {tab === 'review_code' && msg.role === 'assistant' && msg.kind === 'improved' && (
+                          <>
+                            <button onClick={() => downloadCode(msg.content)} title="下载代码" className="p-0.5 hover:bg-black/10 rounded"><Download className="w-3 h-3" /></button>
+                            {s.language === 'python' && (
+                              <button onClick={() => handleDeploy(msg.content)} title="部署到沙箱" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Rocket className="w-3 h-3" /></button>
+                            )}
+                            <button onClick={() => handleBringToCode(msg)} title="带回代码生成" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Undo2 className="w-3 h-3" /></button>
+                          </>
+                        )}
                       </div>
                       {s.editingMsgIdx === idx ? (
                         <div className="space-y-1.5">
@@ -397,15 +955,43 @@ export default function AIWorkspacePage() {
                           </div>
                         </div>
                       ) : (
-                        <div className={`text-sm leading-relaxed ${msg.role === 'user' ? 'whitespace-pre-wrap' : 'prose prose-sm max-w-none'}`}>
+                        <div className={`text-sm leading-relaxed ${msg.role === 'user' ? 'whitespace-pre-wrap' : ''}`}>
                           {msg.role === 'assistant'
-                            ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                            ? <MarkdownRenderer content={msg.content} />
                             : msg.content}
                         </div>
                       )}
                       <div className={`text-xs mt-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>
                         {formatRelativeTime(msg.timestamp)}
                       </div>
+                      {tab === 'code' && msg.role === 'assistant' && s.language === 'python' && (
+                        <div className="mt-2.5">
+                          <button
+                            onClick={() => handleDeploy(msg.content)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
+                          >
+                            <Rocket className="w-3.5 h-3.5" /> 一键部署到沙箱
+                          </button>
+                        </div>
+                      )}
+                      {tab === 'review_code' && msg.role === 'assistant' && msg.kind === 'improved' && (
+                        <div className="mt-2.5 flex flex-wrap gap-2">
+                          {s.language === 'python' && (
+                            <button
+                              onClick={() => handleDeploy(msg.content)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
+                            >
+                              <Rocket className="w-3.5 h-3.5" /> 部署改进后的代码
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleBringToCode(msg)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
+                          >
+                            <Undo2 className="w-3.5 h-3.5" /> 带回代码生成
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -490,9 +1076,27 @@ export default function AIWorkspacePage() {
         </>
       )
     }
+    if (tab === 'code') {
+      return (
+        <>
+          <RichTextEditor value={s.techDesign} onChange={(v) => update({ techDesign: v })} placeholder="粘贴或输入技术方案内容…" minHeight={180} />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
+            <select className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`} value={s.language} onChange={(e) => update({ language: e.target.value })}>
+              <option value="go">Go</option>
+              <option value="python">Python</option>
+              <option value="java">Java</option>
+              <option value="typescript">TypeScript</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1.5">生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行</p>
+          </div>
+        </>
+      )
+    }
+    // review_code：代码审查
     return (
       <>
-        <RichTextEditor value={s.techDesign} onChange={(v) => update({ techDesign: v })} placeholder="粘贴或输入技术方案内容…" minHeight={180} />
+        <RichTextEditor value={s.codeText} onChange={(v) => update({ codeText: v })} placeholder="粘贴要审查的代码…" minHeight={200} />
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
           <select className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`} value={s.language} onChange={(e) => update({ language: e.target.value })}>
@@ -511,6 +1115,7 @@ export default function AIWorkspacePage() {
     if (tab === 'review') return '开始审查'
     if (tab === 'td') return '生成技术方案'
     if (tab === 'test') return '生成测试用例'
+    if (tab === 'review_code') return '开始审查'
     return '生成代码'
   }
 
@@ -519,6 +1124,7 @@ export default function AIWorkspacePage() {
     if (tab === 'review') return '对审查结果提出意见或追问…'
     if (tab === 'td') return '对技术方案提出修改意见…'
     if (tab === 'test') return '对测试用例提出修改意见，例如：补充边界条件…'
+    if (tab === 'review_code') return '对审查结果提出意见或追问…'
     return '对生成的代码提出修改意见，例如：增加错误处理…'
   }
 }

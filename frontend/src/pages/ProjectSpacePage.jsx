@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { formatDateTime, formatDate } from '../lib/format'
 import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
@@ -396,7 +397,7 @@ export default function ProjectSpacePage() {
             {selectedArtifact.content && (
               <div>
                 <p className="text-xs text-gray-500 mb-1">内容</p>
-                <pre className="whitespace-pre-wrap text-sm font-mono text-gray-800 bg-gray-50 p-4 rounded-lg border max-h-80 overflow-auto">{selectedArtifact.content}</pre>
+                <MarkdownRenderer content={selectedArtifact.content} className="max-h-80 overflow-auto" />
               </div>
             )}
             {selectedArtifact.metadata && (

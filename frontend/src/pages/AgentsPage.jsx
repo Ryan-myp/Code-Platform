@@ -6,6 +6,7 @@ import {
   HeadphonesIcon, Languages, LayoutGrid, List as ListIcon,
   MessageSquare, Clock, X, Sparkles, ChevronDown,
   CheckSquare, Square, Power, PowerOff,
+  Wrench, Database, Cable,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -176,12 +177,97 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
   )
 }
 
+// 资源多选组件：工具 / 知识库 / Skills / MCP 通用
+function ResourceMultiSelect({ title, icon: Icon, options, selected, onChange, loading, placeholder }) {
+  const [q, setQ] = useState('')
+  const filtered = options.filter((o) =>
+    !q || (o.name || o.label || '').toLowerCase().includes(q.toLowerCase())
+  )
+  const toggle = (id) => {
+    onChange(selected.includes(id) ? selected.filter((i) => i !== id) : [...selected, id])
+  }
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+        {title} <span className="text-gray-400 font-normal">（已选 {selected.length}）</span>
+      </label>
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="relative border-b border-gray-100 bg-gray-50/50">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={placeholder || '搜索…'}
+            className="w-full pl-9 pr-3 py-2 text-sm outline-none bg-transparent"
+          />
+        </div>
+        <div className="max-h-40 overflow-y-auto p-1.5 space-y-0.5">
+          {loading ? (
+            <p className="text-xs text-gray-400 text-center py-3">加载中…</p>
+          ) : filtered.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-3">暂无可用选项</p>
+          ) : (
+            filtered.map((o) => {
+              const checked = selected.includes(o.id)
+              return (
+                <label
+                  key={o.id}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer text-sm transition-colors ${
+                    checked ? 'bg-purple-50 text-purple-800' : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(o.id)}
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <span className="flex-1 truncate">{o.name}</span>
+                  {o.category && <span className="text-[10px] text-gray-400 flex-shrink-0">{o.category}</span>}
+                </label>
+              )
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // 表单模态框（创建/编辑共用）
-function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
+function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, modelList = [] }) {
+  // 模型下拉选项：优先使用系统配置的模型列表（未加载/未配置时回退内置常量）
+  const formModelOptions = modelList.length ? modelList.map((m) => m.name) : MODELS
   const [form, setForm] = useState({
-    name: '', description: '', model: 'agnes-2.5-flash', instructions: '', tools: [], knowledge_bases: []
+    name: '', description: '', model: 'agnes-2.5-flash', instructions: '',
+    tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
   })
   const [errors, setErrors] = useState({})
+  // 可绑定资源选项
+  const [toolOptions, setToolOptions] = useState([])
+  const [kbOptions, setKbOptions] = useState([])
+  const [skillOptions, setSkillOptions] = useState([])
+  const [mcpOptions, setMcpOptions] = useState([])
+  const [loadingOptions, setLoadingOptions] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoadingOptions(true)
+    Promise.allSettled([
+      api.get('/api/tools'),
+      api.get('/api/knowledge-bases'),
+      api.get('/api/skills'),
+      api.get('/api/mcp-servers'),
+    ]).then(([tools, kbs, skills, mcps]) => {
+      if (cancelled) return
+      setToolOptions(tools.status === 'fulfilled' ? tools.value.data.map((t) => ({ id: t.id, name: t.name, category: t.category })) : [])
+      setKbOptions(kbs.status === 'fulfilled' ? kbs.value.data.map((k) => ({ id: k.id, name: k.name })) : [])
+      setSkillOptions(skills.status === 'fulfilled' ? skills.value.data.map((s) => ({ id: s.id, name: s.name })) : [])
+      setMcpOptions(mcps.status === 'fulfilled' ? mcps.value.data.map((m) => ({ id: m.id, name: m.name })) : [])
+    }).finally(() => { if (!cancelled) setLoadingOptions(false) })
+    return () => { cancelled = true }
+  }, [open])
 
   useEffect(() => {
     if (open) {
@@ -191,8 +277,10 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading })
           description: editing.description || '',
           model: editing.model || 'agnes-2.5-flash',
           instructions: editing.instructions || '',
-          tools: editing.tools || [],
-          knowledge_bases: editing.knowledge_bases || []
+          tools: Array.isArray(editing.tools) ? editing.tools : [],
+          knowledge_base_ids: Array.isArray(editing.knowledge_base_ids) ? editing.knowledge_base_ids : [],
+          skill_ids: Array.isArray(editing.skill_ids) ? editing.skill_ids : [],
+          mcp_server_ids: Array.isArray(editing.mcp_server_ids) ? editing.mcp_server_ids : [],
         })
       } else if (defaults) {
         setForm({
@@ -200,12 +288,13 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading })
           description: defaults.description || '',
           model: 'agnes-2.5-flash',
           instructions: defaults.instructions || '',
-          tools: [], knowledge_bases: []
+          tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
         })
       } else {
         setForm({
           name: '', description: '', model: 'agnes-2.5-flash',
-          instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '', tools: [], knowledge_bases: []
+          instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '',
+          tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
         })
       }
       setErrors({})
@@ -269,7 +358,7 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading })
             onChange={(e) => setField('model', e.target.value)}
             className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
           >
-            {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+                        {formModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div>
@@ -295,6 +384,47 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading })
             className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all font-mono text-sm"
           />
         </div>
+
+        {/* 资源绑定：工具 / 知识库 / Skills / MCP */}
+        <div className="pt-1 border-t border-gray-100 space-y-4">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">能力绑定（可选）</p>
+          <ResourceMultiSelect
+            title="工具 Tools"
+            icon={Wrench}
+            options={toolOptions}
+            selected={form.tools}
+            onChange={(v) => setField('tools', v)}
+            loading={loadingOptions}
+            placeholder="搜索工具…"
+          />
+          <ResourceMultiSelect
+            title="知识库"
+            icon={Database}
+            options={kbOptions}
+            selected={form.knowledge_base_ids}
+            onChange={(v) => setField('knowledge_base_ids', v)}
+            loading={loadingOptions}
+            placeholder="搜索知识库…"
+          />
+          <ResourceMultiSelect
+            title="Skills 技能"
+            icon={Cpu}
+            options={skillOptions}
+            selected={form.skill_ids}
+            onChange={(v) => setField('skill_ids', v)}
+            loading={loadingOptions}
+            placeholder="搜索 Skills…"
+          />
+          <ResourceMultiSelect
+            title="MCP 服务器"
+            icon={Cable}
+            options={mcpOptions}
+            selected={form.mcp_server_ids}
+            onChange={(v) => setField('mcp_server_ids', v)}
+            loading={loadingOptions}
+            placeholder="搜索 MCP 服务器…"
+          />
+        </div>
       </div>
     </Modal>
   )
@@ -318,6 +448,11 @@ export default function AgentsPage({ tab }) {
   const [formDefaults, setFormDefaults] = useState(null)
   const [tagFilter, setTagFilter] = useState('all')
   const [selectedIds, setSelectedIds] = useState([])
+  // 模型列表（来自系统配置，供创建/编辑 Agent 时选择）
+  const [modelList, setModelList] = useState([])
+  // 专业角色模板（来自后端 agent_templates/）
+  const [templates, setTemplates] = useState([])
+  const [creatingTpl, setCreatingTpl] = useState(null)
 
   const fetchAgents = useCallback(async () => {
     setLoading(true)
@@ -335,6 +470,34 @@ export default function AgentsPage({ tab }) {
   useEffect(() => {
     fetchAgents()
   }, [fetchAgents])
+
+  // 加载系统配置的模型列表
+  useEffect(() => {
+    api.get('/api/config')
+      .then((res) => setModelList(Array.isArray(res.data.models) ? res.data.models : []))
+      .catch(() => {})
+  }, [])
+
+  // 加载专业角色模板
+  useEffect(() => {
+    api.get('/api/agent-templates')
+      .then((res) => setTemplates(Array.isArray(res.data) ? res.data : []))
+      .catch(() => {})
+  }, [])
+
+  // 一键从模板创建
+  const createFromTemplate = async (tpl) => {
+    setCreatingTpl(tpl.name)
+    try {
+      const res = await api.post(`/api/agent-templates/${encodeURIComponent(tpl.name)}/create`)
+      toast.success(`已从模板创建「${res.data.name}」，可直接编辑或执行`)
+      fetchAgents()
+    } catch (e) {
+      toast.error(`创建失败：${e.message}`)
+    } finally {
+      setCreatingTpl(null)
+    }
+  }
 
   const setView = (v) => {
     setViewMode(v)
@@ -485,6 +648,33 @@ export default function AgentsPage({ tab }) {
               </button>
             ))}
           </div>
+
+          {templates.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 mt-6 mb-3">
+                <h4 className="text-sm font-semibold text-gray-800">专业角色模板</h4>
+                <span className="text-xs text-gray-400">点击一键创建，无需任何配置</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    onClick={() => createFromTemplate(tpl)}
+                    disabled={creatingTpl === tpl.name}
+                    className="flex items-start gap-3 p-4 rounded-xl border border-gray-200 hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md transition-all text-left disabled:opacity-60"
+                  >
+                    <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.tag === 'coding' ? 'from-blue-500 to-cyan-600' : tpl.tag === 'writing' ? 'from-pink-500 to-rose-600' : tpl.tag === 'service' ? 'from-amber-500 to-orange-600' : 'from-emerald-500 to-teal-600'} flex items-center justify-center text-white flex-shrink-0`}>
+                      {creatingTpl === tpl.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-semibold text-gray-800 truncate">{tpl.label}</h4>
+                      <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{tpl.description}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -625,6 +815,7 @@ export default function AgentsPage({ tab }) {
         editing={editingAgent}
         defaults={formDefaults}
         loading={saving}
+        modelList={modelList}
       />
 
       {/* 删除确认 */}

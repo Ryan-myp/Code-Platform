@@ -1,17 +1,27 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Loader2, Lock, User as UserIcon } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Lock, User as UserIcon, UserPlus, AtSign } from 'lucide-react'
 import { api } from '../lib/api'
 
 export default function LoginPage({ onLogin }) {
+  const [mode, setMode] = useState('login') // login | register
   const [username, setUsername] = useState('')
+  const [nickname, setNickname] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [inviteCode, setInviteCode] = useState(
+    () => new URLSearchParams(window.location.search).get('invite') || ''
+  )
+  // 分享来源（?share=code，注册时上报用于渠道转化统计）
+  const [shareRef] = useState(
+    () => new URLSearchParams(window.location.search).get('share') || ''
+  )
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  const handleLogin = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     // 前端校验
     if (!username.trim()) {
@@ -22,21 +32,41 @@ export default function LoginPage({ onLogin }) {
       setError('请输入密码')
       return
     }
+    if (mode === 'register') {
+      if (password.length < 6) {
+        setError('密码至少 6 位')
+        return
+      }
+      if (password !== confirmPassword) {
+        setError('两次输入的密码不一致')
+        return
+      }
+    }
     setLoading(true)
     setError('')
     try {
-      const res = await api.post('/api/auth/login', { username: username.trim(), password })
+      const url = mode === 'register' ? '/api/auth/register' : '/api/auth/login'
+      const payload =
+        mode === 'register'
+          ? { username: username.trim(), nickname: nickname.trim() || undefined, password, invite_code: inviteCode.trim() || undefined, share_ref: shareRef || undefined }
+          : { username: username.trim(), password }
+      const res = await api.post(url, payload)
       const { access_token, user } = res.data
       localStorage.setItem('token', access_token)
       localStorage.setItem('user', JSON.stringify(user))
       api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
       onLogin(user)
-      navigate('/agents')
+      navigate('/home')
     } catch (err) {
-      setError(err.message || '登录失败，请检查用户名和密码')
+      setError(err.message || (mode === 'register' ? '注册失败，请重试' : '登录失败，请检查用户名和密码'))
     } finally {
       setLoading(false)
     }
+  }
+
+  const switchMode = (m) => {
+    setMode(m)
+    setError('')
   }
 
   return (
@@ -48,7 +78,7 @@ export default function LoginPage({ onLogin }) {
       </div>
 
       <div className="relative bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-md border border-white/60">
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/30">
             <span className="text-white text-2xl font-bold">AI</span>
           </div>
@@ -56,7 +86,26 @@ export default function LoginPage({ onLogin }) {
           <p className="text-gray-500 mt-2 text-sm">AI 赋能各行各业，智能解决工作难题</p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
+        {/* 登录 / 注册切换 */}
+        <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100/80 rounded-xl mb-6">
+          <button
+            type="button"
+            onClick={() => switchMode('login')}
+            className={`py-2 rounded-lg text-sm font-medium transition-all ${mode === 'login' ? 'bg-white shadow-soft text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode('register')}
+            className={`py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-1 ${mode === 'register' ? 'bg-white shadow-soft text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            注册
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">用户名</label>
             <div className="relative">
@@ -71,6 +120,22 @@ export default function LoginPage({ onLogin }) {
               />
             </div>
           </div>
+          {mode === 'register' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">昵称（可选）</label>
+              <div className="relative">
+                <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70"
+                  placeholder="给自己起个好记的名字"
+                  maxLength={30}
+                />
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">密码</label>
             <div className="relative">
@@ -80,8 +145,8 @@ export default function LoginPage({ onLogin }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70"
-                placeholder="请输入密码"
-                autoComplete="current-password"
+                placeholder={mode === 'register' ? '请设置密码（至少 6 位）' : '请输入密码'}
+                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               />
               <button
                 type="button"
@@ -92,6 +157,38 @@ export default function LoginPage({ onLogin }) {
               </button>
             </div>
           </div>
+          {mode === 'register' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">邀请码（选填）</label>
+              <div className="relative">
+                <UserPlus className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70 uppercase"
+                  placeholder="填写好友邀请码，双方各得 5 次额度"
+                  maxLength={12}
+                />
+              </div>
+            </div>
+          )}
+          {mode === 'register' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">确认密码</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70"
+                  placeholder="请再次输入密码"
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+          )}
           {error && (
             <div className="flex items-center gap-2 text-red-500 text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2">
               <span>{error}</span>
@@ -105,19 +202,28 @@ export default function LoginPage({ onLogin }) {
             {loading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                登录中…
+                {mode === 'register' ? '注册中…' : '登录中…'}
               </>
             ) : (
-              '登录'
+              mode === 'register' ? '注册并登录' : '登录'
             )}
           </button>
         </form>
 
-        <div className="mt-6 p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-center">
-          <p className="text-xs text-gray-500">
-            默认账号：<span className="font-mono text-purple-600">admin</span> / <span className="font-mono text-purple-600">admin123</span>
-          </p>
-        </div>
+        {mode === 'login' && (
+          <div className="mt-6 p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-center">
+            <p className="text-xs text-gray-500">
+              默认账号：<span className="font-mono text-purple-600">admin</span> / <span className="font-mono text-purple-600">admin123</span>
+            </p>
+          </div>
+        )}
+        {mode === 'register' && (
+          <div className="mt-6 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl text-center">
+            <p className="text-xs text-gray-500">
+              注册即得 <span className="font-semibold text-purple-600">30 次/日</span> 免费额度，填邀请码双方各得 <span className="font-semibold text-rose-500">5 次</span> 奖励额度！
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

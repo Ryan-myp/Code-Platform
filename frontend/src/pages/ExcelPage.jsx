@@ -3,8 +3,8 @@ import {
   Table2, Play, Clock, Copy, Check, FileSpreadsheet, Upload, X, FileText,
   BarChart3, TrendingUp, PieChart, Calculator, Eraser, Sparkles, Trash2, Lightbulb,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import ShareButton from '../components/ShareButton'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -164,7 +164,7 @@ export default function ExcelPage() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：操作区 */}
         <div className="space-y-4">
           <Card>
@@ -175,7 +175,7 @@ export default function ExcelPage() {
               {/* 操作类型 */}
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">操作类型</label>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {OPERATIONS.map(op => {
                     const Icon = op.icon
                     return (
@@ -242,22 +242,23 @@ export default function ExcelPage() {
         </div>
 
         {/* 右侧：结果区 */}
-        <div className="space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <Card className="min-h-[300px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-green-600" /> 结果
               </h3>
               {result && (
-                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
-                  {copied ? '已复制' : '复制'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <ShareButton content={result} title="Excel 处理结果" contentType="excel" />
+                  <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
+                    {copied ? '已复制' : '复制'}
+                  </Button>
+                </div>
               )}
             </div>
             {result ? (
-              <div className="prose prose-sm max-w-none text-gray-700">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{result}</ReactMarkdown>
-              </div>
+              <MarkdownRenderer content={result} />
             ) : (
               <Empty icon={FileSpreadsheet} title="等待操作" description="输入数据后点击执行" />
             )}

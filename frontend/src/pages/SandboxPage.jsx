@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Play, Square, Trash2, RefreshCw,
-  FolderOpen, Server, Container, Search,
-  LayoutGrid, List as ListIcon, Activity, Zap, Clock,
+  FolderOpen, Server, Container, Search, Terminal,
+  LayoutGrid, List as ListIcon, Activity, Zap, Clock, Loader2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
   Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
 } from '../components/ui'
@@ -39,8 +40,101 @@ function formatPorts(ports) {
   }
 }
 
+// 容器日志弹窗：轮询沙箱日志接口（运行中每 3s 刷新）；支持 AI 分析定位问题
+function LogModal({ project, onClose }) {
+  const toast = useToast()
+  const [logs, setLogs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [message, setMessage] = useState('')
+  const [analysis, setAnalysis] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const logsEndRef = useRef(null)
+
+  useEffect(() => {
+    if (!project) return
+    setAnalysis(null)
+    let alive = true
+    let timer = null
+    const fetchLogs = async () => {
+      try {
+        const res = await api.get(`/api/sandbox/projects/${project.id}/logs?tail=300`)
+        if (!alive) return
+        setLogs(res.data.logs || [])
+        setMessage(res.data.message || '')
+        // 非运行中停止轮询
+        if (project.status !== 'running') clearInterval(timer)
+      } catch (e) {
+        if (alive) {
+          setMessage(`日志加载失败：${e.message}`)
+          clearInterval(timer)
+        }
+      } finally {
+        if (alive) setLoading(false)
+      }
+    }
+    fetchLogs()
+    timer = setInterval(fetchLogs, 3000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs, loading])
+
+  // AI 分析日志定位问题根因
+  const handleAnalyze = async () => {
+    setAnalyzing(true)
+    setAnalysis(null)
+    try {
+      const res = await api.post(`/api/sandbox/projects/${project.id}/logs/analyze`)
+      setAnalysis(res.data.analysis || '（无分析结果）')
+    } catch (e) {
+      toast.error(`分析失败：${e.message}`)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  return (
+    <Modal open={!!project} onClose={onClose} title={`容器日志 - ${project?.name || ''}`} size="lg">
+      {message && (
+        <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">{message}</div>
+      )}
+      <div className="mb-3 flex items-center gap-2">
+        <button
+          onClick={handleAnalyze}
+          disabled={analyzing}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all disabled:opacity-60"
+        >
+          {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+          {analyzing ? 'AI 分析中（约 10-60 秒）…' : 'AI 分析日志定位问题'}
+        </button>
+        {analysis && (
+          <span className="text-xs text-gray-400">分析基于最近 {logs.length} 行日志</span>
+        )}
+      </div>
+      {analysis && (
+        <div className="mb-3 p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-sm text-gray-800 max-h-[30vh] overflow-y-auto">
+          <p className="text-xs font-semibold text-indigo-700 mb-2 flex items-center gap-1.5">
+            <Search className="w-3.5 h-3.5" /> AI 诊断报告
+          </p>
+          <MarkdownRenderer content={analysis} />
+        </div>
+      )}
+      {loading ? (
+        <div className="py-12 text-center text-gray-400 text-sm">加载中…</div>
+      ) : (
+        <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[55vh] whitespace-pre-wrap">
+          {logs.length ? logs.join('\n') : '（暂无日志输出）'}
+        </pre>
+      )}
+      <div ref={logsEndRef} />
+    </Modal>
+  )
+}
+
 // 项目卡片
-function ProjectCard({ project, onStart, onStop, onDelete, viewMode }) {
+function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
   const isRunning = project.status === 'running'
   const ports = formatPorts(project.ports)
 
@@ -60,6 +154,13 @@ function ProjectCard({ project, onStart, onStop, onDelete, viewMode }) {
           <p className="text-sm text-gray-500 truncate">{project.image} · {ports}</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => onLogs(project)}
+            className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+            title="查看日志"
+          >
+            <Terminal className="w-4 h-4" />
+          </button>
           {isRunning ? (
             <Button variant="danger" size="sm" icon={Square} onClick={() => onStop(project)}>停止</Button>
           ) : (
@@ -88,7 +189,7 @@ function ProjectCard({ project, onStart, onStop, onDelete, viewMode }) {
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{project.name}</h3>
-            <p className="text-xs text-gray-500 truncate">{project.image}</p>
+            <p className="text-xs text-gray-500 truncate">{project.image}{project.project_dir ? ` · ${project.project_dir.split('/').slice(-2).join('/')}` : ''}</p>
           </div>
         </div>
         <Badge status={project.status} customMap={SANDBOX_STATUS_MAP} />
@@ -108,6 +209,13 @@ function ProjectCard({ project, onStart, onStop, onDelete, viewMode }) {
       </div>
 
       <div className="flex items-center gap-2 pt-4 border-t border-gray-100 mt-auto">
+        <button
+          onClick={() => onLogs(project)}
+          className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+          title="查看日志"
+        >
+          <Terminal className="w-4 h-4" />
+        </button>
         {isRunning ? (
           <Button variant="danger" size="sm" icon={Square} onClick={() => onStop(project)} className="flex-1">停止</Button>
         ) : (
@@ -334,6 +442,7 @@ export default function SandboxPage() {
   const [savingService, setSavingService] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [logTarget, setLogTarget] = useState(null)
 
   const [pullImage, setPullImage] = useState('')
   const [pulling, setPulling] = useState(false)
@@ -571,6 +680,7 @@ export default function SandboxPage() {
                   onStart={(p) => handleAction(p, 'start')}
                   onStop={(p) => handleAction(p, 'stop')}
                   onDelete={setDeleteTarget}
+                  onLogs={setLogTarget}
                   viewMode="grid"
                 />
               ))}
@@ -584,6 +694,7 @@ export default function SandboxPage() {
                   onStart={(p) => handleAction(p, 'start')}
                   onStop={(p) => handleAction(p, 'stop')}
                   onDelete={setDeleteTarget}
+                  onLogs={setLogTarget}
                   viewMode="list"
                 />
               ))}
@@ -709,6 +820,8 @@ export default function SandboxPage() {
         message={`确定要删除项目「${deleteTarget?.name}」吗？这将同时删除容器和数据，此操作不可撤销。`}
         confirmLabel="确认删除"
       />
+
+      <LogModal project={logTarget} onClose={() => setLogTarget(null)} />
     </div>
   )
 }

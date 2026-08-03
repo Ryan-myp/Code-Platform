@@ -2,12 +2,96 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Bot, Layers, FolderKanban, CheckCircle2, Clock, Bell, Zap,
-  Plus, ArrowRight, TrendingUp, AlertCircle, FileText, Image, Film, Music,
-  Play, Users, Target, Sparkles, ChevronRight, BarChart3, Activity
+  Plus, ArrowRight, AlertCircle, FileText, Image, Film, Music,
+  Play, ChevronRight, Sparkles, GitBranch, ListTodo, Wrench,
+  Rocket, ExternalLink, RefreshCcw, CircleDot, Code2, Wand2, PenTool,
+  Languages, Presentation, Table2, TrendingUp, BarChart3, Database,
+  Brain, Puzzle, MessageSquare, Settings, Crown, HelpCircle, History as HistoryIcon,
+  Search, Shield, Users, Server, X, FlaskConical
 } from 'lucide-react'
 import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+
+// 全场景能力地图：平台所有能力按场景分组，搜索直达（小白用户只需说出想做的事）
+const SCENE_GROUPS = [
+  {
+    key: 'rd', label: '智能研发', desc: 'AI 全流程开发与交付', icon: Code2,
+    color: 'from-brand-500 to-indigo-600',
+    items: [
+      { label: '一句话全自动', desc: '说出功能 → 自动研发部署', path: '/workspace', icon: Sparkles, hot: true },
+      { label: 'AI 工作台', desc: 'PRD→审查→方案→代码', path: '/workspace', icon: Bot },
+      { label: '需求看板', desc: '需求与任务管理', path: '/board', icon: ListTodo },
+      { label: '项目空间', desc: '项目全生命周期', path: '/projects', icon: FolderKanban },
+      { label: '成果仓库', desc: '所有成果集中存储', path: '/artifacts', icon: FileText },
+      { label: '沙箱运行', desc: '安全运行 AI 生成应用', path: '/sandbox', icon: Play },
+      { label: 'CI/CD 流水线', desc: '构建·部署·自动修复', path: '/pipelines', icon: GitBranch },
+      { label: 'Agent 智能体', desc: '专业角色智能体', path: '/agents', icon: Bot },
+      { label: '工作流编排', desc: '可视化流程自动化', path: '/workflows', icon: Layers },
+      { label: '知识库', desc: '团队知识沉淀', path: '/knowledge-bases', icon: Database },
+      { label: 'Skills', desc: 'Agent 技能扩展', path: '/skills', icon: Wrench },
+      { label: 'MCP Servers', desc: '外部能力接入', path: '/mcp-servers', icon: Server },
+      { label: '智能协作', desc: '任务驱动团队对话', path: '/chat', icon: MessageSquare },
+      { label: '自进化中心', desc: '平台持续自我进化', path: '/evolution', icon: Brain },
+    ],
+  },
+  {
+    key: 'create', label: '内容创作', desc: 'AI 生成图·视频·文案', icon: Wand2,
+    color: 'from-accent-500 to-blue-600',
+    items: [
+      { label: '图片工厂', desc: '文生图·图生图', path: '/image-factory', icon: Image },
+      { label: '视频工厂', desc: 'AI 视频生成', path: '/video-factory', icon: Film },
+      { label: '音乐工厂', desc: 'AI 音乐创作', path: '/music-factory', icon: Music },
+      { label: '文案工厂', desc: '营销文案·自媒体', path: '/copywriting', icon: PenTool },
+      { label: '翻译中心', desc: '多语种翻译', path: '/translation', icon: Languages },
+      { label: 'PPT 工厂', desc: 'AI 一键生成 PPT', path: '/ppt-factory', icon: Presentation },
+    ],
+  },
+  {
+    key: 'office', label: '办公效率', desc: '日常办公利器', icon: Table2,
+    color: 'from-orange-500 to-red-600',
+    items: [
+      { label: '效率工具箱', desc: '50+ 实用 AI 小工具', path: '/tool-hub', icon: Wrench },
+      { label: 'Excel 助手', desc: '上传分析·公式生成', path: '/excel', icon: Table2 },
+      { label: '股票分析', desc: 'AI 行情研判', path: '/stock', icon: TrendingUp },
+    ],
+  },
+  {
+    key: 'ops', label: '运营分析', desc: '数据驱动决策', icon: BarChart3,
+    color: 'from-emerald-500 to-teal-600',
+    items: [
+      { label: '数据看板', desc: '经营数据可视化', path: '/dashboard', icon: BarChart3 },
+      { label: 'AB 测试', desc: '实验设计与分析', path: '/ab-testing', icon: FlaskConical },
+    ],
+  },
+  {
+    key: 'me', label: '个人中心', desc: '我的资产与权益', icon: Crown,
+    color: 'from-amber-500 to-orange-600',
+    items: [
+      { label: '任务中心', desc: '待办与任务管理', path: '/tasks', icon: CheckCircle2 },
+      { label: '记录中心', desc: '全部使用记录', path: '/records', icon: HistoryIcon },
+      { label: '通知中心', desc: '消息与提醒', path: '/notifications', icon: Bell },
+      { label: '会员中心', desc: '额度与权益', path: '/membership', icon: Crown },
+      { label: '个人资料', desc: '账号与设置', path: '/profile', icon: Settings },
+      { label: '使用帮助', desc: '教程与常见问题', path: '/help', icon: HelpCircle },
+      { label: '插件市场', desc: '扩展平台能力', path: '/plugins', icon: Puzzle },
+    ],
+  },
+  {
+    key: 'sys', label: '平台管理', desc: '系统配置与运维', icon: Settings,
+    color: 'from-slate-500 to-gray-700',
+    items: [
+      { label: '模型配置', desc: '多供应商模型路由', path: '/config', icon: Settings },
+      { label: '管理后台', desc: '用户·权限·数据', path: '/admin', icon: Shield },
+      { label: 'Team 管理', desc: '团队与成员', path: '/teams', icon: Users },
+    ],
+  },
+]
+
+// 全部能力扁平化，供搜索匹配
+const ALL_CAPABILITIES = SCENE_GROUPS.flatMap((g) =>
+  g.items.map((it) => ({ ...it, group: g.label, groupKey: g.key }))
+)
 
 const PRIORITY_COLORS = { P0: 'red', P1: 'orange', P2: 'blue', P3: 'gray' }
 const STATUS_CONFIG = {
@@ -15,6 +99,72 @@ const STATUS_CONFIG = {
   in_progress: { label: '进行中', color: 'blue' },
   done: { label: '已完成', color: 'green' },
   cancelled: { label: '已取消', color: 'red' },
+}
+
+// AI 工作台流水线阶段（与 AIWorkspacePage 保持一致）
+const STAGES = [
+  { key: 'prd', label: 'PRD', field: 'prd_text' },
+  { key: 'review', label: 'PRD 审查', field: 'review_report' },
+  { key: 'td', label: '技术方案', field: 'tech_design' },
+  { key: 'test', label: '测试用例', field: 'test_cases' },
+  { key: 'code', label: '代码生成', field: 'code' },
+  { key: 'review_code', label: '代码审查', field: 'code_review' },
+]
+
+// 阶段状态：stale=上游变更需重新生成 / done=已有产物 / idle=未开始
+function stageStatus(req, key) {
+  let ps = req?.pipeline_status || {}
+  if (typeof ps === 'string') { try { ps = JSON.parse(ps) } catch { ps = {} } }
+  if (ps[key]?.status === 'stale') return 'stale'
+  const stage = STAGES.find((s) => s.key === key)
+  return req?.[stage.field] ? 'done' : 'idle'
+}
+
+const RUN_STATUS = {
+  running: { label: '部署中', dot: 'bg-blue-500 animate-pulse', badge: 'blue' },
+  success: { label: '运行中', dot: 'bg-green-500', badge: 'green' },
+  failed: { label: '失败', dot: 'bg-red-500', badge: 'red' },
+}
+
+// 能力入口卡片（搜索结果展示）：带热标的能力高亮主推
+function CapCard({ item, groupColor, onNavigate }) {
+  return (
+    <button
+      onClick={() => onNavigate(item.path)}
+      className="relative flex items-center gap-2.5 p-3 rounded-xl border border-gray-200 bg-white hover:border-brand-300 hover:shadow-sm hover:-translate-y-0.5 transition-all text-left group"
+    >
+      <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${groupColor} flex items-center justify-center flex-shrink-0`}>
+        <item.icon className="w-4 h-4 text-white" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold text-gray-800 truncate">{item.label}</span>
+        <span className="block text-[10px] text-gray-400 truncate">{item.desc}</span>
+      </span>
+      {item.hot && (
+        <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white text-[9px] font-bold shadow-sm">
+          主推
+        </span>
+      )}
+    </button>
+  )
+}
+
+// 能力入口小标签（分组概览展示）
+function CapChip({ item, onNavigate }) {
+  return (
+    <button
+      onClick={() => onNavigate(item.path)}
+      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs transition-all ${
+        item.hot
+          ? 'bg-gradient-to-r from-brand-500 to-indigo-600 text-white font-medium shadow-sm hover:opacity-90'
+          : 'bg-white border border-gray-200 text-gray-600 hover:border-brand-300 hover:text-brand-600'
+      }`}
+    >
+      <item.icon className="w-3 h-3" />
+      {item.label}
+      {item.hot && <Sparkles className="w-3 h-3" />}
+    </button>
+  )
 }
 
 export default function HomePage() {
@@ -27,6 +177,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'P2' })
+  const [capKw, setCapKw] = useState('')
 
   useEffect(() => { loadData() }, [])
 
@@ -80,6 +231,14 @@ export default function HomePage() {
     } catch (e) { /* ignore */ }
   }
 
+  // 问候语（随时间段变化）
+  const now = new Date()
+  const hour = now.getHours()
+  const greeting = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好'
+  const dateStr = now.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
+  let user = null
+  try { user = JSON.parse(localStorage.getItem('user') || 'null') } catch { /* ignore */ }
+
   const statCards = [
     { label: 'Agent', value: stats?.agents || 0, icon: Bot, color: 'from-emerald-500 to-teal-600', path: '/agents' },
     { label: 'Workflow', value: stats?.workflows || 0, icon: Layers, color: 'from-blue-500 to-indigo-600', path: '/workflows' },
@@ -90,13 +249,17 @@ export default function HomePage() {
   ]
 
   const quickActions = [
-    { label: '新建 Agent', icon: Bot, path: '/agents', color: 'bg-emerald-500' },
-    { label: '新建 Workflow', icon: Layers, path: '/workflows', color: 'bg-blue-500' },
+    { label: 'AI 工作台', icon: Sparkles, path: '/workspace', color: 'bg-brand-500' },
+    { label: '需求看板', icon: ListTodo, path: '/board', color: 'bg-violet-500' },
+    { label: '沙箱运行', icon: Play, path: '/sandbox', color: 'bg-emerald-500' },
+    { label: 'CI/CD 流水线', icon: GitBranch, path: '/pipelines', color: 'bg-blue-500' },
     { label: '图片生成', icon: Image, path: '/image-factory', color: 'bg-purple-500' },
-    { label: '视频生成', icon: Film, path: '/video-factory', color: 'bg-pink-500' },
-    { label: '音乐生成', icon: Music, path: '/music-factory', color: 'bg-indigo-500' },
-    { label: '知识库', icon: Sparkles, path: '/knowledge-bases', color: 'bg-amber-500' },
+    { label: '效率工具箱', icon: Wrench, path: '/tool-hub', color: 'bg-orange-500' },
   ]
+
+  const requirements = recent?.requirements || []
+  const pipelines = recent?.pipelines || []
+  const totalStale = (req) => STAGES.filter((s) => stageStatus(req, s.key) === 'stale').length
 
   if (loading && !stats) {
     return (
@@ -108,17 +271,113 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
-      {/* 页面标题 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">工作台</h1>
-          <p className="text-sm text-gray-500 mt-1">欢迎回来，这是你的工作概览</p>
+      {/* 欢迎区 */}
+      <div className="bg-gradient-to-r from-brand-600 via-brand-500 to-indigo-500 rounded-2xl px-6 py-5 text-white shadow-lg relative overflow-hidden">
+        <div className="absolute -right-8 -top-8 w-40 h-40 bg-white/10 rounded-full" />
+        <div className="absolute right-16 -bottom-12 w-32 h-32 bg-white/10 rounded-full" />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
+          <div>
+            <h1 className="text-xl md:text-2xl font-bold">{greeting}，{user?.nickname || user?.username || '朋友'} 👋</h1>
+            <p className="text-white/80 text-sm mt-1">{dateStr} · 欢迎回来，这里汇聚了你的一切工作</p>
+          </div>
+          <div className="flex gap-2">
+            <Button icon={Rocket} onClick={() => navigate('/workspace')} className="!bg-white !text-brand-700 hover:!bg-gray-50 shadow-lg">
+              打开 AI 工作台
+            </Button>
+            <Button icon={Plus} onClick={() => setShowTaskModal(true)} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
+              新建任务
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="primary" icon={Plus} onClick={() => setShowTaskModal(true)}>
-            新建任务
-          </Button>
+      </div>
+
+      {/* 全场景能力地图：说出你想做的事，快速找到对应能力 */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-soft">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-brand-500" />
+            <h2 className="font-semibold text-gray-900">全场景能力地图</h2>
+            <span className="text-xs text-gray-400">平台能帮你做的事，都在这里</span>
+          </div>
+          <div className="relative flex-1 max-w-xs">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={capKw}
+              onChange={(e) => setCapKw(e.target.value)}
+              placeholder="想做什么？搜一下直达，如：图片、PPT、代码…"
+              className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-xl focus:border-brand-400 focus:ring-2 focus:ring-brand-400/10 outline-none transition-all"
+            />
+            {capKw && (
+              <button onClick={() => setCapKw('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
+
+        {capKw.trim() ? (
+          /* 搜索结果：按组聚合展示匹配的能力 */
+          <div className="space-y-4">
+            {SCENE_GROUPS.map((g) => {
+              const matched = g.items.filter((it) =>
+                (it.label + it.desc + g.label).toLowerCase().includes(capKw.trim().toLowerCase())
+              )
+              if (matched.length === 0) return null
+              return (
+                <div key={g.key}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`w-6 h-6 rounded-lg bg-gradient-to-br ${g.color} flex items-center justify-center`}>
+                      <g.icon className="w-3 h-3 text-white" />
+                    </span>
+                    <span className="text-sm font-semibold text-gray-700">{g.label}</span>
+                    <span className="text-xs text-gray-400">找到 {matched.length} 项</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {matched.map((it) => (
+                      <CapCard key={it.label} item={it} groupColor={g.color} onNavigate={navigate} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+            {ALL_CAPABILITIES.filter((it) =>
+              (it.label + it.desc + it.group).toLowerCase().includes(capKw.trim().toLowerCase())
+            ).length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">没有找到「{capKw}」相关能力，试试其他关键词</p>
+                <button
+                  onClick={() => navigate('/workspace')}
+                  className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-brand-500 to-indigo-600 text-white text-xs font-medium rounded-xl hover:opacity-90 transition-opacity"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> 或者直接用「一句话全自动」告诉我
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* 全部分组展示 */
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {SCENE_GROUPS.map((g) => (
+              <div key={g.key} className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 hover:border-brand-200 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`w-7 h-7 rounded-lg bg-gradient-to-br ${g.color} flex items-center justify-center`}>
+                    <g.icon className="w-3.5 h-3.5 text-white" />
+                  </span>
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">{g.label}</div>
+                    <div className="text-[10px] text-gray-400">{g.desc}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.items.map((it) => (
+                    <CapChip key={it.label} item={it} onNavigate={navigate} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 统计卡片 */}
@@ -139,6 +398,156 @@ export default function HomePage() {
             <div className="text-xs text-gray-500">{card.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* 智能研发工作流：最近需求 + 最近部署 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 最近需求（AI 流水线进度） */}
+        <div className="lg:col-span-2">
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-brand-500" />
+                <h2 className="font-semibold text-gray-900">最近需求 · 智能流水线</h2>
+                {requirements.length > 0 && (
+                  <Badge color="brand">{requirements.length}</Badge>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/workspace')}>
+                新建需求 <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </div>
+            {requirements.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <Rocket className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">还没有需求流水线</p>
+                <Button variant="primary" size="sm" className="mt-3" icon={Plus} onClick={() => navigate('/workspace')}>
+                  创建第一个需求
+                </Button>
+                <p className="text-xs mt-2 text-gray-400">从需求 → 审查 → 设计 → 测试 → 代码 → 部署，全流程 AI 驱动</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {requirements.map((req) => {
+                  const staleCount = totalStale(req)
+                  const doneCount = STAGES.filter((s) => stageStatus(req, s.key) === 'done').length
+                  return (
+                    <div
+                      key={req.id}
+                      onClick={() => navigate(`/workspace?requirement_id=${req.id}`)}
+                      className="p-3 rounded-lg border border-gray-200 hover:border-brand-300 hover:shadow-sm cursor-pointer transition-all group"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CircleDot className={`w-4 h-4 flex-shrink-0 ${staleCount > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
+                          <span className="text-sm font-medium text-gray-900 truncate">{req.name}</span>
+                          <Badge color={PRIORITY_COLORS[req.priority]}>{req.priority}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-gray-400">{req.updated_at?.split('T')[0]}</span>
+                          <Button variant="ghost" size="sm" className="!py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            继续流程 <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                          </Button>
+                        </div>
+                      </div>
+                      {/* 6 阶段进度条 */}
+                      <div className="mt-2.5 flex items-center gap-1">
+                        {STAGES.map((s, i) => {
+                          const st = stageStatus(req, s.key)
+                          return (
+                            <React.Fragment key={s.key}>
+                              {i > 0 && <div className={`h-0.5 rounded flex-1 min-w-[6px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`} />}
+                              <div
+                                title={`${s.label}：${st === 'stale' ? '需更新' : st === 'done' ? '已完成' : '未开始'}`}
+                                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                  st === 'stale' ? 'bg-amber-400 ring-2 ring-amber-100' :
+                                  st === 'done' ? 'bg-emerald-500' : 'bg-gray-200'
+                                }`}
+                              />
+                            </React.Fragment>
+                          )
+                        })}
+                        <span className="ml-2 text-[10px] text-gray-400 flex-shrink-0">{doneCount}/6 阶段完成</span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-1.5 pl-1">
+                        {STAGES.map((s) => (
+                          <span key={s.key} className="text-[10px] text-gray-400">{s.label}</span>
+                        ))}
+                        {staleCount > 0 && (
+                          <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                            <RefreshCcw className="w-2.5 h-2.5" /> {staleCount} 个阶段需更新
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* 最近部署状态 */}
+        <div>
+          <Card className="h-full">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <GitBranch className="w-5 h-5 text-blue-500" />
+                <h2 className="font-semibold text-gray-900">最近部署</h2>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/pipelines')}>
+                全部 <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </div>
+            {pipelines.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <GitBranch className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">暂无部署记录</p>
+                <p className="text-xs mt-1">在 AI 工作台生成代码后一键部署到沙箱</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pipelines.map((p) => {
+                  const run = p.last_run
+                  const st = RUN_STATUS[run?.status] || { label: run?.status || '未知', dot: 'bg-gray-300', badge: 'gray' }
+                  const port = p.config?.port
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => navigate('/pipelines')}
+                      className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-gray-900 truncate">{p.name}</span>
+                        <Badge color={st.badge}>
+                          <span className="flex items-center gap-1">
+                            <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} />
+                            {st.label}
+                          </span>
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-500">
+                        {port && (
+                          <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                            <ExternalLink className="w-3 h-3" /> localhost:{port}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {p.updated_at?.split('T')[0]}
+                        </span>
+                        {run?.status === 'failed' && (
+                          <span className="ml-auto flex items-center gap-1 text-amber-600 font-medium">
+                            <Wrench className="w-3 h-3" /> 可 AI 修复
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

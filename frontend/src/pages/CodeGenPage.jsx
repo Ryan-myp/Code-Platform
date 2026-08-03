@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Code2, Play, Copy, Check, RotateCcw, Clock, Trash2 } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import ShareButton from '../components/ShareButton'
 
 const LANGUAGES = ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'c++', 'sql', 'html/css', 'shell']
 
@@ -50,14 +51,16 @@ export default function CodeGenPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">AI 代码生成</h1>
-        <p className="text-sm text-gray-500 mt-1">描述你的需求，AI 自动生成高质量代码</p>
-      </div>
+      <PageHeader
+        title="AI 代码生成"
+        description="描述你的需求，AI 自动生成高质量代码"
+        icon={Code2}
+        iconColor="from-blue-500 to-indigo-600"
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 输入区 */}
-        <Card>
+        <Card className="lg:col-span-1">
           <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <Code2 className="w-5 h-5 text-blue-500" /> 代码需求
           </h2>
@@ -82,11 +85,12 @@ export default function CodeGenPage() {
         </Card>
 
         {/* 结果区 */}
-        <Card>
+        <Card className="lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">生成结果</h2>
             {result && (
-              <div className="flex gap-1">
+              <div className="flex gap-1 items-center">
+                <ShareButton content={result} title="代码生成结果" contentType="code" />
                 <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                   {copied ? '已复制' : '复制'}
                 </Button>

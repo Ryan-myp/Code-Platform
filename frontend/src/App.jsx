@@ -1,47 +1,70 @@
-import React, { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import React, { useState, useEffect, useLayoutEffect, lazy, Suspense } from 'react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import Sidebar from './components/Sidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import CommandPalette from './components/CommandPalette'
+import OnboardingTour from './components/OnboardingTour'
+import FloatingAssistant from './components/FloatingAssistant'
+import AccessGuard from './components/AccessGuard'
 import { ToastProvider } from './lib/toast'
-import ConfigPage from './pages/ConfigPage'
-import AgentsPage from './pages/AgentsPage'
-import PlatformEvolutionPage from './pages/PlatformEvolutionPage'
-import KnowledgeBasesPage from './pages/KnowledgeBasesPage'
-import SkillsPage from './pages/SkillsPage'
-import TeamsPage from './pages/TeamsPage'
-import SandboxPage from './pages/SandboxPage'
-import MCPServersPage from './pages/MCPServersPage'
-import ArtifactsPage from './pages/ArtifactsPage'
-import PluginsPage from './pages/PluginsPage'
-import ChatPage from './pages/ChatPage'
-import WorkflowsPage from './pages/WorkflowsPage'
-import WorkflowEditorPage from './pages/WorkflowEditorPage'
-import ReqBoardPage from './pages/ReqBoardPage'
-import AIWorkspacePage from './pages/AIWorkspacePage'
-import LoginPage from './pages/LoginPage'
-import AgentExecutePage from './pages/AgentExecutePage'
-import ImageFactoryPage from './pages/ImageFactoryPage'
-import MusicFactoryPage from './pages/MusicFactoryPage'
-import VideoFactoryPage from './pages/VideoFactoryPage'
-import ProjectSpacePage from './pages/ProjectSpacePage'
+
+// 页面级懒加载：首屏仅加载当前页面，其余按需分块（首包从 ~1.8MB 降至 ~300KB）
+const ConfigPage = lazy(() => import('./pages/ConfigPage'))
+const AgentsPage = lazy(() => import('./pages/AgentsPage'))
+const PlatformEvolutionPage = lazy(() => import('./pages/PlatformEvolutionPage'))
+const KnowledgeBasesPage = lazy(() => import('./pages/KnowledgeBasesPage'))
+const SkillsPage = lazy(() => import('./pages/SkillsPage'))
+const TeamsPage = lazy(() => import('./pages/TeamsPage'))
+const SandboxPage = lazy(() => import('./pages/SandboxPage'))
+const MCPServersPage = lazy(() => import('./pages/MCPServersPage'))
+const ArtifactsPage = lazy(() => import('./pages/ArtifactsPage'))
+const PluginsPage = lazy(() => import('./pages/PluginsPage'))
+const ChatPage = lazy(() => import('./pages/ChatPage'))
+const WorkflowsPage = lazy(() => import('./pages/WorkflowsPage'))
+const WorkflowEditorPage = lazy(() => import('./pages/WorkflowEditorPage'))
+const ReqBoardPage = lazy(() => import('./pages/ReqBoardPage'))
+const AIWorkspacePage = lazy(() => import('./pages/AIWorkspacePage'))
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const AgentExecutePage = lazy(() => import('./pages/AgentExecutePage'))
+const ImageFactoryPage = lazy(() => import('./pages/ImageFactoryPage'))
+const MusicFactoryPage = lazy(() => import('./pages/MusicFactoryPage'))
+const VideoFactoryPage = lazy(() => import('./pages/VideoFactoryPage'))
+const ProjectSpacePage = lazy(() => import('./pages/ProjectSpacePage'))
 // v9.0 新页面
-import HomePage from './pages/HomePage'
-import TasksPage from './pages/TasksPage'
-import NotificationsPage from './pages/NotificationsPage'
-import CodeGenPage from './pages/CodeGenPage'
-import CodeReviewPage from './pages/CodeReviewPage'
-import PipelinesPage from './pages/PipelinesPage'
-import CopywritingPage from './pages/CopywritingPage'
-import TranslationPage from './pages/TranslationPage'
-import DashboardPage from './pages/DashboardPage'
-import ABTestingPage from './pages/ABTestingPage'
-import PPTFactoryPage from './pages/PPTFactoryPage'
-import ExcelPage from './pages/ExcelPage'
-import ToolHubPage from './pages/ToolHubPage'
-import ToolRunPage from './pages/ToolRunPage'
-import StockAnalysisPage from './pages/StockAnalysisPage'
+const HomePage = lazy(() => import('./pages/HomePage'))
+const TasksPage = lazy(() => import('./pages/TasksPage'))
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
+const PipelinesPage = lazy(() => import('./pages/PipelinesPage'))
+const CopywritingPage = lazy(() => import('./pages/CopywritingPage'))
+const TranslationPage = lazy(() => import('./pages/TranslationPage'))
+const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const ABTestingPage = lazy(() => import('./pages/ABTestingPage'))
+const PPTFactoryPage = lazy(() => import('./pages/PPTFactoryPage'))
+const ExcelPage = lazy(() => import('./pages/ExcelPage'))
+const ToolHubPage = lazy(() => import('./pages/ToolHubPage'))
+const ToolRunPage = lazy(() => import('./pages/ToolRunPage'))
+const StockAnalysisPage = lazy(() => import('./pages/StockAnalysisPage'))
+// v9.1 商业版
+const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+const AdminPage = lazy(() => import('./pages/AdminPage'))
+const ShareViewPage = lazy(() => import('./pages/ShareViewPage'))
+const HelpPage = lazy(() => import('./pages/HelpPage'))
+const RecordsPage = lazy(() => import('./pages/RecordsPage'))
+// v9.2 商业版
+const MembershipPage = lazy(() => import('./pages/MembershipPage'))
+
+// 页面级加载骨架（懒加载期间展示）
+function PageFallback() {
+  return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500" />
+        <span className="text-sm text-gray-400">页面加载中…</span>
+      </div>
+    </div>
+  )
+}
 
 function ProtectedRoute({ children, isAuthenticated }) {
   if (!isAuthenticated) {
@@ -50,22 +73,39 @@ function ProtectedRoute({ children, isAuthenticated }) {
   return children
 }
 
+// 分享页 SEO 落地：后端 /share/{code} 返回的 HTML 通过 meta refresh + JS 跳转到 /?share={code}，
+// 此处解析 query 并跳转到 SPA 分享页（useLayoutEffect 避免闪现登录/主页）
+function ShareRedirect() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  useLayoutEffect(() => {
+    const code = new URLSearchParams(location.search).get('share')
+    if (code) {
+      navigate(`/share/${code}`, { replace: true })
+    }
+  }, [location.search, navigate])
+  return null
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [user, setUser] = useState(null)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  // 同步初始化认证态（避免首帧未登录被 ProtectedRoute 踢到 /login 再跳回 /home）
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null')
+    } catch {
+      return null
+    }
+  })
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token') && !!user)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   useEffect(() => {
     const token = localStorage.getItem('token')
-    const userData = localStorage.getItem('user')
-    if (token && userData) {
-      const parsedUser = JSON.parse(userData)
-      setUser(parsedUser)
-      setIsAuthenticated(true)
+    if (token && user) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
     }
-  }, [])
+  }, [user])
 
   // 监听命令面板打开事件
   useEffect(() => {
@@ -79,6 +119,11 @@ export default function App() {
     setIsAuthenticated(true)
   }
 
+  const handleUserUpdate = (userData) => {
+    setUser(userData)
+    localStorage.setItem('user', JSON.stringify(userData))
+  }
+
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
@@ -89,10 +134,15 @@ export default function App() {
 
   return (
     <Router>
+      <ShareRedirect />
       <ToastProvider>
       <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      <OnboardingTour isAuthenticated={isAuthenticated} />
+      <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/home" replace />} />
+        {/* 公开分享查看页（无需登录） */}
+        <Route path="/share/:shareCode" element={<ShareViewPage />} />
         <Route path="*" element={
           <ProtectedRoute isAuthenticated={isAuthenticated}>
             <div className="flex min-h-screen bg-ink-50">
@@ -109,49 +159,58 @@ export default function App() {
                     <Route path="/projects" element={<ProjectSpacePage />} />
                     <Route path="/projects/:id" element={<ProjectSpacePage />} />
                     <Route path="/artifacts" element={<ArtifactsPage />} />
-                    <Route path="/plugins" element={<PluginsPage />} />
-                    <Route path="/chat" element={<ChatPage />} />
-                    <Route path="/agents" element={<AgentsPage />} />
+                    <Route path="/plugins" element={<AccessGuard path="/plugins"><PluginsPage /></AccessGuard>} />
+                    <Route path="/chat" element={<AccessGuard path="/chat"><ChatPage /></AccessGuard>} />
+                    <Route path="/agents" element={<AccessGuard path="/agents"><AgentsPage /></AccessGuard>} />
                     <Route path="/agents/:id" element={<AgentExecutePage />} />
                     <Route path="/teams" element={<TeamsPage />} />
-                    <Route path="/workflows" element={<WorkflowsPage />} />
+                    <Route path="/workflows" element={<AccessGuard path="/workflows"><WorkflowsPage /></AccessGuard>} />
                     <Route path="/workflows/:id" element={<WorkflowEditorPage />} />
                     <Route path="/workflows/:id/edit" element={<WorkflowEditorPage />} />
                     <Route path="/config" element={<ConfigPage />} />
                     <Route path="/knowledge-bases" element={<KnowledgeBasesPage />} />
                     <Route path="/skills" element={<SkillsPage />} />
-                    <Route path="/sandbox" element={<SandboxPage />} />
+                    <Route path="/sandbox" element={<AccessGuard path="/sandbox"><SandboxPage /></AccessGuard>} />
                     <Route path="/mcp-servers" element={<MCPServersPage />} />
                     <Route path="/evolution" element={<PlatformEvolutionPage />} />
-                    <Route path="/image-factory" element={<ImageFactoryPage />} />
-                    <Route path="/video-factory" element={<VideoFactoryPage />} />
-                    <Route path="/music-factory" element={<MusicFactoryPage />} />
-                    {/* v9.0 Phase 2: 研发增强 */}
-                    <Route path="/code-gen" element={<CodeGenPage />} />
-                    <Route path="/code-review" element={<CodeReviewPage />} />
+                    <Route path="/image-factory" element={<AccessGuard path="/image-factory"><ImageFactoryPage /></AccessGuard>} />
+                    <Route path="/video-factory" element={<AccessGuard path="/video-factory"><VideoFactoryPage /></AccessGuard>} />
+                    <Route path="/music-factory" element={<AccessGuard path="/music-factory"><MusicFactoryPage /></AccessGuard>} />
+                    {/* v9.0 Phase 2: 研发增强（代码生成/代码审查已并入 AI 工作台） */}
+                    <Route path="/code-gen" element={<Navigate to="/workspace?tab=code" replace />} />
+                    <Route path="/code-review" element={<Navigate to="/workspace?tab=review_code" replace />} />
                     <Route path="/pipelines" element={<PipelinesPage />} />
                     {/* v9.0 Phase 3: 内容创作 */}
-                    <Route path="/copywriting" element={<CopywritingPage />} />
-                    <Route path="/translation" element={<TranslationPage />} />
+                    <Route path="/copywriting" element={<AccessGuard path="/copywriting"><CopywritingPage /></AccessGuard>} />
+                    <Route path="/translation" element={<AccessGuard path="/translation"><TranslationPage /></AccessGuard>} />
                     {/* v9.0 Phase 4: 运营分析 */}
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/ab-testing" element={<ABTestingPage />} />
                     {/* v9.0 办公效率 */}
-                    <Route path="/ppt-factory" element={<PPTFactoryPage />} />
-                    <Route path="/excel" element={<ExcelPage />} />
+                    <Route path="/ppt-factory" element={<AccessGuard path="/ppt-factory"><PPTFactoryPage /></AccessGuard>} />
+                    <Route path="/excel" element={<AccessGuard path="/excel"><ExcelPage /></AccessGuard>} />
                     {/* v9.0 效率工具箱 */}
                     <Route path="/tool-hub" element={<ToolHubPage />} />
                     <Route path="/tool/:toolId" element={<ToolRunPage />} />
-                    <Route path="/stock" element={<StockAnalysisPage />} />
+                    <Route path="/stock" element={<AccessGuard path="/stock"><StockAnalysisPage /></AccessGuard>} />
+                    {/* v9.1 商业版 */}
+                    <Route path="/profile" element={<ProfilePage user={user} onUserUpdate={handleUserUpdate} />} />
+                    <Route path="/membership" element={<MembershipPage />} />
+                    <Route path="/admin" element={<AdminPage />} />
+                    <Route path="/help" element={<HelpPage />} />
+                    <Route path="/records" element={<RecordsPage />} />
                     <Route path="/" element={<Navigate to="/home" replace />} />
                   </Routes>
                   </ErrorBoundary>
                 </main>
+                {/* 全局浮动机器人：登录后所有页面可用 */}
+                <FloatingAssistant />
               </div>
             </div>
           </ProtectedRoute>
         } />
       </Routes>
+      </Suspense>
       </ToastProvider>
     </Router>
   )

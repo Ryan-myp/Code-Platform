@@ -4,8 +4,7 @@ import {
   Bot, Send, Plus, Trash2, ArrowLeft, Sparkles,
   Database, Wrench, FileText, Menu, Cpu, MessageSquare,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatDateTime } from '../lib/format'
@@ -363,11 +362,7 @@ export default function AgentExecutePage() {
                           </span>
                         </div>
                         {msg.role === 'assistant' ? (
-                          <div className="prose-sm max-w-none break-words [&_pre]:my-2 [&_pre]:p-3 [&_pre]:bg-gray-900 [&_pre]:rounded-lg [&_pre]:overflow-x-auto [&_pre_code]:text-gray-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-gray-100 [&_code]:text-pink-600 [&_a]:text-purple-600 [&_a]:underline">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.content}
-                            </ReactMarkdown>
-                          </div>
+                          <MarkdownRenderer content={msg.content} />
                         ) : (
                           <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
                         )}
