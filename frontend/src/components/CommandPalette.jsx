@@ -7,7 +7,7 @@ import {
   PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2, Share2, TrendingUp,
   Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker, UserCircle,
   GalleryVerticalEnd, Store, Globe, Key, Clock, Terminal,
-  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen
+  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen, ListTodo
 } from 'lucide-react'
 import api from '../lib/api'
 
