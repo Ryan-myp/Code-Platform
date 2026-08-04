@@ -130,31 +130,3 @@ class DecisionNode(BusinessNode):
         """获取假分支的目标节点ID"""
         return self.false_next_node
 
-
-# ─── 使用示例 ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # 示例1: 简单的二分支决策（分数是否及格）
-    pass_grade = DecisionNode(
-        node_id="check_grade",
-        name="成绩判定",
-        description="判断分数是否及格",
-        condition_expr="outputs.previous_step.score >= 60",
-        true_next_node="issue_certificate",  # 及格 -> 发证
-        false_next_node="retake_course",  # 不及格 -> 重修课程
-        input_schema={"score": int},
-        validators=[TypeValidator({"score": int})],
-    )
-
-    # 示例2: 基于文本的情感分析决策
-    urgent_alert = DecisionNode(
-        node_id="check_urgency",
-        name="紧急程度判断",
-        description="检测消息是否紧急",
-        condition_expr="contains(lower(inputs.text), 'urgent') or contains(lower(inputs.text), '紧急')",
-        true_next_node="alert_manager",
-        input_schema={"text": str},
-        validators=[RequiredFieldsValidator(["text"]), MinLengthValidator({"text": 5})],
-    )
-
-    print("DecisionNode 示例完成")

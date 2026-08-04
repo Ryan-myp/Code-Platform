@@ -229,8 +229,8 @@ export default function App() {
                     <Route path="/batch-process" element={<AccessGuard path="/batch-process"><BatchProcessPage /></AccessGuard>} />
                     <Route path="/code-interpreter" element={<AccessGuard path="/code-interpreter"><CodeSandboxPage /></AccessGuard>} />
                     <Route path="/api-platform" element={<AccessGuard path="/api-platform"><ApiDocsPage /></AccessGuard>} />
-                    <Route path="/usage-analytics" element={<UsageAnalyticsPage />} />
-                    <Route path="/scheduler" element={<SchedulerPage />} />
+                    <Route path="/usage-analytics" element={<AccessGuard path="/usage-analytics"><UsageAnalyticsPage /></AccessGuard>} />
+                    <Route path="/scheduler" element={<AccessGuard path="/scheduler"><SchedulerPage /></AccessGuard>} />
                     {/* v10.0 社区与变现 */}
                     <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
                     <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />

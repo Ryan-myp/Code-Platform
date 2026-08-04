@@ -277,18 +277,3 @@ class PrintNode(BusinessNode):
         print(f"[PrintNode {self.node_id}] Input: {json.dumps(current_input, ensure_ascii=False)}")
         return NodeResult.success(output={"echo": current_input}, messages=[f"已打印 {self.node_id} 的输入"])
 
-
-if __name__ == "__main__":
-    # 快速测试
-    import time
-
-    # 创建一个Dummy节点并执行
-    node = DummyNode(node_id="test_1", name="测试节点", dummy_value="Hello World!")
-    context = {"inputs": {"test_1": {"value": "test"}}, "global_outputs": {}}
-    result = node.execute(context)
-    print(f"Status: {result.status}, Output: {result.output}")
-
-    # 创建并验证输入
-    validator = RequiredFieldsValidator(["required_field"])
-    errors = validator.validate({"other_field": "value"})
-    print(f"Validation errors: {errors}")

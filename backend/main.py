@@ -114,6 +114,7 @@ from seed_data import seed_if_empty  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
 from templates_market import router as templates_market_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
+from extensions_agents import router as extensions_agents_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -2276,6 +2277,7 @@ app.include_router(pdf_tools_router)
 app.include_router(competitor_monitor_router)
 app.include_router(seo_analyzer_router)
 app.include_router(realtime_router)
+app.include_router(extensions_agents_router)
 
 # v9.3: 5大高科技功能
 app.include_router(voice_chat_router)

@@ -9,7 +9,10 @@
 pitch 为可选音调参数（如 "+10Hz" / "-5%"），商用配音支持语调调整。
 """
 import asyncio
+import logging
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 async def main() -> int:
@@ -29,5 +32,5 @@ if __name__ == "__main__":
     try:
         sys.exit(asyncio.run(main()))
     except Exception as e:  # noqa: BLE001
-        print(f"EDGE_TTS_ERROR: {e}", file=sys.stderr)
+        logger.error(f"EDGE_TTS_ERROR: {e}")
         sys.exit(1)

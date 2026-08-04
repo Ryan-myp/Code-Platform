@@ -657,7 +657,7 @@ async def render_template(req: dict):
 
                     img.paste(layer_img, (x, y), layer_img)
                 except Exception as e:
-                    print(f"Layer image error: {e}")
+                    logger.warning(f"Layer image error: {e}")
 
     filename = save_image(img)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}

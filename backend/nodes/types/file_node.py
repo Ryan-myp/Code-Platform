@@ -220,22 +220,3 @@ class FileOperationNode(BusinessNode):
             logger.error(f"文件操作异常: {e}")
             return NodeResult.failed(f"操作失败: {str(e)}")
 
-
-# ─── 使用示例 ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # 示例1: 读取一个配置文件
-    read_node = FileOperationNode(node_id="read_config", operation_type="read", path="/app/config/settings.json")
-
-    # 示例2: 保存生成的报告到文件系统
-    save_node = FileOperationNode(
-        node_id="save_report",
-        operation_type="write",
-        path="/var/www/reports/report_{timestamp}.txt",
-        content="{output_text}",  # 会从context中获取output_text
-    )
-
-    # 示例3: 创建输出目录
-    mkdir_node = FileOperationNode(node_id="create_output_dir", operation_type="create_dir", path="/var/www/output")
-
-    print("FileOperationNode 示例完成")

@@ -196,32 +196,3 @@ def create_api_call_validator() -> CombiningValidator:
     ]
     return CombiningValidator(validators)
 
-
-if __name__ == "__main__":
-    # 快速测试验证器
-
-    # 测试RequiredFieldsValidator
-    validator = RequiredFieldsValidator(["name", "age"])
-    result = validator.validate({"name": "Test"})
-    assert "age" in result[0], "应该报告age缺失"
-    print(f"RequiredFieldsValidator测试: {result}")
-
-    # 测试TypeValidator
-    type_validator = TypeValidator({"value": int})
-    result = type_validator.validate({"value": "string"})
-    assert "类型错误" in result[0], "应该报告类型错误"
-    print(f"TypeValidator测试: {result}")
-
-    # 测试PatternValidator（邮箱格式）
-    pattern_validator = PatternValidator({"email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"})
-    result = pattern_validator.validate({"email": "invalid-email"})
-    assert "格式不符合模式" in result[0], "应该报告格式错误"
-    print(f"PatternValidator测试: {result}")
-
-    # 测试组合验证器
-    combined = CombiningValidator([RequiredFieldsValidator(["username"]), MinLengthValidator({"username": 5})])
-    result = combined.validate({"username": "ab"})
-    assert len(result) == 1, "应该有1个错误（长度不足）"
-    print(f"CombiningValidator测试: {result}")
-
-    print("\n所有验证器测试通过！")

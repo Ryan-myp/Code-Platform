@@ -137,18 +137,3 @@ class SkillExecutionNode(BusinessNode):
             logger.error(error_msg)
             return NodeResult.failed(error_msg)
 
-
-# ─── 使用示例 ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # 需要预先在skills/目录下创建skill_file模块
-    # skill_node = SkillExecutionNode(
-    #     node_id="process_data",
-    #     name="数据处理技能",
-    #     description="运行数据处理脚本",
-    #     skill_file="skills.data_processor",
-    #     function_name="process_data",
-    #     args_field="input_data"
-    # )
-
-    print("SkillExecutionNode 示例完成")

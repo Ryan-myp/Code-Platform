@@ -9,7 +9,6 @@
 - 行政：公文撰写、会议纪要整理
 """
 
-import json
 import logging
 import re
 from typing import Any
@@ -232,32 +231,3 @@ class LLMNode(BusinessNode):
         return prompt
 
 
-# ─── 示例用法 ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # 创建一个PRD分析节点
-    prd_analyzer = LLMNode(
-        node_id="analyze_prd",
-        name="PRD分析Agent",
-        description="从PRD中提取产品信息",
-        model="agnes-2.0-flash",
-        prompt_template="""请从以下PRD中提取：产品名称、核心功能、目标用户、关键需求
-PRD内容: {input_text}
-
-请以JSON格式返回，键为: product_name, features, users, requirements""",
-        input_schema={"input_text": str},
-        validators=[
-            RequiredFieldsValidator(["input_text"]),
-            MinLengthValidator({"input_text": 50}),  # 最小50字符
-        ],
-    )
-
-    # 测试执行
-    test_context = {
-        "current_node_input": {"input_text": "这是一个电商平台的购物功能..."},
-        "outputs": {},
-        "global_outputs": {},
-    }
-
-    result = prd_analyzer.execute(test_context)
-    print(f"状态: {result.status}, 输出: {json.dumps(result.output, ensure_ascii=False)[:200]}")

@@ -2,12 +2,14 @@
 """Platform v9.0 Extended API - 研发增强/内容创作/运营分析/办公效率"""
 
 import json
+import logging
 import os
 import re
 import socket
 import subprocess
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
@@ -17,6 +19,8 @@ from typing import Optional
 from common.db import get_db
 from common.auth import require_auth
 from common.llm import call_llm
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -743,8 +747,7 @@ async def review_code(data: CodeReviewRequest, current_user: dict = require_auth
             )
         return {"ok": True, "id": review_id, "result": result}
     except Exception as e:
-        import traceback
-        print(f"[review_code] ERROR: {traceback.format_exc()}", flush=True)
+        logger.error(f"[review_code] {traceback.format_exc()}")
         raise HTTPException(500, f"代码审查失败: {str(e)}")
 
 
@@ -761,8 +764,7 @@ async def improve_code(data: CodeImproveRequest, current_user: dict = require_au
         result = call_llm(system_prompt, prompt)
         return {"ok": True, "result": result}
     except Exception as e:
-        import traceback
-        print(f"[code_improve] ERROR: {traceback.format_exc()}", flush=True)
+        logger.error(f"[code_improve] {traceback.format_exc()}")
         raise HTTPException(500, f"代码修改失败: {str(e)}")
 
 

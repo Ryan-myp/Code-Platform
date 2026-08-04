@@ -168,27 +168,3 @@ class APINode(BusinessNode):
             logger.error(error_msg)
             return NodeResult.failed(error_msg)
 
-
-# ─── 使用示例 ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # 示例1: 发送Slack通知
-    slack_notify = APINode(
-        node_id="send_slack",
-        method="POST",
-        url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
-        body_field="message",
-        auth_token="xxx",
-    )
-
-    # 示例2: 查询天气
-    weather_api = APINode(
-        node_id="get_weather",
-        method="GET",
-        url="https://api.openweathermap.org/data/2.5/weather",
-        body_field=None,  # GET没有body
-        headers={"Accept": "application/json"},
-        timeout=10,
-    )
-
-    print("APINode 示例完成")
