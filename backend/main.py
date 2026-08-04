@@ -5,6 +5,7 @@ v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、
 """
 
 import base64
+import asyncio
 import io
 import json
 import logging
@@ -117,11 +118,15 @@ def init_db():
 # ── 应用生命周期 ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化数据库 + 安全校验。关闭时无特殊处理。"""
+    """启动时初始化数据库 + 安全校验 + 排期后台调度器。关闭时无特殊处理。"""
     validate_security_config()
     init_db()
     seed_if_empty()
     skills_store.migrate_legacy()
+    # 发布排期后台自动执行（每 60s 扫描到期 pending 排期）
+    from publishing import _run_due_schedules
+
+    asyncio.create_task(_run_due_schedules())
     logger.info("Smart R&D Platform v8.0 started")
     yield
     logger.info("Smart R&D Platform v8.0 shutting down")

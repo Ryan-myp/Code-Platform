@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import {
   Mic2, Sparkles, Loader2, Download, Trash2, Volume2, Clapperboard,
   Film, AudioLines, Gauge, FileEdit, Search, Pencil, CheckSquare, Square,
-  DownloadCloud, RotateCcw, Clock, BarChart3,
+  DownloadCloud, RotateCcw, Clock, BarChart3, Play, FileText, SlidersHorizontal,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -45,6 +45,9 @@ export default function VoicePage() {
   const [text, setText] = useState('')
   const [voice, setVoice] = useState('zh-CN-XiaoxiaoNeural')
   const [speed, setSpeed] = useState(1.0)
+  const [pitch, setPitch] = useState(0)
+  const [format, setFormat] = useState('mp3')
+  const [previewing, setPreviewing] = useState('')
   const [generating, setGenerating] = useState(false)
   const [items, setItems] = useState([])
   const [stats, setStats] = useState(null)
@@ -81,7 +84,7 @@ export default function VoicePage() {
     if (!text.trim()) return
     const t = setTimeout(() => {
       api.post('/api/drafts/save', {
-        tool_id: 'voice', title: text.slice(0, 30), content: { text, scene, voice, speed },
+        tool_id: 'voice', title: text.slice(0, 30), content: { text, scene, voice, speed, pitch, format },
       }).catch(() => {})
     }, 1500)
     return () => clearTimeout(t)
@@ -120,8 +123,10 @@ export default function VoicePage() {
       fd.append('scene', scene)
       fd.append('voice', scene === 'custom' ? voice : '')
       fd.append('speed', String(speed))
+      fd.append('pitch', String(pitch))
+      fd.append('format', format)
       const res = await api.post('/api/voice/generate', fd, { timeout: 180000 })
-      toast.success(`配音完成：${fmtDuration(res.data.duration)}${res.data.segments > 1 ? `（${res.data.segments} 段自动拼接）` : ''}`)
+      toast.success(`配音完成：${fmtDuration(res.data.duration)}${res.data.has_srt ? ' · 已生成 SRT 字幕' : ''}${res.data.segments > 1 ? `（${res.data.segments} 段自动拼接）` : ''}`)
       await clearDraft()
       loadList()
     } catch (e) {
@@ -136,6 +141,25 @@ export default function VoicePage() {
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
+  }
+
+  // 音色试听：合成短示例并播放（不占生成额度）
+  const previewVoice = async (vid) => {
+    if (previewing) return
+    setPreviewing(vid)
+    try {
+      const fd = new FormData()
+      fd.append('voice', vid)
+      const res = await api.post('/api/voice/preview', fd, { responseType: 'blob', timeout: 60000 })
+      const url = URL.createObjectURL(res.data)
+      const audio = new Audio(url)
+      audio.onended = () => { URL.revokeObjectURL(url); setPreviewing('') }
+      audio.onerror = () => { URL.revokeObjectURL(url); setPreviewing('') }
+      audio.play().catch(() => setPreviewing(''))
+    } catch (e) {
+      setPreviewing('')
+      toast.error(`试听失败：${e.message}`)
+    }
   }
 
   const remove = async (item) => {
@@ -291,15 +315,21 @@ export default function VoicePage() {
             {scene === 'custom' && (
               <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1.5">音色</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1.5">音色（点击 ▶ 可试听）</label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {VOICES.map((v) => (
-                      <button key={v.id} onClick={() => setVoice(v.id)}
-                        className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-xs transition-all ${
+                      <div key={v.id}
+                        className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs transition-all ${
                           voice === v.id ? 'bg-pink-50 border-pink-300 text-pink-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                         }`}>
-                        <span>{v.emoji}</span><span>{v.name} · {v.gender}</span>
-                      </button>
+                        <button onClick={() => setVoice(v.id)} className="flex items-center gap-1 flex-1 min-w-0">
+                          <span>{v.emoji}</span><span className="truncate">{v.name} · {v.gender}</span>
+                        </button>
+                        <button onClick={() => previewVoice(v.id)} title="试听音色"
+                          className="p-1 rounded-md text-gray-400 hover:text-pink-600 hover:bg-pink-50 flex-shrink-0">
+                          {previewing === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -311,6 +341,33 @@ export default function VoicePage() {
                 </div>
               </div>
             )}
+
+            {/* ── 商用参数：音调 + 格式（全局生效） ── */}
+            <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
+                <SlidersHorizontal className="w-3.5 h-3.5" /> 商用参数（响度已标准化 -14 LUFS + 淡入淡出）
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">音调：{pitch > 0 ? '+' : ''}{pitch}%（{pitch === 0 ? '原声' : pitch > 0 ? '更明亮' : '更低沉'}）</label>
+                <input type="range" min="-20" max="20" step="1" value={pitch}
+                  onChange={(e) => setPitch(parseInt(e.target.value, 10))} className="w-full accent-violet-500" />
+                <div className="flex justify-between text-[11px] text-gray-400"><span>低沉 -20</span><span>原声 0</span><span>明亮 +20</span></div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">输出格式</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[{ id: 'mp3', name: 'MP3 高音质', desc: '256kbps · 体积小' }, { id: 'wav', name: 'WAV 无损', desc: 'PCM 16bit · 专业后期' }].map((f) => (
+                    <button key={f.id} onClick={() => setFormat(f.id)}
+                      className={`px-2 py-1.5 rounded-lg border text-left transition-all ${
+                        format === f.id ? 'bg-violet-50 border-violet-300' : 'border-gray-200 hover:bg-gray-50'
+                      }`}>
+                      <div className={`text-xs font-medium ${format === f.id ? 'text-violet-700' : 'text-gray-700'}`}>{f.name}</div>
+                      <div className="text-[10px] text-gray-400">{f.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             <Button variant="primary" size="lg" icon={Mic2} loading={generating} onClick={generate}
               className="w-full mt-3 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700">
@@ -406,6 +463,9 @@ export default function VoicePage() {
                           <span className="text-sm font-medium text-gray-800 truncate">{item.title}</span>
                           {item.scene_label && <Badge color="pink">{item.scene_label}</Badge>}
                           {item.voice_name && <Badge color="blue">{item.voice_name}</Badge>}
+                          {item.has_srt && <Badge color="violet"><FileText className="w-3 h-3" /> SRT</Badge>}
+                          {item.format === 'wav' && <Badge color="amber">WAV</Badge>}
+                          {item.pitch !== 0 && <span className="text-[11px] text-gray-400">音调 {item.pitch > 0 ? '+' : ''}{item.pitch}%</span>}
                           {item.speed !== 1 && <span className="text-[11px] text-gray-400">语速 {item.speed.toFixed(2)}x</span>}
                         </div>
                         {item.text && <div className="text-xs text-gray-400 truncate">{item.text}</div>}
@@ -414,7 +474,7 @@ export default function VoicePage() {
                         </div>
                       </div>
                       <button onClick={() => openRename(item)} title="重命名" className="p-1.5 text-gray-300 hover:text-violet-500 rounded-lg hover:bg-violet-50"><Pencil className="w-4 h-4" /></button>
-                      <button onClick={() => download(item)} title="下载 mp3" className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg hover:bg-blue-50"><Download className="w-4 h-4" /></button>
+                      <button onClick={() => download(item)} title="下载音频" className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg hover:bg-blue-50"><Download className="w-4 h-4" /></button>
                       <button onClick={() => remove(item)} title="删除" className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
                     </div>
                     <audio controls src={item.url} preload="none" className="w-full h-9" />

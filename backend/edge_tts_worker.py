@@ -4,7 +4,9 @@
 主进程通过 subprocess 调用本脚本完成单段 TTS 合成，
 避免 edge-tts 长文本内部限速 / websocket 异常导致主事件循环卡死。
 
-用法：python3 edge_tts_worker.py <text> <voice> <rate> <out_path>
+用法：python3 edge_tts_worker.py <text> <voice> <rate> <out_path> [pitch]
+
+pitch 为可选音调参数（如 "+10Hz" / "-5%"），商用配音支持语调调整。
 """
 import asyncio
 import sys
@@ -12,9 +14,13 @@ import sys
 
 async def main() -> int:
     text, voice, rate, out_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+    pitch = sys.argv[5] if len(sys.argv) > 5 else ""
     import edge_tts
 
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    kwargs = {"rate": rate}
+    if pitch:
+        kwargs["pitch"] = pitch
+    communicate = edge_tts.Communicate(text, voice, **kwargs)
     await communicate.save(out_path)
     return 0
 

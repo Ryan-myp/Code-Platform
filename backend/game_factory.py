@@ -11,6 +11,7 @@
 import io
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -18,7 +19,7 @@ import zipfile
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -140,10 +141,10 @@ TEMPLATES = [
     },
 ]
 
-_GENERATE_SYSTEM = """你是一位资深游戏开发工程师，擅长 HTML5 Canvas 与微信小游戏开发。
+_GENERATE_SYSTEM = """你是一位资深游戏开发工程师，擅长 HTML5 Canvas 与微信小游戏开发，作品需达到可上架商店的商用品质。
 请根据用户需求生成一个双版本小游戏：网页版 + 微信小游戏版，两个版本玩法完全一致。
 
-硬性要求：
+商用级硬性要求：
 1. 只输出一个 JSON 对象（不要输出任何解释文字、不要用 markdown 代码块包裹），结构如下：
    {"web": {"index.html": "..."}, "wx": {"game.js": "...", "game.json": "...", "project.config.json": "..."}}
 2. web 版本必须只有一个文件 index.html，CSS 与 JS 全部内联在该文件内（双击即可运行、iframe 可直接加载），
@@ -154,11 +155,18 @@ _GENERATE_SYSTEM = """你是一位资深游戏开发工程师，擅长 HTML5 Can
    - project.config.json 配置（appid 用 "touristappid" 测试号、compileType 为 "game"）
    - 微信小游戏没有 DOM，不能用 document/window/Canvas 2D 的 document.createElement，只能用小游戏 API 与 Canvas 2D 上下文
 4. 双版本玩法逻辑一致：相同的规则、计分、难度曲线
-5. 游戏代码必须完整可用，注释清晰，界面美观（配色协调、画布自适应屏幕）
-6. 图片/音效一律用代码绘制或省略，不引用外部资源文件
-7. 输出必须精简！web 版 index.html 不超过 600 行，wx 版 game.js 不超过 500 行，
-   全部文件总字符数必须控制在 40000 以内，严禁超长输出
-8. 游戏需真实可玩：完整游戏循环（update/render）、碰撞检测、计分与结束判定，不要留 TODO
+5. 必须包含完整游戏状态机与界面（商用游戏最低标准，双版本都要有）：
+   - 开始界面：游戏标题、一句玩法说明、操作提示、「开始游戏」按钮（网页版可用 Enter/空格键，微信版触屏按钮）
+   - 游戏中：完整循环（update/render）、碰撞检测、计分、难度曲线
+   - 暂停功能：网页版按 P 或 Esc 暂停/继续并显示半透明暂停遮罩，微信版提供屏幕暂停按钮
+   - 结束界面：显示本局得分、历史最高分、「再来一局」按钮
+   - 排行榜：本地存储保存最高分 Top 5（网页版 localStorage，微信版 wx.setStorageSync），允许输入昵称（默认"我"）
+6. 商用级表现力（全部用代码实现，禁止引用任何外部资源文件）：
+   - 音效：用 WebAudio 程序化合成至少 3 种音效（得分/碰撞/按钮点击），微信版用 wx.createWebAudioContext 实现同款音效
+   - 动效：得分飘字、消除/击中时的粒子爆炸反馈、按钮按下反馈
+   - 视觉：渐变色背景或星空氛围层、圆角按钮、统一配色方案，避免大面积纯色块的廉价感
+7. 代码必须完整可用，注释清晰，界面美观，画布自适应屏幕（含 resize 处理）
+8. 输出控制在合理范围：web 版 index.html 不超过 1200 行，wx 版 game.js 不超过 1000 行，总字符数 60000 以内；不要写与玩法无关的冗余代码
 9. 所有状态变量声明时必须初始化（如数组初始化为 []、对象初始化为 null），
    所有可能被事件回调触发的绘制/更新函数（如 resize 监听触发 draw）开头必须先判空（if (!data) return;），
    严禁出现未初始化变量被回调访问导致的运行时报错"""
@@ -179,7 +187,33 @@ def _extract_json(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
         raise ValueError("LLM 输出中未找到 JSON 对象")
-    return json.loads(text[start:end + 1])
+    raw = text[start:end + 1]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        # 截断修复：输出接近 token 上限被截断时，从出错位置回退到引号边界再补全闭合
+        fixed = _repair_truncated_json(raw, e.pos)
+        if fixed is not None:
+            return fixed
+        raise
+
+
+def _repair_truncated_json(raw: str, err_pos: int) -> dict | None:
+    """尝试修复被截断的 JSON：从错误位置向前回退，补全未闭合的引号/数组/对象。
+
+    模型输出接近 token 上限被截断时，JSON 尾部不完整（如字符串未闭合、
+    数组/对象缺少闭合符），从截断点逐字符回退并尝试多种闭合方式。
+    """
+    if err_pos <= 0 or err_pos > len(raw):
+        return None
+    for back in range(min(err_pos, 400)):
+        seg = raw[:err_pos - back].rstrip()
+        for closer in ('"', '"}', '"]', '"}}', '"]}', '}', ']}', '}"'):
+            try:
+                return json.loads(seg + closer)
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return None
 
 
 def _inline_web_files(web: dict) -> dict:
@@ -247,6 +281,58 @@ def _validate_files(files: dict) -> dict:
     return result
 
 
+def _node_check_js(js: str) -> tuple[bool, str]:
+    """node --check 语法门禁：校验 JS 代码语法（node 不可用时跳过放行）。"""
+    import subprocess
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(js)
+            tmp = f.name
+        try:
+            r = subprocess.run(["node", "--check", tmp], capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                return True, "语法通过"
+            return False, (r.stderr or r.stdout or "").strip()[:400]
+        finally:
+            os.unlink(tmp)
+    except FileNotFoundError:
+        return True, "node 不可用，跳过"
+    except Exception as e:
+        return True, f"校验器异常，跳过: {e}"
+
+
+# 商用要素门禁：生成的游戏必须包含以下能力（双版本任一命中即可）
+_FEATURE_SPECS = [
+    ("开始界面", ["开始游戏", "startGame"]),
+    ("暂停功能", ["暂停", "pause"]),
+    ("结束界面", ["再来一局", "gameOver", "restart"]),
+    ("最高分记录", ["最高分", "best", "localStorage", "setStorage"]),
+    ("程序化音效", ["AudioContext", "oscillator"]),
+    ("粒子动效", ["particle", "粒子"]),
+]
+
+
+def _qc_check(files: dict) -> dict:
+    """生成产物质量门禁（QC）：JS 语法 + 商用要素覆盖，失败时返回问题清单供自动修复。"""
+    checks = []
+    html = files.get("web", {}).get("index.html") or ""
+    js_blocks = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html)
+    if js_blocks:
+        ok, msg = _node_check_js("\n".join(js_blocks))
+        checks.append({"item": "web JS 语法", "ok": ok, "detail": msg})
+    wx_js = files.get("wx", {}).get("game.js") or ""
+    if wx_js:
+        ok, msg = _node_check_js(wx_js)
+        checks.append({"item": "wx game.js 语法", "ok": ok, "detail": msg})
+    src = (html + "\n" + wx_js).lower()
+    for label, kws in _FEATURE_SPECS:
+        hit = any(k.lower() in src for k in kws)
+        checks.append({"item": label, "ok": hit, "detail": "已包含" if hit else "缺失"})
+    return {"ok": all(c["ok"] for c in checks), "checks": checks}
+
+
 @router.get("/templates")
 async def list_templates(current_user: dict = require_auth()):
     return TEMPLATES
@@ -255,8 +341,9 @@ async def list_templates(current_user: dict = require_auth()):
 @router.get("/projects")
 async def list_projects(current_user: dict = require_auth()):
     conn = get_db()
+    _ensure_cover_column(conn)
     rows = conn.execute(
-        "SELECT id, name, template, requirement, created_at, updated_at, favorite, tags, iterations "
+        "SELECT id, name, template, requirement, created_at, updated_at, favorite, tags, iterations, cover "
         "FROM game_projects ORDER BY created_at DESC"
     ).fetchall()
     conn.close()
@@ -289,39 +376,62 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
 请生成双版本小游戏 JSON。"""
 
     start = time.time()
+    files = None
+    qc = None
+    last_err = ""
     try:
-        result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4)
+        result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"生成失败: {e}") from e
 
-    files = None
-    try:
-        files = _validate_files(_extract_json(result))
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.warning("game JSON parse failed (will retry compact): %s", e)
-        # 输出截断/超长：自动降级为精简版重试（优先保证 web 单文件可玩）
+    # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
+    for attempt in range(3):
         try:
-            retry_prompt = user_prompt + (
-                "\n\n重要：上次输出因过长被截断导致失败。本次请严格精简：\n"
-                "1. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内\n"
-                "2. 只保留核心玩法循环、碰撞检测与计分，去掉非必要装饰\n"
-                "3. 全部文件总字符数不超过 20000"
-            )
-            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=10000, temperature=0.3)
             files = _validate_files(_extract_json(result))
-        except (ValueError, json.JSONDecodeError, HTTPException) as e2:
-            raise HTTPException(502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}") from e2
+            qc = _qc_check(files)
+            if qc["ok"]:
+                break
+            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
+            logger.warning("game QC failed (attempt %d): %s", attempt + 1, last_err)
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
+                f"问题清单：{last_err}\n"
+                "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
+            )
+            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=16000, temperature=0.3, timeout=300)
+        except (ValueError, json.JSONDecodeError) as e:
+            last_err = str(e)
+            logger.warning("game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
+                           attempt + 1, e, len(result or ""), (result or "")[:200])
+            # 输出截断/超长：自动降级为精简版重试（优先保证 web 单文件可玩）
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出未通过解析，错误为：" + str(e) + "。\n"
+                "本次请严格：\n"
+                "1. 只输出合法 JSON 对象，不要 markdown 代码块、不要任何解释文字\n"
+                "2. 所有字符串正确转义（引号/换行），内容不要截断\n"
+                "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
+            )
+            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=10000, temperature=0.3, timeout=300)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"生成失败: {e}") from e
+    if not files or qc is None:
+        raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
+    if not qc["ok"]:
+        raise HTTPException(502, f"质量门禁未通过（已自动修复重试 3 次）：{last_err}")
 
     proj_id = f"game_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
     conn = get_db()
+    _ensure_qc_column(conn)
     conn.execute(
-        """INSERT INTO game_projects (id, name, template, requirement, files, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?)""",
+        """INSERT INTO game_projects (id, name, template, requirement, files, qc, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
         (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), now, now),
+         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False), now, now),
     )
     conn.commit()
     conn.close()
@@ -335,7 +445,75 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
         "versions": list(files.keys()),
         "file_count": sum(len(v) for v in files.values()),
         "files": files,
+        "qc": qc,
     }
+
+
+class CoverRequest(BaseModel):
+    cover: str = Field(..., description="封面 base64 dataURL（前端试玩 iframe canvas.toDataURL 截取）")
+
+
+COVER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game_covers")
+
+
+def _ensure_cover_column(conn) -> None:
+    """幂等补列：game_projects.cover 存封面 URL。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+    if "cover" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN cover TEXT DEFAULT ''")
+        conn.commit()
+
+
+def _ensure_qc_column(conn) -> None:
+    """幂等补列：game_projects.qc 存商用质量门禁报告（JSON）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+    if "qc" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN qc TEXT DEFAULT ''")
+        conn.commit()
+
+
+@router.post("/{proj_id}/cover")
+async def save_cover(proj_id: str, req: CoverRequest, current_user: dict = require_auth()):
+    """保存游戏封面：前端试玩时截取首屏画面，作为项目卡片商用展示。"""
+    import base64
+
+    data = (req.cover or "").strip()
+    if not data.startswith("data:image"):
+        raise HTTPException(400, "cover 必须是 data:image 开头的 base64 图片")
+    try:
+        _, b64 = data.split(",", 1)
+        raw = base64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "cover base64 解码失败")
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(400, "封面图片过大（≤5MB）")
+    conn = get_db()
+    _ensure_cover_column(conn)
+    row = conn.execute("SELECT id FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "游戏项目不存在")
+    os.makedirs(COVER_DIR, exist_ok=True)
+    ext = "jpg" if "image/jpeg" in data else "png"
+    fname = f"{proj_id}.{ext}"
+    with open(os.path.join(COVER_DIR, fname), "wb") as f:
+        f.write(raw)
+    cover_url = f"/api/games/{proj_id}/cover-image"
+    conn.execute("UPDATE game_projects SET cover=?, updated_at=? WHERE id=?",
+                 (cover_url, datetime.now().isoformat(), proj_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "cover": cover_url}
+
+
+@router.get("/{proj_id}/cover-image")
+async def get_cover(proj_id: str):
+    """读取游戏封面图片。"""
+    for ext in ("png", "jpg"):
+        p = os.path.join(COVER_DIR, f"{proj_id}.{ext}")
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/png" if ext == "png" else "image/jpeg")
+    raise HTTPException(404, "暂无封面，可在试玩页截取保存")
 
 
 @router.get("/deploy-guide")
@@ -461,7 +639,7 @@ async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = req
 
     start = time.time()
     try:
-        result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4)
+        result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
     except HTTPException:
         conn.close()
         raise
@@ -524,6 +702,7 @@ async def get_project(proj_id: str, current_user: dict = require_auth()):
         raise HTTPException(404, "游戏项目不存在")
     d = dict(row)
     d["files"] = json.loads(d.get("files") or "{}")
+    d["qc"] = json.loads(d.get("qc") or "null")
     return d
 
 

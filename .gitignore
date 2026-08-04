@@ -83,3 +83,8 @@ backend/artifacts/*/
 coverage.xml
 htmlcov/
 .pytest_cache/
+
+# ─── 运行时产物 ──────────────────────────────
+backend/game_covers/
+backend/image_factory/img_*.png
+backend/uploads/qr/

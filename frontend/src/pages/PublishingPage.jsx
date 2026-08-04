@@ -112,6 +112,23 @@ export default function PublishingPage() {
   const [testingId, setTestingId] = useState('')
   const [detail, setDetail] = useState(null)
 
+  // 素材包 ZIP 一键下载（README 步骤 + 正文 + 全部素材文件）
+  const downloadPackage = async () => {
+    if (!detail) return
+    try {
+      const res = await api.get(`/api/publish/records/${detail.id}/package`, { responseType: 'blob', timeout: 60000 })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `publish_package_${detail.id.slice(-6)}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('素材包已下载（README 发布步骤 + 文案 + 素材文件）')
+    } catch (e) { toast.error(`素材包下载失败：${e.message}`) }
+  }
+
   // ── 排期日历 / 数据看板 ──
   const now = new Date()
   const [calMonth, setCalMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
@@ -1111,7 +1128,13 @@ export default function PublishingPage() {
       </Modal>
 
       {/* 记录详情 Modal */}
-      <Modal open={!!detail} onClose={() => setDetail(null)} title="发布详情" size="lg">
+      <Modal open={!!detail} onClose={() => setDetail(null)} title="发布详情" size="lg"
+        footer={
+          <>
+            <Button variant="secondary" icon={Download} onClick={downloadPackage} disabled={!detail}>下载素材包 ZIP</Button>
+            <Button variant="primary" onClick={() => setDetail(null)}>关闭</Button>
+          </>
+        }>
         {detail && (
           <div className="space-y-3 text-sm">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1132,7 +1155,7 @@ export default function PublishingPage() {
             )}
             {detail.asset_urls?.length > 0 && (
               <div>
-                <label className="text-xs font-medium text-gray-500">素材文件</label>
+                <label className="text-xs font-medium text-gray-500">素材文件（也可一键下载素材包 ZIP）</label>
                 <div className="space-y-1 mt-1">
                   {detail.asset_urls.map((u, i) => (
                     <a key={i} href={assetFull(u)} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 hover:border-blue-300 text-xs text-gray-600">

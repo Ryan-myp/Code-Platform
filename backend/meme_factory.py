@@ -21,7 +21,7 @@ import requests
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from common.auth import require_auth
 from common.config import load_config
@@ -50,6 +50,55 @@ MARGIN = 80    # 文字边距
 TOP_H = 240    # 顶部文字区高度
 BOTTOM_H = 240  # 底部文字区高度
 
+# 导出尺寸规格（商用场景全覆盖）
+SIZE_SPECS = [
+    {"size": 240, "name": "微信表情单图", "desc": "240×240 微信表情包标准"},
+    {"size": 750, "name": "聊天大图", "desc": "750×750 聊天大图/社媒配图"},
+    {"size": 1080, "name": "原图", "desc": "1080×1080 默认产物"},
+    {"size": 2160, "name": "高清印刷", "desc": "2160×2160 印刷/大屏高清"},
+]
+
+_BREAK_CHARS = "，。！？、；：,.!?;: "  # 智能换行优先断点（标点/空格）
+
+
+def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_w: int, max_lines: int = 2) -> list[str]:
+    """智能换行：优先在标点/空格后断行，避免词语被硬切；超宽段兜底逐字符切。"""
+    if draw.textlength(text, font=font) <= max_w:
+        return [text]
+    # 1) 按标点切成小段（标点保留在段尾，语气不断裂）
+    segs, buf = [], ""
+    for ch in text:
+        buf += ch
+        if ch in _BREAK_CHARS:
+            segs.append(buf)
+            buf = ""
+    if buf:
+        segs.append(buf)
+    # 2) 贪心组行
+    lines, cur = [], ""
+    for s in segs:
+        if cur and draw.textlength(cur + s, font=font) > max_w:
+            lines.append(cur)
+            cur = s
+        else:
+            cur += s
+    if cur:
+        lines.append(cur)
+    # 3) 仍超宽的段兜底逐字符切
+    final = []
+    for l in lines:
+        while len(final) < max_lines and draw.textlength(l, font=font) > max_w:
+            cut = 1
+            for i in range(2, len(l) + 1):
+                if draw.textlength(l[:i], font=font) > max_w:
+                    cut = i - 1
+                    break
+            final.append(l[:cut])
+            l = l[cut:]
+        if l:
+            final.append(l)
+    return final[:max_lines]
+
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
     """获取中文字体（macOS PingFang），失败回退默认。"""
@@ -64,7 +113,7 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
 
 def _draw_meme_text(draw: ImageDraw.ImageDraw, text: str, box_top: int, box_bottom: int,
                     fill: str = "#FFFFFF", stroke: str = "#000000", font_size: int = 96) -> None:
-    """在指定区域居中绘制 meme 文字：自动换行、自动缩放、白字黑描边。"""
+    """在指定区域居中绘制 meme 文字：智能换行、自动缩放、白字黑描边 + 投影。"""
     if not text:
         return
     text = text.strip()
@@ -74,44 +123,27 @@ def _draw_meme_text(draw: ImageDraw.ImageDraw, text: str, box_top: int, box_bott
     max_w = CANVAS - MARGIN * 2
     max_h = box_bottom - box_top
 
-    # 自动缩放字号直到能放下（最多 2 行）
+    # 自动缩放字号直到 2 行以内能放下（智能换行按真实行宽计算）
     while font_size > 30:
         font = get_font(font_size)
-        # 按字符数估算换行
-        lines = [text]
-        if draw.textlength(text, font=font) > max_w:
-            half = max(1, len(text) // 2)
-            lines = [text[:half], text[half:]]
+        lines = _wrap_text(draw, text, font, max_w)
         line_w = max(draw.textlength(l, font=font) for l in lines)
-        total_h = len(lines) * font_size * 1.2
+        total_h = len(lines) * int(font_size * 1.2)
         if line_w <= max_w and total_h <= max_h:
             break
         font_size -= 6
 
-    # 换行逻辑（按最大宽度精确切分）
-    def wrap(t: str) -> list[str]:
-        if draw.textlength(t, font=font) <= max_w:
-            return [t]
-        # 逐字符累积
-        lines, cur = [], ""
-        for ch in t:
-            if draw.textlength(cur + ch, font=font) > max_w and cur:
-                lines.append(cur)
-                cur = ch
-            else:
-                cur += ch
-        if cur:
-            lines.append(cur)
-        return lines[:2]  # meme 文字最多 2 行
-
-    lines = wrap(text)
+    lines = _wrap_text(draw, text, font, max_w)
     line_h = int(font_size * 1.2)
     total_h = len(lines) * line_h
     y = box_top + (max_h - total_h) // 2
+    sw = max(3, font_size // 24)
     for l in lines:
         w = draw.textlength(l, font=font)
         x = (CANVAS - w) // 2
-        draw.text((x, y), l, font=font, fill=fill, stroke_width=max(3, font_size // 24), stroke_fill=stroke)
+        # 投影层：右下偏移黑色实心描边，增强立体感与浅色背景可读性（商用 meme 标准）
+        draw.text((x + 4, y + 4), l, font=font, fill="#000000", stroke_width=sw, stroke_fill="#000000")
+        draw.text((x, y), l, font=font, fill=fill, stroke_width=sw, stroke_fill=stroke)
         y += line_h
 
 
@@ -127,7 +159,7 @@ def _gradient_bg(draw_color1: tuple, draw_color2: tuple) -> Image.Image:
 
 
 def _style_bg(style: str) -> Image.Image:
-    """按风格生成底图。"""
+    """按风格生成底图（黄/白底附加高斯噪点颗粒，消除纯色廉价感）。"""
     if style == "gradient":
         return _gradient_bg((99, 102, 241), (168, 85, 247))
     if style == "black":
@@ -135,8 +167,14 @@ def _style_bg(style: str) -> Image.Image:
     if style == "red":
         return Image.new("RGB", (CANVAS, CANVAS), (229, 57, 53))
     if style == "white":
-        return Image.new("RGB", (CANVAS, CANVAS), (255, 255, 255))
-    return Image.new("RGB", (CANVAS, CANVAS), (255, 216, 77))  # yellow 默认
+        img = Image.new("RGB", (CANVAS, CANVAS), (255, 255, 255))
+    else:
+        img = Image.new("RGB", (CANVAS, CANVAS), (255, 216, 77))  # yellow 默认
+    if style in ("yellow", "white"):
+        # 高斯噪点叠加：±16 亮度颗粒，纸张质感，避免大面积纯色（商用质感）
+        noise = Image.effect_noise((CANVAS, CANVAS), 10).convert("RGB")
+        img = ImageChops.add(img, noise, scale=8, offset=-16)
+    return img
 
 
 def _text_color(style: str) -> str:
@@ -266,8 +304,17 @@ async def generate_meme(
     # 背景
     if style == "ai":
         full_prompt = ai_prompt.strip() or f"{top_text}，{bottom_text}"
-        scene = "搞笑夸张的卡通插画场景，网络表情包风格，色彩鲜艳，画面留出上下空间放文字"
+        scene = ("扁平插画风格，干净简洁的现代网络表情包场景，高饱和配色，画面主体居中偏下，"
+                 "顶部与底部各预留 20% 高度纯净留白区域用于叠加文字，背景简洁不杂乱")
         img = _ai_bg(f"{full_prompt}。{scene}")
+        # 顶部 + 底部半透明底条，保证大字在任何画面上都可读（商用标准）
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        if top_text:
+            od.rectangle([0, 0, CANVAS, TOP_H], fill=(0, 0, 0, 110))
+        if bottom_text:
+            od.rectangle([0, CANVAS - BOTTOM_H, CANVAS, CANVAS], fill=(0, 0, 0, 110))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
         top_fill, top_stroke = "#FFFFFF", "#000000"
         bottom_fill, bottom_stroke = "#FFFFFF", "#000000"
     else:
@@ -278,13 +325,7 @@ async def generate_meme(
     draw = ImageDraw.Draw(img)
     # 顶部文字
     _draw_meme_text(draw, top_text, MARGIN, TOP_H, fill=top_fill, stroke=top_stroke, font_size=96)
-    # 底部文字（AI 模式加半透明底条提升可读性）
-    if style == "ai" and bottom_text:
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        od.rectangle([0, CANVAS - BOTTOM_H, CANVAS, CANVAS], fill=(0, 0, 0, 120))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        draw = ImageDraw.Draw(img)
+    # 底部文字
     _draw_meme_text(draw, bottom_text, CANVAS - BOTTOM_H, CANVAS - MARGIN, fill=bottom_fill, stroke=bottom_stroke, font_size=96)
 
     filename = f"meme_{int(time.time() * 1000)}.png"
@@ -301,10 +342,23 @@ async def generate_meme(
 
 
 @router.get("/images/{filename}")
-async def get_image(filename: str):
+async def get_image(filename: str, size: int = 1080):
+    """表情包图片：默认返回 1080 原图；size=240/750/2160 时动态导出对应商用尺寸（磁盘缓存）。"""
     path = os.path.join(MEME_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(404, "表情包不存在")
+    if size in (240, 750, 2160):
+        cache_dir = os.path.join(MEME_DIR, "exports")
+        os.makedirs(cache_dir, exist_ok=True)
+        stem = os.path.splitext(filename)[0]
+        cached = os.path.join(cache_dir, f"{stem}_{size}.png")
+        if not os.path.exists(cached):
+            try:
+                with Image.open(path) as im:
+                    im.resize((size, size), Image.LANCZOS).save(cached, "PNG")
+            except Exception as e:
+                raise HTTPException(500, f"尺寸导出失败: {e}")
+        return FileResponse(cached, media_type="image/png")
     return FileResponse(path, media_type="image/png")
 
 
@@ -339,6 +393,7 @@ async def list_memes(
                 "style": m.get("style", ""),
                 "style_label": style_cfg["name"] if style_cfg else "",
                 "ai_prompt": m.get("ai_prompt", ""),
+                "sizes": [s["size"] for s in SIZE_SPECS],
             })
 
     # 搜索与筛选
@@ -434,6 +489,12 @@ async def delete_meme(filename: str, current_user: dict = require_auth()):
     path = os.path.join(MEME_DIR, filename)
     if os.path.exists(path):
         os.remove(path)
+    # 清理尺寸导出缓存
+    stem = os.path.splitext(filename)[0]
+    for s in (240, 750, 2160):
+        cached = os.path.join(MEME_DIR, "exports", f"{stem}_{s}.png")
+        if os.path.exists(cached):
+            os.remove(cached)
     # 同步注销 artifacts 记录
     try:
         from common.db import get_db

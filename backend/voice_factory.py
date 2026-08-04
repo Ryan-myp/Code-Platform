@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -23,7 +24,7 @@ from typing import Optional
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -70,10 +71,14 @@ def _split_text(text: str) -> list[str]:
     text = text.strip()
     if len(text) <= MAX_SEGMENT_CHARS:
         return [text]
-    # 优先按句号/问号/感叹号/换行切分
+    # 优先按句号/问号/感叹号/换行切分（括号/引号保护：不在一对括号中间断句）
     chunks, buf = [], ""
     for part in re.split(r"(?<=[。！？.!?\n])", text):
         if not part:
+            continue
+        # 缓冲以左括号/引号结尾时，即使超长也等待闭合配对再切，避免拼接处语气断裂
+        if len(buf) + len(part) > MAX_SEGMENT_CHARS and buf and buf.rstrip().endswith(tuple("（([《“")):
+            buf += part
             continue
         if len(buf) + len(part) > MAX_SEGMENT_CHARS and buf:
             chunks.append(buf.strip())
@@ -93,14 +98,14 @@ def _split_text(text: str) -> list[str]:
     return final
 
 
-def _tts_one(text: str, voice: str, speed: float) -> bytes:
+def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
     """单段 TTS 合成，返回 mp3 字节。
 
     优先 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
-    失败回退中转站 /audio/speech（需开通 tts-1 渠道）。
+    失败回退中转站 /audio/speech（需开通 tts-1 渠道）。pitch 为音调百分比（-20~+20）。
     """
     try:
-        return _tts_edge(text, voice, speed)
+        return _tts_edge(text, voice, speed, pitch)
     except Exception as e:
         logger.warning(f"edge-tts 失败，回退中转站 API: {e}")
     if not AGNES_API_KEY:
@@ -116,7 +121,7 @@ def _tts_one(text: str, voice: str, speed: float) -> bytes:
     return resp.content
 
 
-def _tts_edge(text: str, voice: str, speed: float) -> bytes:
+def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
     """edge-tts 合成（Azure Neural 音色，免费通道，子进程隔离）。"""
     import subprocess
     import sys
@@ -126,10 +131,10 @@ def _tts_edge(text: str, voice: str, speed: float) -> bytes:
     fd, tmp = tempfile.mkstemp(suffix=".mp3")
     os.close(fd)
     try:
-        result = subprocess.run(
-            [sys.executable, worker, text, voice, rate, tmp],
-            capture_output=True, timeout=45,
-        )
+        args = [sys.executable, worker, text, voice, rate, tmp]
+        if pitch:
+            args.append(f"{pitch:+d}Hz")
+        result = subprocess.run(args, capture_output=True, timeout=45)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode(errors="replace")[:200] or f"exit {result.returncode}")
         with open(tmp, "rb") as f:
@@ -152,6 +157,42 @@ def _merge_mp3(seg_files: list[str], out_path: str) -> None:
         )
     finally:
         os.unlink(list_file)
+
+
+def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
+    """商用级母带处理：响度标准化（-14 LUFS，短视频平台标准）+ 淡入淡出。
+
+    - loudnorm 单遍动态模式统一整体响度，消除分段拼接处响度落差
+    - 时长 ≥0.6s 时加 150ms 淡入 + 300ms 淡出，避免首尾爆音
+    - fmt=mp3 输出 256kbps/44.1kHz 高音质；fmt=wav 输出 PCM 16bit 无损
+    """
+    duration = _audio_duration(in_path)
+    af = "loudnorm=I=-14:TP=-1.5:LRA=11"
+    if duration and duration > 0.6:
+        fade_out_start = max(0.0, duration - 0.3)
+        af += f",afade=t=in:st=0:d=0.15,afade=t=out:st={fade_out_start:.2f}:d=0.3"
+    cmd = ["ffmpeg", "-y", "-i", in_path, "-af", af]
+    if fmt == "wav":
+        cmd += ["-codec:a", "pcm_s16le", "-ar", "44100", out_path]
+    else:
+        cmd += ["-codec:a", "libmp3lame", "-b:a", "256k", "-ar", "44100", out_path]
+    subprocess.run(cmd, capture_output=True, timeout=180, check=True)
+
+
+def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
+    """生成标准 SRT 字幕：按分段文本与真实时长累计时间戳（商用配音包必备）。"""
+    def ts(sec: float) -> str:
+        sec = max(0.0, sec)
+        h, rem = int(sec // 3600), sec % 3600
+        m, s = int(rem // 60), rem % 60
+        return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
+
+    lines, cursor = [], 0.0
+    for i, (seg_text, dur) in enumerate(zip(segs, durations), 1):
+        start, cursor = cursor, cursor + max(dur, 0.5)
+        lines.append(f"{i}\n{ts(start)} --> {ts(cursor)}\n{seg_text.strip()}\n")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
 
 
 def _audio_duration(path: str) -> float:
@@ -215,6 +256,8 @@ def _artifact_meta() -> dict:
                 "scene": md.get("scene", ""),
                 "voice": md.get("voice", ""),
                 "speed": md.get("speed", 1.0),
+                "pitch": md.get("pitch", 0),
+                "format": md.get("format", "mp3"),
                 "segments": md.get("segments", 1),
                 "title": md.get("title", ""),
             }
@@ -229,9 +272,17 @@ async def generate_voice(
     scene: str = Form("shortvideo"),
     voice: str = Form(""),
     speed: float = Form(1.0),
+    pitch: int = Form(0),
+    format: str = Form("mp3"),
     project_id: str = Form(""),
 ):
-    """文字转语音：场景预设或自由音色，长文本自动分段拼接。"""
+    """文字转语音：场景预设或自由音色，长文本自动分段 + 商用级母带处理。
+
+    - 母带：响度标准化 -14 LUFS + 淡入淡出（短视频/自媒体平台标准）
+    - 自动生成同名字幕 .srt（分段时间戳对齐，批量下载随包附送）
+    - format: mp3（256k 高音质，默认）/ wav（PCM 无损）
+    - pitch: -20 ~ +20 音调百分比（0 为原声，正为明亮/负为低沉）
+    """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
     text = (text or "").strip()
@@ -239,7 +290,9 @@ async def generate_voice(
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
         raise HTTPException(400, f"文本过长（{MAX_TEXT_CHARS} 字以内），请分段生成")
-
+    if format not in ("mp3", "wav"):
+        raise HTTPException(400, "format 仅支持 mp3 / wav")
+    pitch = max(-20, min(20, int(pitch or 0)))
     scene_cfg = next((s for s in SCENES if s["id"] == scene), None)
     if scene and scene != "custom" and not scene_cfg:
         raise HTTPException(400, f"未知场景: {scene}")
@@ -254,34 +307,41 @@ async def generate_voice(
 
     try:
         tmp_dir = tempfile.mkdtemp(prefix="voice_seg_")
-        seg_files = []
+        seg_files, seg_durations = [], []
         for i, seg in enumerate(segments):
-            data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed)
+            data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch)
             seg_path = os.path.join(tmp_dir, f"seg_{i}.mp3")
             with open(seg_path, "wb") as f:
                 f.write(data)
             seg_files.append(seg_path)
+            seg_durations.append(_audio_duration(seg_path))
 
-        filename = f"voice_{int(time.time() * 1000)}.mp3"
-        out_path = os.path.join(VOICE_DIR, filename)
+        # 拼接 → 母带处理（响度标准化 + 淡入淡出）→ 输出产物
+        stem = f"voice_{int(time.time() * 1000)}"
+        raw_path = os.path.join(tmp_dir, "merged.mp3")
         if len(seg_files) == 1:
-            with open(out_path, "wb") as f:
-                f.write(open(seg_files[0], "rb").read())
+            shutil.copyfile(seg_files[0], raw_path)
         else:
-            _merge_mp3(seg_files, out_path)
+            _merge_mp3(seg_files, raw_path)
+        filename = f"{stem}.{'wav' if format == 'wav' else 'mp3'}"
+        out_path = os.path.join(VOICE_DIR, filename)
+        _master_audio(raw_path, out_path, format)
         duration = _audio_duration(out_path) or round(len(text) / 4.5, 1)
+        # 字幕：分段文本 + 分段真实时长，时间戳与最终音频对齐
+        srt_path = os.path.join(VOICE_DIR, f"{stem}.srt")
+        _make_srt(segments, seg_durations, srt_path)
+        has_srt = os.path.exists(srt_path)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"TTS 生成失败: {e}")
         raise HTTPException(500, f"配音生成失败: {str(e)}") from e
     finally:
-        import shutil
-
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     art_id = _save_artifact(filename, text,
-                            {"voice": tts_voice, "scene": scene, "speed": tts_speed, "segments": len(segments)})
+                            {"voice": tts_voice, "scene": scene, "speed": tts_speed, "pitch": pitch,
+                             "format": format, "has_srt": has_srt, "segments": len(segments)})
     elapsed = round(time.time() - start, 2)
     from common.llm import log_usage
 
@@ -293,6 +353,9 @@ async def generate_voice(
         "voice": tts_voice,
         "scene": scene,
         "speed": tts_speed,
+        "pitch": pitch,
+        "format": format,
+        "has_srt": has_srt,
         "duration": duration,
         "segments": len(segments),
         "text": text[:200],
@@ -304,7 +367,20 @@ async def get_audio(filename: str):
     path = os.path.join(VOICE_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(404, "配音不存在")
-    return FileResponse(path, media_type="audio/mpeg")
+    media = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
+    return FileResponse(path, media_type=media)
+
+
+@router.post("/preview")
+async def preview_voice(voice: str = Form(...), text: str = Form("")):
+    """音色试听：合成短示例片段（≤80 字），快速对比不同音色的商用效果。"""
+    if voice not in {v["id"] for v in VOICES}:
+        raise HTTPException(400, f"未知音色: {voice}")
+    sample = (text or "").strip()[:80]
+    if not sample:
+        sample = "你好，这是智能语音试听，可以用来挑选喜欢的音色。"
+    data = await asyncio.to_thread(_tts_one, sample, voice, 1.0, 0)
+    return Response(content=data, media_type="audio/mpeg")
 
 
 @router.get("/list")
@@ -326,7 +402,7 @@ async def list_voices(
     items = []
     if os.path.exists(VOICE_DIR):
         for f in sorted(os.listdir(VOICE_DIR), reverse=True):
-            if not f.endswith(".mp3"):
+            if not f.endswith((".mp3", ".wav")):
                 continue
             filepath = os.path.join(VOICE_DIR, f)
             stat = os.stat(filepath)
@@ -347,6 +423,9 @@ async def list_voices(
                 "voice": m.get("voice", ""),
                 "voice_name": voice_cfg["name"] if voice_cfg else "",
                 "speed": m.get("speed", 1.0),
+                "pitch": m.get("pitch", 0),
+                "format": m.get("format", "mp3"),
+                "has_srt": os.path.exists(os.path.join(VOICE_DIR, f"{os.path.splitext(f)[0]}.srt")),
                 "segments": m.get("segments", 1),
             }
             items.append(item)
@@ -410,8 +489,13 @@ async def batch_download_voices(ids: list[str] = Form(...), current_user: dict =
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in ids:
             path = os.path.join(VOICE_DIR, fname)
-            if os.path.exists(path) and fname.endswith(".mp3"):
+            if os.path.exists(path) and fname.endswith((".mp3", ".wav")):
                 zf.write(path, fname)
+                # 商用配音包标准：同名字幕随包附送
+                stem = os.path.splitext(fname)[0]
+                srt_path = os.path.join(VOICE_DIR, f"{stem}.srt")
+                if os.path.exists(srt_path):
+                    zf.write(srt_path, f"{stem}.srt")
                 count += 1
     if count == 0:
         raise HTTPException(400, "没有可下载的文件")
@@ -451,6 +535,10 @@ async def delete_voice(filename: str, current_user: dict = require_auth()):
     path = os.path.join(VOICE_DIR, filename)
     if os.path.exists(path):
         os.remove(path)
+    # 同步删除同名字幕文件
+    srt_path = os.path.join(VOICE_DIR, f"{os.path.splitext(filename)[0]}.srt")
+    if os.path.exists(srt_path):
+        os.remove(srt_path)
     # 同步注销 artifacts 记录（软删，保留历史计数口径）
     try:
         from common.db import get_db

@@ -153,6 +153,16 @@ export default function MemePage() {
     document.body.removeChild(a)
   }
 
+  // 商用尺寸导出：240（微信表情单图）/ 750（聊天大图）/ 1080（原图）/ 2160（高清印刷）
+  const downloadSize = (item, size) => {
+    const a = document.createElement('a')
+    a.href = `${item.url}?size=${size}`
+    a.download = item.id.replace(/\.png$/, `_${size}.png`)
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
   const remove = async (item) => {
     try { await api.delete(`/api/meme/${item.id}`); loadList(); toast.success('已删除') }
     catch (e) { toast.error(e.message) }
@@ -361,8 +371,9 @@ export default function MemePage() {
             </h3>
             <div className="space-y-2 text-sm text-gray-600">
               <p>① 经典模板模式秒出，微信/QQ 直接发送</p>
-              <p>② 长文字自动换行缩放，最多 2 行</p>
-              <p>③ AI 模式生成专属搞笑场景，配上下文字更有梗</p>
+              <p>② 智能换行优先在标点断行，白字黑描边 + 投影更立体</p>
+              <p>③ 支持 240/750/1080/2160 多尺寸导出（微信表情/聊天图/高清印刷）</p>
+              <p>④ AI 模式生成专属搞笑场景，上下文字底条保证可读性</p>
             </div>
           </Card>
         </div>
@@ -429,7 +440,15 @@ export default function MemePage() {
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2 pt-6 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
                       <span className="text-[11px] text-white truncate flex-1">{item.style_label || '未标记'} · {item.created_at?.slice(5, 16).replace('T', ' ')}</span>
                       <button onClick={() => openRename(item)} title="重命名" className="p-1 text-white hover:text-violet-300"><Pencil className="w-4 h-4" /></button>
-                      <button onClick={() => download(item)} title="下载 PNG" className="p-1 text-white hover:text-blue-300"><Download className="w-4 h-4" /></button>
+                      <button onClick={() => download(item)} title="下载原图 1080" className="p-1 text-white hover:text-blue-300"><Download className="w-4 h-4" /></button>
+                      <select onChange={(e) => { if (e.target.value) downloadSize(item, e.target.value) }} defaultValue=""
+                        title="导出尺寸"
+                        className="text-[10px] bg-black/40 text-white border border-white/20 rounded-md px-1 py-0.5 outline-none cursor-pointer">
+                        <option value="" disabled>尺寸</option>
+                        {[240, 750, 1080, 2160].map((s) => (
+                          <option key={s} value={s} className="text-gray-800">{s}×{s}</option>
+                        ))}
+                      </select>
                       <button onClick={() => remove(item)} title="删除" className="p-1 text-white hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   </div>

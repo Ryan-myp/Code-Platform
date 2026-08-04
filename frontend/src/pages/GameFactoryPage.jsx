@@ -3,7 +3,7 @@ import {
   Gamepad2, Sparkles, FolderTree, FileCode2, Braces, Paintbrush,
   Copy, Check, Download, Trash2, Eye, Rocket, Loader2, Play,
   Globe, Smartphone, Maximize2, MonitorPlay, Star, Pencil, Wand2,
-  BarChart3, GitCommitHorizontal, Search, RefreshCw,
+  BarChart3, GitCommitHorizontal, Search, RefreshCw, BadgeCheck, X, Camera,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -90,15 +90,15 @@ export default function GameFactoryPage() {
     if (requirement.trim().length < 2) { toast.error('请描述你的玩法需求'); return }
     setGenerating(true)
     try {
-      const res = await api.post('/api/games/generate', { name: name.trim(), template, requirement }, { timeout: 180000 })
+      const res = await api.post('/api/games/generate', { name: name.trim(), template, requirement }, { timeout: 330000 })
       const data = res.data
-      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions || Object.keys(data.files || {}) })
+      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions || Object.keys(data.files || {}), qc: data.qc })
       const firstVer = (data.versions || Object.keys(data.files || {}))[0] || 'web'
       setVersion(firstVer)
       const firstFile = Object.keys((data.files || {})[firstVer] || {})[0] || ''
       setSelectedFile(firstFile)
       loadProjects()
-      toast.success(`生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件`)
+      toast.success(`生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件${data.qc?.ok ? ' · 商用 QC 全通过' : ''}`)
     } catch (e) {
       toast.error(`生成失败：${e.message}`)
     } finally { setGenerating(false) }
@@ -109,7 +109,7 @@ export default function GameFactoryPage() {
       const res = await api.get(`/api/games/${p.id}`)
       const files = res.data.files || {}
       const versions = Object.keys(files)
-      setViewing({ id: p.id, name: p.name, files, versions })
+      setViewing({ id: p.id, name: p.name, files, versions, qc: res.data.qc })
       const firstVer = versions[0] || 'web'
       setVersion(firstVer)
       setSelectedFile(Object.keys(files[firstVer] || {})[0] || '')
@@ -162,7 +162,7 @@ export default function GameFactoryPage() {
     if (!viewing || !evolveReq.trim()) { toast.error('请输入迭代需求'); return }
     setEvolving(true)
     try {
-      const res = await api.post(`/api/games/${viewing.id}/evolve`, { requirement: evolveReq.trim() }, { timeout: 180000 })
+      const res = await api.post(`/api/games/${viewing.id}/evolve`, { requirement: evolveReq.trim() }, { timeout: 330000 })
       const data = res.data
       // 刷新查看内容为最新版本
       setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions })
@@ -203,6 +203,20 @@ export default function GameFactoryPage() {
   const loadGuide = async () => {
     try { const res = await api.get('/api/games/deploy-guide'); setGuide(res.data); setShowGuide(true) }
     catch (e) { toast.error(e.message) }
+  }
+
+  // 保存封面：截取试玩画面中游戏 canvas 当前帧，作为项目商用封面
+  const saveCover = async () => {
+    if (!playing) return
+    try {
+      const frame = document.getElementById('game-play-frame')
+      const canvas = frame?.contentDocument?.querySelector('canvas')
+      if (!canvas) { toast.error('未找到游戏画面（canvas），请确认游戏已渲染后再试'); return }
+      const dataUrl = canvas.toDataURL('image/png')
+      await api.post(`/api/games/${playing.id}/cover`, { cover: dataUrl }, { timeout: 30000 })
+      loadProjects()
+      toast.success('封面已保存，将展示在项目列表')
+    } catch (e) { toast.error(`封面保存失败：${e.message}`) }
   }
 
   const currentFiles = viewing?.files?.[version] || {}
@@ -341,8 +355,8 @@ export default function GameFactoryPage() {
                         className={`flex-shrink-0 ${p.favorite ? 'text-amber-400' : 'text-gray-300 hover:text-amber-400'}`}>
                         <Star className={`w-4 h-4 ${p.favorite ? 'fill-amber-400' : ''}`} />
                       </button>
-                      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0`}>
-                        {t?.icon || '🎮'}
+                      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0 overflow-hidden`}>
+                        {p.cover ? <img src={p.cover} alt="封面" className="w-full h-full object-cover" /> : (t?.icon || '🎮')}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
@@ -400,6 +414,22 @@ export default function GameFactoryPage() {
             <Button variant="primary" icon={Gamepad2} onClick={() => setViewing(null)}>完成</Button>
           </>
         }>
+        {/* ── 商用 QC 报告（生成时门禁结果） ── */}
+        {viewing?.qc && (
+          <div className={`mb-4 rounded-xl border p-3 ${viewing.qc.ok ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50/50'}`}>
+            <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${viewing.qc.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+              <BadgeCheck className="w-4 h-4" /> 商用质量门禁（QC）：{viewing.qc.ok ? '全部通过，可交付商用' : '部分未通过，建议迭代修复'}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {viewing.qc.checks.map((c) => (
+                <span key={c.item} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] ${c.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                  {c.ok ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />} {c.item}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 版本切换 */}
         <div className="flex gap-2 mb-4">
           {viewing?.versions?.map((v) => {
@@ -486,16 +516,21 @@ export default function GameFactoryPage() {
 
       {/* ── 在线试玩 Modal ── */}
       <Modal open={!!playing} onClose={() => setPlaying(null)} title={playing ? `试玩：${playing.name}` : ''} size="xl"
-        footer={<Button variant="primary" icon={Maximize2} onClick={() => {
-          const url = URL.createObjectURL(new Blob([playing.html], { type: 'text/html' }))
-          window.open(url, '_blank')
-        }}>新窗口打开</Button>}>
+        footer={
+          <>
+            <Button variant="secondary" icon={Camera} onClick={saveCover}>保存当前画面为封面</Button>
+            <Button variant="primary" icon={Maximize2} onClick={() => {
+              const url = URL.createObjectURL(new Blob([playing.html], { type: 'text/html' }))
+              window.open(url, '_blank')
+            }}>新窗口打开</Button>
+          </>
+        }>
         <div className="flex items-center gap-2 mb-3 text-xs text-gray-500 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
           <MonitorPlay className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
           正在运行网页版（键盘操作 + 触屏滑动均可）。微信小游戏版请下载 ZIP 用开发者工具导入。
         </div>
         <div className="rounded-xl border border-gray-200 overflow-hidden bg-gray-900">
-          <iframe title="game-play" srcDoc={playing?.html || ''} className="w-full h-[60vh] bg-white" />
+          <iframe id="game-play-frame" title="game-play" srcDoc={playing?.html || ''} className="w-full h-[60vh] bg-white" />
         </div>
       </Modal>
 

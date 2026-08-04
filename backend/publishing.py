@@ -10,15 +10,19 @@
 发布记录统一落库 publish_records，便于追溯。
 """
 
+import asyncio
+import io
 import json
 import logging
 import os
 import time
 import uuid
+import zipfile
 from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -643,9 +647,137 @@ async def list_records(
     return result
 
 
+@router.get("/records/{record_id}/package")
+async def download_package(record_id: str, current_user: dict = require_auth()):
+    """素材包 ZIP 一键下载：README 步骤 + 正文文案 + 全部素材文件（商用发布素材包）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM publish_records WHERE id=?", (record_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "发布记录不存在")
+    r = dict(row)
+    topics = json.loads(r.get("topics") or "[]")
+    asset_urls = json.loads(r.get("asset_urls") or "[]")
+    steps = GUIDE_STEPS.get(r["platform"], {}).get(r["content_type"], [])
+    platform_label = PLATFORM_LABELS.get(r["platform"], r["platform"])
+    content_label = CONTENT_LABELS.get(r["content_type"], r["content_type"])
+
+    readme = [
+        f"# {r.get('title') or '发布素材包'}",
+        "",
+        f"- 目标平台：{platform_label}",
+        f"- 内容类型：{content_label}",
+        f"- 创建时间：{r.get('created_at', '')}",
+        "",
+        "## 发布步骤",
+    ]
+    readme += [f"{i + 1}. {s}" for i, s in enumerate(steps)]
+    if topics:
+        readme += ["", "## 话题标签", " ".join(f"#{t}" for t in topics)]
+    if asset_urls:
+        readme += ["", "## 素材文件", "本包 assets/ 目录下包含以下素材："]
+        readme += [f"- {_asset_filename(u)}" for u in asset_urls]
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("README.md", "\n".join(readme))
+        zf.writestr("content.txt", f"标题：{r.get('title', '')}\n\n{r.get('content', '')}")
+        for i, url in enumerate(asset_urls):
+            try:
+                data = await _fetch_asset_bytes(url)
+            except Exception as e:
+                logger.warning("package asset fetch failed %s: %s", url, e)
+                continue
+            zf.writestr(f"assets/{i + 1:02d}_{_asset_filename(url)}", data)
+    from urllib.parse import quote
+
+    fname = f"{platform_label}_{r.get('title') or record_id}.zip"
+    try:
+        fname.encode("latin-1")
+        ascii_name = fname
+    except UnicodeEncodeError:
+        ascii_name = "publish_package.zip"
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(fname)}'},
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # 发布排期（内容运营日历）
 # ══════════════════════════════════════════════════════════════
+
+def _ensure_schedule_columns(conn) -> None:
+    """幂等补列：publish_schedules.attempts（自动执行重试计数）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(publish_schedules)").fetchall()]
+    if "attempts" not in cols:
+        conn.execute("ALTER TABLE publish_schedules ADD COLUMN attempts INTEGER DEFAULT 0")
+        conn.commit()
+
+
+async def _run_due_schedules():
+    """排期后台调度器：每 60s 扫描到期 pending 排期并自动执行发布。
+
+    - 自动发布成功 / 素材包生成成功 → 排期标记 published 并关联发布记录
+    - 自动发布失败 → 保留 pending 自动重试（≤3 次后标记 failed），不丢排期
+    """
+    while True:
+        try:
+            conn = get_db()
+            _ensure_schedule_columns(conn)
+            rows = conn.execute(
+                "SELECT * FROM publish_schedules WHERE status='pending' "
+                "AND scheduled_at <= ? ORDER BY scheduled_at LIMIT 10",
+                (datetime.now().isoformat(),),
+            ).fetchall()
+            conn.close()
+            for row in rows:
+                s = dict(row)
+                try:
+                    req = PublishRequest(
+                        platform=s["platform"], content_type=s["content_type"], title=s["title"],
+                        content=s["content"], topics=json.loads(s["topics"] or "[]"),
+                        asset_urls=json.loads(s["asset_urls"] or "[]"), account_id=s["account_id"] or "",
+                    )
+                    result = await submit_publish(req, {"username": s.get("user_id", "")})
+                    conn = get_db()
+                    _ensure_schedule_columns(conn)
+                    if result.get("status") in ("success", "pending"):
+                        # 已发布成功或素材包已生成（guide 模式）→ 排期完成
+                        conn.execute(
+                            "UPDATE publish_schedules SET status='published', published_record_id=? WHERE id=?",
+                            (result.get("record_id", ""), s["id"]),
+                        )
+                    else:
+                        attempts = int(s.get("attempts") or 0) + 1
+                        conn.execute(
+                            "UPDATE publish_schedules SET attempts=? WHERE id=?",
+                            (attempts, s["id"]),
+                        )
+                        if attempts >= 3:
+                            conn.execute("UPDATE publish_schedules SET status='failed' WHERE id=?", (s["id"],))
+                    conn.commit()
+                    conn.close()
+                except Exception as e:
+                    logger.warning("scheduled publish failed %s: %s", s["id"], e)
+                    try:
+                        conn = get_db()
+                        _ensure_schedule_columns(conn)
+                        attempts = int(s.get("attempts") or 0) + 1
+                        if attempts >= 3:
+                            conn.execute("UPDATE publish_schedules SET status='failed', attempts=? WHERE id=?",
+                                         (attempts, s["id"]))
+                        else:
+                            conn.execute("UPDATE publish_schedules SET attempts=? WHERE id=?", (attempts, s["id"]))
+                        conn.commit()
+                        conn.close()
+                    except Exception:
+                        logger.exception("schedule attempt update failed")
+        except Exception:
+            logger.exception("schedule runner error")
+        await asyncio.sleep(60)
+
 
 class ScheduleRequest(PublishRequest):
     scheduled_at: str = Field(..., description="计划发布时间 ISO 格式，如 2026-08-05T09:00:00")
@@ -664,6 +796,7 @@ async def create_schedule(req: ScheduleRequest, current_user: dict = require_aut
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     sched_id = f"sched_{uuid.uuid4().hex[:12]}"
     conn = get_db()
+    _ensure_schedule_columns(conn)
     conn.execute(
         """INSERT INTO publish_schedules (id, user_id, platform, content_type, title, content,
            topics, asset_urls, account_id, scheduled_at, status, created_at)
