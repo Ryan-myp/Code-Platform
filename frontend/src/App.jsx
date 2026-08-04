@@ -62,6 +62,11 @@ const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
 const VoicePage = lazy(() => import('./pages/VoicePage'))
 const MemePage = lazy(() => import('./pages/MemePage'))
 const DigitalHumanPage = lazy(() => import('./pages/DigitalHumanPage'))
+const VoiceChatPage = lazy(() => import('./pages/VoiceChatPage'))
+const VideoAnalyzerPage = lazy(() => import('./pages/VideoAnalyzerPage'))
+const MindMapPage = lazy(() => import('./pages/MindMapPage'))
+const ForecastPage = lazy(() => import('./pages/ForecastPage'))
+const DocQAPage = lazy(() => import('./pages/DocQAPage'))
 const PDFToolPage = lazy(() => import('./pages/PDFToolPage'))
 // v10.0 社区与变现
 const GalleryPage = lazy(() => import('./pages/GalleryPage'))
@@ -206,6 +211,11 @@ export default function App() {
                     <Route path="/voice" element={<AccessGuard path="/voice"><VoicePage /></AccessGuard>} />
                     <Route path="/meme" element={<AccessGuard path="/meme"><MemePage /></AccessGuard>} />
                     <Route path="/digital-human" element={<AccessGuard path="/digital-human"><DigitalHumanPage /></AccessGuard>} />
+                    <Route path="/voice-chat" element={<AccessGuard path="/voice-chat"><VoiceChatPage /></AccessGuard>} />
+                    <Route path="/video-analyzer" element={<AccessGuard path="/video-analyzer"><VideoAnalyzerPage /></AccessGuard>} />
+                    <Route path="/mindmap" element={<AccessGuard path="/mindmap"><MindMapPage /></AccessGuard>} />
+                    <Route path="/forecast" element={<AccessGuard path="/forecast"><ForecastPage /></AccessGuard>} />
+                    <Route path="/doc-qa" element={<AccessGuard path="/doc-qa"><DocQAPage /></AccessGuard>} />
                     <Route path="/pdf-tools" element={<AccessGuard path="/pdf-tools"><PDFToolPage /></AccessGuard>} />
                     {/* v10.0 社区与变现 */}
                     <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />

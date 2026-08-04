@@ -4,7 +4,7 @@ import {
   Search, Bot, Layers, FolderKanban, Image, Film, Music, Database,
   Wrench, Server, Settings, MessageSquare, Brain, FileText, CheckCircle2,
   Bell, Zap, Users, Play, ArrowRight, Home, Shield, GitBranch,
-  PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2,
+  PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2, Share2, TrendingUp,
   Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker, UserCircle,
   GalleryVerticalEnd, Store
 } from 'lucide-react'
@@ -42,6 +42,11 @@ const COMMANDS = [
   { id: 'nav-voice', label: '配音工坊', description: '文字转语音，场景预设 + 长文本自动拼接', icon: Mic2, path: '/voice', category: '创作' },
   { id: 'nav-meme', label: '表情包工坊', description: '文字一键生成表情包：经典模板 + AI 场景', icon: Sticker, path: '/meme', category: '创作' },
   { id: 'nav-digital-human', label: 'AI数字人', description: '文案→配音→口播视频，8大虚拟形象一键生成数字人视频', icon: UserCircle, path: '/digital-human', category: '创作' },
+  { id: 'nav-voice-chat', label: '语音对话', description: '浏览器语音识别 + AI智能回复 + 语音朗读', icon: Mic2, path: '/voice-chat', category: '创作' },
+  { id: 'nav-video-analyzer', label: '视频理解', description: '上传视频，AI自动分析内容、字幕、关键场景', icon: Film, path: '/video-analyzer', category: '创作' },
+  { id: 'nav-mindmap', label: '思维导图', description: '输入主题 → AI生成结构化思维导图，可导出PNG', icon: Share2, path: '/mindmap', category: '创作' },
+  { id: 'nav-forecast', label: '数据预测', description: '上传CSV → AI趋势分析 + 预测 + 可视化', icon: TrendingUp, path: '/forecast', category: '创作' },
+  { id: 'nav-doc-qa', label: '文档问答', description: '上传任意文档，AI理解内容后自由提问', icon: Search, path: '/doc-qa', category: '创作' },
   { id: 'nav-pdf-tools', label: 'PDF工具集', description: 'PDF合并拆分 + 表格提取 + AI合同审查 + 简历优化', icon: FileText, path: '/pdf-tools', category: '创作' },
     { id: 'nav-gallery', label: '作品广场', description: '全平台 AI 作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '社区与发布' },
     { id: 'nav-templates', label: '模板市场', description: '小游戏/小程序/表情包/配音模板聚合', icon: Store, path: '/templates', category: '社区与发布' },

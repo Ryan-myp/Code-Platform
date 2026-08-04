@@ -1,0 +1,256 @@
+import React, { useState, useRef, useEffect } from 'react'
+import { Upload, BarChart3, TrendingUp, Download, Trash2, Clock, Sparkles, FileText, Eye } from 'lucide-react'
+import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import { useToast } from '../lib/toast'
+import api from '../lib/api'
+
+export default function ForecastPage() {
+  const toast = useToast()
+  const fileRef = useRef(null)
+
+  const [uploading, setUploading] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [dataInfo, setDataInfo] = useState(null)
+  const [result, setResult] = useState(null)
+  const [records, setRecords] = useState([])
+  const [targetColumn, setTargetColumn] = useState('')
+  const [periods, setPeriods] = useState(3)
+
+  useEffect(() => { loadRecords() }, [])
+
+  const loadRecords = async () => {
+    try { const res = await api.get('/api/forecast/records'); setRecords(res.data || []) } catch {}
+  }
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true); setResult(null)
+    try {
+      const form = new FormData(); form.append('file', file)
+      const res = await api.post('/api/forecast/upload', form)
+      setDataInfo(res.data)
+      toast.success(`解析成功，${res.data.row_count} 行数据`)
+    } catch (err) { toast.error(`上传失败：${err.message}`) }
+    setUploading(false)
+  }
+
+  const handleAnalyze = async () => {
+    if (!dataInfo?.data_id) return
+    setAnalyzing(true)
+    try {
+      const res = await api.post('/api/forecast/analyze', {
+        data_id: dataInfo.data_id, target_column: targetColumn, forecast_periods: periods,
+      })
+      setResult(res.data); loadRecords()
+      toast.success('预测分析完成')
+    } catch (err) { toast.error(`分析失败：${err.message}`) }
+    setAnalyzing(false)
+  }
+
+  const deleteRecord = async (id) => {
+    try { await api.delete(`/api/forecast/records/${id}`); loadRecords(); toast.success('已删除') }
+    catch (err) { toast.error(err.message) }
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="AI数据预测"
+        description="上传CSV数据 → 统计分析 + AI趋势预测 + 智能建议，驱动数据决策"
+        icon={TrendingUp}
+        iconColor="from-emerald-500 to-teal-600"
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 左：上传 */}
+        <div className="space-y-4">
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Upload className="w-4 h-4 text-emerald-500" /> 上传数据
+            </h3>
+            <input ref={fileRef} type="file" accept=".csv" onChange={handleUpload} className="hidden" />
+            <button onClick={() => fileRef.current?.click()} disabled={uploading}
+              className="w-full py-12 border-2 border-dashed border-gray-300 rounded-xl hover:border-emerald-400 hover:bg-emerald-50/30 transition-all flex flex-col items-center gap-3">
+              <BarChart3 className="w-10 h-10 text-gray-400" />
+              <div className="text-sm text-gray-500">{uploading ? '解析中...' : '点击上传 CSV 文件'}</div>
+              <div className="text-xs text-gray-400">支持 .csv 格式</div>
+            </button>
+
+            {dataInfo && (
+              <div className="mt-4 p-3 bg-emerald-50 rounded-lg space-y-2 text-sm">
+                <div className="font-medium text-emerald-800">{dataInfo.filename}</div>
+                <div className="text-xs text-emerald-600">{dataInfo.row_count} 行 · {dataInfo.columns?.length} 列</div>
+                {dataInfo.numeric_columns?.length > 0 && (
+                  <div>
+                    <label className="text-xs text-gray-500">预测目标列：</label>
+                    <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)}
+                      className="w-full mt-1 px-2 py-1.5 border border-emerald-200 rounded-lg text-xs">
+                      <option value="">自动选择</option>
+                      {dataInfo.numeric_columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="text-xs text-gray-500">预测期数：{periods} 期</label>
+                  <input type="range" min={1} max={12} value={periods}
+                    onChange={(e) => setPeriods(Number(e.target.value))} className="w-full mt-1 accent-emerald-500" />
+                </div>
+                <Button variant="primary" size="sm" icon={Sparkles} loading={analyzing} onClick={handleAnalyze} className="w-full mt-2">
+                  开始预测分析
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          {dataInfo?.sample && (
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <Eye className="w-4 h-4 text-gray-500" /> 数据预览
+              </h3>
+              <div className="overflow-x-auto max-h-60">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr>{dataInfo.columns?.slice(0, 5).map((c) => <th key={c} className="px-2 py-1 text-left bg-gray-50 font-medium text-gray-600 border-b">{c}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {dataInfo.sample.slice(0, 5).map((row, i) => (
+                      <tr key={i}>{dataInfo.columns?.slice(0, 5).map((c) => <td key={c} className="px-2 py-1 border-b border-gray-50 text-gray-500">{row[c]}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{records.length}）
+            </h3>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {records.length === 0 ? (
+                <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
+              ) : records.map((r) => (
+                <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs">
+                  <div>
+                    <div className="font-medium text-gray-700">{r.filename}</div>
+                    <div className="text-gray-400">{r.row_count}行 · {r.created_at?.slice(0,10)}</div>
+                  </div>
+                  <Badge color={r.status === 'done' ? 'green' : 'gray'}>{r.status === 'done' ? '已分析' : '已上传'}</Badge>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        {/* 右侧：结果 */}
+        <div className="lg:col-span-2 space-y-4">
+          {!result ? (
+            <Empty icon={TrendingUp} title="等待分析" description="上传CSV数据后点击「开始预测分析」" />
+          ) : (
+            <>
+              <Card className="border-emerald-200">
+                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-emerald-500" /> 数据概览
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div className="p-3 bg-emerald-50 rounded-lg text-center">
+                    <div className="text-2xl font-bold text-emerald-600">{result.overview?.record_count}</div>
+                    <div className="text-xs text-gray-500 mt-1">记录数</div>
+                  </div>
+                  <div className="p-3 bg-blue-50 rounded-lg text-center">
+                    <div className="text-lg font-bold text-blue-600">{result.overview?.columns?.length || '-'}</div>
+                    <div className="text-xs text-gray-500 mt-1">列数</div>
+                  </div>
+                  <div className="p-3 bg-amber-50 rounded-lg text-center">
+                    <div className="text-lg font-bold text-amber-600">{result.predictions?.confidence || '-'}</div>
+                    <div className="text-xs text-gray-500 mt-1">置信度</div>
+                  </div>
+                  <div className="p-3 bg-purple-50 rounded-lg text-center">
+                    <div className="text-lg font-bold text-purple-600">{result.overview?.data_quality || '-'}</div>
+                    <div className="text-xs text-gray-500 mt-1">数据质量</div>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-gray-600">{result.overview?.summary}</p>
+              </Card>
+
+              {/* 趋势分析 */}
+              {result.trend_analysis && (
+                <Card>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-blue-500" /> 趋势分析
+                  </h3>
+                  <div className="space-y-3">
+                    <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
+                      <strong>整体趋势：</strong>{result.trend_analysis.overall_trend}
+                    </div>
+                    {result.trend_analysis.seasonal_patterns && (
+                      <div className="text-sm text-gray-600">
+                        <strong>季节性：</strong>{result.trend_analysis.seasonal_patterns}
+                      </div>
+                    )}
+                    {result.trend_analysis.key_findings?.length > 0 && (
+                      <div>
+                        <div className="text-sm font-medium text-gray-700 mb-1">关键发现：</div>
+                        {result.trend_analysis.key_findings.map((f, i) => (
+                          <div key={i} className="text-sm text-gray-600 flex gap-2">
+                            <span className="text-blue-500">●</span> {f}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              )}
+
+              {/* 预测值 */}
+              {result.predictions?.forecast_values?.length > 0 && (
+                <Card>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" /> 预测结果
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {result.predictions.forecast_values.map((fv, i) => (
+                      <div key={i} className="p-3 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-xl text-center border border-amber-200">
+                        <div className="text-xs text-gray-500 mb-1">{fv.period}</div>
+                        <div className="text-xl font-bold text-amber-700">{fv.value?.toLocaleString?.() || fv.value}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">
+                          {fv.low} ~ {fv.high}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-sm text-gray-600">
+                    <strong>短期预测：</strong>{result.predictions.short_term}<br />
+                    <strong>中期预测：</strong>{result.predictions.medium_term}
+                  </div>
+                </Card>
+              )}
+
+              {/* 建议 */}
+              {result.recommendations?.length > 0 && (
+                <Card>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-emerald-500" /> 行动建议
+                  </h3>
+                  <div className="space-y-2">
+                    {result.recommendations.map((r, i) => (
+                      <div key={i} className={`p-3 rounded-lg text-sm ${
+                        r.priority === '高' ? 'bg-red-50 text-red-800' :
+                        r.priority === '中' ? 'bg-amber-50 text-amber-800' :
+                        'bg-gray-50 text-gray-700'
+                      }`}>
+                        <strong>[{r.priority}]</strong> {r.action}
+                        <div className="text-xs mt-0.5 opacity-70">{r.reason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

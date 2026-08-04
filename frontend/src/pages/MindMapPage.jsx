@@ -1,0 +1,264 @@
+import React, { useState, useRef, useEffect } from 'react'
+import { Sparkles, Download, Trash2, Clock, RefreshCw, Share2, Maximize2, Minimize2 } from 'lucide-react'
+import { Card, Button, Empty, PageHeader } from '../components/ui'
+import { useToast } from '../lib/toast'
+import api from '../lib/api'
+
+const PALETTE = ['#667eea', '#4A90D9', '#6B8E23', '#E91E63', '#FF9800', '#9C27B0', '#00BCD4', '#FF5722']
+
+function MindMapCanvas({ data, width = 800, height = 600 }) {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !data?.root) return
+    const ctx = canvas.getContext('2d')
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = width * dpr
+    canvas.height = height * dpr
+    ctx.scale(dpr, dpr)
+    ctx.clearRect(0, 0, width, height)
+
+    const cx = width / 2
+    const cy = height / 2
+
+    // 根节点
+    drawNode(ctx, cx, cy, data.root.name, data.root.color || '#667eea', 80)
+
+    // 一级分支
+    const branchCount = (data.root.children || []).length
+    if (branchCount > 0) {
+      const angleStep = (Math.PI * 2) / branchCount
+      const radius = 160
+
+      data.root.children.forEach((child, i) => {
+        const angle = -Math.PI / 2 + i * angleStep
+        const nx = cx + Math.cos(angle) * radius
+        const ny = cy + Math.sin(angle) * radius
+
+        // 连线
+        ctx.strokeStyle = child.color || '#ccc'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(cx, cy + 30)
+        ctx.quadraticCurveTo(cx, cy + 30 + radius * 0.4, nx, ny - 18)
+        ctx.stroke()
+
+        // 一级节点
+        drawNode(ctx, nx, ny, child.name, child.color || '#4A90D9', 60)
+
+        // 二级节点
+        const subChildren = child.children || []
+        if (subChildren.length > 0) {
+          const subRadius = 80
+          const subAngleStep = Math.PI / Math.max(subChildren.length, 1)
+          const baseAngle = angle - (subAngleStep * (subChildren.length - 1)) / 2
+
+          subChildren.forEach((sub, j) => {
+            const sa = baseAngle + j * subAngleStep
+            const sx = nx + Math.cos(sa) * subRadius
+            const sy = ny + Math.sin(sa) * subRadius
+
+            ctx.strokeStyle = '#c4b5fd'
+            ctx.lineWidth = 1.5
+            ctx.beginPath()
+            ctx.moveTo(nx, ny + 18)
+            ctx.quadraticCurveTo(nx, ny + 18 + subRadius * 0.5, sx, sy - 12)
+            ctx.stroke()
+
+            drawNode(ctx, sx, sy, sub.name, child.color ? child.color + '88' : '#c4b5fd', 44)
+
+            // 三级节点
+            const subSub = sub.children || []
+            if (subSub.length > 0) {
+              subSub.forEach((ss, k) => {
+                const tRadius = 55
+                const tAngle = sa + (k - (subSub.length - 1) / 2) * 0.3
+                const tx = sx + Math.cos(tAngle) * tRadius
+                const ty = sy + Math.sin(tAngle) * tRadius
+
+                ctx.strokeStyle = '#e9d5ff'
+                ctx.lineWidth = 1
+                ctx.beginPath()
+                ctx.moveTo(sx, sy + 12)
+                ctx.lineTo(tx, ty)
+                ctx.stroke()
+
+                drawNode(ctx, tx, ty, ss.name, '#e9d5ff', 32, '#666')
+              })
+            }
+          })
+        }
+      })
+    }
+  }, [data, width, height])
+
+  return <canvas ref={canvasRef} style={{ width, height }} className="rounded-xl" />
+}
+
+function drawNode(ctx, x, y, text, color, size, textColor = '#fff') {
+  // 圆角矩形
+  const w = Math.max(size, text.length * 14 + 20)
+  const h = size * 0.55
+  const r = h / 2
+
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.moveTo(x - w / 2 + r, y - h / 2)
+  ctx.lineTo(x + w / 2 - r, y - h / 2)
+  ctx.arcTo(x + w / 2, y - h / 2, x + w / 2, y + h / 2, r)
+  ctx.arcTo(x + w / 2, y + h / 2, x - w / 2, y + h / 2, r)
+  ctx.arcTo(x - w / 2, y + h / 2, x - w / 2, y - h / 2, r)
+  ctx.arcTo(x - w / 2, y - h / 2, x + w / 2, y - h / 2, r)
+  ctx.closePath()
+  ctx.fill()
+
+  // 文字
+  ctx.fillStyle = textColor
+  ctx.font = `${Math.max(10, size * 0.18)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, x, y)
+}
+
+export default function MindMapPage() {
+  const toast = useToast()
+  const [topic, setTopic] = useState('')
+  const [depth, setDepth] = useState(3)
+  const [generating, setGenerating] = useState(false)
+  const [result, setResult] = useState(null)
+  const [records, setRecords] = useState([])
+  const [fullscreen, setFullscreen] = useState(false)
+
+  useEffect(() => { loadRecords() }, [])
+
+  const loadRecords = async () => {
+    try { const res = await api.get('/api/mindmap/records'); setRecords(res.data || []) } catch {}
+  }
+
+  const generate = async () => {
+    if (!topic.trim()) { toast.error('请输入主题'); return }
+    setGenerating(true)
+    try {
+      const res = await api.post('/api/mindmap/generate', { topic: topic.trim(), depth, style: 'professional' })
+      setResult(res.data)
+      loadRecords()
+      toast.success('思维导图生成成功')
+    } catch (e) { toast.error(`生成失败：${e.message}`) }
+    setGenerating(false)
+  }
+
+  const exportPNG = () => {
+    const canvas = document.querySelector('.mindmap-canvas canvas')
+    if (!canvas) return
+    const a = document.createElement('a')
+    a.href = canvas.toDataURL('image/png')
+    a.download = `mindmap-${Date.now()}.png`
+    a.click()
+    toast.success('已导出PNG')
+  }
+
+  const deleteRecord = async (id) => {
+    try { await api.delete(`/api/mindmap/records/${id}`); loadRecords(); toast.success('已删除') }
+    catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="AI思维导图"
+        description="输入主题 → AI自动生成结构化思维导图，支持导出PNG图片"
+        icon={Share2}
+        iconColor="from-purple-500 to-violet-600"
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 左侧：输入 */}
+        <div className="space-y-4">
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" /> 生成导图
+            </h3>
+            <textarea
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="输入思维导图主题，如：新能源汽车市场分析、Python学习路线..."
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none resize-none mb-3"
+            />
+            <div className="flex items-center gap-2 mb-3">
+              <label className="text-xs text-gray-500">展开深度：</label>
+              {[2, 3, 4].map((d) => (
+                <button key={d} onClick={() => setDepth(d)}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                    depth === d ? 'bg-purple-100 text-purple-700 border border-purple-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                  }`}>
+                  {d}层
+                </button>
+              ))}
+            </div>
+            <Button variant="primary" icon={Sparkles} loading={generating} onClick={generate} className="w-full">
+              {generating ? 'AI正在生成思维导图...' : '生成思维导图'}
+            </Button>
+          </Card>
+
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{records.length}）
+            </h3>
+            {records.length === 0 ? (
+              <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                {records.slice(0, 10).map((r) => (
+                  <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-700 truncate">{r.topic}</div>
+                      <div className="text-gray-400">{r.depth}层 · {r.created_at?.slice(0, 10)}</div>
+                    </div>
+                    <button onClick={() => deleteRecord(r.id)} className="p-1 text-gray-300 hover:text-red-500">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* 右侧：导图展示 */}
+        <div className={`${fullscreen ? 'lg:col-span-3' : 'lg:col-span-2'} space-y-4`}>
+          <Card>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900">
+                {result ? result.title || result.topic : '预览'}
+              </h3>
+              {result && (
+                <div className="flex items-center gap-1">
+                  <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>导出PNG</Button>
+                  <Button variant="ghost" size="sm" icon={fullscreen ? Minimize2 : Maximize2}
+                    onClick={() => setFullscreen(!fullscreen)} />
+                </div>
+              )}
+            </div>
+            {!result ? (
+              <Empty icon={Share2} title="等待生成" description="输入主题后点击生成，AI将创建思维导图" />
+            ) : (
+              <div className="mindmap-canvas flex items-center justify-center overflow-auto rounded-xl bg-gradient-to-br from-gray-50 to-purple-50/30 border border-gray-100"
+                style={{ minHeight: 500 }}>
+                <MindMapCanvas
+                  data={{ root: result.root, title: result.title }}
+                  width={fullscreen ? 1000 : 700}
+                  height={fullscreen ? 650 : 500}
+                />
+              </div>
+            )}
+            {result?.description && (
+              <p className="mt-3 text-sm text-gray-500 text-center">{result.description}</p>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}

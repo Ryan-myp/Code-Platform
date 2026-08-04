@@ -42,6 +42,11 @@ from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from pdf_tools import router as pdf_tools_router  # noqa: E402
 from competitor_monitor import router as competitor_monitor_router  # noqa: E402
 from seo_analyzer import router as seo_analyzer_router  # noqa: E402
+from voice_chat import router as voice_chat_router  # noqa: E402
+from video_analyzer import router as video_analyzer_router  # noqa: E402
+from mindmap import router as mindmap_router  # noqa: E402
+from data_forecast import router as data_forecast_router  # noqa: E402
+from doc_qa import router as doc_qa_router  # noqa: E402
 from drafts import router as drafts_router  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
@@ -2261,6 +2266,13 @@ app.include_router(pdf_tools_router)
 app.include_router(competitor_monitor_router)
 app.include_router(seo_analyzer_router)
 app.include_router(realtime_router)
+
+# v9.3: 5大高科技功能
+app.include_router(voice_chat_router)
+app.include_router(video_analyzer_router)
+app.include_router(mindmap_router)
+app.include_router(data_forecast_router)
+app.include_router(doc_qa_router)
 
 # v9.0: Platform API
 from platform_api import router as platform_api_router
