@@ -384,6 +384,77 @@
   color: #505a6a;
 }
 
+/* 品牌色 / 强调色表面 */
+.dark .bg-brand-50 { background-color: #1e1b4b; }
+.dark .bg-brand-100 { background-color: #2e2a5c; }
+.dark .bg-amber-50 { background-color: #2d2410; }
+.dark .bg-blue-50 { background-color: #172033; }
+.dark .bg-emerald-50 { background-color: #0f1f1a; }
+.dark .bg-purple-50 { background-color: #211a30; }
+.dark .bg-violet-50 { background-color: #1f1930; }
+.dark .bg-teal-50 { background-color: #0f1f1f; }
+.dark .bg-cyan-50 { background-color: #0f1f24; }
+.dark .bg-orange-50 { background-color: #2d2010; }
+.dark .bg-red-50 { background-color: #2d1518; }
+.dark .bg-green-50 { background-color: #0f1f18; }
+.dark .bg-indigo-50 { background-color: #1a1b3a; }
+.dark .bg-pink-50 { background-color: #2d1825; }
+.dark .bg-yellow-50 { background-color: #2d2810; }
+
+/* 强调色边框 */
+.dark .border-brand-100 { border-color: #2e2a5c; }
+.dark .border-brand-200 { border-color: #3d3870; }
+.dark .border-amber-100 { border-color: #3d3410; }
+.dark .border-amber-200 { border-color: #5c4a18; }
+.dark .border-amber-300 { border-color: #7a6020; }
+.dark .border-blue-100 { border-color: #1e3050; }
+.dark .border-emerald-100 { border-color: #103028; }
+.dark .border-violet-100 { border-color: #2e2548; }
+.dark .border-teal-100 { border-color: #103035; }
+.dark .border-teal-200 { border-color: #184550; }
+
+/* 强调色文字 */
+.dark .text-brand-600 { color: #a78bfa; }
+.dark .text-brand-700 { color: #c4b5fd; }
+.dark .text-brand-800 { color: #ddd6fe; }
+.dark .text-amber-500 { color: #fbbf24; }
+.dark .text-amber-600 { color: #fcd34d; }
+.dark .text-amber-700 { color: #fde68a; }
+.dark .text-amber-800 { color: #fef3c7; }
+.dark .text-blue-500 { color: #60a5fa; }
+.dark .text-blue-600 { color: #93bbfd; }
+.dark .text-emerald-500 { color: #34d399; }
+.dark .text-emerald-600 { color: #6ee7b7; }
+.dark .text-violet-500 { color: #a78bfa; }
+.dark .text-violet-600 { color: #c4b5fd; }
+.dark .text-purple-500 { color: #a78bfa; }
+.dark .text-purple-600 { color: #c4b5fd; }
+.dark .text-teal-500 { color: #2dd4bf; }
+.dark .text-teal-600 { color: #5eead4; }
+.dark .text-teal-700 { color: #99f6e4; }
+.dark .text-cyan-500 { color: #22d3ee; }
+.dark .text-cyan-600 { color: #67e8f9; }
+.dark .text-orange-500 { color: #f97316; }
+.dark .text-orange-600 { color: #fb923c; }
+.dark .text-red-500 { color: #ef4444; }
+.dark .text-red-600 { color: #f87171; }
+.dark .text-green-500 { color: #22c55e; }
+.dark .text-green-600 { color: #4ade80; }
+
+/* 强调色悬停 */
+.dark .hover\:bg-amber-50:hover { background-color: #2d2410; }
+.dark .hover\:bg-blue-50:hover { background-color: #172033; }
+.dark .hover\:bg-teal-50:hover { background-color: #0f1f1f; }
+.dark .hover\:bg-violet-50:hover { background-color: #1f1930; }
+.dark .hover\:bg-brand-50:hover { background-color: #1e1b4b; }
+.dark .hover\:bg-gray-50:hover { background-color: #1a2438; }
+.dark .hover\:text-brand-600:hover { color: #a78bfa; }
+.dark .hover\:text-amber-600:hover { color: #fcd34d; }
+.dark .hover\:text-teal-500:hover { color: #2dd4bf; }
+.dark .hover\:text-red-500:hover { color: #ef4444; }
+.dark .hover\:text-violet-500:hover { color: #a78bfa; }
+.dark .hover\:border-teal-300:hover { border-color: #2dd4bf; }
+
 /* 滚动条 */
 .dark ::-webkit-scrollbar-thumb {
   background-color: #2a3a52;

@@ -47,6 +47,13 @@ from video_analyzer import router as video_analyzer_router  # noqa: E402
 from mindmap import router as mindmap_router  # noqa: E402
 from data_forecast import router as data_forecast_router  # noqa: E402
 from doc_qa import router as doc_qa_router  # noqa: E402
+from web_search import router as web_search_router  # noqa: E402
+from batch_api import router as batch_api_router  # noqa: E402
+from favorites_api import router as favorites_api_router  # noqa: E402
+from apikey_api import router as apikey_api_router  # noqa: E402
+from search_api import router as search_api_router  # noqa: E402
+from scheduler import router as scheduler_router, start_scheduler, stop_scheduler  # noqa: E402
+from notify_api import router as notify_api_router  # noqa: E402
 from drafts import router as drafts_router  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
@@ -139,8 +146,11 @@ async def lifespan(app: FastAPI):
     from publishing import _run_due_schedules
 
     asyncio.create_task(_run_due_schedules())
+    # v10.1 定时任务调度器
+    start_scheduler()
     logger.info("Smart R&D Platform v8.0 started")
     yield
+    stop_scheduler()
     logger.info("Smart R&D Platform v8.0 shutting down")
 
 
@@ -2273,6 +2283,13 @@ app.include_router(video_analyzer_router)
 app.include_router(mindmap_router)
 app.include_router(data_forecast_router)
 app.include_router(doc_qa_router)
+app.include_router(web_search_router)
+app.include_router(batch_api_router)
+app.include_router(favorites_api_router)
+app.include_router(apikey_api_router)
+app.include_router(search_api_router)
+app.include_router(scheduler_router)
+app.include_router(notify_api_router)
 
 # v9.0: Platform API
 from platform_api import router as platform_api_router

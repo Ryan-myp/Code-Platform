@@ -6,7 +6,7 @@ import {
   Bell, Zap, Users, Play, ArrowRight, Home, Shield, GitBranch,
   PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2, Share2, TrendingUp,
   Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker, UserCircle,
-  GalleryVerticalEnd, Store
+  GalleryVerticalEnd, Store, Globe, Key, Clock
 } from 'lucide-react'
 import api from '../lib/api'
 
@@ -48,6 +48,9 @@ const COMMANDS = [
   { id: 'nav-forecast', label: '数据预测', description: '上传CSV → AI趋势分析 + 预测 + 可视化', icon: TrendingUp, path: '/forecast', category: '创作' },
   { id: 'nav-doc-qa', label: '文档问答', description: '上传任意文档，AI理解内容后自由提问', icon: Search, path: '/doc-qa', category: '创作' },
   { id: 'nav-pdf-tools', label: 'PDF工具集', description: 'PDF合并拆分 + 表格提取 + AI合同审查 + 简历优化', icon: FileText, path: '/pdf-tools', category: '创作' },
+  { id: 'nav-web-search', label: '联网搜索', description: 'AI联网搜索 + 智能摘要 + 来源引用', icon: Globe, path: '/web-search', category: '创作' },
+  { id: 'nav-code-sandbox', label: '代码解释器', description: 'Python在线运行，数据分析/算法/可视化', icon: Terminal, path: '/code-sandbox', category: '创作' },
+  { id: 'nav-batch-process', label: '批量处理', description: '多文件批量翻译、摘要、关键词提取', icon: Layers, path: '/batch-process', category: '创作' },
     { id: 'nav-gallery', label: '作品广场', description: '全平台 AI 作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '社区与发布' },
     { id: 'nav-templates', label: '模板市场', description: '小游戏/小程序/表情包/配音模板聚合', icon: Store, path: '/templates', category: '社区与发布' },
   
@@ -59,9 +62,12 @@ const COMMANDS = [
   // 运营分析
   { id: 'nav-dashboard', label: '数据仪表盘', description: '平台数据概览', icon: BarChart3, path: '/dashboard', category: '运营' },
   { id: 'nav-abtest', label: 'A/B 测试', description: '实验管理', icon: FlaskConical, path: '/ab-testing', category: '运营' },
+  { id: 'nav-usage-analytics', label: '用量分析', description: '个人AI使用统计与趋势', icon: BarChart3, path: '/usage-analytics', category: '运营' },
 
   // 系统
   { id: 'nav-config', label: '模型配置', description: '配置 AI 模型', icon: Settings, path: '/config', category: '系统' },
+  { id: 'nav-api-docs', label: 'API开放平台', description: '创建API Key接入平台能力', icon: Key, path: '/api-docs', category: '系统' },
+  { id: 'nav-scheduler', label: '定时任务', description: '定时报告/数据同步/提醒通知自动化', icon: Clock, path: '/scheduler', category: '系统' },
   { id: 'nav-knowledge', label: '知识库', description: '管理知识库', icon: Database, path: '/knowledge-bases', category: '系统' },
   { id: 'nav-skills', label: 'Skills', description: '管理技能', icon: Wrench, path: '/skills', category: '系统' },
   { id: 'nav-mcp', label: 'MCP Servers', description: '管理 MCP 服务', icon: Server, path: '/mcp-servers', category: '系统' },

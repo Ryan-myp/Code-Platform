@@ -50,6 +50,12 @@ PAGES = [
     {"id": "pdf-tools", "path": "/pdf-tools", "label": "PDF工具集"},
     {"id": "gallery", "path": "/gallery", "label": "作品广场"},
     {"id": "templates", "path": "/templates", "label": "模板市场"},
+    {"id": "web-search", "path": "/web-search", "label": "联网搜索"},
+    {"id": "batch-process", "path": "/batch-process", "label": "批量处理"},
+    {"id": "code-sandbox", "path": "/code-sandbox", "label": "代码解释器"},
+    {"id": "api-docs", "path": "/api-docs", "label": "API开放平台"},
+    {"id": "usage-analytics", "path": "/usage-analytics", "label": "用量分析"},
+    {"id": "scheduler", "path": "/scheduler", "label": "定时任务"},
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊

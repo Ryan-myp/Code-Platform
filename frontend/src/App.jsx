@@ -71,6 +71,13 @@ const PDFToolPage = lazy(() => import('./pages/PDFToolPage'))
 // v10.0 社区与变现
 const GalleryPage = lazy(() => import('./pages/GalleryPage'))
 const TemplateMarketPage = lazy(() => import('./pages/TemplateMarketPage'))
+// v10.1 新功能页面
+const WebSearchPage = lazy(() => import('./pages/WebSearchPage'))
+const BatchProcessPage = lazy(() => import('./pages/BatchProcessPage'))
+const ApiDocsPage = lazy(() => import('./pages/ApiDocsPage'))
+const CodeSandboxPage = lazy(() => import('./pages/CodeSandboxPage'))
+const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
+const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
 
 // 页面级加载骨架（懒加载期间展示）
 function PageFallback() {
@@ -217,6 +224,13 @@ export default function App() {
                     <Route path="/forecast" element={<AccessGuard path="/forecast"><ForecastPage /></AccessGuard>} />
                     <Route path="/doc-qa" element={<AccessGuard path="/doc-qa"><DocQAPage /></AccessGuard>} />
                     <Route path="/pdf-tools" element={<AccessGuard path="/pdf-tools"><PDFToolPage /></AccessGuard>} />
+                    {/* v10.1 新功能 */}
+                    <Route path="/web-search" element={<AccessGuard path="/web-search"><WebSearchPage /></AccessGuard>} />
+                    <Route path="/batch-process" element={<AccessGuard path="/batch-process"><BatchProcessPage /></AccessGuard>} />
+                    <Route path="/code-sandbox" element={<AccessGuard path="/code-sandbox"><CodeSandboxPage /></AccessGuard>} />
+                    <Route path="/api-docs" element={<AccessGuard path="/api-docs"><ApiDocsPage /></AccessGuard>} />
+                    <Route path="/usage-analytics" element={<UsageAnalyticsPage />} />
+                    <Route path="/scheduler" element={<SchedulerPage />} />
                     {/* v10.0 社区与变现 */}
                     <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
                     <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />

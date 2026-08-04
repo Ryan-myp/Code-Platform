@@ -7,7 +7,7 @@ import {
   Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
   Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
   Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun, UserCircle,
-  GalleryVerticalEnd, Store
+  GalleryVerticalEnd, Store, Globe, Key, Clock
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -68,7 +68,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/mindmap', label: '思维导图', icon: Share2, pageId: 'mindmap', group: '智能工坊' },
         { path: '/forecast', label: '数据预测', icon: TrendingUp, pageId: 'forecast', group: '智能工坊' },
         { path: '/doc-qa', label: '文档问答', icon: Search, pageId: 'doc-qa', group: '智能工坊' },
+        { path: '/web-search', label: '联网搜索', icon: Globe, pageId: 'web-search', group: '智能工坊' },
+        { path: '/code-sandbox', label: '代码解释器', icon: Terminal, pageId: 'code-sandbox', group: '智能工坊' },
         { path: '/pdf-tools', label: 'PDF工具集', icon: FileText, pageId: 'pdf-tools', group: '效率工具' },
+        { path: '/batch-process', label: '批量处理', icon: Layers, pageId: 'batch-process', group: '效率工具' },
         { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games', group: '应用工坊' },
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp', group: '应用工坊' },
         { path: '/voice', label: '配音工坊', icon: Mic2, pageId: 'voice', group: '应用工坊' },
@@ -84,6 +87,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/stock', label: '股票分析', icon: TrendingUp, pageId: 'stock' },
         { path: '/dashboard', label: '数据看板', icon: BarChart3 },
         { path: '/ab-testing', label: 'AB 测试', icon: FlaskConical },
+        { path: '/usage-analytics', label: '用量分析', icon: BarChart3 },
       ] },
     { key: 'support', label: '协作与支持', icon: MessageSquare, color: 'from-violet-500 to-purple-600',
       items: [
@@ -95,6 +99,8 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
     { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
       items: [
         { path: '/config', label: '模型配置', icon: Settings },
+        { path: '/api-docs', label: 'API开放平台', icon: Key },
+        { path: '/scheduler', label: '定时任务', icon: Clock },
         ...(user?.role === 'admin'
           ? [{ path: '/admin', label: '管理后台', icon: Shield }]
           : []),
