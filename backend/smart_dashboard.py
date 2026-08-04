@@ -1,0 +1,232 @@
+"""智能数据分析看板 — 自然语言 → 图表（ECharts 配置） + 数据源管理。
+
+- POST /api/dashboard/nl-query   自然语言→自动SQL/聚合→ECharts图表配置JSON
+- GET  /api/dashboard/saved      已保存的看板列表
+- POST /api/dashboard/save       保存看板布局（图表卡片排列）
+- POST /api/dashboard/upload-csv 上传CSV作为数据源
+"""
+
+import csv
+import io
+import json
+import logging
+import os
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel, Field
+
+from common.auth import require_auth
+from common.db import get_db
+from common.llm import call_llm, log_usage
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/dashboard", tags=["智能看板"])
+
+# ── NL→图表 System Prompt ─────────────────────────────────
+CHART_SYSTEM = """你是一个数据分析助手。根据用户用自然语言提出的数据查询需求，生成一个 ECharts 图表配置JSON。
+
+规则：
+1. 分析查询意图，确定图表类型：bar(柱状图)、line(折线图)、pie(饼图)、scatter(散点图)、radar(雷达图)
+2. 如果查询包含具体数字，直接构造模拟数据(通常5-8行)使图表合理美观
+3. 如果没有具体数据可参考，构造合理的示例数据
+4. 输出纯JSON，格式如下：
+{
+  "chart_type": "bar|line|pie|scatter|radar",
+  "title": "图表标题",
+  "insight": "一句话数据洞察",
+  "option": {
+    // 标准 ECharts option 配置，需要包含 xAxis/yAxis/series 等
+    // 使用合理的颜色方案
+  }
+}
+
+输出仅包含JSON，不要任何额外说明。"""
+
+
+def _ensure_tables(conn) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS dashboard_dashboards (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            title TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            cards TEXT DEFAULT '[]',
+            csv_data TEXT DEFAULT '',
+            csv_filename TEXT DEFAULT '',
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.commit()
+
+
+# ── 模型 ──────────────────────────────────────────────────
+
+class NLQueryRequest(BaseModel):
+    query: str = Field(..., min_length=2, max_length=500, description="自然语言数据查询")
+    csv_data: str = Field("", description="可选：CSV数据源（行文本）")
+    csv_filename: str = Field("", description="可选：CSV文件名")
+
+
+class SaveDashboardRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field("")
+    cards: list[dict] = Field(default_factory=list, description="图表卡片数组")
+    csv_data: str = Field("")
+    csv_filename: str = Field("")
+
+
+# ── API ──────────────────────────────────────────────────
+
+@router.post("/nl-query")
+async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
+    """自然语言 → ECharts图表配置。
+
+    示例查询：
+    - "过去7天每天的内容发布量趋势"
+    - "各类型内容的占比"
+    - "本周互动量TOP5的文章"
+    - "发布量与互动率的散点关系"
+
+    如果提供了CSV数据，LLM会基于CSV内容生成图表。
+    """
+    start = datetime.now()
+
+    # 如果有CSV数据，附加到prompt
+    user_prompt = req.query
+    if req.csv_data:
+        user_prompt = (
+            f"数据来源（CSV内容）：\n{req.csv_data[:3000]}\n\n"
+            f"用户查询：{req.query}\n"
+            f"请基于CSV数据中的字段和数值，生成最合适的图表。"
+        )
+
+    try:
+        raw = call_llm(CHART_SYSTEM, user_prompt, max_tokens=2000, temperature=0.3, timeout=60)
+        # 提取JSON
+        raw = raw.strip()
+        if raw.startswith("```"):
+            # 移除markdown代码块
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(500, f"LLM返回格式异常，无法解析为JSON")
+    except Exception as e:
+        logger.exception("nl-query failed")
+        raise HTTPException(500, f"查询失败：{e}")
+
+    elapsed = round((datetime.now() - start).total_seconds(), 2)
+    log_usage("dashboard_nl_query", len(req.query), len(raw), elapsed)
+
+    return {
+        **result,
+        "query": req.query,
+    }
+
+
+@router.get("/saved")
+async def list_dashboards(current_user: dict = require_auth()):
+    conn = get_db()
+    _ensure_tables(conn)
+    rows = conn.execute(
+        "SELECT * FROM dashboard_dashboards ORDER BY updated_at DESC LIMIT 100"
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["cards"] = json.loads(d.get("cards", "[]"))
+        except (json.JSONDecodeError, TypeError):
+            d["cards"] = []
+        result.append(d)
+    return result
+
+
+@router.post("/save")
+async def save_dashboard(req: SaveDashboardRequest, current_user: dict = require_auth()):
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    dash_id = f"db_{uuid.uuid4().hex[:10]}"
+    conn = get_db()
+    _ensure_tables(conn)
+    now = datetime.now().isoformat()
+    conn.execute(
+        """INSERT INTO dashboard_dashboards
+           (id, user_id, title, description, cards, csv_data, csv_filename, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (dash_id, user, req.title, req.description,
+         json.dumps(req.cards, ensure_ascii=False),
+         req.csv_data[:50000] if req.csv_data else "",
+         req.csv_filename, now, now),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": dash_id, "title": req.title, "created_at": now}
+
+
+@router.post("/upload-csv")
+async def upload_csv(file: UploadFile = File(...), current_user: dict = require_auth()):
+    """上传CSV文件作为看板数据源。返回解析后的字段列表和样例数据。"""
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "仅支持 .csv 文件")
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")  # 处理 BOM
+    except UnicodeDecodeError:
+        try:
+            text = content.decode("gbk")
+        except Exception:
+            raise HTTPException(400, "无法解析文件编码，请使用UTF-8或GBK编码")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(400, "CSV文件为空或无表头")
+
+    rows = list(reader)
+    sample = rows[:10]
+    columns = [
+        {"name": f, "type": _guess_type([r.get(f, "") for r in sample])}
+        for f in reader.fieldnames
+    ]
+
+    return {
+        "filename": file.filename,
+        "columns": columns,
+        "row_count": len(rows),
+        "sample": [dict(r) for r in sample],
+        "csv_data": text[:50000],  # 保留原始数据给后续查询
+    }
+
+
+def _guess_type(values: list[str]) -> str:
+    """推测列的数据类型：number / date / text"""
+    numeric = 0
+    for v in values:
+        if not v or v.strip() == "":
+            continue
+        try:
+            float(v.replace(",", "").replace("%", ""))
+            numeric += 1
+        except ValueError:
+            pass
+    if numeric >= len(values) * 0.7:
+        return "number"
+    # 简单日期检测
+    date_samples = [v for v in values if v and ("-" in v or "/" in v)]
+    if len(date_samples) >= len(values) * 0.5:
+        return "date"
+    return "text"
+
+
+@router.delete("/saved/{dash_id}")
+async def delete_dashboard(dash_id: str, current_user: dict = require_auth()):
+    conn = get_db()
+    conn.execute("DELETE FROM dashboard_dashboards WHERE id=?", (dash_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}

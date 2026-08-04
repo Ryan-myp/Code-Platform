@@ -41,6 +41,8 @@ const COMMANDS = [
   { id: 'nav-games', label: '小游戏工坊', description: 'AI 生成双版本小游戏：网页版在线试玩 + 微信小游戏', icon: Gamepad2, path: '/games', category: '创作' },
   { id: 'nav-voice', label: '配音工坊', description: '文字转语音，场景预设 + 长文本自动拼接', icon: Mic2, path: '/voice', category: '创作' },
   { id: 'nav-meme', label: '表情包工坊', description: '文字一键生成表情包：经典模板 + AI 场景', icon: Sticker, path: '/meme', category: '创作' },
+  { id: 'nav-digital-human', label: 'AI数字人', description: '文案→配音→口播视频，8大虚拟形象一键生成数字人视频', icon: UserCircle, path: '/digital-human', category: '创作' },
+  { id: 'nav-pdf-tools', label: 'PDF工具集', description: 'PDF合并拆分 + 表格提取 + AI合同审查 + 简历优化', icon: FileText, path: '/pdf-tools', category: '创作' },
     { id: 'nav-gallery', label: '作品广场', description: '全平台 AI 作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '社区与发布' },
     { id: 'nav-templates', label: '模板市场', description: '小游戏/小程序/表情包/配音模板聚合', icon: Store, path: '/templates', category: '社区与发布' },
   

@@ -41,6 +41,8 @@ PAGES = [
     {"id": "games", "path": "/games", "label": "小游戏工坊"},
     {"id": "voice", "path": "/voice", "label": "配音工坊"},
     {"id": "meme", "path": "/meme", "label": "表情包工坊"},
+    {"id": "digital-human", "path": "/digital-human", "label": "AI数字人"},
+    {"id": "pdf-tools", "path": "/pdf-tools", "label": "PDF工具集"},
     {"id": "gallery", "path": "/gallery", "label": "作品广场"},
     {"id": "templates", "path": "/templates", "label": "模板市场"},
 ]

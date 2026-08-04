@@ -62,6 +62,8 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/translation', label: '翻译中心', icon: Languages, pageId: 'translation', group: '内容生成' },
         { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory', group: '内容生成' },
         { path: '/meme', label: '表情包工坊', icon: Sticker, pageId: 'meme', group: '内容生成' },
+        { path: '/digital-human', label: 'AI数字人', icon: UserCircle, pageId: 'digital-human', group: '智能工坊' },
+        { path: '/pdf-tools', label: 'PDF工具集', icon: FileText, pageId: 'pdf-tools', group: '效率工具' },
         { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games', group: '智能工坊' },
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp', group: '智能工坊' },
         { path: '/voice', label: '配音工坊', icon: Mic2, pageId: 'voice', group: '智能工坊' },

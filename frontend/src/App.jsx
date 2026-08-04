@@ -61,6 +61,8 @@ const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
 const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
 const VoicePage = lazy(() => import('./pages/VoicePage'))
 const MemePage = lazy(() => import('./pages/MemePage'))
+const DigitalHumanPage = lazy(() => import('./pages/DigitalHumanPage'))
+const PDFToolPage = lazy(() => import('./pages/PDFToolPage'))
 // v10.0 社区与变现
 const GalleryPage = lazy(() => import('./pages/GalleryPage'))
 const TemplateMarketPage = lazy(() => import('./pages/TemplateMarketPage'))
@@ -203,6 +205,8 @@ export default function App() {
                     {/* v9.5 AI 配音 + 表情包 */}
                     <Route path="/voice" element={<AccessGuard path="/voice"><VoicePage /></AccessGuard>} />
                     <Route path="/meme" element={<AccessGuard path="/meme"><MemePage /></AccessGuard>} />
+                    <Route path="/digital-human" element={<AccessGuard path="/digital-human"><DigitalHumanPage /></AccessGuard>} />
+                    <Route path="/pdf-tools" element={<AccessGuard path="/pdf-tools"><PDFToolPage /></AccessGuard>} />
                     {/* v10.0 社区与变现 */}
                     <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
                     <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />

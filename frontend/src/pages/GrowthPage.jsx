@@ -3,7 +3,8 @@ import {
   Sparkles, TrendingUp, Wand2, FileText, CheckSquare, Square, Trash2,
   Edit3, CalendarPlus, Play, Clock, BarChart3, MessageSquare, Eye,
   ThumbsUp, MessageCircle, Share2, UserPlus, Save, RefreshCw, X, Plus, Send,
-  Flame, ArrowRight, ShieldCheck, Layers,
+  Flame, ArrowRight, ShieldCheck, Layers, Search, Target, TrendingUp as TrendingIcon,
+  Radar, UserPlus as Competitor, Zap, Crosshair,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -21,6 +22,8 @@ const TABS = [
   { key: 'series', label: '内容系列', icon: Layers },
   { key: 'metrics', label: '效果追踪', icon: BarChart3 },
   { key: 'review', label: 'AI 复盘', icon: Sparkles },
+  { key: 'competitor', label: '竞品监控', icon: Target },
+  { key: 'seo', label: 'SEO评分', icon: Search },
 ]
 
 export default function GrowthPage() {
@@ -77,11 +80,32 @@ export default function GrowthPage() {
   const [replyLoading, setReplyLoading] = useState('')
   const [commentSaving, setCommentSaving] = useState(false)
 
+  // ── 竞品监控状态 ──
+  const [competitors, setCompetitors] = useState([])
+  const [compForm, setCompForm] = useState({ name: '', platform: '', account_id: '', description: '' })
+  const [compSaving, setCompSaving] = useState(false)
+  const [analyzeIds, setAnalyzeIds] = useState([])
+  const [analyzing, setAnalyzing] = useState(false)
+  const [compReport, setCompReport] = useState(null)
+
+  // ── SEO评分状态 ──
+  const [seoTitle, setSeoTitle] = useState('')
+  const [seoContent, setSeoContent] = useState('')
+  const [seoKeyword, setSeoKeyword] = useState('')
+  const [seoLoading, setSeoLoading] = useState(false)
+  const [seoResult, setSeoResult] = useState(null)
+  const [kwSeed, setKwSeed] = useState('')
+  const [kwIndustry, setKwIndustry] = useState('')
+  const [kwLoading, setKwLoading] = useState(false)
+  const [kwResult, setKwResult] = useState(null)
+
   useEffect(() => { if (tab === 'variants') loadVariants() }, [tab, varFilter])
   useEffect(() => { if (tab === 'metrics') loadDashboard() }, [tab, metPlatform])
   useEffect(() => { if (tab === 'hotspots') loadHotspots() }, [tab, hotSource])
   useEffect(() => { if (tab === 'series') loadSeries() }, [tab])
   useEffect(() => { if (tab === 'metrics' && commentRecordId) loadComments() }, [tab, commentRecordId])
+  useEffect(() => { if (tab === 'competitor') loadCompetitors() }, [tab])
+  useEffect(() => { if (tab === 'seo') { setSeoResult(null); setKwResult(null) } }, [tab])
 
   const loadVariants = async () => {
     try {
@@ -293,6 +317,68 @@ export default function GrowthPage() {
   const deleteComment = async (id) => {
     try { await api.delete(`/api/growth/comments/${id}`); toast.success('已删除'); loadComments() }
     catch (e) { toast.error(e.message) }
+  }
+
+  // ── 竞品监控 ──
+  const loadCompetitors = async () => {
+    try { const res = await api.get('/api/monitor/competitors'); setCompetitors(res.data || []) }
+    catch (e) {}
+  }
+
+  const addCompetitor = async () => {
+    if (!compForm.name.trim()) { toast.error('请输入竞品名称'); return }
+    setCompSaving(true)
+    try {
+      await api.post('/api/monitor/competitors', compForm)
+      toast.success('竞品已添加')
+      setCompForm({ name: '', platform: '', account_id: '', description: '' })
+      loadCompetitors()
+    } catch (e) { toast.error(e.message) }
+    finally { setCompSaving(false) }
+  }
+
+  const deleteCompetitor = async (id) => {
+    try { await api.delete(`/api/monitor/competitors/${id}`); toast.success('已删除'); loadCompetitors() }
+    catch (e) { toast.error(e.message) }
+  }
+
+  const toggleAnalyzeId = (id) => {
+    setAnalyzeIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const runAnalysis = async () => {
+    if (analyzeIds.length === 0) { toast.error('请先勾选要分析的竞品'); return }
+    setAnalyzing(true); setCompReport(null)
+    try {
+      const res = await api.post('/api/monitor/analyze', { competitor_ids: analyzeIds })
+      setCompReport(res.data)
+      toast.success('竞品分析完成')
+    } catch (e) { toast.error(e.message) }
+    finally { setAnalyzing(false) }
+  }
+
+  // ── SEO 评分 ──
+  const runSeoAnalyze = async () => {
+    if (!seoTitle.trim()) { toast.error('请输入文章标题'); return }
+    if (!seoContent.trim() || seoContent.length < 50) { toast.error('文章内容至少50字'); return }
+    setSeoLoading(true); setSeoResult(null)
+    try {
+      const res = await api.post('/api/seo/analyze', {
+        title: seoTitle.trim(), content: seoContent.trim(), target_keyword: seoKeyword.trim(),
+      })
+      setSeoResult(res.data)
+    } catch (e) { toast.error(e.message) }
+    finally { setSeoLoading(false) }
+  }
+
+  const runKeywordResearch = async () => {
+    if (!kwSeed.trim()) { toast.error('请输入种子关键词'); return }
+    setKwLoading(true); setKwResult(null)
+    try {
+      const res = await api.post('/api/seo/keywords', { seed_keyword: kwSeed.trim(), industry: kwIndustry.trim() })
+      setKwResult(res.data)
+    } catch (e) { toast.error(e.message) }
+    finally { setKwLoading(false) }
   }
 
   const selectedCount = variants.filter((v) => v.selected).length
@@ -846,7 +932,276 @@ export default function GrowthPage() {
         </div>
       )}
 
-      {/* 批量排期 Modal */}
+      {/* ═══════════════════ 竞品监控 ═══════════════════ */}
+      {tab === 'competitor' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Plus className="w-4 h-4 text-blue-500" /> 添加竞品
+            </h3>
+            <div className="space-y-3">
+              <input type="text" value={compForm.name} onChange={(e) => setCompForm({ ...compForm, name: e.target.value })}
+                placeholder="竞品名称，如：XX科技"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+              <select value={compForm.platform} onChange={(e) => setCompForm({ ...compForm, platform: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 bg-white focus:outline-none">
+                <option value="">选择平台</option>
+                <option value="douyin">抖音</option>
+                <option value="kuaishou">快手</option>
+                <option value="xiaohongshu">小红书</option>
+                <option value="bilibili">B站</option>
+                <option value="wechat">公众号</option>
+                <option value="weibo">微博</option>
+                <option value="zhihu">知乎</option>
+              </select>
+              <input type="text" value={compForm.account_id} onChange={(e) => setCompForm({ ...compForm, account_id: e.target.value })}
+                placeholder="账号ID / 主页链接"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+              <textarea value={compForm.description} onChange={(e) => setCompForm({ ...compForm, description: e.target.value })}
+                placeholder="竞品简介（可选）" rows={2}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+              <Button variant="primary" icon={Plus} loading={compSaving} onClick={addCompetitor} className="w-full">添加竞品</Button>
+            </div>
+          </Card>
+
+          <div className="lg:col-span-2 space-y-4">
+            <Card>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <Target className="w-4 h-4 text-red-500" /> 竞品列表（{competitors.length}）
+                </h3>
+                <Button variant="primary" size="sm" icon={Sparkles} loading={analyzing} onClick={runAnalysis}
+                  disabled={analyzeIds.length === 0}>
+                  AI分析选中竞品（{analyzeIds.length}）
+                </Button>
+              </div>
+              {competitors.length === 0 ? (
+                <Empty icon={Target} title="暂无竞品" description="添加需要关注的竞品账号，AI 将分析其内容策略" />
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {competitors.map((c) => (
+                    <div key={c.id} className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                      analyzeIds.includes(c.id) ? 'border-red-300 bg-red-50/20' : 'border-gray-100 hover:border-red-200'
+                    }`} onClick={() => toggleAnalyzeId(c.id)}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <button className="p-0.5 rounded text-red-400 hover:text-red-600">
+                            {analyzeIds.includes(c.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                          </button>
+                          <div>
+                            <div className="text-sm font-medium text-gray-800">{c.name}</div>
+                            <div className="text-xs text-gray-400">{c.platform}{c.description ? ` · ${c.description.slice(0, 30)}` : ''}</div>
+                          </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); deleteCompetitor(c.id) }}
+                          className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {compReport && (
+              <Card>
+                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-purple-500" /> 分析结果
+                </h3>
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-600">{compReport.analysis?.overview}</p>
+
+                  {compReport.analysis?.hot_patterns?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">爆款规律</p>
+                      {compReport.analysis.hot_patterns.map((p, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs text-amber-700 py-0.5">
+                          <Flame className="w-3 h-3 text-amber-500" /> {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {compReport.analysis?.content_categories?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">内容分布</p>
+                      <div className="space-y-1">
+                        {compReport.analysis.content_categories.map((cat, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs">
+                            <span className="w-20 text-gray-600">{cat.name}</span>
+                            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-violet-500 rounded-full" style={{ width: `${cat.percentage}%` }} />
+                            </div>
+                            <span className="w-8 text-right text-gray-400">{cat.percentage}%</span>
+                            <Badge color={cat.effectiveness === 'high' ? 'green' : cat.effectiveness === 'medium' ? 'amber' : 'red'}>{cat.effectiveness}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {compReport.analysis?.recommendations?.length > 0 && (
+                    <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <p className="text-xs font-medium text-emerald-700 mb-1">差异化建议</p>
+                      {compReport.analysis.recommendations.map((r, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs text-emerald-800 py-0.5">
+                          <Zap className="w-3 h-3 text-emerald-500" /> {r}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════ SEO评分 ═══════════════════ */}
+      {tab === 'seo' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* SEO 评分 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Search className="w-4 h-4 text-blue-500" /> 内容SEO分析
+            </h3>
+            <div className="space-y-3">
+              <input type="text" value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)}
+                placeholder="文章标题"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+              <input type="text" value={seoKeyword} onChange={(e) => setSeoKeyword(e.target.value)}
+                placeholder="目标关键词（可选）"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+              <textarea value={seoContent} onChange={(e) => setSeoContent(e.target.value)}
+                placeholder="文章正文（至少50字）…" rows={8}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none resize-none" />
+              <Button variant="primary" icon={Search} loading={seoLoading} onClick={runSeoAnalyze} className="w-full">SEO 评分分析</Button>
+            </div>
+          </Card>
+
+          <div className="space-y-4">
+            {seoResult && (
+              <Card>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold ${
+                    (seoResult.overall_score || 0) >= 90 ? 'bg-emerald-500' :
+                    (seoResult.overall_score || 0) >= 80 ? 'bg-blue-500' :
+                    (seoResult.overall_score || 0) >= 70 ? 'bg-amber-500' :
+                    (seoResult.overall_score || 0) >= 60 ? 'bg-orange-500' : 'bg-red-500'
+                  }`}>
+                    {seoResult.overall_score || '-'}
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-gray-900">SEO综合评分</div>
+                    <div className="text-xs text-gray-500">{seoResult.summary}</div>
+                  </div>
+                  <Badge className="ml-auto" color={seoResult.grade === 'A+' || seoResult.grade === 'A' ? 'green' : seoResult.grade === 'B' ? 'amber' : 'red'}>
+                    {seoResult.grade}
+                  </Badge>
+                </div>
+
+                {seoResult.dimensions?.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2 py-1.5 text-xs">
+                    <span className="w-20 text-gray-600">{d.name}</span>
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${
+                        d.score >= 90 ? 'bg-emerald-500' : d.score >= 80 ? 'bg-blue-500' : d.score >= 70 ? 'bg-amber-500' : 'bg-red-500'
+                      }`} style={{ width: `${d.score}%` }} />
+                    </div>
+                    <span className="w-8 text-right font-bold text-gray-700">{d.score}</span>
+                    <span className="text-gray-400 hidden lg:inline">{d.comment?.slice(0, 20)}</span>
+                  </div>
+                ))}
+
+                {seoResult.improvements?.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    <p className="text-xs font-medium text-gray-500">改进项</p>
+                    {seoResult.improvements.map((imp, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs p-2 rounded-lg bg-gray-50">
+                        <Badge color={imp.priority === 'high' ? 'red' : imp.priority === 'medium' ? 'amber' : 'green'}>{imp.priority}</Badge>
+                        <div>
+                          <span className="text-gray-700">{imp.issue}</span>
+                          <span className="text-gray-400 ml-1">→ {imp.suggestion}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {seoResult.optimized_title_suggestions?.length > 0 && (
+                  <div className="mt-3 p-2 rounded-lg bg-blue-50 border border-blue-200">
+                    <p className="text-xs font-medium text-blue-700 mb-1">优化标题建议</p>
+                    {seoResult.optimized_title_suggestions.map((t, i) => (
+                      <div key={i} className="text-xs text-blue-800 py-0.5">{i + 1}. {t}</div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* 关键词研究 */}
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Crosshair className="w-4 h-4 text-emerald-500" /> 关键词研究
+              </h3>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input type="text" value={kwSeed} onChange={(e) => setKwSeed(e.target.value)}
+                    placeholder="种子词，如：AI工具"
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none" />
+                  <input type="text" value={kwIndustry} onChange={(e) => setKwIndustry(e.target.value)}
+                    placeholder="行业（可选）"
+                    className="w-32 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none" />
+                </div>
+                <Button variant="primary" icon={Search} loading={kwLoading} onClick={runKeywordResearch} className="w-full">关键词研究</Button>
+              </div>
+
+              {kwResult && (
+                <div className="mt-3 space-y-3">
+                  {kwResult.related_keywords?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">相关词</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {kwResult.related_keywords.map((k, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded-full bg-gray-100 text-xs text-gray-700">
+                            {k.keyword} <span className="text-gray-400">{k.search_volume}/{k.competition}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {kwResult.long_tail_keywords?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">长尾词</p>
+                      <div className="space-y-1">
+                        {kwResult.long_tail_keywords.map((k, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs">
+                            <span className="text-gray-700">{k.keyword}</span>
+                            <Badge color="blue">{k.intent}</Badge>
+                            <span className="text-gray-400">难度：{k.difficulty}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {kwResult.question_keywords?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-500 mb-1">问题型关键词</p>
+                      {kwResult.question_keywords.slice(0, 4).map((q, i) => (
+                        <div key={i} className="text-xs text-gray-700 py-0.5">Q: {q.question}</div>
+                      ))}
+                    </div>
+                  )}
+                  {kwResult.content_suggestions && (
+                    <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-700">
+                      {kwResult.content_suggestions}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
       <Modal open={schedModal} onClose={() => setSchedModal(false)} title="批量创建排期" size="sm">
         <div className="space-y-3">
           <p className="text-sm text-gray-600">将为已勾选的 <span className="font-semibold text-violet-600">{selectedCount}</span> 条变体创建发布排期。</p>
