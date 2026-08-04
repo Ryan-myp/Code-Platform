@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Mic2, Sparkles, Play, Download, Trash2, UserCircle, Music2,
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
-  Image as ImageIcon, Palette, Radio, Volume2,
+  Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import AnimatedAvatar from '../components/AnimatedAvatar'
 
 const SCENES = [
   { id: 'product', name: '产品介绍', desc: '突出卖点，节奏明快', icon: Sparkles, color: 'from-amber-500 to-orange-600' },
@@ -38,6 +39,12 @@ export default function DigitalHumanPage() {
   // 文案素材库
   const [articles, setArticles] = useState([])
   const [showArticles, setShowArticles] = useState(false)
+
+  // 音频播放 + 口型同步
+  const audioRef = useRef(null)
+  const [playing, setPlaying] = useState(false)
+  const [talking, setTalking] = useState(false)
+  const [audioUrl, setAudioUrl] = useState('')
 
   useEffect(() => { loadData(); loadRecords() }, [])
 
@@ -71,7 +78,7 @@ export default function DigitalHumanPage() {
 
   const generate = async () => {
     if (!text.trim()) { toast.error('请输入口播文案'); return }
-    setGenerating(true); setResult(null)
+    setGenerating(true); setResult(null); stopAudio()
     try {
       const res = await api.post('/api/digital-human/generate', {
         text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
@@ -79,10 +86,47 @@ export default function DigitalHumanPage() {
       })
       setResult(res.data)
       loadRecords()
+      // 如果有音频URL，自动播放
+      if (res.data.audio_url) {
+        const fullUrl = res.data.audio_url.startsWith('http')
+          ? res.data.audio_url
+          : `http://127.0.0.1:8000${res.data.audio_url}`
+        setAudioUrl(fullUrl)
+        // 延迟确保 audio 元素挂载后再播放
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().then(() => {
+              setPlaying(true)
+              setTalking(true)
+            }).catch(() => {})
+          }
+        }, 300)
+      }
       toast.success(res.data.message || '生成成功')
     } catch (e) { toast.error(`生成失败：${e.message}`) }
     finally { setGenerating(false) }
   }
+
+  const playAudio = useCallback(() => {
+    if (!audioRef.current) return
+    audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
+  }, [])
+
+  const pauseAudio = useCallback(() => {
+    if (!audioRef.current) return
+    audioRef.current.pause()
+    setPlaying(false)
+    setTalking(false)
+  }, [])
+
+  const stopAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+    }
+    setPlaying(false)
+    setTalking(false)
+  }, [])
 
   const deleteRecord = async (id) => {
     try { await api.delete(`/api/digital-human/records/${id}`); loadRecords(); toast.success('已删除') }
@@ -227,24 +271,52 @@ export default function DigitalHumanPage() {
 
           {/* 预览区 */}
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Eye className="w-4 h-4 text-violet-500" /> 实时预览
-            </h3>
-            <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-900 aspect-video flex items-center justify-center">
-              {/* 数字人形象预览 */}
-              <div className="text-center">
-                <div className="text-6xl mb-3">{selectedAvatar?.emoji || '👩‍💼'}</div>
-                <div className="text-white text-sm font-medium">{selectedAvatar?.name || '选择形象'}</div>
-                <div className="text-white/50 text-xs mt-1">{selectedAvatar?.desc || ''}</div>
-                <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 text-white/70 text-xs">
-                  <Volume2 className="w-3 h-3" /> {selectedVoice?.name || ''}
-                  <span className="mx-1">·</span>
-                  <Palette className="w-3 h-3" /> {selectedBg?.name || ''}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Eye className="w-4 h-4 text-violet-500" /> 实时预览
+                {talking && <span className="text-[10px] text-emerald-500 font-normal animate-pulse">● 口型同步中</span>}
+              </h3>
+              {/* 音频播放控制 */}
+              {audioUrl && (
+                <div className="flex items-center gap-1">
+                  {playing ? (
+                    <Button variant="secondary" size="sm" icon={Pause} onClick={pauseAudio}>暂停</Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" icon={Play} onClick={playAudio}>播放</Button>
+                  )}
+                  <Button variant="ghost" size="sm" icon={StopCircle} onClick={stopAudio} />
+                </div>
+              )}
+            </div>
+            <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-900 flex items-center justify-center">
+              <AnimatedAvatar
+                avatarId={avatarId}
+                width={400}
+                height={350}
+                talking={talking}
+                audioElement={audioRef.current}
+              />
+              {/* 背景渐变叠加 */}
+              <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ background: selectedBg?.color || '#667eea' }} />
+              {/* 底部信息条 */}
+              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+                <div className="flex items-center justify-center gap-3 text-white/80 text-xs">
+                  <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" /> {selectedAvatar?.name || '选择形象'}</span>
+                  <span className="flex items-center gap-1"><Volume2 className="w-3 h-3" /> {selectedVoice?.name || ''}</span>
                 </div>
               </div>
-              {/* 背景渐变 */}
-              <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ background: selectedBg?.color || '#667eea' }} />
             </div>
+            {/* 隐藏的 audio 元素 */}
+            {audioUrl && (
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                onEnded={() => { setPlaying(false); setTalking(false) }}
+                onPause={() => setPlaying(false)}
+                className="hidden"
+                crossOrigin="anonymous"
+              />
+            )}
           </Card>
         </div>
 
