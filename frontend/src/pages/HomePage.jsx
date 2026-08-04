@@ -20,20 +20,20 @@ const SCENE_GROUPS = [
     key: 'rd', label: '智能研发', desc: 'AI 全流程开发与交付', icon: Code2,
     color: 'from-brand-500 to-indigo-600',
     items: [
-      { label: '一句话全自动', desc: '说出功能 → 自动研发部署', path: '/workspace', icon: Sparkles, hot: true },
-      { label: 'AI 工作台', desc: 'PRD→审查→方案→代码', path: '/workspace', icon: Bot },
-      { label: '需求看板', desc: '需求与任务管理', path: '/board', icon: ListTodo },
-      { label: '项目空间', desc: '项目全生命周期', path: '/projects', icon: FolderKanban },
-      { label: '成果仓库', desc: '所有成果集中存储', path: '/artifacts', icon: FileText },
-      { label: '沙箱运行', desc: '安全运行 AI 生成应用', path: '/sandbox', icon: Play },
-      { label: 'CI/CD 流水线', desc: '构建·部署·自动修复', path: '/pipelines', icon: GitBranch },
-      { label: 'Agent 智能体', desc: '专业角色智能体', path: '/agents', icon: Bot },
-      { label: '工作流编排', desc: '可视化流程自动化', path: '/workflows', icon: Layers },
-      { label: '知识库', desc: '团队知识沉淀', path: '/knowledge-bases', icon: Database },
-      { label: 'Skills', desc: 'Agent 技能扩展', path: '/skills', icon: Wrench },
-      { label: 'MCP Servers', desc: '外部能力接入', path: '/mcp-servers', icon: Server },
-      { label: '智能协作', desc: '任务驱动团队对话', path: '/chat', icon: MessageSquare },
-      { label: '自进化中心', desc: '平台持续自我进化', path: '/evolution', icon: Brain },
+      { label: '一句话全自动', desc: '说出功能 → 自动研发部署', path: '/workspace', icon: Sparkles, hot: true, group: '研发核心', keywords: '自动,生成,开发,部署' },
+      { label: 'AI 工作台', desc: 'PRD→审查→方案→代码', path: '/workspace', icon: Bot, group: '研发核心' },
+      { label: '需求看板', desc: '需求与任务管理', path: '/board', icon: ListTodo, group: '研发核心' },
+      { label: '项目空间', desc: '项目全生命周期', path: '/projects', icon: FolderKanban, group: '研发核心' },
+      { label: '成果仓库', desc: '所有成果集中存储', path: '/artifacts', icon: FileText, group: '研发核心' },
+      { label: '沙箱运行', desc: '安全运行 AI 生成应用', path: '/sandbox', icon: Play, group: '研发核心' },
+      { label: 'CI/CD 流水线', desc: '构建·部署·自动修复', path: '/pipelines', icon: GitBranch, group: '研发核心' },
+      { label: 'Agent 智能体', desc: '专业角色智能体', path: '/agents', icon: Bot, group: '智能体与协作' },
+      { label: '工作流编排', desc: '可视化流程自动化', path: '/workflows', icon: Layers, group: '智能体与协作' },
+      { label: '知识库', desc: '团队知识沉淀', path: '/knowledge-bases', icon: Database, group: '智能体与协作' },
+      { label: 'Skills', desc: 'Agent 技能扩展', path: '/skills', icon: Wrench, group: '智能体与协作' },
+      { label: 'MCP Servers', desc: '外部能力接入', path: '/mcp-servers', icon: Server, group: '智能体与协作' },
+      { label: '智能协作', desc: '任务驱动团队对话', path: '/chat', icon: MessageSquare, group: '智能体与协作' },
+      { label: '自进化中心', desc: '平台持续自我进化', path: '/evolution', icon: Brain, group: '智能体与协作' },
     ],
   },
   {
@@ -46,28 +46,28 @@ const SCENE_GROUPS = [
       { label: '文案工厂', desc: '营销文案·自媒体', path: '/copywriting', icon: PenTool },
       { label: '翻译中心', desc: '多语种翻译', path: '/translation', icon: Languages },
       { label: 'PPT 工厂', desc: 'AI 一键生成 PPT', path: '/ppt-factory', icon: Presentation },
-      { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true },
-      { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, hot: true },
-      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, hot: true },
-      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Mic2, hot: true },
-      { label: '表情包工坊', desc: '文字一键生成表情包', path: '/meme', icon: Sticker, hot: true },
-      { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true },
-      { label: '模板市场', desc: '四大工坊模板聚合', path: '/templates', icon: Store, hot: true },
+      { label: '表情包工坊', desc: '文字一键生成表情包', path: '/meme', icon: Sticker, keywords: '表情包,图片,搞笑' },
     ],
   },
   {
-    key: 'office', label: '办公效率', desc: '日常办公利器', icon: Table2,
-    color: 'from-orange-500 to-red-600',
+    key: 'workshop', label: '工坊与社区', desc: '智能工坊 · 发布 · 互动', icon: Gamepad2,
+    color: 'from-rose-500 to-pink-600',
+    items: [
+      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, keywords: '游戏,微信,娱乐' },
+      { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, keywords: '微信,程序,应用' },
+      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Mic2, keywords: '配音,语音,tts,音频' },
+      { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true, keywords: '发布,公众号,抖音,快手,排期,内容' },
+      { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true, keywords: '发布,作品,点赞,评论,社区,广场' },
+      { label: '模板市场', desc: '四大工坊模板聚合', path: '/templates', icon: Store, keywords: '发布,模板,工坊,游戏,小程序,表情包,配音' },
+    ],
+  },
+  {
+    key: 'eff', label: '效率与运营', desc: '日常办公 · 数据驱动', icon: BarChart3,
+    color: 'from-emerald-500 to-teal-600',
     items: [
       { label: '效率工具箱', desc: '50+ 实用 AI 小工具', path: '/tool-hub', icon: Wrench },
       { label: 'Excel 助手', desc: '上传分析·公式生成', path: '/excel', icon: Table2 },
       { label: '股票分析', desc: 'AI 行情研判', path: '/stock', icon: TrendingUp },
-    ],
-  },
-  {
-    key: 'ops', label: '运营分析', desc: '数据驱动决策', icon: BarChart3,
-    color: 'from-emerald-500 to-teal-600',
-    items: [
       { label: '数据看板', desc: '经营数据可视化', path: '/dashboard', icon: BarChart3 },
       { label: 'AB 测试', desc: '实验设计与分析', path: '/ab-testing', icon: FlaskConical },
     ],
@@ -342,7 +342,7 @@ export default function HomePage() {
           <div className="space-y-4">
             {SCENE_GROUPS.map((g) => {
               const matched = g.items.filter((it) =>
-                (it.label + it.desc + g.label).toLowerCase().includes(capKw.trim().toLowerCase())
+                (it.label + it.desc + (it.keywords || '') + g.label).toLowerCase().includes(capKw.trim().toLowerCase())
               )
               if (matched.length === 0) return null
               return (
@@ -363,7 +363,7 @@ export default function HomePage() {
               )
             })}
             {ALL_CAPABILITIES.filter((it) =>
-              (it.label + it.desc + it.group).toLowerCase().includes(capKw.trim().toLowerCase())
+              (it.label + it.desc + (it.keywords || '') + it.group).toLowerCase().includes(capKw.trim().toLowerCase())
             ).length === 0 && (
               <div className="text-center py-8 text-gray-400">
                 <Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -392,8 +392,16 @@ export default function HomePage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {g.items.map((it) => (
-                    <CapChip key={it.label} item={it} onNavigate={navigate} />
+                  {g.items.map((it, idx) => (
+                    <React.Fragment key={it.label}>
+                      {it.group && (idx === 0 || g.items[idx - 1].group !== it.group) && (
+                        <div className="w-full flex items-center gap-2 mt-1 mb-0.5 first:mt-0">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{it.group}</span>
+                          <span className="flex-1 h-px bg-gray-200/70" />
+                        </div>
+                      )}
+                      <CapChip item={it} onNavigate={navigate} />
+                    </React.Fragment>
                   ))}
                 </div>
               </div>
