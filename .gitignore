@@ -41,7 +41,13 @@ data/
 backend/skills_files/
 backend/uploads/
 backend/image_factory/
+backend/meme_factory/
+backend/voice_factory/
+backend/video_factory/
+backend/music_factory/
 backend/.hermes/
+*.db-shm
+*.db-wal
 
 # ─── Environment & Secrets ──────────────────────────────────────
 .env

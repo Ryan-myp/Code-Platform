@@ -38,6 +38,11 @@ PAGES = [
     {"id": "chat", "path": "/chat", "label": "智能协作"},
     {"id": "publish", "path": "/publish", "label": "发布中心"},
     {"id": "miniapp", "path": "/miniapp", "label": "小程序工坊"},
+    {"id": "games", "path": "/games", "label": "小游戏工坊"},
+    {"id": "voice", "path": "/voice", "label": "配音工坊"},
+    {"id": "meme", "path": "/meme", "label": "表情包工坊"},
+    {"id": "gallery", "path": "/gallery", "label": "作品广场"},
+    {"id": "templates", "path": "/templates", "label": "模板市场"},
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊

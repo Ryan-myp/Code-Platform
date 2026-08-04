@@ -3,6 +3,8 @@ import {
   Send, Copy, Check, Sparkles, Clock, Settings2, Plus, Trash2, TestTube2,
   FileText, Image as ImageIcon, Film, Tag, Link2, Download, ExternalLink,
   MessageSquare, Music2, Clapperboard, AlertCircle, CheckCircle2, CircleDashed,
+  Calendar, CalendarPlus, BarChart3, Play, TrendingUp, ChevronLeft, ChevronRight,
+  PieChart,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -55,9 +57,30 @@ function assetFull(url) {
 
 const TABS = [
   { key: 'workbench', label: '发布工作台', icon: Send },
+  { key: 'calendar', label: '排期日历', icon: Calendar },
+  { key: 'stats', label: '数据看板', icon: BarChart3 },
   { key: 'records', label: '发布记录', icon: Clock },
   { key: 'accounts', label: '账号配置', icon: Settings2 },
 ]
+
+const SCHEDULE_STATUS_BADGE = {
+  pending: { label: '待发布', color: 'amber', dot: 'bg-amber-400' },
+  published: { label: '已发布', color: 'green', dot: 'bg-emerald-400' },
+  cancelled: { label: '已取消', color: 'gray', dot: 'bg-gray-300' },
+}
+
+// ── 排期日历工具 ──────────────────────────────────────────────
+function buildCalendar(year, month) { // month 0-based
+  const startDay = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const cells = []
+  for (let i = 0; i < startDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+  while (cells.length % 7 !== 0) cells.push(null)
+  return cells
+}
+
+function fmtDay(iso) { return iso ? iso.slice(0, 10) : '' }
 
 export default function PublishingPage() {
   const toast = useToast()
@@ -84,9 +107,29 @@ export default function PublishingPage() {
   const [testingId, setTestingId] = useState('')
   const [detail, setDetail] = useState(null)
 
-  useEffect(() => { loadAssets() }, [])
+  // ── 排期日历 / 数据看板 ──
+  const now = new Date()
+  const [calMonth, setCalMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
+  const [schedules, setSchedules] = useState([])
+  const [stats, setStats] = useState(null)
+  const [schedModal, setSchedModal] = useState(null) // { date }
+  const [schedAssets, setSchedAssets] = useState([]) // 排期弹窗内选择的素材
+  const [schedForm, setSchedForm] = useState({ platform: 'wechat', content_type: 'article', title: '', content: '', scheduled_at: '', topics: [], topic_input: '' })
+  const [executingId, setExecutingId] = useState('')
+
   useEffect(() => { if (tab === 'records') loadRecords() }, [tab])
   useEffect(() => { if (tab === 'accounts') loadAccounts() }, [tab])
+  useEffect(() => { if (tab === 'calendar') { loadSchedules() } }, [tab, calMonth])
+  useEffect(() => { if (tab === 'stats') { loadStats(); loadSchedules() } }, [tab])
+
+  const loadSchedules = async () => {
+    try { const res = await api.get(`/api/publish/schedules?month=${calMonth}`); setSchedules(res.data || []) } catch (e) {}
+  }
+  const loadStats = async () => {
+    try { const res = await api.get('/api/publish/stats'); setStats(res.data || null) } catch (e) {}
+  }
+
+  useEffect(() => { loadAssets() }, [])
 
   const loadAssets = async () => {
     try { const res = await api.get('/api/publish/assets'); setAssets(res.data || { articles: [], media: [] }) } catch (e) {}
@@ -176,6 +219,51 @@ export default function PublishingPage() {
 
   const deleteAccount = async (id) => {
     try { await api.delete(`/api/publish/accounts/${id}`); loadAccounts(); toast.success('账号已删除') }
+    catch (e) { toast.error(e.message) }
+  }
+
+  // ── 排期操作 ──
+  const openSchedModal = (date) => {
+    setSchedForm({ platform: 'wechat', content_type: 'article', title: '', content: '', scheduled_at: `${date}T09:00`, topics: [], topic_input: '' })
+    setSchedAssets([])
+    setSchedModal({ date })
+  }
+
+  const addSchedTopic = () => {
+    const t = schedForm.topic_input.trim().replace(/^#/, '')
+    if (!t) return
+    if (schedForm.topics.includes(t)) { toast.error('话题已存在'); return }
+    setSchedForm({ ...schedForm, topics: [...schedForm.topics, t], topic_input: '' })
+  }
+
+  const createSchedule = async () => {
+    if (!schedForm.title.trim() && schedForm.content_type !== 'image') { toast.error('请填写标题'); return }
+    if (!schedForm.scheduled_at) { toast.error('请选择计划发布时间'); return }
+    try {
+      const res = await api.post('/api/publish/schedules', {
+        platform: schedForm.platform, content_type: schedForm.content_type,
+        title: schedForm.title, content: schedForm.content, topics: schedForm.topics,
+        asset_urls: schedAssets.map((s) => s.url), scheduled_at: schedForm.scheduled_at,
+      })
+      toast.success('排期已创建，到点后一键执行发布')
+      setSchedModal(null)
+      loadSchedules()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const executeSchedule = async (id) => {
+    setExecutingId(id)
+    try {
+      const res = await api.post(`/api/publish/schedules/${id}/execute`)
+      toast.success(res.data.mode === 'auto' ? '排期已自动发布成功' : '排期已执行，素材包已生成')
+      loadSchedules(); loadRecords()
+    } catch (e) { toast.error(e.message) }
+    finally { setExecutingId('') }
+  }
+
+  const cancelSchedule = async (id) => {
+    if (!window.confirm('确定取消这条排期吗？')) return
+    try { await api.delete(`/api/publish/schedules/${id}`); toast.success('排期已取消'); loadSchedules() }
     catch (e) { toast.error(e.message) }
   }
 
@@ -490,6 +578,200 @@ export default function PublishingPage() {
         </div>
       )}
 
+      {tab === 'calendar' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* ── 左列：日历 ── */}
+          <div className="lg:col-span-2">
+            <Card>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-indigo-500" /> 发布排期日历
+                </h3>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => { const [y, m] = calMonth.split('-').map(Number); const d = new Date(y, m - 2, 1); setCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"><ChevronLeft className="w-4 h-4" /></button>
+                  <span className="px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-sm font-medium">
+                    {new Date(`${calMonth}-01`).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' })}
+                  </span>
+                  <button onClick={() => { const [y, m] = calMonth.split('-').map(Number); const d = new Date(y, m, 1); setCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500"><ChevronRight className="w-4 h-4" /></button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-7 gap-1 mb-1">
+                {['日', '一', '二', '三', '四', '五', '六'].map((d, i) => (
+                  <div key={i} className={`text-center text-xs font-medium py-1 ${i === 0 || i === 6 ? 'text-red-400' : 'text-gray-400'}`}>{d}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {buildCalendar(Number(calMonth.split('-')[0]), Number(calMonth.split('-')[1]) - 1).map((day, i) => {
+                  if (!day) return <div key={i} className="h-20 rounded-xl border border-dashed border-gray-100" />
+                  const dayStr = `${calMonth}-${String(day).padStart(2, '0')}`
+                  const dayScheds = schedules.filter((s) => fmtDay(s.scheduled_at) === dayStr)
+                  const isToday = dayStr === new Date().toISOString().slice(0, 10)
+                  return (
+                    <button key={i} onClick={() => openSchedModal(dayStr)}
+                      className={`h-20 rounded-xl border text-left p-1.5 transition-all hover:shadow-md group ${
+                        isToday ? 'border-indigo-300 bg-indigo-50/50' : 'border-gray-100 hover:border-indigo-200 bg-white'
+                      }`}>
+                      <div className={`flex items-center justify-between`}>
+                        <span className={`text-xs font-medium ${isToday ? 'text-indigo-600' : 'text-gray-500'}`}>{day}</span>
+                        <CalendarPlus className="w-3 h-3 text-gray-200 group-hover:text-indigo-400" />
+                      </div>
+                      <div className="mt-1 space-y-0.5">
+                        {dayScheds.slice(0, 3).map((s) => (
+                          <div key={s.id} className="flex items-center gap-1 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${SCHEDULE_STATUS_BADGE[s.status]?.dot || 'bg-gray-300'}`} />
+                            <span className="text-[10px] text-gray-500 truncate">{s.scheduled_at?.slice(11, 16)} {s.title || PLATFORMS.find((p) => p.value === s.platform)?.label}</span>
+                          </div>
+                        ))}
+                        {dayScheds.length > 3 && <span className="text-[10px] text-gray-400">+{dayScheds.length - 3} 条</span>}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" /> 待发布</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-400" /> 已发布</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-300" /> 已取消</span>
+                <span className="ml-auto text-gray-400">点击任意日期创建排期</span>
+              </div>
+            </Card>
+          </div>
+
+          {/* ── 右列：本月排期列表 ── */}
+          <div>
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <CalendarPlus className="w-4 h-4 text-amber-500" /> 本月排期（{schedules.length}）
+              </h3>
+              {schedules.length === 0 ? (
+                <Empty icon={Calendar} title="本月暂无排期" description="点击日历上的日期创建发布排期" />
+              ) : (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                  {schedules.map((s) => {
+                    const p = PLATFORMS.find((x) => x.value === s.platform)
+                    const isOverdue = s.status === 'pending' && s.scheduled_at < new Date().toISOString()
+                    return (
+                      <div key={s.id} className={`p-3 rounded-xl border transition-all ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-gray-100 hover:border-indigo-200'}`}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {p && <span className={`w-6 h-6 rounded-md bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}><p.icon className="w-3 h-3 text-white" /></span>}
+                          <Badge color={SCHEDULE_STATUS_BADGE[s.status]?.color || 'gray'}>{SCHEDULE_STATUS_BADGE[s.status]?.label || s.status}</Badge>
+                          {isOverdue && <span className="text-[10px] text-red-500 font-medium">已到时间</span>}
+                          <span className="text-xs text-gray-400 ml-auto">{s.scheduled_at?.slice(5, 16).replace('T', ' ')}</span>
+                        </div>
+                        <div className="text-sm font-medium text-gray-800 truncate mb-1">{s.title || `（${s.content_label}发布）`}</div>
+                        {s.content && <div className="text-xs text-gray-400 truncate mb-2">{s.content.slice(0, 60)}</div>}
+                        <div className="flex gap-1.5">
+                          {s.status === 'pending' && (
+                            <>
+                              <Button variant="primary" size="sm" icon={Play} loading={executingId === s.id} onClick={() => executeSchedule(s.id)}>执行发布</Button>
+                              <Button variant="ghost" size="sm" icon={Trash2} onClick={() => cancelSchedule(s.id)}>取消</Button>
+                            </>
+                          )}
+                          {s.published_record_id && <span className="text-[11px] text-emerald-600 ml-auto">记录 {s.published_record_id}</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {tab === 'stats' && (
+        <div className="space-y-6">
+          {/* 核心指标 */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: '发布总次数', value: stats?.total ?? 0, sub: `成功率 ${stats?.success_rate ?? 0}%`, icon: Send, color: 'from-blue-500 to-indigo-600' },
+              { label: '发布成功', value: stats?.success ?? 0, sub: '已发布到平台', icon: CheckCircle2, color: 'from-emerald-500 to-teal-600' },
+              { label: '待发布', value: stats?.pending ?? 0, sub: '含失败待重试', icon: Clock, color: 'from-amber-500 to-orange-600' },
+              { label: '未来排期', value: stats?.upcoming_schedules ?? 0, sub: stats?.overdue_schedules ? `已到时间 ${stats.overdue_schedules} 条待执行` : '已排定待执行', icon: Calendar, color: 'from-violet-500 to-purple-600' },
+            ].map((s, i) => (
+              <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${s.color} flex items-center justify-center`}>
+                    <s.icon className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold text-gray-900">{s.value}</div>
+                    <div className="text-xs text-gray-500">{s.label}</div>
+                    <div className={`text-[11px] ${stats?.overdue_schedules && i === 3 ? 'text-red-500' : 'text-gray-400'}`}>{s.sub}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 平台分布 */}
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <PieChart className="w-4 h-4 text-blue-500" /> 平台分布
+              </h3>
+              {Object.keys(stats?.by_platform || {}).length === 0 ? (
+                <Empty icon={PieChart} title="暂无发布数据" description="发布内容后这里会展示各平台占比" />
+              ) : (
+                <div className="space-y-3">
+                  {PLATFORMS.map((p) => {
+                    const n = stats?.by_platform?.[p.value] || 0
+                    const max = Math.max(...Object.values(stats?.by_platform || {}), 1)
+                    return (
+                      <div key={p.value}>
+                        <div className="flex items-center justify-between text-sm mb-1">
+                          <span className="flex items-center gap-2 text-gray-700">
+                            <span className={`w-6 h-6 rounded-md bg-gradient-to-br ${p.color} flex items-center justify-center`}><p.icon className="w-3 h-3 text-white" /></span>
+                            {p.label}
+                          </span>
+                          <span className="text-xs text-gray-400">{n} 次</span>
+                        </div>
+                        <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                          <div className={`h-full rounded-full bg-gradient-to-r ${p.color} transition-all duration-500`} style={{ width: `${(n / max) * 100}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+
+            {/* 近 30 天趋势 */}
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-emerald-500" /> 近 30 天发布趋势
+              </h3>
+              {!stats?.trend_30d?.some((t) => t.count > 0) ? (
+                <Empty icon={TrendingUp} title="近 30 天暂无发布" description="持续发布后这里会显示趋势曲线" />
+              ) : (
+                <div className="flex items-end gap-[3px] h-36">
+                  {stats.trend_30d.map((t, i) => {
+                    const max = Math.max(...stats.trend_30d.map((x) => x.count), 1)
+                    const h = Math.max((t.count / max) * 100, t.count > 0 ? 8 : 2)
+                    const isWeekEnd = new Date(t.date).getDay() === 0 || new Date(t.date).getDay() === 6
+                    return (
+                      <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+                        <div className="w-full rounded-t bg-gradient-to-t from-indigo-500 to-blue-400 transition-all" style={{ height: `${h}%`, opacity: t.count > 0 ? 1 : 0.15 }} />
+                        {t.count > 0 && (
+                          <span className="absolute -top-5 text-[9px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">{t.count}</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex justify-between text-[10px] text-gray-400 mt-2">
+                <span>{stats?.trend_30d?.[0]?.date?.slice(5)}</span>
+                <span>{stats?.trend_30d?.[29]?.date?.slice(5)}</span>
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
       {tab === 'records' && (
         <Card>
           <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -603,6 +885,113 @@ export default function PublishingPage() {
           </div>
         </div>
       )}
+
+      {/* 创建排期 Modal */}
+      <Modal open={!!schedModal} onClose={() => setSchedModal(null)} title={`创建发布排期 · ${schedModal?.date || ''}`} size="lg">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">发布平台</label>
+              <div className="space-y-1.5">
+                {PLATFORMS.map((p) => (
+                  <button key={p.value} onClick={() => setSchedForm({ ...schedForm, platform: p.value, content_type: p.value === 'wechat' ? 'article' : 'image' })}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-xs transition-all ${
+                      schedForm.platform === p.value ? `${p.border} ${p.text} font-medium` : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}>
+                    <p.icon className="w-3.5 h-3.5" /> {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">内容类型</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {CONTENT_TYPES.map((c) => (
+                  <button key={c.value} onClick={() => setSchedForm({ ...schedForm, content_type: c.value })}
+                    className={`flex flex-col items-center gap-1 px-1 py-2 rounded-lg border text-[11px] transition-all ${
+                      schedForm.content_type === c.value ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}>
+                    <c.icon className="w-3.5 h-3.5" /> {c.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-500 mb-1">计划发布时间</label>
+                <input type="datetime-local" value={schedForm.scheduled_at}
+                  onChange={(e) => setSchedForm({ ...schedForm, scheduled_at: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">标题</label>
+            <input type="text" value={schedForm.title} onChange={(e) => setSchedForm({ ...schedForm, title: e.target.value })}
+              placeholder="如：周五产品周报 / 新品上架视频"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">正文 / 文案</label>
+            <textarea value={schedForm.content} onChange={(e) => setSchedForm({ ...schedForm, content: e.target.value })}
+              rows={3} placeholder="排期发布时使用的文案（可留空）"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">话题标签（回车添加）</label>
+            <div className="flex gap-2">
+              <input type="text" value={schedForm.topic_input}
+                onChange={(e) => setSchedForm({ ...schedForm, topic_input: e.target.value })}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSchedTopic() } }}
+                placeholder="如：AI工具 内容运营" className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+              <Button variant="secondary" size="sm" icon={Plus} onClick={addSchedTopic}>添加</Button>
+            </div>
+            {schedForm.topics.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {schedForm.topics.map((t, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-xs text-indigo-700">
+                    #{t}
+                    <button onClick={() => setSchedForm({ ...schedForm, topics: schedForm.topics.filter((_, j) => j !== i) })} className="text-indigo-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">素材（{schedAssets.length}，点击图片/视频选择）</label>
+            {assets.media?.length ? (
+              <div className="grid grid-cols-4 md:grid-cols-6 gap-2 max-h-36 overflow-y-auto pr-1">
+                {assets.media.map((m) => {
+                  const url = m.url || m.media_url
+                  const sel = schedAssets.some((s) => s.url === url)
+                  return (
+                    <button key={m.id} onClick={() => {
+                      if (!url) return
+                      setSchedAssets((prev) => sel ? prev.filter((s) => s.url !== url) : [...prev, { url, name: url.split('/').pop(), type: m.type === 'video' ? 'video' : 'image' }])
+                    }}
+                      className={`relative rounded-lg overflow-hidden border-2 transition-all ${sel ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-transparent hover:border-indigo-200'}`}>
+                      {m.type === 'image' ? (
+                        <img src={assetFull(url)} alt="" className="w-full h-12 object-cover" />
+                      ) : (
+                        <div className="w-full h-12 flex items-center justify-center bg-gray-800"><Film className="w-4 h-4 text-white/70" /></div>
+                      )}
+                      {sel && <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-indigo-500 text-white text-[9px] flex items-center justify-center"><Check className="w-2 h-2" /></span>}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">暂无素材，可先到图片/视频工厂生成（图文排期可不选素材）</p>
+            )}
+          </div>
+
+          <Button variant="primary" size="lg" icon={CalendarPlus} onClick={createSchedule} className="w-full">
+            创建排期
+          </Button>
+        </div>
+      </Modal>
 
       {/* 记录详情 Modal */}
       <Modal open={!!detail} onClose={() => setDetail(null)} title="发布详情" size="lg">

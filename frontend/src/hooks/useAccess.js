@@ -27,6 +27,11 @@ const PAGE_PATH_TO_ID = {
   '/chat': 'chat',
   '/publish': 'publish',
   '/miniapp': 'miniapp',
+  '/games': 'games',
+  '/voice': 'voice',
+  '/meme': 'meme',
+  '/gallery': 'gallery',
+  '/templates': 'templates',
 }
 
 export default function useAccess() {

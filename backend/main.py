@@ -35,6 +35,7 @@ load_dotenv()
 from admin_api import router as admin_api_router  # noqa: E402
 from chat_engine import router as chat_engine_router  # noqa: E402
 from collab_engine import router as collab_engine_router  # noqa: E402
+from drafts import router as drafts_router  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
     consume_quota,
@@ -79,14 +80,19 @@ from common.models import (  # noqa: E402
     WorkflowUpdateRequest,
 )
 import skills_store  # noqa: E402
+from game_factory import router as game_factory_router  # noqa: E402
+from gallery import router as gallery_router  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
+from meme_factory import router as meme_factory_router  # noqa: E402
 from miniapp import router as miniapp_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
 from publishing import router as publishing_router  # noqa: E402
+from voice_factory import router as voice_factory_router  # noqa: E402
 from realtime import router as realtime_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
+from templates_market import router as templates_market_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
@@ -271,9 +277,9 @@ _ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小�
 
 # 功能地图（用户可通过左侧导航直达）
 1. 研发管理：需求看板 /board、AI 工作台 /workspace（一句话全自动：PRD 编写→审查→技术方案→测试用例→代码生成→代码审查→一键部署沙箱）、项目空间 /projects、流水线 /pipelines、Agent 智能体 /agents、Team 团队协作 /teams、Workflow 工作流编排 /workflows（拖拽节点编排，支持 Agent/图片/视频/音乐/PRD 等节点）、知识库 /knowledge-bases（支持上传文档、检索）、Skills /skills、MCP 服务器 /mcp-servers、沙箱运行 /sandbox、全局任务 /tasks。
-2. 创作工厂：图片生成 /image-factory、视频生成 /video-factory、音乐生成 /music-factory、文案创作 /copywriting、翻译 /translation、PPT 生成 /ppt-factory。
-3. 效率工具箱：/tool-hub 提供 30+ 覆盖职场办公、自媒体、学习研究的 AI 工具；另有 Excel 处理 /excel、股票分析 /stock、AB 实验 /ab-testing、数据看板 /dashboard。
-4. 个人中心：/profile 查看每日额度、修改昵称头像密码；会员 /membership 升级套餐；使用记录 /records；帮助中心 /help（含新手引导回放）。
+2. 创作工厂：图片生成 /image-factory、视频生成 /video-factory、音乐生成 /music-factory、文案创作 /copywriting、翻译 /translation、PPT 生成 /ppt-factory、内容发布 /publish（文章/图片/视频一键发布公众号/抖音/快手，支持引导式素材包与账号自动发布，支持排期日历定时发布与数据看板追踪）、小程序开发 /miniapp（电商/预约/展示/工具/资讯等模板 + AI 生成完整微信小程序项目）、小游戏开发 /games（贪吃蛇/2048/飞机大战/打砖块/记忆翻牌/俄罗斯方块/扫雷/三消等模板 + AI 生成双版本小游戏：网页版在线试玩 + 微信小游戏版开发上线）、配音工坊 /voice（文字转语音，短视频旁白/广告口播/有声书等场景预设，长文本自动分段拼接）、表情包工坊 /meme（经典黄底/熊猫白底/公告红底等样式 + AI 场景一键生成表情包）、作品广场 /gallery（全平台 AI 作品聚合，点赞评论互动）、模板市场 /templates（四大工坊内置模板聚合浏览，一键跳转使用）。
+3. 效率工具箱：/tool-hub 提供 50+ 覆盖职场办公、自媒体、学习研究的 AI 工具；另有 Excel 处理 /excel、股票分析 /stock、AB 实验 /ab-testing、数据看板 /dashboard。
+4. 个人中心：/profile 查看每日额度、修改昵称头像密码；会员 /membership 升级套餐；使用记录 /records；帮助中心 /help（含新手引导回放）；首页 /home 支持深色/浅色一键切换（侧边栏底部月亮/太阳按钮）与「我的收藏」「常用工具」「草稿箱」快捷卡片。
 
 # 常见问题速查
 - 注册登录：登录页点「注册」，用户名 2-20 位、密码至少 6 位；默认管理员 admin / admin123。
@@ -284,6 +290,16 @@ _ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小�
 - 切换模型：在「系统配置 → 模型配置」查看/调整；部分工具支持高级选项切换模型。
 - 修改密码：个人中心 → 修改密码，填原密码+新密码。
 - 部署失败：系统自动 AI 诊断修复（拉日志→定位根因→改码→重建→健康检查，最多 3 轮），也可在沙箱运行页手动触发。
+- 内容发布：创作工厂 → 发布中心 /publish。从素材库加载历史文章/图片/视频，选平台（公众号/抖音/快手）一键发布；未配置自动发布账号时自动生成「素材包 + 分步操作指引」，到官方 App/后台粘贴即可。账号配置在发布中心 → 账号配置 Tab（公众号 AppID/Secret 可直接自动发布；抖音/快手需开放平台审核通过）。
+- 小程序开发：创作工厂 → 小程序工坊 /miniapp。选模板（电商/预约/展示/工具/资讯/自定义）+ 描述需求，AI 生成完整微信小程序项目（含 app.json/app.js/WXML 页面），在线预览、复制、下载 ZIP，用微信开发者工具导入即可运行；部署指引见页面底部按钮。
+- 小游戏开发：创作工厂 → 小游戏工坊 /games。选模板（贪吃蛇/2048/飞机大战/打砖块/记忆翻牌/自定义）+ 描述玩法需求，AI 生成双版本小游戏：网页版（单文件，可在页面直接「在线试玩」，也可下载部署到任意网站）+ 微信小游戏版（wx/ 目录用微信开发者工具导入，个人主体可注册上线）；每次生成约 1-2 分钟。
+- 配音工坊：创作工厂 → 配音工坊 /voice。选场景（短视频旁白/广告口播/有声书/新闻播报/儿童故事）+ 输入文字，AI 合成中文/英文配音，长文本自动分段拼接，支持自定义语速音色。
+- 表情包工坊：创作工厂 → 表情包工坊 /meme。输入顶部/底部文字，选样式（经典黄底/熊猫白底/公告红底/暗夜黑底/蓝紫渐变/AI 生成），一键生成 1080×1080 表情包图片。
+- 发布排期：发布中心 → 排期日历 Tab。创建计划发布的内容，选平台/类型/时间，到点后一键「立即发布」；数据看板 Tab 查看发布总量、成功率、平台分布与近 30 天趋势。
+- 作品广场：创作工厂 → 作品广场 /gallery。图片/视频/音频作品自动聚合展示，可点赞、评论互动。
+- 模板市场：创作工厂 → 模板市场 /templates。小游戏玩法/小程序结构/表情包样式/配音场景四大类模板聚合，点击卡片直达对应工坊。
+- 草稿箱：创作工厂各页面输入自动保存草稿，首页「草稿箱」卡片可恢复继续编辑或删除。
+- 深色模式：点击侧边栏底部月亮/太阳按钮切换深色/浅色，选择会记住，跟随系统偏好。
 - 新手引导：帮助中心可重播，首次登录自动弹出。
 
 # 回复规范
@@ -2215,6 +2231,12 @@ app.include_router(video_factory_router)
 app.include_router(music_factory_router)
 app.include_router(miniapp_router)
 app.include_router(publishing_router)
+app.include_router(game_factory_router)
+app.include_router(voice_factory_router)
+app.include_router(meme_factory_router)
+app.include_router(drafts_router)
+app.include_router(gallery_router)
+app.include_router(templates_market_router)
 app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)

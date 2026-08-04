@@ -56,6 +56,12 @@ const MembershipPage = lazy(() => import('./pages/MembershipPage'))
 // v9.3 内容发布 + 小程序开发
 const PublishingPage = lazy(() => import('./pages/PublishingPage'))
 const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
+const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
+const VoicePage = lazy(() => import('./pages/VoicePage'))
+const MemePage = lazy(() => import('./pages/MemePage'))
+// v10.0 社区与变现
+const GalleryPage = lazy(() => import('./pages/GalleryPage'))
+const TemplateMarketPage = lazy(() => import('./pages/TemplateMarketPage'))
 
 // 页面级加载骨架（懒加载期间展示）
 function PageFallback() {
@@ -189,6 +195,14 @@ export default function App() {
                     {/* v9.3 内容发布 + 小程序开发 */}
                     <Route path="/publish" element={<AccessGuard path="/publish"><PublishingPage /></AccessGuard>} />
                     <Route path="/miniapp" element={<AccessGuard path="/miniapp"><MiniAppPage /></AccessGuard>} />
+                    {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
+                    <Route path="/games" element={<AccessGuard path="/games"><GameFactoryPage /></AccessGuard>} />
+                    {/* v9.5 AI 配音 + 表情包 */}
+                    <Route path="/voice" element={<AccessGuard path="/voice"><VoicePage /></AccessGuard>} />
+                    <Route path="/meme" element={<AccessGuard path="/meme"><MemePage /></AccessGuard>} />
+                    {/* v10.0 社区与变现 */}
+                    <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
+                    <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />
                     {/* v9.0 Phase 4: 运营分析 */}
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/ab-testing" element={<ABTestingPage />} />

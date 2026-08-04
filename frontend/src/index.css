@@ -325,3 +325,104 @@
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+/* ========================================
+   深色模式（v10.0）
+   框架级暗色适配：class="dark" 挂在 <html> 上，
+   全局覆盖常用 surface/text/border 色类，工具页自动生效
+   ======================================== */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  @apply bg-[#0b1220] text-ink-200;
+}
+
+/* 表面色：卡片 / 面板 */
+.dark .bg-white { background-color: #151e31; }
+.dark .bg-white\/95 { background-color: rgba(21, 30, 49, 0.95); }
+.dark .bg-gray-50 { background-color: #1a2438; }
+.dark .bg-gray-100 { background-color: #1f2a40; }
+.dark .bg-gray-200 { background-color: #263350; }
+.dark .bg-ink-50 { background-color: #0b1220; }
+.dark .bg-ink-100 { background-color: #1a2438; }
+.dark .bg-ink-200 { background-color: #263350; }
+.dark .bg-ink-50\/60 { background-color: rgba(11, 18, 32, 0.6); }
+
+/* 边框 */
+.dark .border-gray-100 { border-color: #223048; }
+.dark .border-gray-200 { border-color: #2a3a52; }
+.dark .border-gray-300 { border-color: #35476b; }
+.dark .border-ink-100 { border-color: #223048; }
+.dark .border-ink-200 { border-color: #2a3a52; }
+.dark .border-ink-200\/60 { border-color: rgba(42, 58, 82, 0.6); }
+.dark .border-ink-300\/80 { border-color: rgba(53, 71, 107, 0.8); }
+
+/* 文字 */
+.dark .text-gray-900 { color: #e8ecf4; }
+.dark .text-gray-800 { color: #d3d9e3; }
+.dark .text-gray-700 { color: #b9c1cf; }
+.dark .text-gray-600 { color: #9aa4b4; }
+.dark .text-gray-500 { color: #7d8798; }
+.dark .text-gray-400 { color: #636d7e; }
+.dark .text-gray-300 { color: #505a6a; }
+.dark .text-ink-700 { color: #b9c1cf; }
+.dark .text-ink-800 { color: #d3d9e3; }
+.dark .text-ink-900 { color: #e8ecf4; }
+.dark .text-ink-400\/70 { color: rgba(125, 135, 152, 0.7); }
+
+/* 表单控件（color-scheme 自动深色渲染默认控件） */
+.dark input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.dark textarea,
+.dark select {
+  background-color: #0f172a;
+  color: #d3d9e3;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #505a6a;
+}
+
+/* 滚动条 */
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #2a3a52;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #35476b;
+}
+
+/* Markdown 内容 */
+.dark .md-content { color: #b9c1cf; }
+.dark .md-content h1,
+.dark .md-content h2,
+.dark .md-content h3,
+.dark .md-content h4,
+.dark .md-content h5,
+.dark .md-content h6,
+.dark .md-content strong { color: #e8ecf4; }
+.dark .md-content h1 { border-bottom-color: #35476b; }
+.dark .md-content h2 { border-bottom-color: #2a3a52; }
+.dark .md-content code {
+  background: #1f2a40;
+  color: #c4b5fd;
+  border-color: #2a3a52;
+}
+.dark .md-content blockquote {
+  background: #1a2438;
+  color: #9aa4b4;
+}
+.dark .md-content table { border-color: #2a3a52; }
+.dark .md-content thead { background: #1f2a40; }
+.dark .md-content th { color: #c4b5fd; border-bottom-color: #35476b; }
+.dark .md-content td { border-bottom-color: #223048; color: #b9c1cf; }
+.dark .md-content tbody tr:hover { background: #1f2a40; }
+.dark .md-content hr { background: linear-gradient(to right, transparent, #35476b, transparent); }
+.dark .md-content a { color: #a78bfa; text-decoration-color: #5b21b6; }
+.dark .md-content a:hover { color: #c4b5fd; }
+
+/* 页面过渡平滑 */
+html.theme-transition,
+html.theme-transition * {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease !important;
+}

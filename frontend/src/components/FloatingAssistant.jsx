@@ -9,12 +9,13 @@ const STORAGE_KEY = 'assistant_messages_v1'
 // 快捷问题：小白用户点一下即可提问
 const QUICK_QUESTIONS = [
   '平台有哪些功能？',
-  '今日额度是怎么计算的？',
-  '如何创建一个 Agent？',
+  '如何发布内容到公众号/抖音？',
+  '如何生成微信小程序？',
+  '如何生成小游戏？',
   '部署失败怎么办？',
 ]
 
-const WELCOME = '你好呀，我是**小团** 🤖 你的平台智能助手！\n\n我可以帮你解答平台使用问题：额度计算、功能入口、Agent / 工作流 / 知识库怎么用……\n\n直接输入问题，或点下方快捷问题试试吧～'
+const WELCOME = '你好呀，我是**小团** 🤖 你的平台智能助手！\n\n我可以帮你解答平台使用问题：额度计算、功能入口、内容发布、小程序开发、Agent / 工作流 / 知识库怎么用……\n\n直接输入问题，或点下方快捷问题试试吧～'
 
 export default function FloatingAssistant() {
   const toast = useToast()

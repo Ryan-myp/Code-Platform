@@ -1,0 +1,387 @@
+import React, { useState, useEffect } from 'react'
+import {
+  Gamepad2, Sparkles, FolderTree, FileCode2, Braces, Paintbrush,
+  Copy, Check, Download, Trash2, Eye, Rocket, Loader2, Play,
+  Globe, Smartphone, Maximize2, MonitorPlay,
+} from 'lucide-react'
+import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import { useToast } from '../lib/toast'
+import api from '../lib/api'
+
+const TEMPLATES = [
+  { id: 'snake', name: '贪吃蛇', icon: '🐍', color: 'from-emerald-500 to-green-600', description: '吃食物变长，撞墙/撞自己结束' },
+  { id: '2048', name: '2048', icon: '🔢', color: 'from-amber-500 to-orange-600', description: '滑动合并数字，合成 2048' },
+  { id: 'plane', name: '飞机大战', icon: '✈️', color: 'from-blue-500 to-indigo-600', description: '躲避敌机，射击得分升级' },
+  { id: 'brick', name: '打砖块', icon: '🧱', color: 'from-red-500 to-rose-600', description: '挡板反弹小球，清空砖块' },
+  { id: 'memory', name: '记忆翻牌', icon: '🃏', color: 'from-violet-500 to-purple-600', description: '翻牌配对，步数越少越好' },
+  { id: 'tetris', name: '俄罗斯方块', icon: '🧩', color: 'from-cyan-500 to-teal-600', description: '旋转堆叠，满行消除' },
+  { id: 'minesweeper', name: '扫雷', icon: '💣', color: 'from-lime-500 to-green-600', description: '推理翻格，零失误过关' },
+  { id: 'match3', name: '三消消乐', icon: '🍬', color: 'from-pink-500 to-rose-600', description: '交换消除，连锁加分' },
+  { id: 'custom', name: '自定义', icon: '✨', color: 'from-gray-500 to-gray-700', description: '自由描述玩法，AI 设计实现' },
+]
+
+const VERSION_META = {
+  web: { label: '网页版', icon: Globe, color: 'green', desc: '浏览器直接玩，可在线试玩' },
+  wx: { label: '微信小游戏版', icon: Smartphone, color: 'blue', desc: '开发者工具导入运行' },
+}
+
+function fileIcon(path) {
+  if (path.endsWith('.json')) return { Icon: Braces, color: 'text-amber-500' }
+  if (path.endsWith('.html')) return { Icon: Paintbrush, color: 'text-pink-500' }
+  if (path.endsWith('.css')) return { Icon: Paintbrush, color: 'text-sky-500' }
+  return { Icon: FileCode2, color: 'text-blue-500' }
+}
+
+export default function GameFactoryPage() {
+  const toast = useToast()
+  const [templates, setTemplates] = useState(TEMPLATES)
+  const [template, setTemplate] = useState('snake')
+  const [name, setName] = useState('')
+  const [requirement, setRequirement] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [projects, setProjects] = useState([])
+  const [viewing, setViewing] = useState(null) // {id,name,files,versions}
+  const [version, setVersion] = useState('web')
+  const [selectedFile, setSelectedFile] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [playing, setPlaying] = useState(null) // {id,name,html}
+  const [showGuide, setShowGuide] = useState(false)
+  const [guide, setGuide] = useState({ steps: [], note: '' })
+
+  useEffect(() => { loadProjects() }, [])
+  useEffect(() => {
+    api.get('/api/games/templates').then((res) => {
+      if (res.data?.length) {
+        const merged = TEMPLATES.map((t) => res.data.find((r) => r.id === t.id) || t)
+        const extra = res.data.filter((r) => !TEMPLATES.some((t) => t.id === r.id)).map((r) => ({ ...r, color: 'from-gray-500 to-gray-700' }))
+        setTemplates([...merged, ...extra])
+      }
+    }).catch(() => {})
+  }, [])
+
+  const loadProjects = async () => {
+    try { const res = await api.get('/api/games/projects'); setProjects(res.data || []) } catch (e) {}
+  }
+
+  const generate = async () => {
+    if (!name.trim()) { toast.error('请输入游戏名称'); return }
+    if (requirement.trim().length < 2) { toast.error('请描述你的玩法需求'); return }
+    setGenerating(true)
+    try {
+      const res = await api.post('/api/games/generate', { name: name.trim(), template, requirement }, { timeout: 180000 })
+      const data = res.data
+      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions || Object.keys(data.files || {}) })
+      const firstVer = (data.versions || Object.keys(data.files || {}))[0] || 'web'
+      setVersion(firstVer)
+      const firstFile = Object.keys((data.files || {})[firstVer] || {})[0] || ''
+      setSelectedFile(firstFile)
+      loadProjects()
+      toast.success(`生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件`)
+    } catch (e) {
+      toast.error(`生成失败：${e.message}`)
+    } finally { setGenerating(false) }
+  }
+
+  const openProject = async (p) => {
+    try {
+      const res = await api.get(`/api/games/${p.id}`)
+      const files = res.data.files || {}
+      const versions = Object.keys(files)
+      setViewing({ id: p.id, name: p.name, files, versions })
+      const firstVer = versions[0] || 'web'
+      setVersion(firstVer)
+      setSelectedFile(Object.keys(files[firstVer] || {})[0] || '')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const switchVersion = (v) => {
+    setVersion(v)
+    setSelectedFile(Object.keys((viewing?.files || {})[v] || {})[0] || '')
+  }
+
+  const playGame = async (p) => {
+    try {
+      const res = await api.get(`/api/games/${p.id}`)
+      const files = res.data.files || {}
+      const html = files.web?.['index.html']
+      if (!html) { toast.error('网页版文件缺失，无法试玩'); return }
+      setPlaying({ id: p.id, name: p.name, html })
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const removeProject = async (p, e) => {
+    e.stopPropagation()
+    try { await api.delete(`/api/games/${p.id}`); loadProjects(); toast.success('游戏已删除') }
+    catch (err) { toast.error(err.message) }
+  }
+
+  const downloadZip = async () => {
+    if (!viewing) return
+    try {
+      const res = await api.get(`/api/games/${viewing.id}/export-zip`, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${viewing.name}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('ZIP 包已下载（含 web/ 网页版 + wx/ 微信小游戏版）')
+    } catch (e) { toast.error(`下载失败：${e.message}`) }
+  }
+
+  const copyFile = async () => {
+    try {
+      await navigator.clipboard.writeText(viewing.files[version][selectedFile] || '')
+      setCopied(true); setTimeout(() => setCopied(false), 1500)
+    } catch { toast.error('复制失败') }
+  }
+
+  const loadGuide = async () => {
+    try { const res = await api.get('/api/games/deploy-guide'); setGuide(res.data); setShowGuide(true) }
+    catch (e) { toast.error(e.message) }
+  }
+
+  const currentFiles = viewing?.files?.[version] || {}
+  const current = currentFiles[selectedFile] || ''
+  const tpl = templates.find((t) => t.id === template)
+  const vm = VERSION_META[version]
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="小游戏工坊"
+        description="选玩法模板 + 描述需求 → AI 生成双版本小游戏：网页版在线试玩 + 微信小游戏版开发上线"
+        icon={Gamepad2}
+        iconColor="from-fuchsia-500 to-purple-600"
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ── 左列：模板 + 生成 ── */}
+        <div className="space-y-4">
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <FolderTree className="w-4 h-4 text-fuchsia-500" /> 选择玩法模板
+            </h3>
+            <div className="grid grid-cols-2 gap-2">
+              {templates.map((t) => (
+                <button key={t.id} onClick={() => setTemplate(t.id)}
+                  className={`flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border transition-all ${
+                    template === t.id ? 'bg-fuchsia-50 border-fuchsia-300 ring-2 ring-fuchsia-500/20' : 'border-gray-200 hover:bg-gray-50'
+                  }`}>
+                  <span className={`w-9 h-9 rounded-lg bg-gradient-to-br ${t.color} flex items-center justify-center text-lg`}>{t.icon}</span>
+                  <span className="text-xs font-medium text-gray-700">{t.name}</span>
+                </button>
+              ))}
+            </div>
+            {tpl && <p className="mt-2 text-xs text-gray-400">{tpl.description}</p>}
+          </Card>
+
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-500" /> 生成配置
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">游戏名称 *</label>
+                <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                  placeholder="如：星际贪吃蛇"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500/20 focus:border-fuchsia-500 outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">玩法需求 *</label>
+                <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)}
+                  placeholder="描述你的玩法需求，如：加入道具系统，吃金色苹果可以加速，每 50 分关卡加速一次…"
+                  rows={6} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500/20 focus:border-fuchsia-500 outline-none" />
+              </div>
+              <Button variant="primary" size="lg" icon={Gamepad2} loading={generating} onClick={generate} className="w-full bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-700 hover:to-purple-700">
+                {generating ? 'AI 生成双版本中（约 1-2 分钟）…' : '生成小游戏（网页 + 微信版）'}
+              </Button>
+              {generating && (
+                <div className="flex items-center gap-2 text-xs text-fuchsia-600 bg-fuchsia-50 border border-fuchsia-100 rounded-lg px-3 py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  正在编写网页版与微信小游戏版代码，请耐心等待…
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <Rocket className="w-4 h-4 text-emerald-500" /> 双版本一步到位
+            </h3>
+            <div className="space-y-2 text-sm text-gray-600">
+              <div className="flex gap-2"><Globe className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" /><span>网页版：平台内直接在线试玩，也可下载部署到任意网站</span></div>
+              <div className="flex gap-2"><Smartphone className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" /><span>微信小游戏版：开发者工具导入即可运行，个人主体可注册上线</span></div>
+            </div>
+            <Button variant="ghost" size="sm" icon={Rocket} onClick={loadGuide} className="mt-2 w-full justify-center">查看部署指引</Button>
+          </Card>
+        </div>
+
+        {/* ── 右列：我的游戏 ── */}
+        <div className="lg:col-span-2 space-y-4">
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <FolderTree className="w-4 h-4 text-gray-400" /> 我的游戏（{projects.length}）
+            </h3>
+            {projects.length === 0 ? (
+              <Empty icon={Gamepad2} title="还没有小游戏" description="选择模板、填写需求后点击「生成小游戏」" />
+            ) : (
+              <div className="space-y-2">
+                {projects.map((p) => {
+                  const t = templates.find((x) => x.id === p.template)
+                  return (
+                    <div key={p.id} onClick={() => openProject(p)}
+                      className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-fuchsia-200 hover:bg-fuchsia-50/30 transition-all cursor-pointer">
+                      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0`}>
+                        {t?.icon || '🎮'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-800 truncate">{p.name}</div>
+                        <div className="text-xs text-gray-400 truncate">
+                          {t?.name || '自定义'} · 双版本 · {p.requirement?.slice(0, 50)}
+                        </div>
+                      </div>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{p.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                      <Button variant="secondary" size="sm" icon={Play} onClick={(e) => { e.stopPropagation(); playGame(p) }}>试玩</Button>
+                      <Button variant="secondary" size="sm" icon={Eye} onClick={(e) => { e.stopPropagation(); openProject(p) }}>查看</Button>
+                      <button onClick={(e) => removeProject(p, e)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+
+          {projects.length > 0 && (
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <Rocket className="w-4 h-4 text-emerald-500" /> 快速上手
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-600">
+                <div className="p-3 rounded-lg bg-green-50 border border-green-100">
+                  <p className="font-medium text-green-700 mb-1">① 在线试玩</p>
+                  <p className="text-xs">点「试玩」直接在平台内运行网页版，验证玩法手感</p>
+                </div>
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-100">
+                  <p className="font-medium text-blue-700 mb-1">② 导入开发者工具</p>
+                  <p className="text-xs">下载 ZIP → 微信开发者工具（小游戏类型）导入 wx/ 目录</p>
+                </div>
+                <div className="p-3 rounded-lg bg-violet-50 border border-violet-100">
+                  <p className="font-medium text-violet-700 mb-1">③ 发布上线</p>
+                  <p className="text-xs">网页版部署到任意网站；微信版上传代码 → 审核 → 发布</p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+
+      {/* ── 项目查看 Modal ── */}
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `游戏：${viewing.name}` : ''} size="2xl"
+        footer={
+          <>
+            <Button variant="secondary" icon={Rocket} onClick={loadGuide}>部署指引</Button>
+            <Button variant="secondary" icon={Download} onClick={downloadZip}>下载 ZIP</Button>
+            <Button variant="primary" icon={Gamepad2} onClick={() => setViewing(null)}>完成</Button>
+          </>
+        }>
+        {/* 版本切换 */}
+        <div className="flex gap-2 mb-4">
+          {viewing?.versions?.map((v) => {
+            const meta = VERSION_META[v]
+            return (
+              <button key={v} onClick={() => switchVersion(v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  version === v ? 'bg-fuchsia-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}>
+                {meta?.icon && <meta.icon className="w-3.5 h-3.5" />}
+                {meta?.label || v}（{Object.keys(viewing.files[v] || {}).length} 文件）
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4">
+          {/* 文件列表 */}
+          <div className="md:w-56 flex-shrink-0 border border-gray-200 rounded-xl overflow-hidden max-h-[55vh] overflow-y-auto bg-gray-50/50">
+            <div className="px-3 py-2 bg-gray-100/80 border-b border-gray-200 text-xs font-medium text-gray-500 flex items-center gap-1.5">
+              {vm?.icon && <vm.icon className="w-3.5 h-3.5" />} {vm?.label} · {Object.keys(currentFiles).length} 个文件
+            </div>
+            <div className="p-2 space-y-0.5">
+              {Object.keys(currentFiles).map((path) => {
+                const { Icon, color } = fileIcon(path)
+                return (
+                  <button key={path} onClick={() => setSelectedFile(path)}
+                    className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs transition-colors text-left ${
+                      selectedFile === path ? 'bg-fuchsia-100 text-fuchsia-700 font-medium' : 'text-gray-600 hover:bg-gray-100'
+                    }`}>
+                    <Icon className={`w-3.5 h-3.5 ${color} flex-shrink-0`} /> {path}
+                  </button>
+                )
+              })}
+            </div>
+            {version === 'web' && currentFiles['index.html'] && (
+              <div className="px-3 py-2 border-t border-gray-200 bg-green-50/60">
+                <Button variant="success" size="sm" icon={Play} className="w-full justify-center"
+                  onClick={() => setPlaying({ id: viewing.id, name: viewing.name, html: currentFiles['index.html'] })}>
+                  在线试玩
+                </Button>
+              </div>
+            )}
+          </div>
+          {/* 代码预览 */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700 truncate flex items-center gap-1.5">
+                {(() => { const { Icon, color } = fileIcon(selectedFile); return <Icon className={`w-4 h-4 ${color} flex-shrink-0`} /> })()}
+                {selectedFile}
+                <span className="text-xs text-gray-400 font-normal">（{current.length} 字符）</span>
+              </span>
+              <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyFile}>{copied ? '已复制' : '复制'}</Button>
+            </div>
+            <pre className="bg-gray-900 text-gray-100 text-xs leading-relaxed p-4 rounded-xl overflow-auto max-h-[48vh] font-mono whitespace-pre">
+              {current}
+            </pre>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── 在线试玩 Modal ── */}
+      <Modal open={!!playing} onClose={() => setPlaying(null)} title={playing ? `试玩：${playing.name}` : ''} size="xl"
+        footer={<Button variant="primary" icon={Maximize2} onClick={() => {
+          const url = URL.createObjectURL(new Blob([playing.html], { type: 'text/html' }))
+          window.open(url, '_blank')
+        }}>新窗口打开</Button>}>
+        <div className="flex items-center gap-2 mb-3 text-xs text-gray-500 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+          <MonitorPlay className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+          正在运行网页版（键盘操作 + 触屏滑动均可）。微信小游戏版请下载 ZIP 用开发者工具导入。
+        </div>
+        <div className="rounded-xl border border-gray-200 overflow-hidden bg-gray-900">
+          <iframe title="game-play" srcDoc={playing?.html || ''} className="w-full h-[60vh] bg-white" />
+        </div>
+      </Modal>
+
+      {/* ── 部署指引 Modal ── */}
+      <Modal open={showGuide} onClose={() => setShowGuide(false)} title="小游戏部署指引" size="lg">
+        <div className="space-y-3">
+          <ol className="space-y-2.5">
+            {guide.steps.map((s, i) => (
+              <li key={i} className="flex gap-3 text-sm text-gray-700">
+                <span className="w-6 h-6 rounded-full bg-fuchsia-100 text-fuchsia-700 text-xs font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                <span className="pt-0.5">{s}</span>
+              </li>
+            ))}
+          </ol>
+          {guide.note && (
+            <div className="px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2">
+              <Rocket className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              {guide.note}
+            </div>
+          )}
+        </div>
+      </Modal>
+    </div>
+  )
+}

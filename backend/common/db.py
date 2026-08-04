@@ -250,6 +250,9 @@ _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS comment_likes (
         id TEXT PRIMARY KEY, comment_id TEXT NOT NULL, user_id TEXT DEFAULT '', created_at TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS work_likes (
+        id TEXT PRIMARY KEY, work_id TEXT NOT NULL, user_id TEXT DEFAULT '', created_at TEXT
+    )""",
 
     # ── 配置与统计 ──────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS config (
@@ -416,6 +419,13 @@ _SCHEMA_STATEMENTS = [
         last_used_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, tool_id)
     )""",
+    # 草稿箱（v10.0：各工厂表单自动保存草稿）
+    """CREATE TABLE IF NOT EXISTS drafts (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+        tool_id TEXT NOT NULL,  -- voice/meme/copywriting/…
+        title TEXT DEFAULT '', content TEXT DEFAULT '{}',
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
 
     # ── 内容发布中心（公众号/抖音/快手） ──────────────────────
     # 第三方平台账号配置（自动发布用；secret 存库、读取时脱敏）
@@ -436,8 +446,25 @@ _SCHEMA_STATEMENTS = [
         platform_post_id TEXT DEFAULT '', error TEXT DEFAULT '',
         created_at TEXT
     )""",
+    # 发布排期（v10.0：内容运营日历）
+    """CREATE TABLE IF NOT EXISTS publish_schedules (
+        id TEXT PRIMARY KEY, user_id TEXT DEFAULT '', platform TEXT NOT NULL,
+        content_type TEXT NOT NULL,  -- article/image/video
+        title TEXT DEFAULT '', content TEXT DEFAULT '', topics TEXT DEFAULT '[]',
+        asset_urls TEXT DEFAULT '[]', account_id TEXT DEFAULT '',
+        scheduled_at TEXT NOT NULL,  -- 计划发布时间
+        status TEXT DEFAULT 'pending',  -- pending/published/cancelled
+        published_record_id TEXT DEFAULT '',  -- 关联发布记录
+        created_at TEXT
+    )""",
     # 小程序项目（AI 生成）
     """CREATE TABLE IF NOT EXISTS miniapp_projects (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, template TEXT DEFAULT 'custom',
+        requirement TEXT DEFAULT '', files TEXT DEFAULT '{}',
+        model TEXT DEFAULT '', created_at TEXT
+    )""",
+    # 小游戏项目（AI 生成，双版本 web + wx）
+    """CREATE TABLE IF NOT EXISTS game_projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, template TEXT DEFAULT 'custom',
         requirement TEXT DEFAULT '', files TEXT DEFAULT '{}',
         model TEXT DEFAULT '', created_at TEXT

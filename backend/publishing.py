@@ -612,3 +612,166 @@ async def list_records(current_user: dict = require_auth()):
         d["content_label"] = CONTENT_LABELS.get(d["content_type"], d["content_type"])
         result.append(d)
     return result
+
+
+# ══════════════════════════════════════════════════════════════
+# 发布排期（内容运营日历）
+# ══════════════════════════════════════════════════════════════
+
+class ScheduleRequest(PublishRequest):
+    scheduled_at: str = Field(..., description="计划发布时间 ISO 格式，如 2026-08-05T09:00:00")
+
+
+@router.post("/schedules")
+async def create_schedule(req: ScheduleRequest, current_user: dict = require_auth()):
+    """创建发布排期：先锁定内容，到点后一键执行。"""
+    if req.platform not in PLATFORM_LABELS:
+        raise HTTPException(400, f"未知平台: {req.platform}")
+    try:
+        from datetime import datetime as _dt
+        _dt.fromisoformat(req.scheduled_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, "计划时间格式不正确，应为 YYYY-MM-DDTHH:MM")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    sched_id = f"sched_{uuid.uuid4().hex[:12]}"
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO publish_schedules (id, user_id, platform, content_type, title, content,
+           topics, asset_urls, account_id, scheduled_at, status, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (sched_id, user, req.platform, req.content_type, req.title, req.content,
+         json.dumps(req.topics, ensure_ascii=False),
+         json.dumps(req.asset_urls, ensure_ascii=False),
+         req.account_id, req.scheduled_at, "pending", datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": sched_id, "status": "pending", "message": "排期已创建，到点后可一键执行发布"}
+
+
+@router.get("/schedules")
+async def list_schedules(month: str = "", current_user: dict = require_auth()):
+    """排期列表；month=YYYY-MM 时按计划月份过滤，否则返回全部未取消排期。"""
+    conn = get_db()
+    if month:
+        rows = conn.execute(
+            "SELECT * FROM publish_schedules WHERE substr(scheduled_at,1,7)=? "
+            "ORDER BY scheduled_at", (month,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM publish_schedules WHERE status!='cancelled' "
+            "ORDER BY scheduled_at DESC LIMIT 100"
+        ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["topics"] = json.loads(d.get("topics") or "[]")
+        d["asset_urls"] = json.loads(d.get("asset_urls") or "[]")
+        d["platform_label"] = PLATFORM_LABELS.get(d["platform"], d["platform"])
+        d["content_label"] = CONTENT_LABELS.get(d["content_type"], d["content_type"])
+        result.append(d)
+    return result
+
+
+@router.delete("/schedules/{sched_id}")
+async def cancel_schedule(sched_id: str, current_user: dict = require_auth()):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM publish_schedules WHERE id=?", (sched_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "排期不存在")
+    conn.execute("UPDATE publish_schedules SET status='cancelled' WHERE id=?", (sched_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "message": "排期已取消"}
+
+
+@router.post("/schedules/{sched_id}/execute")
+async def execute_schedule(sched_id: str, current_user: dict = require_auth()):
+    """执行排期：复用 submit_publish 发布逻辑，成功后关联发布记录。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM publish_schedules WHERE id=?", (sched_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "排期不存在")
+    s = dict(row)
+    if s["status"] != "pending":
+        conn.close()
+        raise HTTPException(400, f"排期当前状态为 {s['status']}，无法执行")
+    conn.close()
+    req = PublishRequest(
+        platform=s["platform"], content_type=s["content_type"], title=s["title"],
+        content=s["content"], topics=json.loads(s["topics"] or "[]"),
+        asset_urls=json.loads(s["asset_urls"] or "[]"), account_id=s["account_id"] or "",
+    )
+    result = await submit_publish(req, current_user)
+    conn = get_db()
+    conn.execute(
+        "UPDATE publish_schedules SET status=?, published_record_id=? WHERE id=?",
+        ("published" if result.get("status") == "success" else "pending",
+         result.get("record_id", ""), sched_id),
+    )
+    conn.commit()
+    conn.close()
+    return result
+
+
+# ══════════════════════════════════════════════════════════════
+# 发布数据统计（运营看板）
+# ══════════════════════════════════════════════════════════════
+
+@router.get("/stats")
+async def publish_stats(current_user: dict = require_auth()):
+    """运营看板统计：总量 / 平台分布 / 状态分布 / 近 30 天趋势 / 排期概览。"""
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) AS n FROM publish_records").fetchone()["n"]
+    success = conn.execute(
+        "SELECT COUNT(*) AS n FROM publish_records WHERE status='success'"
+    ).fetchone()["n"]
+    by_platform = {}
+    for r in conn.execute(
+        "SELECT platform, COUNT(*) AS n FROM publish_records GROUP BY platform"
+    ).fetchall():
+        by_platform[r["platform"]] = r["n"]
+    by_status = {}
+    for r in conn.execute(
+        "SELECT status, COUNT(*) AS n FROM publish_records GROUP BY status"
+    ).fetchall():
+        by_status[r["status"]] = r["n"]
+    # 近 30 天趋势（SQLite date 函数按本地日期聚合）
+    trend = []
+    rows = conn.execute(
+        """SELECT substr(created_at,1,10) AS day, COUNT(*) AS n
+           FROM publish_records WHERE created_at >= datetime('now','-29 days')
+           GROUP BY day ORDER BY day"""
+    ).fetchall()
+    day_map = {r["day"]: r["n"] for r in rows}
+    from datetime import timedelta
+    today = datetime.now().date()
+    for i in range(29, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        trend.append({"date": d, "count": day_map.get(d, 0)})
+    # 排期概览
+    upcoming = conn.execute(
+        "SELECT COUNT(*) AS n FROM publish_schedules WHERE status='pending' "
+        "AND scheduled_at >= datetime('now','-1 day')"
+    ).fetchone()["n"]
+    overdue = conn.execute(
+        "SELECT COUNT(*) AS n FROM publish_schedules WHERE status='pending' "
+        "AND scheduled_at < datetime('now')"
+    ).fetchone()["n"]
+    conn.close()
+    return {
+        "total": total,
+        "success": success,
+        "failed": by_status.get("failed", 0),
+        "pending": by_status.get("pending", 0),
+        "success_rate": round(success / total * 100, 1) if total else 0,
+        "by_platform": by_platform,
+        "by_status": by_status,
+        "trend_30d": trend,
+        "upcoming_schedules": upcoming,
+        "overdue_schedules": overdue,
+    }

@@ -7,7 +7,8 @@ import {
   Rocket, ExternalLink, RefreshCcw, CircleDot, Code2, Wand2, PenTool,
   Languages, Presentation, Table2, TrendingUp, BarChart3, Database,
   Brain, Puzzle, MessageSquare, Settings, Crown, HelpCircle, History as HistoryIcon,
-  Search, Shield, Users, Server, X, FlaskConical
+  Search, Shield, Users, Server, X, FlaskConical, Send, Smartphone, Gamepad2, Mic2, Sticker,
+  Star, FileEdit, Trash2, GalleryVerticalEnd, Store
 } from 'lucide-react'
 import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -45,6 +46,13 @@ const SCENE_GROUPS = [
       { label: '文案工厂', desc: '营销文案·自媒体', path: '/copywriting', icon: PenTool },
       { label: '翻译中心', desc: '多语种翻译', path: '/translation', icon: Languages },
       { label: 'PPT 工厂', desc: 'AI 一键生成 PPT', path: '/ppt-factory', icon: Presentation },
+      { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true },
+      { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, hot: true },
+      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, hot: true },
+      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Mic2, hot: true },
+      { label: '表情包工坊', desc: '文字一键生成表情包', path: '/meme', icon: Sticker, hot: true },
+      { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true },
+      { label: '模板市场', desc: '四大工坊模板聚合', path: '/templates', icon: Store, hot: true },
     ],
   },
   {
@@ -174,6 +182,9 @@ export default function HomePage() {
   const [recent, setRecent] = useState(null)
   const [tasks, setTasks] = useState([])
   const [notifications, setNotifications] = useState([])
+  const [favorites, setFavorites] = useState([])
+  const [toolStats, setToolStats] = useState([])
+  const [drafts, setDrafts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showTaskModal, setShowTaskModal] = useState(false)
   const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'P2' })
@@ -184,21 +195,32 @@ export default function HomePage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [statsRes, recentRes, tasksRes, notifsRes] = await Promise.all([
+      const [statsRes, recentRes, tasksRes, notifsRes, favRes, toolRes, draftRes] = await Promise.all([
         api.get('/api/home/stats'),
         api.get('/api/home/recent'),
         api.get('/api/tasks?status=todo'),
         api.get('/api/notifications?unread_only=true&limit=10'),
+        api.get('/api/tools/favorites/list').catch(() => ({ data: [] })),
+        api.get('/api/tools/stats').catch(() => ({ data: [] })),
+        api.get('/api/drafts').catch(() => ({ data: [] })),
       ])
       setStats(statsRes.data)
       setRecent(recentRes.data)
       setTasks(tasksRes.data)
       setNotifications(notifsRes.data)
+      setFavorites(favRes.data || [])
+      setToolStats(toolRes.data || [])
+      setDrafts(draftRes.data || [])
     } catch (e) {
       toast.error('加载数据失败')
     } finally {
       setLoading(false)
     }
+  }
+
+  const deleteDraft = async (id) => {
+    try { await api.delete(`/api/drafts/${id}`); setDrafts((prev) => prev.filter((d) => d.id !== id)); toast.success('草稿已删除') }
+    catch (e) { toast.error(e.message) }
   }
 
   const createTask = async () => {
@@ -665,8 +687,95 @@ export default function HomePage() {
               </div>
             )}
           </Card>
+
+          {/* 常用工具（使用统计 TOP6） */}
+          {toolStats.length > 0 && (
+            <Card>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-500" />
+                  <h2 className="font-semibold text-gray-900">常用工具</h2>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/tool-hub')}>
+                  全部 <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                {toolStats.slice(0, 6).map((t) => (
+                  <button key={t.tool_id} onClick={() => navigate(t.path ? t.path : `/tool/${t.tool_id}`)}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 transition-colors text-left group">
+                    <span className={`w-7 h-7 rounded-lg ${t.color || 'bg-brand-500'} flex items-center justify-center flex-shrink-0`}>
+                      <span className="text-white text-xs">{t.name?.[0] || '工'}</span>
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xs font-medium text-gray-700 truncate">{t.name}</span>
+                      <span className="block text-[10px] text-gray-400">{t.category} · 用 {t.use_count} 次</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* 我的收藏 */}
+          {favorites.length > 0 && (
+            <Card>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Star className="w-5 h-5 text-amber-400" fill="currentColor" />
+                  <h2 className="font-semibold text-gray-900">我的收藏</h2>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/tool-hub')}>
+                  全部 <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {favorites.slice(0, 8).map((t) => (
+                  <button key={t.id} onClick={() => navigate(t.path ? t.path : `/tool/${t.id}`)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-50 border border-amber-200 text-xs text-amber-700 hover:bg-amber-100 transition-colors">
+                    <Star className="w-3 h-3" fill="currentColor" />
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          )}
         </div>
       </div>
+
+      {/* 草稿箱 */}
+      {drafts.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <FileEdit className="w-5 h-5 text-sky-500" />
+              <h2 className="font-semibold text-gray-900">草稿箱</h2>
+              <Badge color="blue">{drafts.length}</Badge>
+              <span className="text-xs text-gray-400">在配音/表情包/文案等页面输入时会自动保存</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {drafts.map((d) => (
+              <div key={d.id} className="group p-3 rounded-lg border border-gray-200 hover:border-sky-300 hover:shadow-sm transition-all">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-600 text-[10px] font-medium">{d.tool_label}</span>
+                  <span className="text-[10px] text-gray-400 ml-auto">{d.updated_at?.slice(5, 16).replace('T', ' ')}</span>
+                </div>
+                <div className="text-sm font-medium text-gray-800 truncate">{d.title || '未命名草稿'}</div>
+                {d.content?.text && <div className="text-xs text-gray-400 truncate mt-0.5">{String(d.content.text).slice(0, 40)}</div>}
+                <div className="flex items-center gap-2 mt-2">
+                  <Button variant="primary" size="sm" className="!py-1 flex-1" onClick={() => d.tool_path && navigate(d.tool_path)}>
+                    继续编辑
+                  </Button>
+                  <button onClick={() => deleteDraft(d.id)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* 最近项目 */}
       {recent?.projects?.length > 0 && (

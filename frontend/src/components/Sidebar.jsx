@@ -6,13 +6,15 @@ import {
   Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell,
   Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
   Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
-  Send, Smartphone
+  Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun,
+  GalleryVerticalEnd, Store
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
 import { useToast } from '../lib/toast'
 import useQuota from '../hooks/useQuota'
 import useAccess from '../hooks/useAccess'
+import useTheme from '../hooks/useTheme'
 import ModelSwitcher from './ModelSwitcher'
 
 export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout }) {
@@ -21,6 +23,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
   const toast = useToast()
   const { quota } = useQuota()
   const { getPageStatusById } = useAccess()
+  const { theme, toggleTheme } = useTheme()
   const [confirmLogout, setConfirmLogout] = useState(false)
 
   const navItems = [
@@ -60,6 +63,11 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
         { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish' },
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp' },
+        { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games' },
+        { path: '/voice', label: '配音工坊', icon: Mic2, pageId: 'voice' },
+        { path: '/meme', label: '表情包工坊', icon: Sticker, pageId: 'meme' },
+        { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery' },
+        { path: '/templates', label: '模板市场', icon: Store, pageId: 'templates' },
       ] },
     { key: 'office', label: '效率工具箱', icon: Wrench, color: 'from-orange-500 to-red-600',
       items: [
@@ -227,6 +235,11 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         <span>Powered by Agno</span>
         <span className="text-ink-300">·</span>
         <span>v9.0</span>
+        <span className="text-ink-300">·</span>
+        <button onClick={toggleTheme} className="flex items-center gap-1 hover:text-brand-500 transition-colors" title="切换深色 / 浅色模式">
+          {theme === 'dark' ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
+          <span>{theme === 'dark' ? '深色' : '浅色'}</span>
+        </button>
       </div>
     </div>
   )
