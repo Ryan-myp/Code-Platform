@@ -6,7 +6,7 @@ import {
   Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell,
   Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
   Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
-  Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun,
+  Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun, UserCircle,
   GalleryVerticalEnd, Store
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'

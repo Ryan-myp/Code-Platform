@@ -5,7 +5,7 @@ import {
   Wrench, Server, Settings, MessageSquare, Brain, FileText, CheckCircle2,
   Bell, Zap, Users, Play, ArrowRight, Home, Shield, GitBranch,
   PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2,
-  Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker,
+  Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker, UserCircle,
   GalleryVerticalEnd, Store
 } from 'lucide-react'
 import api from '../lib/api'
