@@ -6,14 +6,14 @@ import {
   Bell, Zap, Users, Play, ArrowRight, Home, Shield, GitBranch,
   PenTool, Languages, BarChart3, FlaskConical, Presentation, Table2, Share2, TrendingUp,
   Code2, Puzzle, Rocket, RefreshCcw, Send, Smartphone, Gamepad2, Mic2, Sticker, UserCircle,
-  GalleryVerticalEnd, Store, Globe, Key, Clock
+  GalleryVerticalEnd, Store, Globe, Key, Clock, Terminal,
+  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen
 } from 'lucide-react'
 import api from '../lib/api'
 
 const COMMANDS = [
   // 导航
   { id: 'nav-home', label: '首页', description: '返回工作台首页', icon: Home, path: '/home', category: '导航' },
-  { id: 'nav-board', label: '需求看板', description: '查看需求看板', icon: FileText, path: '/board', category: '导航' },
   { id: 'nav-auto-run', label: '一句话全自动', description: '说出功能 → PRD→审查→方案→代码→部署 全自动', icon: Rocket, path: '/workspace', category: '导航', highlight: true },
   { id: 'nav-workspace', label: 'AI 工作台', description: '需求 → 审查 → 设计 → 测试 → 代码 → 部署', icon: Zap, path: '/workspace', category: '导航' },
   { id: 'nav-projects', label: '项目空间', description: '查看所有项目', icon: FolderKanban, path: '/projects', category: '导航' },
@@ -23,57 +23,64 @@ const COMMANDS = [
   { id: 'nav-agents', label: 'Agent 列表', description: '管理智能体', icon: Bot, path: '/agents', category: '智能体' },
   { id: 'nav-teams', label: 'Team 管理', description: '管理团队', icon: Users, path: '/teams', category: '智能体' },
   { id: 'nav-workflows', label: 'Workflow 管理', description: '管理工作流', icon: Layers, path: '/workflows', category: '智能体' },
-  { id: 'nav-sandbox', label: '沙箱运行', description: '查看沙箱容器与日志', icon: Play, path: '/sandbox', category: '智能体' },
-  { id: 'nav-pipelines', label: 'CI/CD 流水线', description: '部署状态与 AI 修复', icon: GitBranch, path: '/pipelines', category: '智能体' },
+  { id: 'nav-knowledge', label: '知识库', description: '管理知识库', icon: Database, path: '/knowledge-bases', category: '智能体' },
+  { id: 'nav-skills', label: 'Skills', description: '管理技能', icon: BookOpen, path: '/skills', category: '智能体' },
+  { id: 'nav-mcp', label: 'MCP Servers', description: '管理 MCP 服务', icon: Server, path: '/mcp-servers', category: '智能体' },
 
-  // 研发工具（已并入 AI 工作台）
+  // 研发工具
+  { id: 'nav-sandbox', label: '沙箱运行', description: '查看沙箱容器与日志', icon: Play, path: '/sandbox', category: '研发工具' },
+  { id: 'nav-pipelines', label: 'CI/CD 流水线', description: '部署状态与 AI 修复', icon: GitBranch, path: '/pipelines', category: '研发工具' },
   { id: 'nav-codegen', label: '代码生成', description: 'AI 工作台 · 生成代码', icon: Code2, path: '/workspace?tab=code', category: '研发工具' },
   { id: 'nav-codereview', label: '代码审查', description: 'AI 工作台 · 审查代码', icon: Shield, path: '/workspace?tab=review_code', category: '研发工具' },
 
-  // 创作工厂
-  { id: 'nav-image', label: '图片工厂', description: 'AI 图片生成', icon: Image, path: '/image-factory', category: '创作' },
-  { id: 'nav-video', label: '视频工厂', description: 'AI 视频生成', icon: Film, path: '/video-factory', category: '创作' },
-  { id: 'nav-music', label: '音乐工厂', description: 'AI 音乐生成', icon: Music, path: '/music-factory', category: '创作' },
-  { id: 'nav-copywriting', label: '文案工厂', description: 'AI 文案生成', icon: PenTool, path: '/copywriting', category: '创作' },
-  { id: 'nav-translation', label: '翻译中心', description: 'AI 多语言翻译', icon: Languages, path: '/translation', category: '创作' },
-  { id: 'nav-publish', label: '发布中心', description: '文章/图片/视频一键发布公众号、抖音、快手 + 排期日历', icon: Send, path: '/publish', category: '社区与发布' },
-  { id: 'nav-miniapp', label: '小程序工坊', description: 'AI 生成微信小程序项目，模板 + 自定义', icon: Smartphone, path: '/miniapp', category: '创作' },
-  { id: 'nav-games', label: '小游戏工坊', description: 'AI 生成双版本小游戏：网页版在线试玩 + 微信小游戏', icon: Gamepad2, path: '/games', category: '创作' },
-  { id: 'nav-voice', label: '配音工坊', description: '文字转语音，场景预设 + 长文本自动拼接', icon: Mic2, path: '/voice', category: '创作' },
-  { id: 'nav-meme', label: '表情包工坊', description: '文字一键生成表情包：经典模板 + AI 场景', icon: Sticker, path: '/meme', category: '创作' },
-  { id: 'nav-digital-human', label: 'AI数字人', description: '文案→配音→口播视频，8大虚拟形象一键生成数字人视频', icon: UserCircle, path: '/digital-human', category: '创作' },
-  { id: 'nav-voice-chat', label: '语音对话', description: '浏览器语音识别 + AI智能回复 + 语音朗读', icon: Mic2, path: '/voice-chat', category: '创作' },
-  { id: 'nav-video-analyzer', label: '视频理解', description: '上传视频，AI自动分析内容、字幕、关键场景', icon: Film, path: '/video-analyzer', category: '创作' },
-  { id: 'nav-mindmap', label: '思维导图', description: '输入主题 → AI生成结构化思维导图，可导出PNG', icon: Share2, path: '/mindmap', category: '创作' },
-  { id: 'nav-forecast', label: '数据预测', description: '上传CSV → AI趋势分析 + 预测 + 可视化', icon: TrendingUp, path: '/forecast', category: '创作' },
-  { id: 'nav-doc-qa', label: '文档问答', description: '上传任意文档，AI理解内容后自由提问', icon: Search, path: '/doc-qa', category: '创作' },
-  { id: 'nav-pdf-tools', label: 'PDF工具集', description: 'PDF合并拆分 + 表格提取 + AI合同审查 + 简历优化', icon: FileText, path: '/pdf-tools', category: '创作' },
-  { id: 'nav-web-search', label: '联网搜索', description: 'AI联网搜索 + 智能摘要 + 来源引用', icon: Globe, path: '/web-search', category: '创作' },
-  { id: 'nav-code-sandbox', label: '代码解释器', description: 'Python在线运行，数据分析/算法/可视化', icon: Terminal, path: '/code-sandbox', category: '创作' },
-  { id: 'nav-batch-process', label: '批量处理', description: '多文件批量翻译、摘要、关键词提取', icon: Layers, path: '/batch-process', category: '创作' },
-    { id: 'nav-gallery', label: '作品广场', description: '全平台 AI 作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '社区与发布' },
-    { id: 'nav-templates', label: '模板市场', description: '小游戏/小程序/表情包/配音模板聚合', icon: Store, path: '/templates', category: '社区与发布' },
-  
+  // 内容创作
+  { id: 'nav-image', label: '图片工厂', description: 'AI 图片生成', icon: Image, path: '/image-factory', category: '内容创作' },
+  { id: 'nav-video', label: '视频工厂', description: 'AI 视频生成', icon: Film, path: '/video-factory', category: '内容创作' },
+  { id: 'nav-music', label: '音乐工厂', description: 'AI 音乐生成', icon: Music, path: '/music-factory', category: '内容创作' },
+  { id: 'nav-copywriting', label: '文案工厂', description: 'AI 文案生成', icon: PenTool, path: '/copywriting', category: '内容创作' },
+  { id: 'nav-translation', label: '翻译中心', description: 'AI 多语言翻译', icon: Languages, path: '/translation', category: '内容创作' },
+  { id: 'nav-ppt', label: 'PPT 生成', description: 'AI PPT 大纲生成', icon: Presentation, path: '/ppt-factory', category: '内容创作' },
+  { id: 'nav-meme', label: '表情包工坊', description: '文字一键生成表情包', icon: Sticker, path: '/meme', category: '内容创作' },
+
+  // AI 工坊
+  { id: 'nav-digital-human', label: 'AI数字人', description: '文案→配音→口播视频，虚拟形象', icon: UserCircle, path: '/digital-human', category: 'AI工坊' },
+  { id: 'nav-voice-chat', label: '语音对话', description: '浏览器语音识别 + AI智能回复', icon: Mic2, path: '/voice-chat', category: 'AI工坊' },
+  { id: 'nav-video-analyzer', label: '视频理解', description: '上传视频，AI分析内容、字幕、场景', icon: Monitor, path: '/video-analyzer', category: 'AI工坊' },
+  { id: 'nav-mindmap', label: '思维导图', description: '输入主题 → AI生成结构化导图', icon: Share2, path: '/mindmap', category: 'AI工坊' },
+  { id: 'nav-forecast', label: '数据预测', description: '上传CSV → AI趋势分析 + 预测', icon: TrendingUp, path: '/forecast', category: 'AI工坊' },
+  { id: 'nav-doc-qa', label: '文档问答', description: '上传文档，AI理解后自由提问', icon: Search, path: '/doc-qa', category: 'AI工坊' },
+  { id: 'nav-web-search', label: '联网搜索', description: 'AI联网搜索 + 智能摘要 + 来源引用', icon: Globe, path: '/web-search', category: 'AI工坊' },
+  { id: 'nav-code-sandbox', label: '代码解释器', description: 'Python在线运行，数据分析/可视化', icon: Terminal, path: '/code-sandbox', category: 'AI工坊' },
+
+  // 应用与社区
+  { id: 'nav-games', label: '小游戏工坊', description: 'AI 生成双版本小游戏', icon: Gamepad2, path: '/games', category: '应用与社区' },
+  { id: 'nav-miniapp', label: '小程序工坊', description: 'AI 生成微信小程序', icon: Smartphone, path: '/miniapp', category: '应用与社区' },
+  { id: 'nav-voice', label: '配音工坊', description: '文字转语音，场景预设', icon: Volume2, path: '/voice', category: '应用与社区' },
+  { id: 'nav-publish', label: '发布中心', description: '一键发布公众号、抖音、快手 + 排期', icon: Send, path: '/publish', category: '应用与社区' },
+  { id: 'nav-growth', label: '增长工坊', description: '用户增长与数据分析', icon: Target, path: '/growth', category: '应用与社区' },
+  { id: 'nav-gallery', label: '作品广场', description: '全平台作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '应用与社区' },
+  { id: 'nav-templates', label: '模板市场', description: '游戏/小程序/表情包/配音模板聚合', icon: Store, path: '/templates', category: '应用与社区' },
+
   // 办公效率
   { id: 'nav-tool-hub', label: '效率工具箱', description: 'AI 效率工具集合', icon: Wrench, path: '/tool-hub', category: '办公' },
-  { id: 'nav-ppt', label: 'PPT 生成', description: 'AI PPT 大纲生成', icon: Presentation, path: '/ppt-factory', category: '办公' },
   { id: 'nav-excel', label: 'Excel 助手', description: 'AI 数据分析', icon: Table2, path: '/excel', category: '办公' },
+  { id: 'nav-stock', label: '股票分析', description: 'AI 行情研判', icon: Landmark, path: '/stock', category: '办公' },
+  { id: 'nav-pdf-tools', label: 'PDF工具集', description: 'PDF合并拆分 + 合同审查 + 简历优化', icon: FileSearch, path: '/pdf-tools', category: '办公' },
+  { id: 'nav-batch-process', label: '批量处理', description: '多文件批量翻译、摘要、关键词', icon: Files, path: '/batch-process', category: '办公' },
 
   // 运营分析
   { id: 'nav-dashboard', label: '数据仪表盘', description: '平台数据概览', icon: BarChart3, path: '/dashboard', category: '运营' },
   { id: 'nav-abtest', label: 'A/B 测试', description: '实验管理', icon: FlaskConical, path: '/ab-testing', category: '运营' },
-  { id: 'nav-usage-analytics', label: '用量分析', description: '个人AI使用统计与趋势', icon: BarChart3, path: '/usage-analytics', category: '运营' },
+  { id: 'nav-usage-analytics', label: '用量分析', description: '个人AI使用统计与趋势', icon: Activity, path: '/usage-analytics', category: '运营' },
 
   // 系统
   { id: 'nav-config', label: '模型配置', description: '配置 AI 模型', icon: Settings, path: '/config', category: '系统' },
   { id: 'nav-api-docs', label: 'API开放平台', description: '创建API Key接入平台能力', icon: Key, path: '/api-docs', category: '系统' },
-  { id: 'nav-scheduler', label: '定时任务', description: '定时报告/数据同步/提醒通知自动化', icon: Clock, path: '/scheduler', category: '系统' },
-  { id: 'nav-knowledge', label: '知识库', description: '管理知识库', icon: Database, path: '/knowledge-bases', category: '系统' },
-  { id: 'nav-skills', label: 'Skills', description: '管理技能', icon: Wrench, path: '/skills', category: '系统' },
-  { id: 'nav-mcp', label: 'MCP Servers', description: '管理 MCP 服务', icon: Server, path: '/mcp-servers', category: '系统' },
+  { id: 'nav-scheduler', label: '定时任务', description: '定时报告/同步/提醒自动化', icon: Clock, path: '/scheduler', category: '系统' },
+  { id: 'nav-plugins', label: '插件市场', description: '浏览插件', icon: Puzzle, path: '/plugins', category: '系统' },
 
   // 其他
-  { id: 'nav-plugins', label: '插件市场', description: '浏览插件', icon: Puzzle, path: '/plugins', category: '其他' },
+  { id: 'nav-board', label: '需求看板', description: '查看需求看板', icon: ListTodo, path: '/board', category: '其他' },
   { id: 'nav-chat', label: '任务对话', description: '智能协作', icon: MessageSquare, path: '/chat', category: '其他' },
   { id: 'nav-evolution', label: '自进化中心', description: '平台自进化', icon: Brain, path: '/evolution', category: '其他' },
   { id: 'nav-tasks', label: '任务中心', description: '管理所有任务', icon: CheckCircle2, path: '/tasks', category: '其他' },
