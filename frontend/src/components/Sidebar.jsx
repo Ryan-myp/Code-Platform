@@ -8,7 +8,7 @@ import {
   Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
   Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun, UserCircle,
   GalleryVerticalEnd, Store, Globe, Key, Clock,
-  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen
+  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen, Terminal
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
