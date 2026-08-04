@@ -25,6 +25,8 @@ router = APIRouter(prefix="/api/video", tags=["视频理解"])
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads", "videos")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+FRAME_DIR = os.path.join(os.path.dirname(__file__), "uploads", "video_frames")
+os.makedirs(FRAME_DIR, exist_ok=True)
 
 # ── System Prompts ─────────────────────────────────────────
 
@@ -82,7 +84,7 @@ init_db()
 
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...), current_user: dict = require_auth()):
-    """上传视频文件，返回视频ID供后续分析。"""
+    """上传视频文件，自动提取关键帧缩略图，返回视频ID供后续分析。"""
     if not file.filename:
         raise HTTPException(400, "未选择文件")
 
@@ -118,13 +120,32 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
     except Exception:
         pass
 
+    # 提取关键帧缩略图（3帧：前/中/后）
+    frames = []
+    if duration and duration > 1:
+        try:
+            import subprocess
+            for idx, ratio in enumerate([0.1, 0.5, 0.9]):
+                seek_time = duration * ratio
+                frame_file = os.path.join(FRAME_DIR, f"{vid}_frame{idx}.jpg")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-ss", str(seek_time), "-i", save_path,
+                     "-vframes", "1", "-q:v", "2", "-s", "640x360", frame_file],
+                    capture_output=True, timeout=20
+                )
+                if os.path.exists(frame_file):
+                    frames.append({"index": idx, "time": round(seek_time, 1), "url": f"/uploads/video_frames/{vid}_frame{idx}.jpg"})
+        except Exception:
+            pass
+
     return {
         "video_id": vid,
         "filename": file.filename,
         "file_size": len(content),
         "duration": duration,
         "format": ext,
-        "message": f"视频上传成功{'，时长 ' + str(duration) + '秒' if duration else ''}",
+        "frames": frames,
+        "message": f"视频上传成功{'，时长 ' + str(duration) + '秒' if duration else ''}{'，已提取' + str(len(frames)) + '帧缩略图' if frames else ''}",
     }
 
 
@@ -190,6 +211,25 @@ async def list_records(current_user: dict = require_auth()):
         }
         for r in rows
     ]
+
+
+@router.get("/records/{record_id}")
+async def get_record(record_id: str, current_user: dict = require_auth()):
+    """获取单条视频分析详情（含分析结果）。"""
+    with get_db_context() as conn:
+        row = conn.execute("SELECT * FROM video_records WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "记录不存在")
+
+    return {
+        "id": row[0],
+        "filename": row[1],
+        "file_size": row[3],
+        "description": row[4],
+        "analysis": json.loads(row[5]) if row[5] else None,
+        "status": row[6],
+        "created_at": row[7],
+    }
 
 
 @router.delete("/records/{record_id}")

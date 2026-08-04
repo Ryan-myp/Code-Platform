@@ -8,7 +8,7 @@ import {
   Languages, Presentation, Table2, TrendingUp, BarChart3, Database,
   Brain, Puzzle, MessageSquare, Settings, Crown, HelpCircle, History as HistoryIcon,
   Search, Shield, Users, Server, X, FlaskConical, Send, Smartphone, Gamepad2, Mic2, Sticker,
-  Star, FileEdit, Trash2, GalleryVerticalEnd, Store
+  Star, FileEdit, Trash2, GalleryVerticalEnd, Store, Video, UserCircle, Share2
 } from 'lucide-react'
 import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -50,15 +50,21 @@ const SCENE_GROUPS = [
     ],
   },
   {
-    key: 'workshop', label: '工坊与社区', desc: '智能工坊 · 发布 · 互动', icon: Gamepad2,
+    key: 'workshop', label: '工坊与社区', desc: 'AI智能工坊 · 应用 · 发布', icon: Gamepad2,
     color: 'from-rose-500 to-pink-600',
     items: [
-      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, keywords: '游戏,微信,娱乐' },
-      { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, keywords: '微信,程序,应用' },
-      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Mic2, keywords: '配音,语音,tts,音频' },
-      { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true, keywords: '发布,公众号,抖音,快手,排期,内容' },
-      { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true, keywords: '发布,作品,点赞,评论,社区,广场' },
-      { label: '模板市场', desc: '四大工坊模板聚合', path: '/templates', icon: Store, keywords: '发布,模板,工坊,游戏,小程序,表情包,配音' },
+      { label: 'AI数字人', desc: '虚拟形象·口播视频', path: '/digital-human', icon: UserCircle, group: '智能工坊', keywords: '数字人,虚拟,直播,口播' },
+      { label: '语音对话', desc: '实时语音AI助手', path: '/voice-chat', icon: Mic2, group: '智能工坊', keywords: '语音,对话,聊天,说话' },
+      { label: '视频理解', desc: 'AI分析视频内容', path: '/video-analyzer', icon: Video, group: '智能工坊', keywords: '视频,分析,理解,字幕' },
+      { label: '思维导图', desc: 'AI生成结构化导图', path: '/mindmap', icon: Share2, group: '智能工坊', keywords: '思维导图,脑图,结构' },
+      { label: '数据预测', desc: 'CSV趋势分析预测', path: '/forecast', icon: TrendingUp, group: '智能工坊', keywords: '数据,预测,分析,趋势' },
+      { label: '文档问答', desc: '上传文档AI问答', path: '/doc-qa', icon: Search, group: '智能工坊', keywords: '文档,问答,PDF,合同' },
+      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, group: '应用工坊', keywords: '游戏,微信,娱乐' },
+      { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, group: '应用工坊', keywords: '微信,程序,应用' },
+      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Mic2, group: '应用工坊', keywords: '配音,语音,tts,音频' },
+      { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true, group: '发布社区', keywords: '发布,公众号,抖音,快手,排期,内容' },
+      { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true, group: '发布社区', keywords: '发布,作品,点赞,评论,社区,广场' },
+      { label: '模板市场', desc: '四大工坊模板聚合', path: '/templates', icon: Store, group: '发布社区', keywords: '发布,模板,工坊,游戏,小程序,表情包,配音' },
     ],
   },
   {

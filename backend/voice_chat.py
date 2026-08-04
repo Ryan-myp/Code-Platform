@@ -102,15 +102,22 @@ async def voice_respond(req: RespondRequest, current_user: dict = require_auth()
 
 @router.post("/tts")
 async def text_to_speech(req: TTSRequest, current_user: dict = require_auth()):
-    """文字转语音：代理到 voice_factory 的 TTS 引擎。"""
+    """文字转语音：调用 voice_factory TTS 引擎，保存为 mp3 文件并返回 URL。"""
     start = datetime.now()
+
+    tts_dir = os.path.join(os.path.dirname(__file__), "uploads", "tts")
+    os.makedirs(tts_dir, exist_ok=True)
 
     try:
         from voice_factory import _tts_one
-        audio_path = _tts_one(req.text, req.voice_id)
-        audio_url = f"/api/voice-chat/audio/{os.path.basename(audio_path)}"
+        audio_bytes = _tts_one(req.text, req.voice_id, speed=1.0)
+        filename = f"tts_{int(datetime.now().timestamp()*1000)}.mp3"
+        filepath = os.path.join(tts_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(audio_bytes)
+        audio_url = f"/uploads/tts/{filename}"
     except Exception as e:
-        logger.warning(f"TTS via voice_factory failed: {e}, returning empty")
+        logger.warning(f"TTS failed: {e}")
         audio_url = ""
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)

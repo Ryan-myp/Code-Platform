@@ -255,6 +255,25 @@ async def list_records(current_user: dict = require_auth()):
     return [{"id": r[0], "filename": r[1], "row_count": r[2], "status": r[3], "created_at": r[4]} for r in rows]
 
 
+@router.get("/records/{record_id}")
+async def get_record(record_id: str, current_user: dict = require_auth()):
+    """获取单条数据预测详情（含分析结果）。"""
+    with get_db_context() as conn:
+        row = conn.execute("SELECT * FROM forecast_records WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "记录不存在")
+
+    return {
+        "id": row[0],
+        "filename": row[1],
+        "row_count": row[3],
+        "columns": json.loads(row[4]) if row[4] else [],
+        "analysis": json.loads(row[5]) if row[5] else None,
+        "status": row[6],
+        "created_at": row[7],
+    }
+
+
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
     """删除数据预测记录。"""

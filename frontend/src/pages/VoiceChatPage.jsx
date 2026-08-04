@@ -13,6 +13,9 @@ export default function VoiceChatPage() {
   const [loading, setLoading] = useState(false)
   const recognitionRef = useRef(null)
 
+  const handleSendRef = useRef(handleSend)
+  useEffect(() => { handleSendRef.current = handleSend }, [handleSend])
+
   // ── 浏览器语音识别 ──
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -31,7 +34,7 @@ export default function VoiceChatPage() {
       setTranscript(final)
       if (e.results[0]?.isFinal) {
         setTranscript(final)
-        handleSend(final)
+        handleSendRef.current(final)
       }
     }
     rec.onerror = (e) => {

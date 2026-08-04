@@ -134,6 +134,27 @@ async def list_records(current_user: dict = require_auth()):
     return [{"id": r[0], "topic": r[1], "depth": r[2], "style": r[3], "created_at": r[4]} for r in rows]
 
 
+@router.get("/records/{record_id}")
+async def get_record(record_id: str, current_user: dict = require_auth()):
+    """获取单条思维导图详情（含完整树结构）。"""
+    with get_db_context() as conn:
+        row = conn.execute("SELECT * FROM mindmap_records WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "记录不存在")
+
+    result = json.loads(row[4]) if row[4] else {}
+    return {
+        "id": row[0],
+        "topic": row[1],
+        "depth": row[2],
+        "style": row[3],
+        "title": result.get("title"),
+        "root": result.get("root"),
+        "description": result.get("description"),
+        "created_at": row[5],
+    }
+
+
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
     """删除思维导图记录。"""

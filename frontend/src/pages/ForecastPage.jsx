@@ -3,6 +3,7 @@ import { Upload, BarChart3, TrendingUp, Download, Trash2, Clock, Sparkles, FileT
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 export default function ForecastPage() {
   const toast = useToast()
@@ -173,6 +174,35 @@ export default function ForecastPage() {
                 </div>
                 <p className="mt-3 text-sm text-gray-600">{result.overview?.summary}</p>
               </Card>
+
+              {/* 趋势图表 */}
+              {result.charts?.labels?.length > 0 && (
+                <Card>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-emerald-500" /> 趋势可视化
+                  </h3>
+                  <ResponsiveContainer width="100%" height={320}>
+                    <LineChart
+                      data={result.charts.labels.map((label, i) => ({
+                        name: label,
+                        实际值: result.charts.actual?.[i] ?? null,
+                        预测值: result.charts.forecast?.[i] ?? null,
+                        趋势线: result.charts.trend_line?.[i] ?? null,
+                      }))}
+                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="实际值" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} connectNulls={false} />
+                      <Line type="monotone" dataKey="预测值" stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 4 }} connectNulls={false} />
+                      <Line type="monotone" dataKey="趋势线" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="3 3" dot={false} connectNulls={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </Card>
+              )}
 
               {/* 趋势分析 */}
               {result.trend_analysis && (
