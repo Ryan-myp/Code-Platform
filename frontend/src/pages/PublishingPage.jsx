@@ -4,7 +4,7 @@ import {
   FileText, Image as ImageIcon, Film, Tag, Link2, Download, ExternalLink,
   MessageSquare, Music2, Clapperboard, AlertCircle, CheckCircle2, CircleDashed,
   Calendar, CalendarPlus, BarChart3, Play, TrendingUp, ChevronLeft, ChevronRight,
-  PieChart,
+  PieChart, Search, CheckSquare, Square, X,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -100,6 +100,11 @@ export default function PublishingPage() {
   const [loading, setLoading] = useState(false)
   const [copiedKey, setCopiedKey] = useState('')
 
+  // ── 记录筛选 ──
+  const [recPlatform, setRecPlatform] = useState('')
+  const [recStatus, setRecStatus] = useState('')
+  const [recQ, setRecQ] = useState('')
+
   // ── 记录 / 账号 ──
   const [records, setRecords] = useState([])
   const [accounts, setAccounts] = useState([])
@@ -117,7 +122,15 @@ export default function PublishingPage() {
   const [schedForm, setSchedForm] = useState({ platform: 'wechat', content_type: 'article', title: '', content: '', scheduled_at: '', topics: [], topic_input: '' })
   const [executingId, setExecutingId] = useState('')
 
-  useEffect(() => { if (tab === 'records') loadRecords() }, [tab])
+  // ── 排期批量操作 ──
+  const [schedSelected, setSchedSelected] = useState(new Set())
+  const [cancelling, setCancelling] = useState(false)
+
+  useEffect(() => {
+    if (tab !== 'records') return
+    const t = setTimeout(() => loadRecords(), recQ ? 300 : 0)
+    return () => clearTimeout(t)
+  }, [tab, recPlatform, recStatus, recQ])
   useEffect(() => { if (tab === 'accounts') loadAccounts() }, [tab])
   useEffect(() => { if (tab === 'calendar') { loadSchedules() } }, [tab, calMonth])
   useEffect(() => { if (tab === 'stats') { loadStats(); loadSchedules() } }, [tab])
@@ -129,13 +142,20 @@ export default function PublishingPage() {
     try { const res = await api.get('/api/publish/stats'); setStats(res.data || null) } catch (e) {}
   }
 
-  useEffect(() => { loadAssets() }, [])
+  useEffect(() => { loadAssets(); loadStats() }, [])
 
   const loadAssets = async () => {
     try { const res = await api.get('/api/publish/assets'); setAssets(res.data || { articles: [], media: [] }) } catch (e) {}
   }
   const loadRecords = async () => {
-    try { const res = await api.get('/api/publish/records'); setRecords(res.data || []) } catch (e) {}
+    try {
+      const params = new URLSearchParams()
+      if (recPlatform) params.set('platform', recPlatform)
+      if (recStatus) params.set('status', recStatus)
+      if (recQ.trim()) params.set('q', recQ.trim())
+      const res = await api.get(`/api/publish/records?${params.toString()}`)
+      setRecords(res.data || [])
+    } catch (e) {}
   }
   const loadAccounts = async () => {
     try { const res = await api.get('/api/publish/accounts'); setAccounts(res.data || []) } catch (e) {}
@@ -267,6 +287,33 @@ export default function PublishingPage() {
     catch (e) { toast.error(e.message) }
   }
 
+  // ── 排期批量取消 ──
+  const toggleSchedSelect = (id) => {
+    setSchedSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAllSched = () => {
+    const pendings = schedules.filter((s) => s.status === 'pending')
+    setSchedSelected((prev) => (prev.size === pendings.length ? new Set() : new Set(pendings.map((s) => s.id))))
+  }
+
+  const batchCancel = async () => {
+    if (schedSelected.size === 0) return
+    if (!window.confirm(`确定批量取消选中的 ${schedSelected.size} 条排期吗？`)) return
+    setCancelling(true)
+    try {
+      const res = await api.post('/api/publish/schedules/batch-cancel', { ids: [...schedSelected] })
+      toast.success(`已取消 ${res.data.cancelled} 条排期`)
+      setSchedSelected(new Set())
+      loadSchedules()
+    } catch (e) { toast.error(e.message) }
+    finally { setCancelling(false) }
+  }
+
   const platformMeta = PLATFORMS.find((p) => p.value === platform)
   const ctypeMeta = CONTENT_TYPES.find((c) => c.value === contentType)
 
@@ -284,7 +331,7 @@ export default function PublishingPage() {
         {[
           { label: '可发布文章', value: assets.articles?.length || 0, icon: FileText, color: 'from-blue-500 to-indigo-600' },
           { label: '图片视频素材', value: assets.media?.length || 0, icon: Film, color: 'from-pink-500 to-rose-600' },
-          { label: '发布总次数', value: records.length, icon: Send, color: 'from-emerald-500 to-teal-600' },
+          { label: '发布总次数', value: stats?.total ?? records.length, icon: Send, color: 'from-emerald-500 to-teal-600' },
           { label: '已配置账号', value: accounts.filter((a) => a.configured).length, icon: Settings2, color: 'from-amber-500 to-orange-600' },
         ].map((s, i) => (
           <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
@@ -643,9 +690,24 @@ export default function PublishingPage() {
           {/* ── 右列：本月排期列表 ── */}
           <div>
             <Card>
-              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                <CalendarPlus className="w-4 h-4 text-amber-500" /> 本月排期（{schedules.length}）
-              </h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <CalendarPlus className="w-4 h-4 text-amber-500" /> 本月排期（{schedules.length}）
+                </h3>
+                <div className="flex items-center gap-2">
+                  {schedules.some((s) => s.status === 'pending') && (
+                    <button onClick={toggleAllSched}
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600 transition-all">
+                      {schedSelected.size === schedules.filter((s) => s.status === 'pending').length ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />} 全选
+                    </button>
+                  )}
+                  {schedSelected.size > 0 && (
+                    <Button variant="danger" size="sm" icon={Trash2} loading={cancelling} onClick={batchCancel}>
+                      批量取消（{schedSelected.size}）
+                    </Button>
+                  )}
+                </div>
+              </div>
               {schedules.length === 0 ? (
                 <Empty icon={Calendar} title="本月暂无排期" description="点击日历上的日期创建发布排期" />
               ) : (
@@ -654,8 +716,15 @@ export default function PublishingPage() {
                     const p = PLATFORMS.find((x) => x.value === s.platform)
                     const isOverdue = s.status === 'pending' && s.scheduled_at < new Date().toISOString()
                     return (
-                      <div key={s.id} className={`p-3 rounded-xl border transition-all ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-gray-100 hover:border-indigo-200'}`}>
+                      <div key={s.id} className={`p-3 rounded-xl border transition-all ${isOverdue ? 'border-red-200 bg-red-50/30' : 'border-gray-100 hover:border-indigo-200'} ${schedSelected.has(s.id) ? 'border-indigo-300 bg-indigo-50/40' : ''}`}>
                         <div className="flex items-center gap-2 mb-1.5">
+                          {s.status === 'pending' && (
+                            <button onClick={() => toggleSchedSelect(s.id)}
+                              className={`p-1 rounded-md transition-all ${schedSelected.has(s.id) ? 'bg-indigo-100 text-indigo-600' : 'text-gray-300 hover:text-indigo-500 hover:bg-gray-50'}`}
+                              title={schedSelected.has(s.id) ? '取消选择' : '选择此排期'}>
+                              {schedSelected.has(s.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                            </button>
+                          )}
                           {p && <span className={`w-6 h-6 rounded-md bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}><p.icon className="w-3 h-3 text-white" /></span>}
                           <Badge color={SCHEDULE_STATUS_BADGE[s.status]?.color || 'gray'}>{SCHEDULE_STATUS_BADGE[s.status]?.label || s.status}</Badge>
                           {isOverdue && <span className="text-[10px] text-red-500 font-medium">已到时间</span>}
@@ -705,6 +774,32 @@ export default function PublishingPage() {
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* 发布状态分布 */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[
+              { key: 'success', label: '发布成功', color: 'from-emerald-500 to-teal-600', bar: 'bg-emerald-500' },
+              { key: 'failed', label: '发布失败', color: 'from-rose-500 to-pink-600', bar: 'bg-rose-500' },
+              { key: 'pending', label: '待发布', color: 'from-amber-500 to-orange-600', bar: 'bg-amber-500' },
+            ].map((s) => {
+              const n = stats?.by_status?.[s.key] || 0
+              const pct = stats?.total ? Math.round((n / stats.total) * 100) : 0
+              return (
+                <div key={s.key} className="bg-white rounded-xl border border-gray-200 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="flex items-center gap-2 text-sm text-gray-700">
+                      <span className={`w-2.5 h-2.5 rounded-full bg-gradient-to-br ${s.color}`} /> {s.label}
+                    </span>
+                    <span className="text-sm font-bold text-gray-900">{n}</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div className={`h-full rounded-full ${s.bar} transition-all duration-500`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1.5">占比 {pct}%</p>
+                </div>
+              )
+            })}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -774,9 +869,31 @@ export default function PublishingPage() {
 
       {tab === 'records' && (
         <Card>
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-gray-400" /> 发布记录
-          </h3>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-400" /> 发布记录（{records.length}）
+            </h3>
+            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              <select value={recPlatform} onChange={(e) => setRecPlatform(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                <option value="">全部平台</option>
+                {PLATFORMS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+              <select value={recStatus} onChange={(e) => setRecStatus(e.target.value)}
+                className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                <option value="">全部状态</option>
+                {Object.entries(STATUS_BADGE).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input value={recQ} onChange={(e) => setRecQ(e.target.value)} placeholder="搜索标题 / 内容…"
+                  className="w-44 pl-8 pr-7 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400" />
+                {recQ && (
+                  <button onClick={() => setRecQ('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500"><X className="w-3.5 h-3.5" /></button>
+                )}
+              </div>
+            </div>
+          </div>
           {records.length === 0 ? (
             <Empty icon={Clock} title="暂无发布记录" description="发布内容后记录会展示在这里" />
           ) : (

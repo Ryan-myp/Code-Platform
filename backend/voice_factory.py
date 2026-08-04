@@ -8,6 +8,8 @@
 """
 
 import asyncio
+import io
+import json
 import logging
 import os
 import re
@@ -15,12 +17,16 @@ import subprocess
 import tempfile
 import time
 import uuid
+import zipfile
 from datetime import datetime
+from typing import Optional
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
+from common.auth import require_auth
 from common.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -183,6 +189,40 @@ def _save_artifact(filename: str, text: str, extra: dict) -> str:
     return art_id
 
 
+def _artifact_meta() -> dict:
+    """读取 artifacts 表中配音产物的元数据（filename → {text, scene, voice, speed, segments}）。"""
+    meta: dict = {}
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT content, media_url, metadata FROM artifacts "
+            "WHERE type='audio' AND author='voice_factory' AND active=1"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            fname = (r["media_url"] or "").rsplit("/", 1)[-1]
+            if not fname:
+                continue
+            md = {}
+            try:
+                md = json.loads(r["metadata"] or "{}")
+            except Exception:
+                pass
+            meta[fname] = {
+                "text": r["content"] or "",
+                "scene": md.get("scene", ""),
+                "voice": md.get("voice", ""),
+                "speed": md.get("speed", 1.0),
+                "segments": md.get("segments", 1),
+                "title": md.get("title", ""),
+            }
+    except Exception as e:
+        logger.debug(f"_artifact_meta skipped: {e}")
+    return meta
+
+
 @router.post("/generate")
 async def generate_voice(
     text: str = Form(...),
@@ -268,7 +308,21 @@ async def get_audio(filename: str):
 
 
 @router.get("/list")
-async def list_voices():
+async def list_voices(
+    q: str = "",
+    scene: str = "",
+    voice: str = "",
+    sort: str = "newest",
+    current_user: dict = require_auth(),
+):
+    """配音列表：从 artifacts 合并文本/场景/音色元数据，支持搜索与筛选。
+
+    - q: 按文件名或文本内容搜索
+    - scene: 场景 ID 筛选（shortvideo/ad/news/…）
+    - voice: 音色 ID 筛选（zh-CN-XiaoxiaoNeural/…）
+    - sort: newest / oldest / duration
+    """
+    meta = _artifact_meta()
     items = []
     if os.path.exists(VOICE_DIR):
         for f in sorted(os.listdir(VOICE_DIR), reverse=True):
@@ -276,19 +330,138 @@ async def list_voices():
                 continue
             filepath = os.path.join(VOICE_DIR, f)
             stat = os.stat(filepath)
-            items.append({
+            m = meta.get(f, {})
+            scene_cfg = next((s for s in SCENES if s["id"] == m.get("scene")), None)
+            voice_cfg = next((v for v in VOICES if v["id"] == m.get("voice")), None)
+            text = m.get("text", "")
+            item = {
                 "id": f,
                 "url": f"/api/voice/audios/{f}",
                 "size": stat.st_size,
                 "duration": _audio_duration(filepath),
                 "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            })
+                "title": m.get("title") or (text[:30] + ("…" if len(text) > 30 else "")) or f,
+                "text": text,
+                "scene": m.get("scene", ""),
+                "scene_label": scene_cfg["name"] if scene_cfg else "",
+                "voice": m.get("voice", ""),
+                "voice_name": voice_cfg["name"] if voice_cfg else "",
+                "speed": m.get("speed", 1.0),
+                "segments": m.get("segments", 1),
+            }
+            items.append(item)
+
+    # 搜索与筛选
+    q_lower = (q or "").strip().lower()
+    if q_lower:
+        items = [i for i in items if q_lower in i["id"].lower() or q_lower in (i["text"] or "").lower()]
+    if scene:
+        items = [i for i in items if i["scene"] == scene]
+    if voice:
+        items = [i for i in items if i["voice"] == voice]
+    if sort == "oldest":
+        items.reverse()
+    elif sort == "duration":
+        items.sort(key=lambda x: x["duration"], reverse=True)
     return items
 
 
+class RenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80, description="新标题")
+
+
+@router.put("/{filename}/rename")
+async def rename_voice(filename: str, req: RenameRequest, current_user: dict = require_auth()):
+    """重命名配音：标题写入 artifacts.metadata.title。"""
+    path = os.path.join(VOICE_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "配音不存在")
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT metadata FROM artifacts WHERE media_url=? AND active=1",
+            (f"/api/voice/audios/{filename}",),
+        ).fetchone()
+        if row:
+            md = {}
+            try:
+                md = json.loads(row["metadata"] or "{}")
+            except Exception:
+                pass
+            md["title"] = req.title.strip()
+            conn.execute(
+                "UPDATE artifacts SET metadata=? WHERE media_url=? AND active=1",
+                (json.dumps(md, ensure_ascii=False), f"/api/voice/audios/{filename}"),
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"rename_voice db skipped: {e}")
+    return {"success": True, "title": req.title.strip()}
+
+
+@router.post("/batch-download")
+async def batch_download_voices(ids: list[str] = Form(...), current_user: dict = require_auth()):
+    """批量下载多个配音为 ZIP 包。"""
+    buf = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in ids:
+            path = os.path.join(VOICE_DIR, fname)
+            if os.path.exists(path) and fname.endswith(".mp3"):
+                zf.write(path, fname)
+                count += 1
+    if count == 0:
+        raise HTTPException(400, "没有可下载的文件")
+    data = buf.getvalue()
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="voices_{int(time.time())}.zip"'},
+    )
+
+
+@router.get("/stats")
+async def voice_stats(current_user: dict = require_auth()):
+    """配音工坊统计：总数 / 总时长 / 场景分布 / 音色分布。"""
+    items = await list_voices(current_user=current_user)
+    total = len(items)
+    total_duration = round(sum(i["duration"] for i in items), 1)
+    total_size = sum(i["size"] for i in items)
+    scene_dist = {}
+    voice_dist = {}
+    for i in items:
+        s = i["scene_label"] or "未标记"
+        scene_dist[s] = scene_dist.get(s, 0) + 1
+        v = i["voice_name"] or "未知"
+        voice_dist[v] = voice_dist.get(v, 0) + 1
+    return {
+        "total": total,
+        "total_duration": total_duration,
+        "total_size": total_size,
+        "scene_dist": scene_dist,
+        "voice_dist": voice_dist,
+    }
+
+
 @router.delete("/{filename}")
-async def delete_voice(filename: str):
+async def delete_voice(filename: str, current_user: dict = require_auth()):
     path = os.path.join(VOICE_DIR, filename)
     if os.path.exists(path):
         os.remove(path)
+    # 同步注销 artifacts 记录（软删，保留历史计数口径）
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        conn.execute(
+            "UPDATE artifacts SET active=0 WHERE media_url=? AND type='audio'",
+            (f"/api/voice/audios/{filename}",),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"delete_voice artifact skipped: {e}")
     return {"success": True}

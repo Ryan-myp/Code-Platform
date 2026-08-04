@@ -467,7 +467,9 @@ _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS game_projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, template TEXT DEFAULT 'custom',
         requirement TEXT DEFAULT '', files TEXT DEFAULT '{}',
-        model TEXT DEFAULT '', created_at TEXT
+        model TEXT DEFAULT '', created_at TEXT,
+        updated_at TEXT, favorite INTEGER DEFAULT 0, tags TEXT DEFAULT '[]',
+        iterations INTEGER DEFAULT 0, iteration_log TEXT DEFAULT '[]'
     )""",
 ]
 
@@ -560,6 +562,12 @@ def migrate() -> None:
         _add_column_if_missing(conn, "requirements", "pipeline_status", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "sandbox_projects", "ports", "TEXT DEFAULT '[]'")
         _add_column_if_missing(conn, "sandbox_projects", "config", "TEXT DEFAULT '{}'")
+        # v10.1 游戏工坊资产化：更新/收藏/标签/迭代记录
+        _add_column_if_missing(conn, "game_projects", "updated_at", "TEXT")
+        _add_column_if_missing(conn, "game_projects", "favorite", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "game_projects", "tags", "TEXT DEFAULT '[]'")
+        _add_column_if_missing(conn, "game_projects", "iterations", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "game_projects", "iteration_log", "TEXT DEFAULT '[]'")
         # v9.1 商业版：用户资料 / 会员 / 额度
         _add_column_if_missing(conn, "users", "avatar", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "users", "nickname", "TEXT DEFAULT ''")

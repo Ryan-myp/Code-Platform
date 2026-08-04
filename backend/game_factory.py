@@ -256,10 +256,19 @@ async def list_templates(current_user: dict = require_auth()):
 async def list_projects(current_user: dict = require_auth()):
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, name, template, requirement, created_at FROM game_projects ORDER BY created_at DESC"
+        "SELECT id, name, template, requirement, created_at, updated_at, favorite, tags, iterations "
+        "FROM game_projects ORDER BY created_at DESC"
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["tags"] = json.loads(d.get("tags") or "[]")
+        except Exception:
+            d["tags"] = []
+        result.append(d)
+    return result
 
 
 @router.post("/generate")
@@ -306,12 +315,13 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
             raise HTTPException(502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}") from e2
 
     proj_id = f"game_{uuid.uuid4().hex[:12]}"
+    now = datetime.now().isoformat()
     conn = get_db()
     conn.execute(
-        """INSERT INTO game_projects (id, name, template, requirement, files, created_at)
-           VALUES (?,?,?,?,?,?)""",
+        """INSERT INTO game_projects (id, name, template, requirement, files, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?)""",
         (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), datetime.now().isoformat()),
+         json.dumps(files, ensure_ascii=False), now, now),
     )
     conn.commit()
     conn.close()
@@ -342,6 +352,166 @@ async def deploy_guide(current_user: dict = require_auth()):
             "网页版（web/index.html）可直接双击运行，或部署到任意静态网站（如 GitHub Pages）分享给朋友",
         ],
         "note": "个人主体即可注册小游戏账号；用「测试号」可以先体验完整开发流程。",
+    }
+
+
+@router.get("/stats")
+async def game_stats(current_user: dict = require_auth()):
+    """小游戏工坊统计：项目数 / 模板分布 / 总迭代次数 / 收藏数。"""
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) AS n FROM game_projects").fetchone()["n"]
+    favorites = conn.execute("SELECT COUNT(*) AS n FROM game_projects WHERE favorite=1").fetchone()["n"]
+    total_iter = conn.execute("SELECT COALESCE(SUM(iterations),0) AS n FROM game_projects").fetchone()["n"]
+    template_dist = {}
+    for r in conn.execute("SELECT template, COUNT(*) AS n FROM game_projects GROUP BY template").fetchall():
+        tpl = next((t for t in TEMPLATES if t["id"] == r["template"]), None)
+        template_dist[tpl["name"] if tpl else r["template"]] = r["n"]
+    conn.close()
+    return {"total": total, "favorites": favorites, "total_iterations": total_iter, "template_dist": template_dist}
+
+
+class RenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80, description="新名称")
+    tags: list[str] = Field(default_factory=list, description="标签列表")
+
+
+@router.put("/{proj_id}")
+async def rename_project(proj_id: str, req: RenameRequest, current_user: dict = require_auth()):
+    """重命名游戏项目 / 更新标签。"""
+    conn = get_db()
+    row = conn.execute("SELECT id FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "游戏项目不存在")
+    conn.execute(
+        "UPDATE game_projects SET name=?, tags=?, updated_at=? WHERE id=?",
+        (req.name.strip(), json.dumps(req.tags[:10], ensure_ascii=False), datetime.now().isoformat(), proj_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "name": req.name.strip(), "tags": req.tags[:10]}
+
+
+@router.post("/{proj_id}/favorite")
+async def toggle_favorite(proj_id: str, current_user: dict = require_auth()):
+    """收藏/取消收藏游戏项目（toggle）。"""
+    conn = get_db()
+    row = conn.execute("SELECT favorite FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "游戏项目不存在")
+    new_val = 0 if row["favorite"] else 1
+    conn.execute("UPDATE game_projects SET favorite=? WHERE id=?", (new_val, proj_id))
+    conn.commit()
+    conn.close()
+    return {"success": True, "favorite": bool(new_val)}
+
+
+class EvolveRequest(BaseModel):
+    requirement: str = Field(..., min_length=2, max_length=2000, description="迭代需求")
+
+
+_EVOLVE_SYSTEM = """你是一位资深游戏开发工程师，正在对一个已存在的双版本小游戏进行升级迭代。
+请根据用户的新需求修改现有代码，两个版本玩法保持同步。
+
+硬性要求：
+1. 只输出一个 JSON 对象（不要输出任何解释文字、不要用 markdown 代码块包裹），结构如下：
+   {"web": {"index.html": "..."}, "wx": {"game.js": "...", "game.json": "...", "project.config.json": "..."}}
+2. 必须输出完整文件内容（不是 diff），基于下方现有代码修改：只改需求涉及的逻辑，其余保持不变
+3. web 版保持单文件 index.html（CSS/JS 内联），wx 版保持微信小游戏 API 风格（无 DOM）
+4. 双版本玩法逻辑一致：相同的规则、计分、难度曲线；新增功能两个版本都要有
+5. 代码完整可用，注释清晰，界面美观；不引用外部资源文件
+6. 输出必须精简！web 版 index.html 不超过 700 行，wx 版 game.js 不超过 600 行，
+   全部文件总字符数必须控制在 50000 以内
+7. 所有状态变量声明时必须初始化，事件回调触发的绘制/更新函数开头必须先判空，严禁运行时错误"""
+
+
+@router.post("/{proj_id}/evolve")
+async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = require_auth()):
+    """AI 二次迭代：基于现有代码 + 新需求，生成升级版双版本代码（覆盖保存，保留历史需求日志）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "游戏项目不存在")
+    files = json.loads(row["files"] or "{}")
+    if not files:
+        conn.close()
+        raise HTTPException(400, "项目没有代码文件，无法迭代")
+
+    # 注入现有代码（截断保护 token 上限）
+    web_html = (files.get("web", {}).get("index.html") or "")[:24000]
+    wx_js = (files.get("wx", {}).get("game.js") or "")[:20000]
+    user_prompt = f"""游戏名称：{row['name']}
+
+现有网页版代码（web/index.html，共 {len(web_html)} 字符）：
+```
+{web_html}
+```
+
+现有微信小游戏版代码（wx/game.js，共 {len(wx_js)} 字符）：
+```
+{wx_js}
+```
+
+用户的迭代需求：
+{req.requirement}
+
+请基于现有代码生成升级后的双版本小游戏 JSON。"""
+
+    start = time.time()
+    try:
+        result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4)
+    except HTTPException:
+        conn.close()
+        raise
+    except Exception as e:
+        conn.close()
+        raise HTTPException(500, f"迭代生成失败: {e}") from e
+
+    try:
+        new_files = _validate_files(_extract_json(result))
+    except (ValueError, json.JSONDecodeError) as e:
+        conn.close()
+        raise HTTPException(502, f"AI 输出格式异常，请重试。详情: {e}") from e
+
+    # 合并保护：AI 输出缺失的版本/文件保留旧代码，避免迭代丢文件
+    for ver in ("web", "wx"):
+        if ver not in new_files and ver in files:
+            new_files[ver] = files[ver]
+        elif ver in new_files and ver in files:
+            for path, content in files[ver].items():
+                if path not in new_files[ver]:
+                    new_files[ver][path] = content
+
+    # 迭代日志：保留历史需求，追加本次
+    try:
+        log = json.loads(row["iteration_log"] or "[]")
+    except Exception:
+        log = []
+    log.append({
+        "requirement": req.requirement,
+        "created_at": datetime.now().isoformat(),
+        "chars": len(result),
+    })
+    conn.execute(
+        """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, updated_at=?
+           WHERE id=?""",
+        (json.dumps(new_files, ensure_ascii=False), json.dumps(log[-20:], ensure_ascii=False),
+         datetime.now().isoformat(), proj_id),
+    )
+    conn.commit()
+    conn.close()
+
+    elapsed = round(time.time() - start, 2)
+    log_usage("game_evolve", len(user_prompt), len(result), elapsed)
+    return {
+        "id": proj_id,
+        "name": row["name"],
+        "versions": list(new_files.keys()),
+        "file_count": sum(len(v) for v in new_files.values()),
+        "files": new_files,
+        "iterations": len(log),
     }
 
 

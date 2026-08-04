@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Mic2, Sparkles, Loader2, Download, Trash2, Volume2, Clapperboard,
-  Film, AudioLines, Gauge, FileEdit,
+  Film, AudioLines, Gauge, FileEdit, Search, Pencil, CheckSquare, Square,
+  DownloadCloud, RotateCcw, Clock, BarChart3,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader } from '../components/ui'
+import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -33,6 +34,11 @@ function fmtDuration(sec) {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+function fmtSize(bytes) {
+  if (!bytes) return '0 KB'
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
 export default function VoicePage() {
   const toast = useToast()
   const [scene, setScene] = useState('shortvideo')
@@ -41,7 +47,18 @@ export default function VoicePage() {
   const [speed, setSpeed] = useState(1.0)
   const [generating, setGenerating] = useState(false)
   const [items, setItems] = useState([])
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [draftRestored, setDraftRestored] = useState(false)
+
+  // ── 资产化管理状态 ──
+  const [q, setQ] = useState('')
+  const [filterScene, setFilterScene] = useState('')
+  const [filterVoice, setFilterVoice] = useState('')
+  const [sort, setSort] = useState('newest')
+  const [selected, setSelected] = useState(new Set())
+  const [renaming, setRenaming] = useState(null) // { id, title }
+  const [renameTitle, setRenameTitle] = useState('')
 
   useEffect(() => { loadList() }, [])
 
@@ -79,7 +96,19 @@ export default function VoicePage() {
   }
 
   const loadList = async () => {
-    try { const res = await api.get('/api/voice/list'); setItems(res.data || []) } catch (e) {}
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (q) params.set('q', q)
+      if (filterScene) params.set('scene', filterScene)
+      if (filterVoice) params.set('voice', filterVoice)
+      if (sort) params.set('sort', sort)
+      const res = await api.get(`/api/voice/list?${params.toString()}`)
+      setItems(res.data || [])
+      api.get('/api/voice/stats').then((r) => setStats(r.data)).catch(() => {})
+    } catch (e) {
+      toast.error(`加载失败：${e.message}`)
+    } finally { setLoading(false) }
   }
 
   const generate = async () => {
@@ -114,13 +143,80 @@ export default function VoicePage() {
     catch (e) { toast.error(e.message) }
   }
 
+  const removeSelected = async () => {
+    if (selected.size === 0) return
+    try {
+      await Promise.all([...selected].map((id) => api.delete(`/api/voice/${id}`)))
+      toast.success(`已删除 ${selected.size} 个配音`)
+      setSelected(new Set())
+      loadList()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const downloadSelected = async () => {
+    if (selected.size === 0) return
+    try {
+      const res = await api.post('/api/voice/batch-download', toForm([...selected]), { responseType: 'blob', timeout: 60000 })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `voices_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success(`已打包下载 ${selected.size} 个配音`)
+    } catch (e) { toast.error(`批量下载失败：${e.message}`) }
+  }
+
+  const toForm = (ids) => {
+    const fd = new FormData()
+    ids.forEach((id) => fd.append('ids', id))
+    return fd
+  }
+
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    setSelected((prev) => prev.size === filtered.length ? new Set() : new Set(filtered.map((i) => i.id)))
+  }
+
+  const openRename = (item) => { setRenaming(item); setRenameTitle(item.title || '') }
+
+  const submitRename = async () => {
+    if (!renameTitle.trim()) { toast.error('请输入新标题'); return }
+    try {
+      await api.put(`/api/voice/${renaming.id}/rename`, { title: renameTitle.trim() })
+      toast.success('已重命名')
+      setRenaming(null)
+      loadList()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const filtered = useMemo(() => {
+    let list = [...items]
+    if (q) {
+      const kw = q.toLowerCase()
+      list = list.filter((i) => i.id.toLowerCase().includes(kw) || (i.text || '').toLowerCase().includes(kw) || (i.title || '').toLowerCase().includes(kw))
+    }
+    if (filterScene) list = list.filter((i) => i.scene === filterScene)
+    if (filterVoice) list = list.filter((i) => i.voice === filterVoice)
+    return list
+  }, [items, q, filterScene, filterVoice])
+
   const sceneCfg = SCENES.find((s) => s.id === scene)
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="AI 配音工坊"
-        description="文字转语音：选场景预设或自由音色，长文本自动分段拼接，短视频配音一步到位"
+        description="文字转语音：选场景预设或自由音色，长文本自动分段拼接，资产化管理配音库"
         icon={Mic2}
         iconColor="from-pink-500 to-rose-600"
       />
@@ -131,6 +227,28 @@ export default function VoicePage() {
           <span className="flex-1">已恢复上次未完成的草稿，可直接继续生成或清空重写</span>
           <button onClick={() => { setText(''); setDraftRestored(false); api.get('/api/drafts/voice').then((r) => r.data?.id && api.delete(`/api/drafts/${r.data.id}`)).catch(() => {}) }}
             className="text-sky-600 hover:text-sky-800 font-medium">清空草稿</button>
+        </div>
+      )}
+
+      {/* ── 统计卡片 ── */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-pink-50 text-pink-600 flex items-center justify-center"><AudioLines className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{stats.total}</div><div className="text-xs text-gray-400">配音总数</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center"><Clock className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{fmtDuration(stats.total_duration)}</div><div className="text-xs text-gray-400">总时长</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><BarChart3 className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{Object.keys(stats.scene_dist || {}).length}</div><div className="text-xs text-gray-400">使用场景</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center"><Volume2 className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{Object.keys(stats.voice_dist || {}).length}</div><div className="text-xs text-gray-400">音色种类</div></div>
+          </div>
         </div>
       )}
 
@@ -218,30 +336,88 @@ export default function VoicePage() {
           </Card>
         </div>
 
-        {/* ── 右列：我的配音 ── */}
+        {/* ── 右列：配音资产库 ── */}
         <div className="lg:col-span-2 space-y-4">
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <AudioLines className="w-4 h-4 text-gray-400" /> 我的配音（{items.length}）
-            </h3>
-            {items.length === 0 ? (
-              <Empty icon={Mic2} title="还没有配音" description="选场景、输入文本，点击生成即可" />
+            <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 flex-shrink-0">
+                <AudioLines className="w-4 h-4 text-gray-400" /> 配音资产库（{filtered.length}）
+              </h3>
+              <div className="flex-1 flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[160px]">
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索文本或文件名…"
+                    className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 outline-none" />
+                </div>
+                <select value={filterScene} onChange={(e) => setFilterScene(e.target.value)}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 outline-none focus:border-pink-500 bg-white">
+                  <option value="">全部场景</option>
+                  {SCENES.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <select value={filterVoice} onChange={(e) => setFilterVoice(e.target.value)}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 outline-none focus:border-pink-500 bg-white">
+                  <option value="">全部音色</option>
+                  {VOICES.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+                <select value={sort} onChange={(e) => setSort(e.target.value)}
+                  className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 outline-none focus:border-pink-500 bg-white">
+                  <option value="newest">最新优先</option>
+                  <option value="oldest">最早优先</option>
+                  <option value="duration">时长最长</option>
+                </select>
+                <Button variant="ghost" size="sm" icon={RotateCcw} onClick={loadList}>刷新</Button>
+              </div>
+            </div>
+
+            {filtered.length > 0 && (
+              <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-gray-50 border border-gray-100 text-xs">
+                <button onClick={toggleAll} className="flex items-center gap-1.5 text-gray-600 hover:text-pink-600">
+                  {selected.size === filtered.length ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                  全选
+                </button>
+                <span className="text-gray-400">已选 {selected.size} 项</span>
+                {selected.size > 0 && (
+                  <div className="ml-auto flex gap-2">
+                    <Button variant="secondary" size="sm" icon={DownloadCloud} onClick={downloadSelected}>批量下载 ZIP</Button>
+                    <Button variant="danger" size="sm" icon={Trash2} onClick={removeSelected}>批量删除</Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {loading ? (
+              <SkeletonList count={3} />
+            ) : filtered.length === 0 ? (
+              <Empty icon={Mic2} title={q || filterScene ? '没有匹配的配音' : '还没有配音'} description={q || filterScene ? '换个关键词或筛选条件试试' : '选场景、输入文本，点击生成即可'} />
             ) : (
               <div className="space-y-3">
-                {items.map((item) => (
+                {filtered.map((item) => (
                   <div key={item.id} className="p-3 rounded-xl border border-gray-100 hover:border-pink-200 hover:bg-pink-50/30 transition-all">
                     <div className="flex items-center gap-3 mb-2">
+                      <button onClick={() => toggleSelect(item.id)}
+                        className={`flex-shrink-0 ${selected.has(item.id) ? 'text-pink-600' : 'text-gray-300 hover:text-gray-400'}`}>
+                        {selected.has(item.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                      </button>
                       <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white flex-shrink-0">
                         <Volume2 className="w-4 h-4" />
                       </span>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-800 truncate">{item.id}</div>
-                        <div className="text-xs text-gray-400">{fmtDuration(item.duration)} · {(item.size / 1024).toFixed(1)} KB · {item.created_at?.slice(0, 16).replace('T', ' ')}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-gray-800 truncate">{item.title}</span>
+                          {item.scene_label && <Badge color="pink">{item.scene_label}</Badge>}
+                          {item.voice_name && <Badge color="blue">{item.voice_name}</Badge>}
+                          {item.speed !== 1 && <span className="text-[11px] text-gray-400">语速 {item.speed.toFixed(2)}x</span>}
+                        </div>
+                        {item.text && <div className="text-xs text-gray-400 truncate">{item.text}</div>}
+                        <div className="text-[11px] text-gray-400 mt-0.5">
+                          {fmtDuration(item.duration)} · {fmtSize(item.size)} · {item.created_at?.slice(0, 16).replace('T', ' ')}{item.segments > 1 ? ` · ${item.segments} 段拼接` : ''}
+                        </div>
                       </div>
-                      <button onClick={() => download(item)} className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg hover:bg-blue-50"><Download className="w-4 h-4" /></button>
-                      <button onClick={() => remove(item)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => openRename(item)} title="重命名" className="p-1.5 text-gray-300 hover:text-violet-500 rounded-lg hover:bg-violet-50"><Pencil className="w-4 h-4" /></button>
+                      <button onClick={() => download(item)} title="下载 mp3" className="p-1.5 text-gray-300 hover:text-blue-500 rounded-lg hover:bg-blue-50"><Download className="w-4 h-4" /></button>
+                      <button onClick={() => remove(item)} title="删除" className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
                     </div>
-                    <audio controls src={item.url} className="w-full h-9" />
+                    <audio controls src={item.url} preload="none" className="w-full h-9" />
                   </div>
                 ))}
               </div>
@@ -249,6 +425,22 @@ export default function VoicePage() {
           </Card>
         </div>
       </div>
+
+      {/* ── 重命名 Modal ── */}
+      <Modal open={!!renaming} onClose={() => setRenaming(null)} title="重命名配音" size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRenaming(null)}>取消</Button>
+            <Button variant="primary" onClick={submitRename}>保存</Button>
+          </>
+        }>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1.5">标题（便于在资产库中识别）</label>
+          <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} autoFocus
+            placeholder="如：产品介绍口播 01"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 outline-none" />
+        </div>
+      </Modal>
     </div>
   )
 }

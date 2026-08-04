@@ -8,18 +8,22 @@
 """
 
 import io
+import json
 import logging
 import os
 import time
 import uuid
+import zipfile
 from datetime import datetime
 from typing import Optional
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
 
+from common.auth import require_auth
 from common.config import load_config
 
 logger = logging.getLogger(__name__)
@@ -176,9 +180,11 @@ def _ai_bg(prompt: str) -> Image.Image:
     raise HTTPException(500, f"文生图返回异常: {data}")
 
 
-def _save_artifact(filename: str, prompt: str) -> str:
+def _save_artifact(filename: str, top_text: str, bottom_text: str, style: str, ai_prompt: str) -> str:
     """登记 artifacts 表（type=image），失败静默。"""
     art_id = f"art_{uuid.uuid4().hex[:12]}"
+    meta = {"filename": filename, "top_text": top_text, "bottom_text": bottom_text,
+            "style": style, "ai_prompt": ai_prompt}
     try:
         from common.db import get_db
 
@@ -187,15 +193,59 @@ def _save_artifact(filename: str, prompt: str) -> str:
             """INSERT INTO artifacts
                (id, project_id, type, content, version, author, created_at, active, media_url, metadata)
                VALUES (?, ?, 'image', ?, 'v1', 'meme_factory', ?, 1, ?, ?)""",
-            (art_id, "", __import__("json").dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False),
+            (art_id, "", json.dumps(meta, ensure_ascii=False),
              datetime.now().isoformat(), f"/api/meme/images/{filename}",
-             __import__("json").dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False)),
+             json.dumps(meta, ensure_ascii=False)),
         )
         conn.commit()
         conn.close()
     except Exception as e:
         logger.debug(f"_save_artifact skipped: {e}")
     return art_id
+
+
+def _artifact_meta() -> dict:
+    """读取 artifacts 表中表情包产物的元数据（filename → {top_text, bottom_text, style}）。"""
+    meta: dict = {}
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT content, media_url, metadata FROM artifacts "
+            "WHERE type='image' AND author='meme_factory' AND active=1"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            fname = (r["media_url"] or "").rsplit("/", 1)[-1]
+            if not fname:
+                continue
+            md = {}
+            raw = r["metadata"] or r["content"] or ""
+            try:
+                md = json.loads(raw)
+            except Exception:
+                pass
+            top = md.get("top_text", "") or ""
+            bottom = md.get("bottom_text", "") or ""
+            # 兼容旧数据：metadata 为 {filename, prompt}，prompt 格式 "top / bottom"
+            if not top and not bottom and isinstance(md, dict) and md.get("prompt"):
+                parts = str(md["prompt"]).split("/", 1)
+                top, bottom = parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
+            # 兼容更旧数据：content 为 "top / bottom" 纯文本
+            if not top and not bottom and isinstance(raw, str) and "/" in raw and not raw.startswith("{"):
+                parts = raw.split("/", 1)
+                top, bottom = parts[0].strip(), parts[1].strip()
+            meta[fname] = {
+                "top_text": top,
+                "bottom_text": bottom,
+                "style": md.get("style", ""),
+                "title": md.get("title", ""),
+                "ai_prompt": md.get("ai_prompt", ""),
+            }
+    except Exception as e:
+        logger.debug(f"_artifact_meta skipped: {e}")
+    return meta
 
 
 @router.post("/generate")
@@ -239,7 +289,7 @@ async def generate_meme(
 
     filename = f"meme_{int(time.time() * 1000)}.png"
     img.save(os.path.join(MEME_DIR, filename), "PNG")
-    art_id = _save_artifact(filename, f"{top_text} / {bottom_text}")
+    art_id = _save_artifact(filename, top_text, bottom_text, style, ai_prompt.strip())
     return {
         "id": filename,
         "artifact_id": art_id,
@@ -259,7 +309,14 @@ async def get_image(filename: str):
 
 
 @router.get("/list")
-async def list_memes():
+async def list_memes(
+    q: str = "",
+    style: str = "",
+    sort: str = "newest",
+    current_user: dict = require_auth(),
+):
+    """表情包列表：从 artifacts 合并文案/风格元数据，支持搜索与筛选。"""
+    meta = _artifact_meta()
     items = []
     if os.path.exists(MEME_DIR):
         for f in sorted(os.listdir(MEME_DIR), reverse=True):
@@ -267,18 +324,127 @@ async def list_memes():
                 continue
             filepath = os.path.join(MEME_DIR, f)
             stat = os.stat(filepath)
+            m = meta.get(f, {})
+            top, bottom = m.get("top_text", ""), m.get("bottom_text", "")
+            style_cfg = next((s for s in STYLES if s["id"] == m.get("style")), None)
+            title = m.get("title") or f"{top} / {bottom}".strip(" /")
             items.append({
                 "id": f,
                 "url": f"/api/meme/images/{f}",
                 "size": stat.st_size,
                 "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "title": title[:60] or f,
+                "top_text": top,
+                "bottom_text": bottom,
+                "style": m.get("style", ""),
+                "style_label": style_cfg["name"] if style_cfg else "",
+                "ai_prompt": m.get("ai_prompt", ""),
             })
+
+    # 搜索与筛选
+    q_lower = (q or "").strip().lower()
+    if q_lower:
+        items = [i for i in items if q_lower in i["id"].lower()
+                 or q_lower in i["top_text"].lower() or q_lower in i["bottom_text"].lower()]
+    if style:
+        items = [i for i in items if i["style"] == style]
+    if sort == "oldest":
+        items.reverse()
     return items
 
 
+class RenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80, description="新标题")
+
+
+@router.put("/{filename}/rename")
+async def rename_meme(filename: str, req: RenameRequest, current_user: dict = require_auth()):
+    """重命名表情包：标题写入 artifacts.metadata.title。"""
+    path = os.path.join(MEME_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "表情包不存在")
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT metadata FROM artifacts WHERE media_url=? AND active=1",
+            (f"/api/meme/images/{filename}",),
+        ).fetchone()
+        if row:
+            md = {}
+            try:
+                md = json.loads(row["metadata"] or "{}")
+            except Exception:
+                pass
+            md["title"] = req.title.strip()
+            conn.execute(
+                "UPDATE artifacts SET metadata=? WHERE media_url=? AND active=1",
+                (json.dumps(md, ensure_ascii=False), f"/api/meme/images/{filename}"),
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"rename_meme db skipped: {e}")
+    return {"success": True, "title": req.title.strip()}
+
+
+@router.post("/batch-download")
+async def batch_download_memes(ids: list[str] = Form(...), current_user: dict = require_auth()):
+    """批量下载多个表情包为 ZIP 包。"""
+    buf = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in ids:
+            path = os.path.join(MEME_DIR, fname)
+            if os.path.exists(path) and fname.endswith(".png"):
+                zf.write(path, fname)
+                count += 1
+    if count == 0:
+        raise HTTPException(400, "没有可下载的文件")
+    data = buf.getvalue()
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="memes_{int(time.time())}.zip"'},
+    )
+
+
+@router.get("/stats")
+async def meme_stats(current_user: dict = require_auth()):
+    """表情包工坊统计：总数 / 风格分布 / AI 占比。"""
+    items = await list_memes(current_user=current_user)
+    total = len(items)
+    style_dist = {}
+    ai_count = 0
+    for i in items:
+        s = i["style_label"] or "未标记"
+        style_dist[s] = style_dist.get(s, 0) + 1
+        if i["style"] == "ai":
+            ai_count += 1
+    return {
+        "total": total,
+        "ai_count": ai_count,
+        "style_dist": style_dist,
+    }
+
+
 @router.delete("/{filename}")
-async def delete_meme(filename: str):
+async def delete_meme(filename: str, current_user: dict = require_auth()):
     path = os.path.join(MEME_DIR, filename)
     if os.path.exists(path):
         os.remove(path)
+    # 同步注销 artifacts 记录
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        conn.execute(
+            "UPDATE artifacts SET active=0 WHERE media_url=? AND type='image'",
+            (f"/api/meme/images/{filename}",),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"delete_meme artifact skipped: {e}")
     return {"success": True}

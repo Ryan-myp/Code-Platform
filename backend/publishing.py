@@ -597,11 +597,40 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
 
 
 @router.get("/records")
-async def list_records(current_user: dict = require_auth()):
+async def list_records(
+    platform: str = "",
+    content_type: str = "",
+    status: str = "",
+    mode: str = "",
+    q: str = "",
+    limit: int = 100,
+    current_user: dict = require_auth(),
+):
+    """发布记录：支持按平台/内容类型/状态/模式筛选 + 关键词搜索（标题/内容）。"""
+    where, params = [], []
+    if platform:
+        where.append("platform=?")
+        params.append(platform)
+    if content_type:
+        where.append("content_type=?")
+        params.append(content_type)
+    if status:
+        where.append("status=?")
+        params.append(status)
+    if mode:
+        where.append("mode=?")
+        params.append(mode)
+    if q:
+        where.append("(title LIKE ? OR content LIKE ?)")
+        params.append(f"%{q}%")
+        params.append(f"%{q}%")
+    sql = "SELECT * FROM publish_records"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM publish_records ORDER BY created_at DESC LIMIT 100"
-    ).fetchall()
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
     result = []
     for r in rows:
@@ -673,6 +702,25 @@ async def list_schedules(month: str = "", current_user: dict = require_auth()):
         d["content_label"] = CONTENT_LABELS.get(d["content_type"], d["content_type"])
         result.append(d)
     return result
+
+
+class BatchCancelRequest(BaseModel):
+    ids: list[str] = Field(..., min_length=1, description="要取消的排期 ID 列表")
+
+
+@router.post("/schedules/batch-cancel")
+async def batch_cancel_schedules(req: BatchCancelRequest, current_user: dict = require_auth()):
+    """批量取消排期（仅 pending 状态生效，已发布/已取消的跳过）。"""
+    conn = get_db()
+    cancelled = 0
+    for sid in req.ids:
+        row = conn.execute("SELECT status FROM publish_schedules WHERE id=?", (sid,)).fetchone()
+        if row and row["status"] == "pending":
+            conn.execute("UPDATE publish_schedules SET status='cancelled' WHERE id=?", (sid,))
+            cancelled += 1
+    conn.commit()
+    conn.close()
+    return {"success": True, "cancelled": cancelled}
 
 
 @router.delete("/schedules/{sched_id}")

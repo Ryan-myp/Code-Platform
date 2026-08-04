@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import {
   Image as ImageIcon, Film, Music, Heart, MessageCircle, Users,
-  TrendingUp, X, Send, Sparkles, ThumbsUp,
+  TrendingUp, X, Send, Sparkles, ThumbsUp, Search, Flame, Clock3,
 } from 'lucide-react'
-import { PageHeader, Button, Empty } from '../components/ui'
+import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -16,17 +16,37 @@ const TYPE_TABS = [
   { key: 'audio', label: '音频', icon: Music },
 ]
 
+// 作品来源工厂（与后端 SOURCE_LABEL 一致，筛选传原始模块名）
+const AUTHOR_OPTIONS = [
+  { value: '', label: '全部来源' },
+  { value: 'image_factory', label: '图片工厂' },
+  { value: 'video_factory', label: '视频工厂' },
+  { value: 'music_factory', label: '音乐工厂' },
+  { value: 'voice_factory', label: '配音工坊' },
+  { value: 'meme_factory', label: '表情包工坊' },
+  { value: 'game_factory', label: '小游戏工坊' },
+  { value: 'miniapp', label: '小程序工坊' },
+]
+
+function mediaFull(url) {
+  if (!url) return ''
+  return url.startsWith('http') ? url : `${API_BASE}${url}`
+}
+
 function fmtTime(iso) {
   if (!iso) return ''
   try { return new Date(iso).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return '' }
 }
 
 // 作品卡片：图片/视频/音频统一媒体渲染 + 点赞 + 评论入口
-function WorkCard({ work, onLike, onComment, user }) {
+function WorkCard({ work, onLike, onComment, onPreview, user }) {
   const [imgErr, setImgErr] = useState(false)
-  const mediaUrl = work.media_url?.startsWith('http') ? work.media_url : `${API_BASE}${work.media_url || ''}`
+  const mediaUrl = mediaFull(work.media_url)
   return (
-    <div className="break-inside-avoid mb-4 bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all">
+    <div
+      onClick={() => onPreview?.(work)}
+      className="break-inside-avoid mb-4 bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-lg hover:-translate-y-0.5 transition-all cursor-pointer"
+    >
       {/* 媒体区 */}
       <div className="relative bg-gray-100">
         {work.type === 'image' && (
@@ -64,7 +84,7 @@ function WorkCard({ work, onLike, onComment, user }) {
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
-              onClick={() => onLike(work)}
+              onClick={(e) => { e.stopPropagation(); onLike(work) }}
               className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all ${
                 work.liked
                   ? 'bg-rose-50 text-rose-500 border border-rose-200'
@@ -75,7 +95,7 @@ function WorkCard({ work, onLike, onComment, user }) {
               {work.likes}
             </button>
             <button
-              onClick={() => onComment(work)}
+              onClick={(e) => { e.stopPropagation(); onComment(work) }}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200 hover:border-brand-300 hover:text-brand-600 transition-all"
             >
               <MessageCircle className="w-3.5 h-3.5" />
@@ -178,20 +198,34 @@ export default function GalleryPage() {
   const [active, setActive] = useState(null) // 评论面板目标作品
   const [user, setUser] = useState(null)
 
+  // ── 搜索 / 排序 / 来源筛选 / 详情预览 ──
+  const [q, setQ] = useState('')
+  const [sort, setSort] = useState('newest')
+  const [author, setAuthor] = useState('')
+  const [preview, setPreview] = useState(null)
+
   useEffect(() => {
     try { setUser(JSON.parse(localStorage.getItem('user') || 'null')) } catch { setUser(null) }
   }, [])
 
-  const loadWorks = async (t) => {
+  const loadWorks = async (t = type) => {
     setLoading(true)
     try {
-      const params = t === 'all' ? {} : { type: t }
-      const res = await api.get('/api/gallery/works', { params })
+      const params = new URLSearchParams()
+      if (t !== 'all') params.set('type', t)
+      if (q.trim()) params.set('q', q.trim())
+      if (sort) params.set('sort', sort)
+      if (author) params.set('author', author)
+      const res = await api.get(`/api/gallery/works?${params.toString()}`)
       setWorks(res.data || [])
     } catch (e) { toast.error('加载作品失败') } finally { setLoading(false) }
   }
 
-  useEffect(() => { loadWorks(type) }, [type])
+  // 搜索防抖 + 条件变化自动刷新
+  useEffect(() => {
+    const t = setTimeout(() => loadWorks(type), q ? 300 : 0)
+    return () => clearTimeout(t)
+  }, [type, q, sort, author])
 
   useEffect(() => {
     api.get('/api/gallery/stats').then((res) => setStats(res.data)).catch(() => {})
@@ -200,7 +234,9 @@ export default function GalleryPage() {
   const toggleLike = async (work) => {
     try {
       const res = await api.post(`/api/gallery/${work.id}/like`)
-      setWorks((prev) => prev.map((w) => (w.id === work.id ? { ...w, liked: res.data.liked, likes: res.data.likes } : w)))
+      const patch = { ...work, liked: res.data.liked, likes: res.data.likes }
+      setWorks((prev) => prev.map((w) => (w.id === work.id ? patch : w)))
+      if (preview?.id === work.id) setPreview(patch)
     } catch (e) { toast.error(e.message) }
   }
 
@@ -254,20 +290,87 @@ export default function GalleryPage() {
         ))}
       </div>
 
+      {/* 搜索 / 排序 / 来源筛选 */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索作品描述…"
+            className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400" />
+          {q && (
+            <button onClick={() => setQ('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-300 hover:text-gray-500 rounded-full">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white">
+            {[{ key: 'newest', label: '最新', icon: Clock3 }, { key: 'popular', label: '最热', icon: Flame }].map((s) => (
+              <button key={s.key} onClick={() => setSort(s.key)}
+                className={`flex items-center gap-1 px-3 py-2 text-xs font-medium transition-all ${sort === s.key ? 'bg-violet-50 text-violet-700' : 'text-gray-500 hover:bg-gray-50'}`}>
+                <s.icon className="w-3.5 h-3.5" /> {s.label}
+              </button>
+            ))}
+          </div>
+          <select value={author} onChange={(e) => setAuthor(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-gray-200 text-xs text-gray-600 bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-400">
+            {AUTHOR_OPTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>
+        </div>
+      </div>
+
       {/* 作品瀑布流 */}
       {loading ? (
-        <div className="text-center py-20 text-gray-400">作品加载中…</div>
+        <SkeletonGrid count={8} />
       ) : works.length === 0 ? (
         <Empty icon={ImageIcon} title="暂无作品" description="先去图片工厂 / 视频工厂 / 配音工坊创作，作品会自动出现在这里" />
       ) : (
         <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {works.map((w) => (
-            <WorkCard key={w.id} work={w} onLike={toggleLike} onComment={openComments} user={user} />
+            <WorkCard key={w.id} work={w} onLike={toggleLike} onComment={openComments} onPreview={setPreview} user={user} />
           ))}
         </div>
       )}
 
       {active && <CommentsPanel work={active} onClose={() => setActive(null)} user={user} />}
+
+      {/* 作品详情预览 */}
+      <Modal open={!!preview} onClose={() => setPreview(null)} title={preview ? `作品详情 · ${preview.type_label}` : ''} size="lg">
+        {preview && (
+          <div className="space-y-4">
+            <div className="rounded-2xl overflow-hidden bg-gray-100">
+              {preview.type === 'image' && (
+                <img src={mediaFull(preview.media_url)} alt={preview.prompt?.slice(0, 50) || '作品'} className="w-full max-h-[480px] object-contain" />
+              )}
+              {preview.type === 'video' && (
+                <video src={mediaFull(preview.media_url)} controls autoPlay className="w-full max-h-[480px] bg-black" />
+              )}
+              {preview.type === 'audio' && (
+                <div className="w-full h-44 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-sky-50 to-indigo-100">
+                  <div className="w-14 h-14 rounded-full bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-glow">
+                    <Music className="w-6 h-6 text-white" />
+                  </div>
+                  <audio src={mediaFull(preview.media_url)} controls autoPlay className="w-4/5 h-9" />
+                </div>
+              )}
+            </div>
+            <p className="text-sm text-gray-800 leading-relaxed">{preview.prompt || '（无描述）'}</p>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <Badge color="violet">{preview.author}</Badge>
+              <span>{fmtTime(preview.created_at)}</span>
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={() => toggleLike(preview)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all ${preview.liked ? 'bg-rose-50 text-rose-500 border border-rose-200' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:border-rose-200 hover:text-rose-500'}`}>
+                  <Heart className={`w-3.5 h-3.5 ${preview.liked ? 'fill-rose-500' : ''}`} /> {preview.likes}
+                </button>
+                <button onClick={() => { openComments(preview); setPreview(null) }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200 hover:border-brand-300 hover:text-brand-600 transition-all">
+                  <MessageCircle className="w-3.5 h-3.5" /> {preview.comments}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

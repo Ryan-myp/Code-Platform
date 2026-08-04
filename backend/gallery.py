@@ -97,25 +97,58 @@ async def list_works(
     type: str = None,
     limit: int = 60,
     offset: int = 0,
+    q: str = "",
+    sort: str = "newest",
+    author: str = "",
     current_user: dict = require_auth(),
 ):
-    """作品列表（倒序）：type 过滤 image/video/audio，聚合点赞数与评论数。"""
+    """作品列表：type 过滤 image/video/audio，q 搜索描述/作者，sort=最新/最热，author 按工厂筛选。"""
     user_id = _uid(current_user)
     conn = get_db()
+    where = ["active=1"]
+    params = []
     if type:
+        where.append("type=?")
+        params.append(type)
+    else:
+        where.append("type IN ('image','video','audio')")
+    if q:
+        where.append("(content LIKE ? OR author LIKE ?)")
+        params.append(f"%{q}%")
+        params.append(f"%{q}%")
+    if author:
+        where.append("author=?")
+        params.append(author)
+    if sort == "popular":
+        # 最热：按点赞数倒序（子查询关联 work_likes）
         rows = conn.execute(
-            "SELECT * FROM artifacts WHERE type=? AND active=1 ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (type, limit, offset),
+            "SELECT a.*, (SELECT COUNT(*) FROM work_likes wl WHERE wl.work_id=a.id) AS like_count "
+            f"FROM artifacts a WHERE {" AND ".join(where)} "
+            "ORDER BY like_count DESC, a.created_at DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
         ).fetchall()
     else:
         rows = conn.execute(
-            """SELECT * FROM artifacts
-               WHERE type IN ('image','video','audio') AND active=1
-               ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-            (limit, offset),
+            "SELECT * FROM artifacts WHERE " + " AND ".join(where)
+            + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
         ).fetchall()
     conn.close()
     return [_decorate(dict(r), user_id) for r in rows]
+
+
+@router.get("/works/{work_id}")
+async def get_work(work_id: str, current_user: dict = require_auth()):
+    """作品详情（含点赞/评论统计）。"""
+    user_id = _uid(current_user)
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM artifacts WHERE id=? AND active=1", (work_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "作品不存在")
+    return _decorate(dict(row), user_id)
 
 
 @router.post("/{work_id}/like")

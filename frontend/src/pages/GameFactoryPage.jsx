@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react'
 import {
   Gamepad2, Sparkles, FolderTree, FileCode2, Braces, Paintbrush,
   Copy, Check, Download, Trash2, Eye, Rocket, Loader2, Play,
-  Globe, Smartphone, Maximize2, MonitorPlay,
+  Globe, Smartphone, Maximize2, MonitorPlay, Star, Pencil, Wand2,
+  BarChart3, GitCommitHorizontal, Search, RefreshCw,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -40,6 +41,8 @@ export default function GameFactoryPage() {
   const [requirement, setRequirement] = useState('')
   const [generating, setGenerating] = useState(false)
   const [projects, setProjects] = useState([])
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
   const [viewing, setViewing] = useState(null) // {id,name,files,versions}
   const [version, setVersion] = useState('web')
   const [selectedFile, setSelectedFile] = useState('')
@@ -47,6 +50,13 @@ export default function GameFactoryPage() {
   const [playing, setPlaying] = useState(null) // {id,name,html}
   const [showGuide, setShowGuide] = useState(false)
   const [guide, setGuide] = useState({ steps: [], note: '' })
+  // 资产化管理：搜索/收藏筛选/重命名/迭代
+  const [q, setQ] = useState('')
+  const [onlyFav, setOnlyFav] = useState(false)
+  const [renaming, setRenaming] = useState(null) // {id, name}
+  const [renameName, setRenameName] = useState('')
+  const [evolveReq, setEvolveReq] = useState('')
+  const [evolving, setEvolving] = useState(false)
 
   useEffect(() => { loadProjects() }, [])
   useEffect(() => {
@@ -60,8 +70,20 @@ export default function GameFactoryPage() {
   }, [])
 
   const loadProjects = async () => {
-    try { const res = await api.get('/api/games/projects'); setProjects(res.data || []) } catch (e) {}
+    setLoading(true)
+    try {
+      const res = await api.get('/api/games/projects')
+      setProjects(res.data || [])
+      api.get('/api/games/stats').then((r) => setStats(r.data)).catch(() => {})
+    } catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
   }
+
+  const filteredProjects = projects.filter((p) => {
+    if (onlyFav && !p.favorite) return false
+    if (q && !(p.name.toLowerCase().includes(q.toLowerCase()) || (p.requirement || '').toLowerCase().includes(q.toLowerCase()))) return false
+    return true
+  })
 
   const generate = async () => {
     if (!name.trim()) { toast.error('请输入游戏名称'); return }
@@ -115,6 +137,46 @@ export default function GameFactoryPage() {
     catch (err) { toast.error(err.message) }
   }
 
+  const toggleFav = async (p, e) => {
+    e.stopPropagation()
+    try {
+      const res = await api.post(`/api/games/${p.id}/favorite`)
+      loadProjects()
+      toast.success(res.data.favorite ? '已收藏' : '已取消收藏')
+    } catch (err) { toast.error(err.message) }
+  }
+
+  const openRename = (p, e) => { e.stopPropagation(); setRenaming({ id: p.id, name: p.name }); setRenameName(p.name) }
+
+  const submitRename = async () => {
+    if (!renameName.trim()) { toast.error('请输入新名称'); return }
+    try {
+      await api.put(`/api/games/${renaming.id}`, { name: renameName.trim(), tags: [] })
+      toast.success('已重命名')
+      setRenaming(null)
+      loadProjects()
+    } catch (err) { toast.error(err.message) }
+  }
+
+  const evolveGame = async () => {
+    if (!viewing || !evolveReq.trim()) { toast.error('请输入迭代需求'); return }
+    setEvolving(true)
+    try {
+      const res = await api.post(`/api/games/${viewing.id}/evolve`, { requirement: evolveReq.trim() }, { timeout: 180000 })
+      const data = res.data
+      // 刷新查看内容为最新版本
+      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions })
+      const firstVer = data.versions[0] || 'web'
+      setVersion(firstVer)
+      setSelectedFile(Object.keys(data.files[firstVer] || {})[0] || '')
+      setEvolveReq('')
+      loadProjects()
+      toast.success(`迭代完成！新版本 ${data.versions.length} 个，共 ${data.file_count} 个文件`)
+    } catch (err) {
+      toast.error(`迭代失败：${err.message}`)
+    } finally { setEvolving(false) }
+  }
+
   const downloadZip = async () => {
     if (!viewing) return
     try {
@@ -156,6 +218,28 @@ export default function GameFactoryPage() {
         icon={Gamepad2}
         iconColor="from-fuchsia-500 to-purple-600"
       />
+
+      {/* ── 统计卡片 ── */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-fuchsia-50 text-fuchsia-600 flex items-center justify-center"><Gamepad2 className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{stats.total}</div><div className="text-xs text-gray-400">游戏项目</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><Star className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{stats.favorites}</div><div className="text-xs text-gray-400">已收藏</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center"><GitCommitHorizontal className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{stats.total_iterations}</div><div className="text-xs text-gray-400">累计迭代</div></div>
+          </div>
+          <div className="rounded-xl border border-gray-100 bg-white p-4 flex items-center gap-3">
+            <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><BarChart3 className="w-4.5 h-4.5" /></span>
+            <div><div className="text-lg font-bold text-gray-900">{Object.keys(stats.template_dist || {}).length}</div><div className="text-xs text-gray-400">玩法模板</div></div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── 左列：模板 + 生成 ── */}
@@ -222,30 +306,59 @@ export default function GameFactoryPage() {
         {/* ── 右列：我的游戏 ── */}
         <div className="lg:col-span-2 space-y-4">
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <FolderTree className="w-4 h-4 text-gray-400" /> 我的游戏（{projects.length}）
-            </h3>
-            {projects.length === 0 ? (
-              <Empty icon={Gamepad2} title="还没有小游戏" description="选择模板、填写需求后点击「生成小游戏」" />
+            <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 flex-shrink-0">
+                <FolderTree className="w-4 h-4 text-gray-400" /> 我的游戏（{filteredProjects.length}）
+              </h3>
+              <div className="flex-1 flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[160px]">
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索游戏名称或需求…"
+                    className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-fuchsia-500/20 focus:border-fuchsia-500 outline-none" />
+                </div>
+                <button onClick={() => setOnlyFav(!onlyFav)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                    onlyFav ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}>
+                  <Star className={`w-3.5 h-3.5 ${onlyFav ? 'fill-amber-400 text-amber-400' : ''}`} />
+                  {onlyFav ? '全部' : '只看收藏'}
+                </button>
+                <Button variant="ghost" size="sm" icon={RefreshCw} onClick={loadProjects}>刷新</Button>
+              </div>
+            </div>
+            {loading ? (
+              <SkeletonList count={3} />
+            ) : filteredProjects.length === 0 ? (
+              <Empty icon={Gamepad2} title={q || onlyFav ? '没有匹配的游戏' : '还没有小游戏'} description={q || onlyFav ? '换个关键词或筛选条件试试' : '选择模板、填写需求后点击「生成小游戏」'} />
             ) : (
               <div className="space-y-2">
-                {projects.map((p) => {
+                {filteredProjects.map((p) => {
                   const t = templates.find((x) => x.id === p.template)
                   return (
                     <div key={p.id} onClick={() => openProject(p)}
                       className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-fuchsia-200 hover:bg-fuchsia-50/30 transition-all cursor-pointer">
+                      <button onClick={(e) => toggleFav(p, e)} title={p.favorite ? '取消收藏' : '收藏'}
+                        className={`flex-shrink-0 ${p.favorite ? 'text-amber-400' : 'text-gray-300 hover:text-amber-400'}`}>
+                        <Star className={`w-4 h-4 ${p.favorite ? 'fill-amber-400' : ''}`} />
+                      </button>
                       <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0`}>
                         {t?.icon || '🎮'}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-gray-800 truncate">{p.name}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-800 truncate">{p.name}</span>
+                          {p.iterations > 0 && (
+                            <Badge color="violet"><GitCommitHorizontal className="w-3 h-3 mr-0.5 inline" />迭代 {p.iterations} 次</Badge>
+                          )}
+                        </div>
                         <div className="text-xs text-gray-400 truncate">
                           {t?.name || '自定义'} · 双版本 · {p.requirement?.slice(0, 50)}
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">{p.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{(p.updated_at || p.created_at)?.slice(0, 16).replace('T', ' ')}</span>
                       <Button variant="secondary" size="sm" icon={Play} onClick={(e) => { e.stopPropagation(); playGame(p) }}>试玩</Button>
                       <Button variant="secondary" size="sm" icon={Eye} onClick={(e) => { e.stopPropagation(); openProject(p) }}>查看</Button>
+                      <button onClick={(e) => openRename(p, e)} title="重命名" className="p-1.5 text-gray-300 hover:text-violet-500 rounded-lg hover:bg-violet-50"><Pencil className="w-4 h-4" /></button>
                       <button onClick={(e) => removeProject(p, e)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
                     </div>
                   )
@@ -346,6 +459,29 @@ export default function GameFactoryPage() {
             </pre>
           </div>
         </div>
+
+        {/* ── AI 迭代区 ── */}
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4">
+          <h4 className="text-sm font-semibold text-gray-800 mb-2 flex items-center gap-1.5">
+            <Wand2 className="w-4 h-4 text-violet-600" /> AI 迭代优化
+          </h4>
+          <p className="text-xs text-gray-500 mb-2">基于当前代码继续改：加功能、调难度、换风格、修 Bug，双版本同步更新</p>
+          <div className="flex gap-2">
+            <input value={evolveReq} onChange={(e) => setEvolveReq(e.target.value)}
+              placeholder="如：加一个暂停功能；每 100 分出一个道具；把配色改成赛博朋克风…"
+              className="flex-1 px-3 py-2 border border-violet-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none bg-white" />
+            <Button variant="primary" icon={Wand2} loading={evolving} onClick={evolveGame}
+              className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 flex-shrink-0">
+              {evolving ? '迭代中（约 1-2 分钟）…' : '开始迭代'}
+            </Button>
+          </div>
+          {evolving && (
+            <div className="flex items-center gap-2 text-xs text-violet-600 mt-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              AI 正在基于现有代码生成升级版双版本代码，请稍候…
+            </div>
+          )}
+        </div>
       </Modal>
 
       {/* ── 在线试玩 Modal ── */}
@@ -380,6 +516,22 @@ export default function GameFactoryPage() {
               {guide.note}
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* ── 重命名 Modal ── */}
+      <Modal open={!!renaming} onClose={() => setRenaming(null)} title="重命名游戏" size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRenaming(null)}>取消</Button>
+            <Button variant="primary" onClick={submitRename}>保存</Button>
+          </>
+        }>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1.5">游戏名称</label>
+          <input value={renameName} onChange={(e) => setRenameName(e.target.value)} autoFocus
+            placeholder="如：星际贪吃蛇 Pro"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500/20 focus:border-fuchsia-500 outline-none" />
         </div>
       </Modal>
     </div>
