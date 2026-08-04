@@ -3,11 +3,12 @@ import {
   Mic2, Sparkles, Play, Download, Trash2, UserCircle, Music2,
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
   Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
+  Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
-import AnimatedAvatar from '../components/AnimatedAvatar'
+import AnimatedAvatar, { EXPRESSION_NAMES, OUTFIT_NAMES, SCENE_NAMES } from '../components/AnimatedAvatar'
 
 const SCENES = [
   { id: 'product', name: '产品介绍', desc: '突出卖点，节奏明快', icon: Sparkles, color: 'from-amber-500 to-orange-600' },
@@ -40,11 +41,23 @@ export default function DigitalHumanPage() {
   const [articles, setArticles] = useState([])
   const [showArticles, setShowArticles] = useState(false)
 
+  // 角色外观
+  const [outfit, setOutfit] = useState('formal')
+  const [avatarScene, setAvatarScene] = useState('studio')
+  const [glasses, setGlasses] = useState(false)
+  const [hat, setHat] = useState(false)
+  const [currentExpression, setCurrentExpression] = useState('neutral')
+
   // 音频播放 + 口型同步
   const audioRef = useRef(null)
+  const avatarRef = useRef(null)
   const [playing, setPlaying] = useState(false)
   const [talking, setTalking] = useState(false)
   const [audioUrl, setAudioUrl] = useState('')
+
+  // 录制
+  const [recording, setRecording] = useState(false)
+  const [videoBlob, setVideoBlob] = useState(null)
 
   useEffect(() => { loadData(); loadRecords() }, [])
 
@@ -127,6 +140,67 @@ export default function DigitalHumanPage() {
     setPlaying(false)
     setTalking(false)
   }, [])
+
+  // ── 录制控制 ──
+  const startRecording = useCallback(() => {
+    if (!avatarRef.current) { toast.error('角色未就绪'); return }
+    avatarRef.current.startRecording()
+    setRecording(true)
+    setVideoBlob(null)
+    toast.success('开始录制')
+  }, [toast])
+
+  const stopRecording = useCallback(async () => {
+    if (!avatarRef.current) return
+    const blob = await avatarRef.current.stopRecording()
+    setRecording(false)
+    if (blob) { setVideoBlob(blob); toast.success('录制完成') }
+    else toast.error('录制失败')
+  }, [toast])
+
+  const downloadVideo = useCallback(() => {
+    if (!videoBlob) return
+    const url = URL.createObjectURL(videoBlob)
+    const a = document.createElement('a'); a.href = url; a.download = `digital-human-${Date.now()}.webm`
+    a.click(); URL.revokeObjectURL(url); toast.success('下载中')
+  }, [videoBlob, toast])
+
+  // 自动录制：生成 + 播放时同步录制
+  const recordAndPlay = useCallback(async () => {
+    if (!text.trim()) { toast.error('请输入口播文案'); return }
+    setGenerating(true); setResult(null); stopAudio(); setVideoBlob(null)
+    try {
+      const res = await api.post('/api/digital-human/generate', {
+        text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
+        background_id: bgId, scene_id: sceneId, speed,
+      })
+      setResult(res.data); loadRecords()
+      if (res.data.audio_url) {
+        const fullUrl = res.data.audio_url.startsWith('http')
+          ? res.data.audio_url : `http://127.0.0.1:8000${res.data.audio_url}`
+        setAudioUrl(fullUrl)
+        setTimeout(() => {
+          if (audioRef.current && avatarRef.current) {
+            avatarRef.current.startRecording()
+            setRecording(true)
+            audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
+          }
+        }, 300)
+      }
+      toast.success(res.data.message || '生成成功')
+    } catch (e) { toast.error(`生成失败：${e.message}`) }
+    finally { setGenerating(false) }
+  }, [text, avatarId, voiceId, bgId, sceneId, speed, toast, stopAudio, loadRecords])
+
+  // 音频结束时停止录制
+  useEffect(() => {
+    if (!playing && recording && avatarRef.current) {
+      avatarRef.current.stopRecording().then(blob => {
+        setRecording(false)
+        if (blob) setVideoBlob(blob)
+      })
+    }
+  }, [playing, recording])
 
   const deleteRecord = async (id) => {
     try { await api.delete(`/api/digital-human/records/${id}`); loadRecords(); toast.success('已删除') }
@@ -225,21 +299,75 @@ export default function DigitalHumanPage() {
             </div>
           </Card>
 
-          {/* 背景选择 */}
+          {/* 虚拟场景 */}
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Palette className="w-4 h-4 text-emerald-500" /> 虚拟背景
+              <Monitor className="w-4 h-4 text-emerald-500" /> 虚拟场景
             </h3>
-            <div className="grid grid-cols-3 gap-2">
-              {backgrounds.map((b) => (
-                <button key={b.id} onClick={() => setBgId(b.id)}
-                  className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all ${
-                    bgId === b.id ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-500/20' : 'border-gray-100 hover:border-emerald-200'
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(SCENE_NAMES).map(([key, name]) => (
+                <button key={key} onClick={() => setAvatarScene(key)}
+                  className={`p-2 rounded-lg text-xs font-medium transition-all ${
+                    avatarScene === key ? 'bg-emerald-100 text-emerald-700 border border-emerald-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
                   }`}>
-                  <div className="w-8 h-8 rounded-lg" style={{ background: b.color }} />
-                  <div className="text-[10px] font-medium text-gray-700">{b.name}</div>
+                  {name}
                 </button>
               ))}
+            </div>
+          </Card>
+
+          {/* 表情切换 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Smile className="w-4 h-4 text-yellow-500" /> 表情控制
+            </h3>
+            <div className="grid grid-cols-3 gap-1.5">
+              {Object.entries(EXPRESSION_NAMES).map(([key, name]) => (
+                <button key={key} onClick={() => setCurrentExpression(key)}
+                  className={`p-1.5 rounded-lg text-xs font-medium transition-all ${
+                    currentExpression === key ? 'bg-yellow-100 text-yellow-700 border border-yellow-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                  }`}>
+                  {name}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* 服装 + 配饰 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Shirt className="w-4 h-4 text-orange-500" /> 服装配饰
+            </h3>
+            <div className="space-y-2">
+              {/* 服装 */}
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">服装</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {Object.entries(OUTFIT_NAMES).map(([key, name]) => (
+                    <button key={key} onClick={() => setOutfit(key)}
+                      className={`p-1.5 rounded-lg text-xs font-medium transition-all ${
+                        outfit === key ? 'bg-orange-100 text-orange-700 border border-orange-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                      }`}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 配饰 */}
+              <div className="flex gap-2">
+                <button onClick={() => setGlasses(!glasses)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 p-1.5 rounded-lg text-xs font-medium transition-all ${
+                    glasses ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'
+                  }`}>
+                  <Glasses className="w-3 h-3" /> 眼镜
+                </button>
+                <button onClick={() => setHat(!hat)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 p-1.5 rounded-lg text-xs font-medium transition-all ${
+                    hat ? 'bg-purple-100 text-purple-700 border border-purple-300' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'
+                  }`}>
+                  <HardHat className="w-3 h-3" /> 帽子
+                </button>
+              </div>
             </div>
           </Card>
         </div>
@@ -267,6 +395,9 @@ export default function DigitalHumanPage() {
             <Button variant="primary" size="lg" icon={Sparkles} loading={generating} onClick={generate} className="flex-1">
               {generating ? 'AI数字人正在生成…' : '生成数字人视频'}
             </Button>
+            <Button variant="secondary" size="lg" icon={Video} loading={generating} onClick={recordAndPlay}>
+              生成+录制
+            </Button>
           </div>
 
           {/* 预览区 */}
@@ -275,34 +406,57 @@ export default function DigitalHumanPage() {
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Eye className="w-4 h-4 text-violet-500" /> 实时预览
                 {talking && <span className="text-[10px] text-emerald-500 font-normal animate-pulse">● 口型同步中</span>}
+                {recording && <span className="text-[10px] text-red-500 font-normal animate-pulse">● 录制中</span>}
               </h3>
-              {/* 音频播放控制 */}
-              {audioUrl && (
-                <div className="flex items-center gap-1">
-                  {playing ? (
-                    <Button variant="secondary" size="sm" icon={Pause} onClick={pauseAudio}>暂停</Button>
-                  ) : (
-                    <Button variant="secondary" size="sm" icon={Play} onClick={playAudio}>播放</Button>
-                  )}
-                  <Button variant="ghost" size="sm" icon={StopCircle} onClick={stopAudio} />
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                {/* 录制按钮 */}
+                {!recording ? (
+                  <Button variant="secondary" size="sm" icon={Circle} onClick={startRecording}>
+                    <span className="text-red-500">录制</span>
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" icon={StopCircle} onClick={stopRecording}>
+                    停止
+                  </Button>
+                )}
+                {videoBlob && (
+                  <Button variant="secondary" size="sm" icon={Download} onClick={downloadVideo}>
+                    下载
+                  </Button>
+                )}
+                {/* 音频控制 */}
+                {audioUrl && (
+                  <>
+                    {playing ? (
+                      <Button variant="secondary" size="sm" icon={Pause} onClick={pauseAudio}>暂停</Button>
+                    ) : (
+                      <Button variant="secondary" size="sm" icon={Play} onClick={playAudio}>播放</Button>
+                    )}
+                    <Button variant="ghost" size="sm" icon={StopCircle} onClick={stopAudio} />
+                  </>
+                )}
+              </div>
             </div>
-            <div className="relative rounded-xl overflow-hidden border border-gray-200 bg-gray-900 flex items-center justify-center">
+            <div className="relative rounded-xl overflow-hidden border border-gray-200 flex items-center justify-center" style={{ minHeight: 350 }}>
               <AnimatedAvatar
+                ref={avatarRef}
                 avatarId={avatarId}
-                width={400}
-                height={350}
+                width={480}
+                height={360}
                 talking={talking}
                 audioElement={audioRef.current}
+                expression={currentExpression}
+                outfit={outfit}
+                scene={avatarScene}
+                glasses={glasses}
+                hat={hat}
               />
-              {/* 背景渐变叠加 */}
-              <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ background: selectedBg?.color || '#667eea' }} />
               {/* 底部信息条 */}
-              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/50 to-transparent">
                 <div className="flex items-center justify-center gap-3 text-white/80 text-xs">
                   <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" /> {selectedAvatar?.name || '选择形象'}</span>
                   <span className="flex items-center gap-1"><Volume2 className="w-3 h-3" /> {selectedVoice?.name || ''}</span>
+                  <span className="flex items-center gap-1"><Smile className="w-3 h-3" /> {EXPRESSION_NAMES[currentExpression]}</span>
                 </div>
               </div>
             </div>

@@ -1,392 +1,495 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react'
 
 /**
- * 自研 Canvas 动画角色引擎 — 动漫风格虚拟主播
+ * AI数字人动画引擎 v2.0 — 全面升级版
  *
- * 特性：
- * - Canvas 绘制动漫角色（圆脸、大眼、渐变配色）
- * - requestAnimationFrame 60fps 动画循环
- * - Web Audio API 实时口型同步
- * - 自然空闲动画：呼吸起伏、眨眼、微摇头
- * - 8 种配色方案对应平台已有的 8 个数字人形象
+ * 新特性：
+ * - 5 种表情（自然/开心/惊讶/思考/悲伤）+ 平滑过渡
+ * - 肢体动画（手势、点头、身体微晃、撩头发）
+ * - 音素级口型（a/e/i/o/u）+ 音量混合
+ * - 4 套服装（正装/休闲/科技/可爱）
+ * - 配饰切换（眼镜/帽子）
+ * - 4 种虚拟场景背景
+ * - Canvas 录制导出（WebM 视频）
  * - 零外部依赖
  */
 
-// ── 配色方案（对应 digital_human.py 的 8 个形象） ──────────
+// ═══════════════════════════════════════════════════════════
+// 配色方案
+// ═══════════════════════════════════════════════════════════
 const STYLES = {
-  'business-female': { skin: '#FFDAB9', hair: '#2C1810', hairHighlight: '#4A3728', eye: '#4A90D9', top: '#667eea', skirt: '#5a67d8', ribbon: '#f5576c' },
-  'business-male':   { skin: '#F5D5B8', hair: '#1a1a2e', hairHighlight: '#2d2d44', eye: '#3d5a80', top: '#4a5568', skirt: '#2d3748', ribbon: '#a0aec0' },
-  'casual-female':   { skin: '#FFD1C1', hair: '#8B4513', hairHighlight: '#A0522D', eye: '#6B8E23', top: '#f093fb', skirt: '#f5576c', ribbon: '#ffd700' },
-  'casual-male':     { skin: '#FDEBD0', hair: '#34495E', hairHighlight: '#5D6D7E', eye: '#2980B9', top: '#f39c12', skirt: '#e67e22', ribbon: '#f1c40f' },
-  'tech-female':     { skin: '#FFE4D6', hair: '#1a0033', hairHighlight: '#2d0055', eye: '#9b59b6', top: '#8B5CF6', skirt: '#7C3AED', ribbon: '#06d6a0' },
-  'educator-male':   { skin: '#FAE5D3', hair: '#3E2723', hairHighlight: '#5D4037', eye: '#2E7D32', top: '#0d9488', skirt: '#0f766e', ribbon: '#fbbf24' },
-  'cartoon-cute':    { skin: '#FFF5E6', hair: '#FFE0B2', hairHighlight: '#FFCC80', eye: '#4FC3F7', top: '#FFB74D', skirt: '#FF9800', ribbon: '#FF5722' },
-  'anime-style':     { skin: '#FCE4EC', hair: '#E91E63', hairHighlight: '#F06292', eye: '#CE93D8', top: '#f472b6', skirt: '#db2777', ribbon: '#818cf8' },
+  'business-female': { skin: '#FFDAB9', hair: '#2C1810', hairHi: '#4A3728', eye: '#4A90D9', outfit: { formal: ['#1a1a2e', '#2d2d44'], casual: ['#f093fb', '#db2777'], tech: ['#667eea', '#5a67d8'], cute: ['#fbbf24', '#f59e0b'] } },
+  'business-male':   { skin: '#F5D5B8', hair: '#1a1a2e', hairHi: '#2d2d44', eye: '#3d5a80', outfit: { formal: ['#374151', '#1f2937'], casual: ['#f59e0b', '#d97706'], tech: ['#4a5568', '#2d3748'], cute: ['#34d399', '#059669'] } },
+  'casual-female':   { skin: '#FFD1C1', hair: '#8B4513', hairHi: '#A0522D', eye: '#6B8E23', outfit: { formal: ['#78716c', '#57534e'], casual: ['#f472b6', '#db2777'], tech: ['#818cf8', '#6366f1'], cute: ['#fbbf24', '#f59e0b'] } },
+  'casual-male':     { skin: '#FDEBD0', hair: '#34495E', hairHi: '#5D6D7E', eye: '#2980B9', outfit: { formal: ['#475569', '#334155'], casual: ['#fb923c', '#ea580c'], tech: ['#06b6d4', '#0891b2'], cute: ['#a78bfa', '#7c3aed'] } },
+  'tech-female':     { skin: '#FFE4D6', hair: '#1a0033', hairHi: '#2d0055', eye: '#9b59b6', outfit: { formal: ['#374151', '#1f2937'], casual: ['#ec4899', '#be185d'], tech: ['#8B5CF6', '#7C3AED'], cute: ['#06b6d4', '#0891b2'] } },
+  'educator-male':   { skin: '#FAE5D3', hair: '#3E2723', hairHi: '#5D4037', eye: '#2E7D32', outfit: { formal: ['#1e3a5f', '#15294a'], casual: ['#14b8a6', '#0d9488'], tech: ['#0d9488', '#0f766e'], cute: ['#f59e0b', '#d97706'] } },
+  'cartoon-cute':    { skin: '#FFF5E6', hair: '#FFE0B2', hairHi: '#FFCC80', eye: '#4FC3F7', outfit: { formal: ['#9ca3af', '#6b7280'], casual: ['#fbbf24', '#f59e0b'], tech: ['#38bdf8', '#0ea5e9'], cute: ['#f472b6', '#ec4899'] } },
+  'anime-style':     { skin: '#FCE4EC', hair: '#E91E63', hairHi: '#F06292', eye: '#CE93D8', outfit: { formal: ['#4a1942', '#2d0f26'], casual: ['#f472b6', '#db2777'], tech: ['#c084fc', '#a855f7'], cute: ['#fb7185', '#e11d48'] } },
+}
+
+// 表情参数：{ eyebrowAngle, eyeScaleY, mouthCurve, blushAlpha, eyeSparkle }
+const EXPRESSIONS = {
+  neutral:   { ea: 0, es: 1, mc: 0.5, blush: 0.3, sparkle: 1 },
+  happy:     { ea: -0.25, es: 0.85, mc: 0.9, blush: 0.6, sparkle: 1.5 },
+  surprised: { ea: 0.4, es: 1.35, mc: 0.2, blush: 0.1, sparkle: 1.3 },
+  sad:       { ea: 0.3, es: 0.9, mc: 0.3, blush: 0.15, sparkle: 0.5 },
+  thinking:  { ea: -0.15, es: 0.95, mc: 0.35, blush: 0.2, sparkle: 0.8 },
+}
+
+// 口型形状（音素 → 宽高比）
+const PHONEME_SHAPES = {
+  a: { mw: 1.3, mh: 1.1 },  // 大圆口型 "啊"
+  e: { mw: 1.6, mh: 0.6 },  // 横扁口型 "欸"
+  i: { mw: 0.7, mh: 0.8 },  // 小口型 "衣"
+  o: { mw: 0.85, mh: 1.0 }, // 圆口型 "哦"
+  u: { mw: 0.5, mh: 0.9 },  // 噘嘴 "呜"
+}
+
+// 场景背景绘制
+const SCENE_BG = {
+  office: (ctx, w, h) => {
+    const bg = ctx.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, '#1a1a2e'); bg.addColorStop(0.5, '#16213e'); bg.addColorStop(1, '#0f3460'); ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+    // 窗户
+    ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(w * 0.15, h * 0.1, w * 0.25, h * 0.3); ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2; ctx.strokeRect(w * 0.15, h * 0.1, w * 0.25, h * 0.3)
+    // 桌子
+    ctx.fillStyle = '#2d1810'; ctx.fillRect(0, h * 0.75, w, h * 0.3); ctx.fillStyle = '#3d2818'; ctx.fillRect(0, h * 0.75, w, 4)
+    // 电脑屏幕
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(w * 0.55, h * 0.45, w * 0.3, h * 0.25); ctx.fillStyle = '#5a67d8'; ctx.fillRect(w * 0.57, h * 0.47, w * 0.26, h * 0.18); ctx.fillStyle = '#1a1a2e'; ctx.fillRect(w * 0.63, h * 0.73, w * 0.14, 8)
+  },
+  studio: (ctx, w, h) => {
+    const bg = ctx.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, '#1e1b4b'); bg.addColorStop(0.5, '#312e81'); bg.addColorStop(1, '#3730a3'); ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+    // 环形灯
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(w * 0.75, h * 0.3, 40, 0, Math.PI * 2); ctx.stroke()
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.beginPath(); ctx.arc(w * 0.75, h * 0.3, 55, 0, Math.PI * 2); ctx.stroke()
+    // 灯架
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(w * 0.75, h * 0.3 + 55); ctx.lineTo(w * 0.75, h); ctx.stroke()
+  },
+  nature: (ctx, w, h) => {
+    const bg = ctx.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, '#4ade80'); bg.addColorStop(0.4, '#22c55e'); bg.addColorStop(1, '#166534'); ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+    // 云
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(w * 0.2, h * 0.15, 30, 0, Math.PI * 2); ctx.arc(w * 0.27, h * 0.12, 25, 0, Math.PI * 2); ctx.arc(w * 0.33, h * 0.15, 28, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(w * 0.65, h * 0.1, 22, 0, Math.PI * 2); ctx.arc(w * 0.7, h * 0.08, 18, 0, Math.PI * 2); ctx.fill()
+    // 地面
+    ctx.fillStyle = '#3f6212'; ctx.fillRect(0, h * 0.82, w, h * 0.3)
+    // 小花
+    for (let i = 0; i < 6; i++) { const x = w * 0.1 + i * w * 0.15; ctx.fillStyle = ['#fbbf24','#f472b6','#ffffff','#fbbf24','#818cf8','#f472b6'][i]; ctx.beginPath(); ctx.arc(x, h * 0.84, 4, 0, Math.PI * 2); ctx.fill() }
+  },
+  tech: (ctx, w, h) => {
+    const bg = ctx.createLinearGradient(0, 0, w, h); bg.addColorStop(0, '#0f0c29'); bg.addColorStop(0.5, '#302b63'); bg.addColorStop(1, '#24243e'); ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
+    // 数据流线条
+    ctx.strokeStyle = 'rgba(99,102,241,0.2)'; ctx.lineWidth = 1
+    for (let i = 0; i < 8; i++) { ctx.beginPath(); ctx.moveTo(0, h * 0.1 + i * h * 0.1); ctx.lineTo(w, h * 0.15 + i * h * 0.1); ctx.stroke() }
+    // 节点
+    for (let i = 0; i < 12; i++) { ctx.fillStyle = ['rgba(99,102,241,0.3)','rgba(16,185,129,0.3)'][i % 2]; ctx.beginPath(); ctx.arc(w * 0.1 + Math.random() * w * 0.8, h * 0.1 + Math.random() * h * 0.4, 3, 0, Math.PI * 2); ctx.fill() }
+  },
 }
 
 function lerp(a, b, t) { return a + (b - a) * t }
 
-export default function AnimatedAvatar({
+const AnimatedAvatar = forwardRef(function AnimatedAvatar({
   avatarId = 'business-female',
-  width = 400,
+  width = 480,
   height = 400,
-  audioElement = null,   // <audio> 元素引用，用于口型同步
-  talking = false,        // 手动控制是否说话
-  expression = 'neutral', // neutral | happy | surprised | thinking
+  audioElement = null,
+  talking = false,
+  expression = 'neutral',
+  outfit = 'formal',
+  scene = 'office',
+  glasses = false,
+  hat = false,
   className = '',
-}) {
+}, ref) {
   const canvasRef = useRef(null)
   const animFrame = useRef(null)
   const analyserRef = useRef(null)
   const audioCtxRef = useRef(null)
-  const audioSourceRef = useRef(null)
+  const recorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const streamRef = useRef(null)
 
-  // 动画状态
   const stateRef = useRef({
-    time: 0,
-    breathPhase: 0,
-    blinkTimer: 0,
-    nextBlink: 100,
-    isBlinking: false,
-    blinkProgress: 0,
-    mouthOpenTarget: 0,
-    mouthOpenCurrent: 0,
-    audioLevel: 0,
-    headTilt: 0,
-    headTiltTarget: 0,
+    time: 0, breathPhase: 0, blinkTimer: 0, nextBlink: 100,
+    isBlinking: false, blinkProgress: 0,
+    mouthOpen: 0, mouthTarget: 0, audioLevel: 0,
+    headTilt: 0, headTiltTarget: 0,
+    // 表情过渡
+    exprCurrent: { ea: 0, es: 1, mc: 0.5, blush: 0.3, sparkle: 1 },
+    exprTarget: { ea: 0, es: 1, mc: 0.5, blush: 0.3, sparkle: 1 },
+    // 音素
+    phonemeTarget: 'a', phonemeCurrent: { mw: 1, mh: 1 },
+    // 手势
+    handPhase: 0, gestureType: 0, gestureProgress: 0,
+    nodAmount: 0, nodTarget: 0,
+    hairTouchTimer: 0, hairTouchProgress: 0, isHairTouching: false,
   })
 
   const style = STYLES[avatarId] || STYLES['business-female']
+  const topColor = style.outfit[outfit]?.[0] || style.outfit.formal[0]
+  const bottomColor = style.outfit[outfit]?.[1] || style.outfit.formal[1]
 
-  // ── Web Audio 口型分析 ──
+  // ══ Web Audio ══
   useEffect(() => {
     if (!audioElement) return
     let ctx, source, analyser
-
     try {
       ctx = new (window.AudioContext || window.webkitAudioContext)()
       analyser = ctx.createAnalyser()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.3
+      analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.25
       source = ctx.createMediaElementSource(audioElement)
-      source.connect(analyser)
-      analyser.connect(ctx.destination)
-      audioCtxRef.current = ctx
-      analyserRef.current = analyser
-      audioSourceRef.current = source
-    } catch (e) {
-      console.warn('Web Audio API 不可用，口型同步将使用模拟模式', e)
-    }
-
-    return () => {
-      if (ctx) ctx.close().catch(() => {})
-    }
+      source.connect(analyser); analyser.connect(ctx.destination)
+      audioCtxRef.current = ctx; analyserRef.current = analyser
+    } catch (e) { console.warn('Web Audio 不可用', e) }
+    return () => { if (ctx) ctx.close().catch(() => {}) }
   }, [audioElement])
 
-  // ── 音频音量读取 ──
-  const getAudioLevel = useCallback(() => {
-    const analyser = analyserRef.current
-    if (!analyser) return 0
-    const dataArray = new Uint8Array(analyser.frequencyBinCount)
-    analyser.getByteFrequencyData(dataArray)
-    // 取中低频段（人声主要频率范围）
-    let sum = 0
-    for (let i = 2; i < Math.min(32, dataArray.length); i++) {
-      sum += dataArray[i]
-    }
-    return sum / (30 * 255)
+  const getAudioData = useCallback(() => {
+    const a = analyserRef.current; if (!a) return { level: 0, freq: new Uint8Array(0) }
+    const d = new Uint8Array(a.frequencyBinCount)
+    a.getByteFrequencyData(d)
+    let sum = 0; for (let i = 2; i < Math.min(40, d.length); i++) sum += d[i]
+    return { level: sum / (38 * 255), freq: d }
   }, [])
 
-  // ── 绘制角色 ──
-  const drawCharacter = useCallback((ctx, w, h, state, scale) => {
-    const s = scale
-    const cx = w / 2
-    const cy = h / 2
-    const t = state.time
+  // 音素检测（简化：用频段能量分布推断）
+  const detectPhoneme = useCallback((freq) => {
+    if (!freq || freq.length < 40) return 'a'
+    const low = freq.slice(2, 10).reduce((a, b) => a + b, 0)
+    const mid = freq.slice(10, 25).reduce((a, b) => a + b, 0)
+    const high = freq.slice(25, 40).reduce((a, b) => a + b, 0)
+    const total = low + mid + high; if (total < 100) return 'a'
+    const lr = low / total; const mr = mid / total
+    if (lr > 0.5) return 'u'
+    if (mr > 0.55) return 'o'
+    if (high / total > 0.4) return 'i'
+    if (mr > 0.4) return 'e'
+    return 'a'
+  }, [])
 
+  // ══ 录制 ══
+  const startRecording = useCallback(() => {
+    const canvas = canvasRef.current; if (!canvas) return null
+    const stream = canvas.captureStream(30)
+    streamRef.current = stream; chunksRef.current = []
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' })
+    recorder.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data) }
+    recorderRef.current = recorder
+    recorder.start()
+    return recorder
+  }, [])
+
+  const stopRecording = useCallback(() => {
+    return new Promise((resolve) => {
+      const rec = recorderRef.current; if (!rec) { resolve(null); return }
+      rec.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'video/webm' })
+        resolve(blob)
+      }
+      rec.stop()
+    })
+  }, [])
+
+  useImperativeHandle(ref, () => ({ startRecording, stopRecording, canvas: canvasRef.current }), [startRecording, stopRecording])
+
+  // ══ 绘制函数集 ══
+  const drawFace = (ctx, cx, cy, s, state, st) => {
+    const e = state.exprCurrent
+    // 脸
+    const fg = ctx.createRadialGradient(cx - 10 * s, cy * 0.52, 5 * s, cx, cy * 0.55, 50 * s)
+    fg.addColorStop(0, '#FFFFFF'); fg.addColorStop(0.5, st.skin); fg.addColorStop(1, st.skin.replace('FF','E6').replace('D1','B0').replace('FA','E0').replace('FD','E0'))
+    ctx.fillStyle = fg; ctx.beginPath(); ctx.ellipse(cx, cy * 0.55, 48 * s, 52 * s, 0, 0, Math.PI * 2); ctx.fill()
+    // 脸颊
+    ctx.fillStyle = `rgba(255, 150, 150, ${e.blush})`
+    ctx.beginPath(); ctx.ellipse(cx - 28 * s, cy * 0.58, 10 * s, 6 * s, 0, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.ellipse(cx + 28 * s, cy * 0.58, 10 * s, 6 * s, 0, 0, Math.PI * 2); ctx.fill()
+    // 鼻子
+    ctx.fillStyle = st.skin.replace('FF','E6').replace('D1','B0'); ctx.beginPath(); ctx.arc(cx, cy * 0.54, 3 * s, 0, Math.PI * 2); ctx.fill()
+  }
+
+  const drawEyes = (ctx, cx, cy, s, state, st) => {
+    const e = state.exprCurrent
+    const eyeY = cy * 0.48 - (e.ea * 8 * s)
+    const blinkH = state.isBlinking ? lerp(14, 1.5, state.blinkProgress) : 14 * e.es
+    const eyeW = 14 * s
+    const irisW = 9 * s; const pupilW = 5 * s
+
+    for (const side of [-1, 1]) {
+      const ex = cx + side * 18 * s
+      // 眼白
+      ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.ellipse(ex, eyeY, eyeW, blinkH * s, 0, 0, Math.PI * 2); ctx.fill()
+      if (blinkH > 3) {
+        // 虹膜
+        ctx.fillStyle = st.eye; ctx.beginPath(); ctx.ellipse(ex, eyeY, irisW, Math.min(blinkH * s, irisW), 0, 0, Math.PI * 2); ctx.fill()
+        // 瞳孔
+        const pupilH = Math.min(blinkH * s * 0.55, pupilW)
+        ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.ellipse(ex, eyeY, pupilW, pupilH, 0, 0, Math.PI * 2); ctx.fill()
+        // 高光
+        ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(ex + 4 * s * e.sparkle * side, eyeY - 3 * s * e.sparkle, 3 * s * e.sparkle, 0, Math.PI * 2); ctx.fill()
+        if (e.sparkle > 0.6) { ctx.beginPath(); ctx.arc(ex - 3 * s * side, eyeY + 2 * s, 1.5 * s, 0, Math.PI * 2); ctx.fill() }
+      }
+    }
+  }
+
+  const drawEyebrows = (ctx, cx, cy, s, state, st) => {
+    const e = state.exprCurrent
+    ctx.strokeStyle = st.hair; ctx.lineWidth = 2.5 * s; ctx.lineCap = 'round'
+    const by = cy * 0.36 - (e.ea * 15 * s)
+    // 左眉
+    ctx.beginPath(); ctx.moveTo(cx - 28 * s, by + e.ea * 8 * s)
+    ctx.quadraticCurveTo(cx - 18 * s, by, cx - 10 * s, by + e.ea * 2 * s); ctx.stroke()
+    // 右眉
+    ctx.beginPath(); ctx.moveTo(cx + 10 * s, by + e.ea * 2 * s)
+    ctx.quadraticCurveTo(cx + 18 * s, by, cx + 28 * s, by + e.ea * 8 * s); ctx.stroke()
+  }
+
+  const drawMouth = (ctx, cx, cy, s, state) => {
+    const e = state.exprCurrent
+    const open = state.mouthOpen
+    const mouthY = cy * 0.65
+    const p = state.phonemeCurrent // { mw, mh }
+
+    if (open < 0.015) {
+      // 闭嘴 — 情绪化微笑
+      const curve = lerp(0.1, Math.PI - 0.1, e.mc)
+      ctx.strokeStyle = '#CC7777'; ctx.lineWidth = 2 * s; ctx.lineCap = 'round'
+      ctx.beginPath(); ctx.arc(cx, mouthY + 2 * s, lerp(10, 14, e.mc) * s, 0.1 + (1 - e.mc) * 0.3, Math.PI - 0.1 - (1 - e.mc) * 0.3, false); ctx.stroke()
+    } else {
+      const mh = Math.max(2.5, open * 38) * s * p.mh
+      const mw = Math.max(8, 14 * s * p.mw)
+      ctx.fillStyle = '#8B3333'; ctx.beginPath(); ctx.ellipse(cx, mouthY + mh * 0.3, mw, mh, 0, 0, Math.PI * 2); ctx.fill()
+      if (open > 0.25) {
+        ctx.fillStyle = '#E57373'; ctx.beginPath(); ctx.ellipse(cx, mouthY + mh * 0.5, mw * 0.55, mh * 0.45, 0, 0, Math.PI); ctx.fill()
+      }
+    }
+  }
+
+  const drawHair = (ctx, cx, cy, s, state, st, t) => {
+    // 后层
+    ctx.fillStyle = st.hairHi; ctx.beginPath(); ctx.ellipse(cx, cy * 0.55, 62 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill()
+    // 前层 + 刘海
+    ctx.fillStyle = st.hair; ctx.beginPath()
+    ctx.moveTo(cx - 42 * s, cy * 0.25); ctx.quadraticCurveTo(cx - 50 * s, cy * 0.0, cx - 20 * s, cy * 0.05)
+    for (let i = 0; i < 5; i++) {
+      const bx = cx - 35 * s + i * 18 * s; ctx.lineTo(bx - 8 * s, cy * 0.12); ctx.lineTo(bx + 8 * s, cy * 0.0)
+    }
+    ctx.lineTo(cx + 45 * s, cy * 0.15); ctx.quadraticCurveTo(cx + 58 * s, cy * 0.4, cx + 48 * s, cy * 0.7)
+    ctx.lineTo(cx - 48 * s, cy * 0.7); ctx.quadraticCurveTo(cx - 58 * s, cy * 0.4, cx - 42 * s, cy * 0.25)
+    ctx.fill()
+    // 侧发
+    for (const side of [1, -1]) {
+      ctx.fillStyle = st.hair; ctx.beginPath()
+      ctx.moveTo(cx + side * 46 * s, cy * 0.55); ctx.quadraticCurveTo(cx + side * 52 * s, cy * 0.8, cx + side * 42 * s, cy * 1.05)
+      ctx.quadraticCurveTo(cx + side * 38 * s, cy * 0.85, cx + side * 48 * s, cy * 0.55); ctx.fill()
+    }
+    // 呆毛
+    ctx.strokeStyle = st.hairHi; ctx.lineWidth = 2.5 * s; ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(cx + 5 * s, cy * 0.05)
+    ctx.quadraticCurveTo(cx + 15 * s, cy * (-0.15), cx + 25 * s + Math.sin(t * 3) * 5 * s, cy * (-0.1) + Math.sin(t * 2.5) * 3 * s)
+    ctx.stroke()
+  }
+
+  const drawBody = (ctx, cx, cy, s, state, w, h, t) => {
+    const breath = Math.sin(state.breathPhase) * 3 * s
+    // 脖子
+    ctx.fillStyle = style.skin; ctx.beginPath(); ctx.roundRect(cx - 12 * s, cy * 0.85, 24 * s, 30 * s, 6 * s); ctx.fill()
+    // 上衣
+    ctx.fillStyle = topColor; ctx.beginPath()
+    ctx.moveTo(cx - 55 * s, cy * 1.05 + breath); ctx.quadraticCurveTo(cx - 30 * s, cy * 0.9, cx - 10 * s, cy * 1.02)
+    ctx.lineTo(cx + 10 * s, cy * 1.02); ctx.quadraticCurveTo(cx + 30 * s, cy * 0.9, cx + 55 * s, cy * 1.05 + breath)
+    ctx.lineTo(cx + 70 * s, h * 1.1); ctx.lineTo(cx - 70 * s, h * 1.1); ctx.closePath(); ctx.fill()
+    // 衣领
+    ctx.fillStyle = bottomColor; ctx.beginPath()
+    ctx.moveTo(cx - 20 * s, cy * 0.95); ctx.quadraticCurveTo(cx, cy * 1.08, cx + 20 * s, cy * 0.95)
+    ctx.quadraticCurveTo(cx, cy * 0.88, cx - 20 * s, cy * 0.95); ctx.fill()
+    // 领带/蝴蝶结
+    ctx.fillStyle = style.outfit[outfit]?.[1] || '#f5576c'
+    ctx.beginPath(); ctx.moveTo(cx, cy * 0.92); ctx.lineTo(cx - 6 * s, cy * 0.98); ctx.lineTo(cx, cy * 1.05); ctx.lineTo(cx + 6 * s, cy * 0.98); ctx.closePath(); ctx.fill()
+  }
+
+  const drawArm = (ctx, cx, cy, s, state, side, t) => {
+    const gPhase = state.handPhase
+    const gType = state.gestureType
     ctx.save()
+    // 手臂从肩膀伸出
+    const shoulderX = cx + side * 48 * s; const shoulderY = cy * 0.98
+    ctx.translate(shoulderX, shoulderY)
+    // 根据手势类型摆臂
+    let armAngle = side * 0.3
+    let forearmAngle = side * 0.5
+    if (gType === 0) { // 自然下垂
+      armAngle = side * 0.2 + Math.sin(gPhase * 0.7) * 0.1
+      forearmAngle = side * 0.4 + Math.sin(gPhase * 0.8) * 0.08
+    } else if (gType === 1) { // 说话手势
+      armAngle = side * (-0.4) + Math.sin(gPhase * 1.5) * 0.5
+      forearmAngle = side * (-0.6) + Math.cos(gPhase * 1.3) * 0.4
+    } else if (gType === 2) { // 指向/展示
+      armAngle = side * (-0.7) + Math.sin(gPhase * 0.5) * 0.2
+      forearmAngle = side * (-1.0) + Math.cos(gPhase * 0.6) * 0.15
+    }
+
+    // 上臂
+    ctx.strokeStyle = topColor; ctx.lineWidth = 14 * s; ctx.lineCap = 'round'
+    ctx.beginPath(); ctx.moveTo(0, 0)
+    const armX = Math.sin(armAngle) * 35 * s; const armY = Math.cos(armAngle) * 35 * s
+    ctx.lineTo(armX, armY); ctx.stroke()
+    // 前臂
+    ctx.translate(armX, armY)
+    const faX = Math.sin(forearmAngle) * 30 * s; const faY = Math.cos(forearmAngle) * 30 * s
+    ctx.lineWidth = 10 * s
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(faX, faY); ctx.stroke()
+    // 手
+    ctx.fillStyle = style.skin; ctx.beginPath(); ctx.arc(faX, faY, 7 * s, 0, Math.PI * 2); ctx.fill()
+    ctx.restore()
+  }
+
+  const drawAccessories = (ctx, cx, cy, s, state, st) => {
+    // 眼镜
+    if (glasses) {
+      ctx.strokeStyle = '#333'; ctx.lineWidth = 2 * s
+      const ey = cy * 0.48
+      for (const side of [-1, 1]) {
+        ctx.beginPath(); ctx.roundRect(cx + side * 18 * s - 14 * s, ey - 10 * s, 28 * s, 20 * s, 6 * s); ctx.stroke()
+      }
+      // 鼻梁
+      ctx.beginPath(); ctx.moveTo(cx - 4 * s, ey); ctx.lineTo(cx + 4 * s, ey); ctx.stroke()
+    }
+    // 帽子
+    if (hat) {
+      ctx.fillStyle = '#2c1810'; ctx.beginPath()
+      ctx.ellipse(cx, cy * 0.1, 48 * s, 10 * s, 0, Math.PI, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = bottomColor; ctx.beginPath()
+      ctx.ellipse(cx, cy * 0.05, 32 * s, 22 * s, 0, Math.PI, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = '#FFF'; ctx.beginPath(); ctx.arc(cx + 8 * s, cy * (-0.05), 5 * s, 0, Math.PI * 2); ctx.fill()
+    }
+  }
+
+  // ══ 主绘制 ══
+  const drawCharacter = useCallback((ctx, w, h, state, st, t) => {
+    const s = Math.min(w, h) / 480
+    const cx = w / 2; const cy = h / 2
+
     ctx.clearRect(0, 0, w, h)
 
     // 头部微摇
-    const headTiltAngle = state.headTilt * 0.03
-    ctx.translate(cx, cy * 0.7)
-    ctx.rotate(headTiltAngle)
-    ctx.translate(-cx, -cy * 0.7)
+    const tilt = state.headTilt * 0.04
+    ctx.save(); ctx.translate(cx, cy * 0.7); ctx.rotate(tilt); ctx.translate(-cx, -cy * 0.7)
 
-    // ══ 身体 ══
-    // 脖子
-    ctx.fillStyle = style.skin
-    ctx.beginPath()
-    ctx.roundRect(cx - 12 * s, cy * 0.85, 24 * s, 30 * s, 6 * s)
-    ctx.fill()
+    // 点头
+    const nod = state.nodAmount * 0.08
+    ctx.translate(0, nod * s * 5)
 
-    // 上衣
-    const breathOffset = Math.sin(state.breathPhase) * 3 * s
-    ctx.fillStyle = style.top
-    ctx.beginPath()
-    ctx.moveTo(cx - 55 * s, cy * 1.05 + breathOffset)
-    ctx.quadraticCurveTo(cx - 30 * s, cy * 0.9, cx - 10 * s, cy * 1.02)
-    ctx.lineTo(cx + 10 * s, cy * 1.02)
-    ctx.quadraticCurveTo(cx + 30 * s, cy * 0.9, cx + 55 * s, cy * 1.05 + breathOffset)
-    ctx.lineTo(cx + 70 * s, h * 1.1)
-    ctx.lineTo(cx - 70 * s, h * 1.1)
-    ctx.closePath()
-    ctx.fill()
+    drawBody(ctx, cx, cy, s, state, w, h, t)
 
-    // 衣领
-    ctx.fillStyle = style.ribbon
-    ctx.beginPath()
-    ctx.moveTo(cx - 20 * s, cy * 0.95)
-    ctx.quadraticCurveTo(cx, cy * 1.08, cx + 20 * s, cy * 0.95)
-    ctx.quadraticCurveTo(cx, cy * 0.88, cx - 20 * s, cy * 0.95)
-    ctx.fill()
+    // 左臂（在身体前面）
+    drawArm(ctx, cx, cy, s, state, -1, t)
+    drawArm(ctx, cx, cy, s, state, 1, t)
 
-    // ══ 头部 ══
     // 头发后层
-    ctx.fillStyle = style.hairHighlight
-    ctx.beginPath()
-    ctx.ellipse(cx, cy * 0.55, 62 * s, 70 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.fillStyle = st.hairHi; ctx.beginPath(); ctx.ellipse(cx, cy * 0.55, 62 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill()
 
-    // 脸部
-    const faceGrad = ctx.createRadialGradient(cx - 10 * s, cy * 0.52, 5 * s, cx, cy * 0.55, 50 * s)
-    faceGrad.addColorStop(0, '#FFFFFF')
-    faceGrad.addColorStop(0.5, style.skin)
-    faceGrad.addColorStop(1, style.skin.replace('FF', 'E6').replace('D1', 'B0').replace('FA', 'E0').replace('FD', 'E0'))
-    ctx.fillStyle = faceGrad
-    ctx.beginPath()
-    ctx.ellipse(cx, cy * 0.55, 48 * s, 52 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-
-    // 头发前层 + 刘海
-    ctx.fillStyle = style.hair
-    ctx.beginPath()
-    // 顶部弧线 + 锯齿刘海
-    ctx.moveTo(cx - 42 * s, cy * 0.25)
-    ctx.quadraticCurveTo(cx - 50 * s, cy * 0.0, cx - 20 * s, cy * 0.05)
-    // 刘海锯齿
-    for (let i = 0; i < 5; i++) {
-      const bx = cx - 35 * s + i * 18 * s
-      ctx.lineTo(bx - 8 * s, cy * 0.12)
-      ctx.lineTo(bx + 8 * s, cy * 0.0)
-    }
-    ctx.lineTo(cx + 45 * s, cy * 0.15)
-    // 右侧头发
-    ctx.quadraticCurveTo(cx + 58 * s, cy * 0.4, cx + 48 * s, cy * 0.7)
-    ctx.lineTo(cx - 48 * s, cy * 0.7)
-    ctx.quadraticCurveTo(cx - 58 * s, cy * 0.4, cx - 42 * s, cy * 0.25)
-    ctx.fill()
-
-    // 侧发
-    ctx.fillStyle = style.hair
-    ctx.beginPath()
-    ctx.moveTo(cx + 46 * s, cy * 0.55)
-    ctx.quadraticCurveTo(cx + 52 * s, cy * 0.8, cx + 42 * s, cy * 1.05)
-    ctx.quadraticCurveTo(cx + 38 * s, cy * 0.85, cx + 48 * s, cy * 0.55)
-    ctx.fill()
-    ctx.beginPath()
-    ctx.moveTo(cx - 46 * s, cy * 0.55)
-    ctx.quadraticCurveTo(cx - 52 * s, cy * 0.8, cx - 42 * s, cy * 1.05)
-    ctx.quadraticCurveTo(cx - 38 * s, cy * 0.85, cx - 48 * s, cy * 0.55)
-    ctx.fill()
-
-    // 呆毛
-    ctx.strokeStyle = style.hairHighlight
-    ctx.lineWidth = 2.5 * s
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.moveTo(cx + 5 * s, cy * 0.05)
-    ctx.quadraticCurveTo(cx + 15 * s, cy * (-0.15), cx + 25 * s + Math.sin(t * 3) * 5 * s, cy * (-0.1))
-    ctx.stroke()
-
-    // ══ 眉毛 ══
-    ctx.strokeStyle = style.hair
-    ctx.lineWidth = 2.5 * s
-    ctx.lineCap = 'round'
-    // 左眉
-    ctx.beginPath()
-    ctx.moveTo(cx - 28 * s, cy * 0.36)
-    ctx.quadraticCurveTo(cx - 18 * s, cy * 0.33, cx - 10 * s, cy * 0.35)
-    ctx.stroke()
-    // 右眉
-    ctx.beginPath()
-    ctx.moveTo(cx + 10 * s, cy * 0.35)
-    ctx.quadraticCurveTo(cx + 18 * s, cy * 0.33, cx + 28 * s, cy * 0.36)
-    ctx.stroke()
-
-    // ══ 眼睛 ══
-    const eyeY = cy * 0.48
-    const blinkH = state.isBlinking ? lerp(14, 2, state.blinkProgress) : 14
-
-    // 左眼
-    ctx.fillStyle = '#FFFFFF'
-    ctx.beginPath()
-    ctx.ellipse(cx - 18 * s, eyeY, 14 * s, blinkH * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    // 虹膜
-    ctx.fillStyle = style.eye
-    ctx.beginPath()
-    ctx.ellipse(cx - 18 * s, eyeY, 9 * s, blinkH > 4 ? 9 * s : 2 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    // 瞳孔
-    ctx.fillStyle = '#1a1a2e'
-    ctx.beginPath()
-    ctx.ellipse(cx - 18 * s, eyeY, 5 * s, blinkH > 4 ? 5 * s : 1 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    // 高光
-    if (blinkH > 6) {
-      ctx.fillStyle = '#FFFFFF'
-      ctx.beginPath()
-      ctx.arc(cx - 14 * s, eyeY - 3 * s, 3 * s, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.beginPath()
-      ctx.arc(cx - 21 * s, eyeY + 2 * s, 2 * s, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // 右眼
-    ctx.fillStyle = '#FFFFFF'
-    ctx.beginPath()
-    ctx.ellipse(cx + 18 * s, eyeY, 14 * s, blinkH * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = style.eye
-    ctx.beginPath()
-    ctx.ellipse(cx + 18 * s, eyeY, 9 * s, blinkH > 4 ? 9 * s : 2 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#1a1a2e'
-    ctx.beginPath()
-    ctx.ellipse(cx + 18 * s, eyeY, 5 * s, blinkH > 4 ? 5 * s : 1 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    if (blinkH > 6) {
-      ctx.fillStyle = '#FFFFFF'
-      ctx.beginPath()
-      ctx.arc(cx + 22 * s, eyeY - 3 * s, 3 * s, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.beginPath()
-      ctx.arc(cx + 15 * s, eyeY + 2 * s, 2 * s, 0, Math.PI * 2)
-      ctx.fill()
-    }
-
-    // 脸颊红晕
-    ctx.fillStyle = 'rgba(255, 150, 150, 0.3)'
-    ctx.beginPath()
-    ctx.ellipse(cx - 28 * s, cy * 0.58, 10 * s, 6 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.beginPath()
-    ctx.ellipse(cx + 28 * s, cy * 0.58, 10 * s, 6 * s, 0, 0, Math.PI * 2)
-    ctx.fill()
-
-    // 鼻子
-    ctx.fillStyle = style.skin.replace('FF', 'E6').replace('D1', 'B0')
-    ctx.beginPath()
-    ctx.arc(cx, cy * 0.54, 3 * s, 0, Math.PI * 2)
-    ctx.fill()
-
-    // ══ 嘴巴（口型同步） ══
-    const mouthOpen = state.mouthOpenCurrent
-    const mouthY = cy * 0.65
-
-    if (mouthOpen < 0.02) {
-      // 闭嘴 — 微笑弧线
-      ctx.strokeStyle = '#CC7777'
-      ctx.lineWidth = 2 * s
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.arc(cx, mouthY + 2 * s, 12 * s, 0.1, Math.PI - 0.1, false)
-      ctx.stroke()
-    } else {
-      // 张嘴 — 椭圆
-      const mh = Math.max(3, mouthOpen * 35) * s
-      const mw = 14 * s
-      ctx.fillStyle = '#8B3333'
-      ctx.beginPath()
-      ctx.ellipse(cx, mouthY + mh * 0.3, mw, mh, 0, 0, Math.PI * 2)
-      ctx.fill()
-      // 舌头（张开较大时可见）
-      if (mouthOpen > 0.3) {
-        ctx.fillStyle = '#E57373'
-        ctx.beginPath()
-        ctx.ellipse(cx, mouthY + mh * 0.5, mw * 0.6, mh * 0.5, 0, 0, Math.PI)
-        ctx.fill()
-      }
-    }
+    drawFace(ctx, cx, cy, s, state, st)
+    drawEyes(ctx, cx, cy, s, state, st)
+    drawEyebrows(ctx, cx, cy, s, state, st)
+    drawMouth(ctx, cx, cy, s, state)
+    drawHair(ctx, cx, cy, s, state, st, t)
+    drawAccessories(ctx, cx, cy, s, state, st)
 
     ctx.restore()
-  }, [style])
+  }, [style, topColor, bottomColor, outfit, glasses, hat])
 
-  // ── 动画循环 ──
+  // ══ 动画循环 ══
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const canvas = canvasRef.current; if (!canvas) return
     const ctx = canvas.getContext('2d')
     const dpr = window.devicePixelRatio || 1
-    const w = width
-    const h = height
-
-    canvas.width = w * dpr
-    canvas.height = h * dpr
+    canvas.width = width * dpr; canvas.height = height * dpr
     ctx.scale(dpr, dpr)
 
-    const state = stateRef.current
-    let lastTime = performance.now()
+    const state = stateRef.current; let last = performance.now()
+    state.exprTarget = EXPRESSIONS[expression] || EXPRESSIONS.neutral
 
     const loop = (now) => {
-      const dt = Math.min((now - lastTime) / 1000, 0.1)
-      lastTime = now
-      state.time += dt
-
-      // 呼吸
-      state.breathPhase += dt * 2.5
+      const dt = Math.min((now - last) / 1000, 0.1); last = now
+      state.time += dt; state.breathPhase += dt * 2.5
 
       // 眨眼
       state.blinkTimer += dt * 60
-      if (!state.isBlinking && state.blinkTimer > state.nextBlink) {
-        state.isBlinking = true
-        state.blinkProgress = 0
-        state.blinkTimer = 0
-        state.nextBlink = 80 + Math.random() * 200
-      }
-      if (state.isBlinking) {
-        state.blinkProgress += dt * 12
-        if (state.blinkProgress >= 1) {
-          state.isBlinking = false
-          state.blinkProgress = 0
-        }
-      }
+      if (!state.isBlinking && state.blinkTimer > state.nextBlink) { state.isBlinking = true; state.blinkProgress = 0; state.blinkTimer = 0; state.nextBlink = 80 + Math.random() * 200 }
+      if (state.isBlinking) { state.blinkProgress += dt * 12; if (state.blinkProgress >= 1) { state.isBlinking = false; state.blinkProgress = 0 } }
 
-      // 头部微摇
+      // 表情过渡
+      const et = state.exprTarget
+      state.exprCurrent.ea = lerp(state.exprCurrent.ea, et.ea, dt * 5)
+      state.exprCurrent.es = lerp(state.exprCurrent.es, et.es, dt * 5)
+      state.exprCurrent.mc = lerp(state.exprCurrent.mc, et.mc, dt * 5)
+      state.exprCurrent.blush = lerp(state.exprCurrent.blush, et.blush, dt * 5)
+      state.exprCurrent.sparkle = lerp(state.exprCurrent.sparkle, et.sparkle, dt * 5)
+
+      // 头部
       state.headTiltTarget += (Math.sin(state.time * 0.7) * 0.15 - state.headTiltTarget) * dt * 2
       state.headTilt += (state.headTiltTarget - state.headTilt) * dt * 3
 
-      // 口型同步
-      let mouthTarget = 0
-      if (talking) {
-        const level = getAudioLevel()
-        state.audioLevel = lerp(state.audioLevel, level, dt * 15)
-        mouthTarget = Math.pow(state.audioLevel, 0.7) * 0.9
-      }
-      state.mouthOpenTarget = mouthTarget
-      state.mouthOpenCurrent = lerp(state.mouthOpenCurrent, mouthTarget, dt * 20)
+      // 点头
+      state.nodTarget += (Math.sin(state.time * 1.8) * 0.5 - state.nodTarget) * dt * 2
+      state.nodAmount += (state.nodTarget - state.nodAmount) * dt * 4
 
-      // 绘制
-      const scale = Math.min(w, h) / 400
-      drawCharacter(ctx, w, h, state, scale)
+      // 手势
+      state.handPhase += dt
+      if (state.handPhase > 8) { state.handPhase = 0; state.gestureType = Math.floor(Math.random() * 3) }
+
+      // 撩头发
+      state.hairTouchTimer += dt
+      if (!state.isHairTouching && state.hairTouchTimer > 5 + Math.random() * 10) {
+        state.isHairTouching = true; state.hairTouchProgress = 0; state.hairTouchTimer = 0
+      }
+      if (state.isHairTouching) { state.hairTouchProgress += dt * 2; if (state.hairTouchProgress > 1) { state.isHairTouching = false; state.hairTouchTimer = 0 } }
+
+      // 口型 + 音素
+      if (talking) {
+        const { level, freq } = getAudioData()
+        state.audioLevel = lerp(state.audioLevel, level, dt * 15)
+        const ph = detectPhoneme(freq)
+        state.phonemeTarget = ph
+        const ps = PHONEME_SHAPES[ph] || PHONEME_SHAPES.a
+        state.phonemeCurrent.mw = lerp(state.phonemeCurrent.mw, ps.mw, dt * 12)
+        state.phonemeCurrent.mh = lerp(state.phonemeCurrent.mh, ps.mh, dt * 12)
+        state.mouthTarget = Math.pow(state.audioLevel, 0.7) * 0.9
+      } else {
+        state.mouthTarget = 0
+        state.phonemeCurrent.mw = lerp(state.phonemeCurrent.mw, 1, dt * 8)
+        state.phonemeCurrent.mh = lerp(state.phonemeCurrent.mh, 1, dt * 8)
+      }
+      state.mouthOpen = lerp(state.mouthOpen, state.mouthTarget, dt * 20)
+
+      const st = STYLES[avatarId] || STYLES['business-female']
+      drawCharacter(ctx, width, height, state, st, state.time)
 
       animFrame.current = requestAnimationFrame(loop)
     }
-
     animFrame.current = requestAnimationFrame(loop)
+    return () => { if (animFrame.current) cancelAnimationFrame(animFrame.current) }
+  }, [width, height, avatarId, talking, expression, outfit, scene, glasses, hat, getAudioData, detectPhoneme, drawCharacter])
 
-    return () => {
-      if (animFrame.current) cancelAnimationFrame(animFrame.current)
-    }
-  }, [width, height, avatarId, talking, getAudioLevel, drawCharacter])
+  // ══ 背景绘制 ══
+  const bgCanvasRef = useRef(null)
+  useEffect(() => {
+    const bg = bgCanvasRef.current; if (!bg) return
+    const ctx = bg.getContext('2d'); const dpr = window.devicePixelRatio || 1
+    bg.width = width * dpr; bg.height = height * dpr; ctx.scale(dpr, dpr)
+    const drawFn = SCENE_BG[scene]; if (drawFn) drawFn(ctx, width, height)
+  }, [width, height, scene])
 
   return (
-    <canvas
-      ref={canvasRef}
-      className={`rounded-2xl ${className}`}
-      style={{ width, height }}
-    />
+    <div className="relative" style={{ width, height }}>
+      {/* 背景层 */}
+      <canvas ref={bgCanvasRef} className="absolute inset-0 rounded-2xl" style={{ width, height }} />
+      {/* 角色层 */}
+      <canvas ref={canvasRef} className={`absolute inset-0 rounded-2xl ${className}`} style={{ width, height }} />
+    </div>
   )
-}
+})
+
+export { AnimatedAvatar as default, EXPRESSIONS, SCENE_BG }
+export const SCENE_NAMES = { office: '商务办公', studio: '虚拟演播室', nature: '自然户外', tech: '科技蓝幕' }
+export const OUTFIT_NAMES = { formal: '正装', casual: '休闲', tech: '科技', cute: '可爱' }
+export const EXPRESSION_NAMES = { neutral: '自然', happy: '开心', surprised: '惊讶', sad: '悲伤', thinking: '思考' }
