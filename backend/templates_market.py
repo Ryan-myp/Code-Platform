@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
-"""模板市场 — 聚合各工厂内置模板，一站式浏览并跳转使用。
+"""模板市场 — 内置模板聚合 + C2C 用户模板交易。
 
 聚合来源：
 - game_factory.TEMPLATES  小游戏玩法模板（9 种）
 - miniapp.TEMPLATES       小程序结构模板
 - meme_factory.STYLES     表情包样式模板
 - voice_factory.SCENES    配音场景预设
+
+C2C 用户模板市场：
+- 用户上传模板（命名/描述/分类/定价积分）
+- 积分购买下载（平台分成可配，默认 30%）
+- 我的上传 / 我的购买
 """
 
 import json
 import logging
+import os
+import uuid
+from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from common.auth import require_auth
+from common.config import load_config
 from common.db import get_db
 
 logger = logging.getLogger(__name__)
+load_config()
 
 router = APIRouter(prefix="/api/templates", tags=["模板市场"])
 
@@ -155,3 +166,195 @@ async def template_market(q: str = "", current_user: dict = require_auth()):
         "total": len(all_items),
         "groups": grouped,
     }
+
+
+# ══════════════════════════════════════════════════════════════
+# C2C 用户模板市场（上传 / 定价 / 积分购买 / 分成）
+# ══════════════════════════════════════════════════════════════
+
+PLATFORM_SHARE = float(os.environ.get("TEMPLATE_PLATFORM_SHARE", "0.3"))  # 平台分成比例
+
+
+def _ensure_user_templates(conn) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS user_templates (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            category TEXT DEFAULT 'other',
+            price INTEGER DEFAULT 0,
+            content_json TEXT DEFAULT '{}',
+            sales INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS template_purchases (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            template_id TEXT NOT NULL,
+            price INTEGER DEFAULT 0,
+            seller_id TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.commit()
+
+
+class TemplateUploadRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str = Field("", max_length=500)
+    category: str = Field("other", description="game/miniapp/meme/voice/other")
+    price: int = Field(0, ge=0, le=10000, description="定价（积分）")
+    content_json: str = Field("{}", description="模板内容 JSON")
+
+
+@router.post("/upload")
+async def upload_template(req: TemplateUploadRequest, current_user: dict = require_auth()):
+    """用户上传付费模板到 C2C 市场。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_user_templates(conn)
+    tid = f"utpl_{uuid.uuid4().hex[:10]}"
+    conn.execute(
+        """INSERT INTO user_templates (id, user_id, name, description, category,
+           price, content_json, sales, active, created_at)
+           VALUES (?,?,?,?,?,?,?,0,1,?)""",
+        (tid, user, req.name, req.description, req.category,
+         req.price, req.content_json, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": tid, "name": req.name, "price": req.price, "message": "模板已上架"}
+
+
+@router.get("/user")
+async def my_templates(current_user: dict = require_auth()):
+    """我的上传模板列表。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_user_templates(conn)
+    rows = conn.execute(
+        "SELECT * FROM user_templates WHERE user_id=? AND active=1 ORDER BY created_at DESC",
+        (user,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.get("/c2c")
+async def c2c_market(category: str = "", q: str = "", current_user: dict = require_auth()):
+    """C2C 模板市场列表（所有用户上传的付费/免费模板）。"""
+    conn = get_db()
+    _ensure_user_templates(conn)
+    where, params = ["active=1"], []
+    if category:
+        where.append("category=?")
+        params.append(category)
+    if q:
+        where.append("(name LIKE ? OR description LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
+    sql = f"SELECT * FROM user_templates WHERE {' AND '.join(where)} ORDER BY sales DESC, created_at DESC LIMIT 100"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/{template_id}/buy")
+async def buy_template(template_id: str, current_user: dict = require_auth()):
+    """积分购买模板（从用户配额/积分余额扣减）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_user_templates(conn)
+
+    tpl = conn.execute(
+        "SELECT * FROM user_templates WHERE id=? AND active=1", (template_id,)
+    ).fetchone()
+    if not tpl:
+        conn.close()
+        raise HTTPException(404, "模板不存在或已下架")
+    tpl = dict(tpl)
+    if tpl["user_id"] == user:
+        conn.close()
+        raise HTTPException(400, "不能购买自己上传的模板")
+
+    # 检查是否已购买
+    existing = conn.execute(
+        "SELECT id FROM template_purchases WHERE user_id=? AND template_id=?",
+        (user, template_id),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return {"owned": True, "template": tpl, "message": "你已购买过此模板，无需重复购买"}
+
+    price = tpl["price"]
+    if price > 0:
+        # 扣减积分：从 user_quotas 表扣减 credits
+        quota = conn.execute(
+            "SELECT credits FROM user_quotas WHERE username=?", (user,)
+        ).fetchone()
+        balance = int(quota["credits"]) if quota else 0
+        if balance < price:
+            conn.close()
+            raise HTTPException(402, f"积分不足（需要 {price}，当前 {balance}），请先充值")
+        conn.execute(
+            "UPDATE user_quotas SET credits=credits-? WHERE username=?",
+            (price, user),
+        )
+        # 平台分成：seller 获得 (1 - PLATFORM_SHARE) * price
+        seller_share = int(price * (1 - PLATFORM_SHARE))
+        if seller_share > 0 and tpl["user_id"]:
+            conn.execute(
+                "UPDATE user_quotas SET credits=credits+? WHERE username=?",
+                (seller_share, tpl["user_id"]),
+            )
+
+    # 记录购买
+    pid = f"tbuy_{uuid.uuid4().hex[:8]}"
+    conn.execute(
+        """INSERT INTO template_purchases (id, user_id, template_id, price, seller_id, created_at)
+           VALUES (?,?,?,?,?,?)""",
+        (pid, user, template_id, price, tpl["user_id"], datetime.now().isoformat()),
+    )
+    # 更新销量
+    conn.execute("UPDATE user_templates SET sales=sales+1 WHERE id=?", (template_id,))
+    conn.commit()
+    conn.close()
+    return {
+        "owned": True,
+        "template": tpl,
+        "price_paid": price,
+        "message": f"购买成功！花费 {price} 积分" if price > 0 else "免费领取成功",
+    }
+
+
+@router.get("/purchases")
+async def my_purchases(current_user: dict = require_auth()):
+    """我的购买记录。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_user_templates(conn)
+    rows = conn.execute(
+        """SELECT p.*, t.name as template_name, t.description as template_desc
+           FROM template_purchases p LEFT JOIN user_templates t ON p.template_id=t.id
+           WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 100""",
+        (user,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.delete("/{template_id}")
+async def delete_template(template_id: str, current_user: dict = require_auth()):
+    """下架自己的模板。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    conn.execute(
+        "UPDATE user_templates SET active=0 WHERE id=? AND user_id=?",
+        (template_id, user),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True}

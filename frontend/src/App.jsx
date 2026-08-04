@@ -6,6 +6,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import CommandPalette from './components/CommandPalette'
 import OnboardingTour from './components/OnboardingTour'
 import FloatingAssistant from './components/FloatingAssistant'
+import MobileBottomNav from './components/MobileBottomNav'
 import AccessGuard from './components/AccessGuard'
 import { ToastProvider } from './lib/toast'
 
@@ -55,6 +56,7 @@ const RecordsPage = lazy(() => import('./pages/RecordsPage'))
 const MembershipPage = lazy(() => import('./pages/MembershipPage'))
 // v9.3 内容发布 + 小程序开发
 const PublishingPage = lazy(() => import('./pages/PublishingPage'))
+const GrowthPage = lazy(() => import('./pages/GrowthPage'))
 const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
 const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
 const VoicePage = lazy(() => import('./pages/VoicePage'))
@@ -157,7 +159,7 @@ export default function App() {
             <div className="flex min-h-screen bg-ink-50">
               <Sidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} user={user} onLogout={handleLogout} />
               <div className="flex-1 flex flex-col md:ml-64 min-w-0">
-                <main className="flex-1 overflow-y-auto p-4 md:p-6 animate-page-in">
+                <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 animate-page-in">
                   <ErrorBoundary>
                   <Routes>
                     <Route path="/home" element={<HomePage />} />
@@ -194,6 +196,7 @@ export default function App() {
                     <Route path="/translation" element={<AccessGuard path="/translation"><TranslationPage /></AccessGuard>} />
                     {/* v9.3 内容发布 + 小程序开发 */}
                     <Route path="/publish" element={<AccessGuard path="/publish"><PublishingPage /></AccessGuard>} />
+                    <Route path="/growth" element={<AccessGuard path="/growth"><GrowthPage /></AccessGuard>} />
                     <Route path="/miniapp" element={<AccessGuard path="/miniapp"><MiniAppPage /></AccessGuard>} />
                     {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
                     <Route path="/games" element={<AccessGuard path="/games"><GameFactoryPage /></AccessGuard>} />
@@ -225,6 +228,8 @@ export default function App() {
                 </main>
                 {/* 全局浮动机器人：登录后所有页面可用 */}
                 <FloatingAssistant />
+                {/* 移动端底部导航 */}
+                <MobileBottomNav />
               </div>
             </div>
           </ProtectedRoute>

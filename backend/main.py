@@ -82,6 +82,7 @@ from common.models import (  # noqa: E402
 )
 import skills_store  # noqa: E402
 from game_factory import router as game_factory_router  # noqa: E402
+from growth_engine import router as growth_engine_router  # noqa: E402
 from gallery import router as gallery_router  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
 from meme_factory import router as meme_factory_router  # noqa: E402
@@ -2237,6 +2238,7 @@ app.include_router(music_factory_router)
 app.include_router(miniapp_router)
 app.include_router(publishing_router)
 app.include_router(game_factory_router)
+app.include_router(growth_engine_router)
 app.include_router(voice_factory_router)
 app.include_router(meme_factory_router)
 app.include_router(drafts_router)

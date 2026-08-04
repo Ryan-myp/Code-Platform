@@ -426,3 +426,8 @@ html.theme-transition,
 html.theme-transition * {
   transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease !important;
 }
+
+/* 移动端底部安全区（iOS Safari notch） */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

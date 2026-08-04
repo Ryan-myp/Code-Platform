@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Send, Copy, Check, Sparkles, Clock, Settings2, Plus, Trash2, TestTube2,
+  Send, Copy, Check, Sparkles, Clock, Settings2, Plus, Trash2, TestTube2, Upload,
   FileText, Image as ImageIcon, Film, Tag, Link2, Download, ExternalLink,
   MessageSquare, Music2, Clapperboard, AlertCircle, CheckCircle2, CircleDashed,
   Calendar, CalendarPlus, BarChart3, Play, TrendingUp, ChevronLeft, ChevronRight,
@@ -111,6 +111,9 @@ export default function PublishingPage() {
   const [accForm, setAccForm] = useState({ platform: 'wechat', name: '', app_id: '', app_secret: '' })
   const [testingId, setTestingId] = useState('')
   const [detail, setDetail] = useState(null)
+  const [batchModal, setBatchModal] = useState(false)
+  const [batchText, setBatchText] = useState('')
+  const [batchLoading, setBatchLoading] = useState(false)
 
   // 素材包 ZIP 一键下载（README 步骤 + 正文 + 全部素材文件）
   const downloadPackage = async () => {
@@ -257,6 +260,20 @@ export default function PublishingPage() {
   const deleteAccount = async (id) => {
     try { await api.delete(`/api/publish/accounts/${id}`); loadAccounts(); toast.success('账号已删除') }
     catch (e) { toast.error(e.message) }
+  }
+
+  const batchImportAccounts = async () => {
+    if (!batchText.trim()) { toast.error('请输入账号信息'); return }
+    setBatchLoading(true)
+    try {
+      const res = await api.post('/api/publish/accounts/batch', {
+        platform: accForm.platform,
+        lines: batchText.trim(),
+      })
+      toast.success(`批量导入完成：成功 ${res.data.count} 个${res.data.skipped?.length ? `，跳过 ${res.data.skipped.length} 个` : ''}`)
+      setBatchModal(false); setBatchText(''); loadAccounts()
+    } catch (e) { toast.error(`批量导入失败：${e.message}`) }
+    finally { setBatchLoading(false) }
   }
 
   // ── 排期操作 ──
@@ -568,6 +585,24 @@ export default function PublishingPage() {
                       <p className="font-medium">{result.message}</p>
                       <p className="mt-1 text-xs opacity-80">发布目标：{result.platform_label} · {result.content_type === 'article' ? '图文' : result.content_type}</p>
                     </div>
+
+                    {/* 多平台适配说明 */}
+                    {result.adapted?.note?.length > 0 && (
+                      <div className="p-3 rounded-xl bg-purple-50 border border-purple-200 text-sm">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Sparkles className="w-4 h-4 text-purple-500" />
+                          <span className="font-medium text-purple-800">智能适配</span>
+                        </div>
+                        <ul className="space-y-1">
+                          {result.adapted.note.map((n, i) => (
+                            <li key={i} className="flex items-start gap-2 text-xs text-purple-700">
+                              <CheckCircle2 className="w-3 h-3 mt-0.5 flex-shrink-0 text-purple-400" />
+                              <span>{n}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     {/* 标题 */}
                     <div>
@@ -940,9 +975,12 @@ export default function PublishingPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* 已配置账号 */}
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-gray-400" /> 已配置账号（{accounts.length}）
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-gray-400" /> 已配置账号（{accounts.length}）
+              </h3>
+              <Button variant="secondary" size="sm" icon={Upload} onClick={() => setBatchModal(true)}>批量导入</Button>
+            </div>
             {accounts.length === 0 ? (
               <Empty icon={Settings2} title="暂无账号配置" description="添加平台账号后即可使用自动发布（未配置时自动使用引导式）" />
             ) : (
@@ -955,7 +993,7 @@ export default function PublishingPage() {
                         {p && <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}><p.icon className="w-4 h-4 text-white" /></div>}
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-800">{a.name || p?.label || a.platform}</div>
-                          <div className="text-xs text-gray-400">AppID：{a.app_id || '未填写'} {a.configured ? '· 已配置' : '· 未配置'}</div>
+                          <div className="text-xs text-gray-400">AppID：{a.app_id || '未填写'} {a.configured ? '· 已配置' : '· 未配置'} · 今日 {a.today_published ?? 0}/{a.daily_limit ?? 10}</div>
                         </div>
                         <Button variant="secondary" size="sm" icon={TestTube2} loading={testingId === a.id} onClick={() => testAccount(a.id)}>测试连接</Button>
                         <button onClick={() => deleteAccount(a.id)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
@@ -1124,6 +1162,21 @@ export default function PublishingPage() {
           <Button variant="primary" size="lg" icon={CalendarPlus} onClick={createSchedule} className="w-full">
             创建排期
           </Button>
+        </div>
+      </Modal>
+
+      {/* 批量导入账号 Modal */}
+      <Modal open={batchModal} onClose={() => setBatchModal(false)} title="批量导入账号" size="md">
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500">每行一个账号，格式：<code className="px-1.5 py-0.5 rounded bg-gray-100 text-blue-600">名称|AppID|AppSecret</code>（用竖线 <code className="px-1 py-0.5 rounded bg-gray-100">|</code> 分隔）</p>
+          <textarea value={batchText} onChange={(e) => setBatchText(e.target.value)}
+            rows={8}
+            placeholder={"主号|wx1234567890|abc123def456\n备用号|wx0987654321|xyz789uvw012"}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setBatchModal(false)}>取消</Button>
+            <Button variant="primary" icon={Upload} loading={batchLoading} onClick={batchImportAccounts}>导入</Button>
+          </div>
         </div>
       </Modal>
 

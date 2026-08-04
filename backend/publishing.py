@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from common.auth import require_auth
 from common.config import load_config
 from common.db import get_db
-from common.llm import log_usage
+from common.llm import call_llm_async, log_usage
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,25 @@ _INTERNAL_BASE = os.environ.get("PUBLISH_INTERNAL_BASE", "http://127.0.0.1:8888"
 
 PLATFORM_LABELS = {"wechat": "微信公众号", "douyin": "抖音", "kuaishou": "快手"}
 CONTENT_LABELS = {"article": "图文", "image": "图片", "video": "视频"}
+
+# 多平台自动适配规格（封面比例 + 文案调性）
+PLATFORM_SPECS = {
+    "wechat": {
+        "cover": (900, 383),
+        "cover_note": "900×383（2.35:1 横版）",
+        "tone": "公众号深度图文风格：专业、结构化，首段点题，小标题分段，结尾引导互动；避免夸张标题党",
+    },
+    "douyin": {
+        "cover": (1080, 1920),
+        "cover_note": "1080×1920（9:16 竖版）",
+        "tone": "抖音短视频风格：第一句即钩子，短句高频、情绪化、口语化，带话题标签，引导点赞评论；控制在 100 字内",
+    },
+    "kuaishou": {
+        "cover": (1080, 1440),
+        "cover_note": "1080×1440（3:4 竖版）",
+        "tone": "快手老铁风格：真实接地气、亲切口吻，直白不端着，带话题标签；控制在 120 字内",
+    },
+}
 
 # ── 引导式发布步骤（分平台分类型） ──────────────────────────
 GUIDE_STEPS = {
@@ -148,11 +167,18 @@ def _mask_account(a: dict) -> dict:
 @router.get("/accounts")
 async def list_accounts(current_user: dict = require_auth()):
     conn = get_db()
+    _ensure_account_columns(conn)
     rows = conn.execute(
         "SELECT * FROM publish_accounts WHERE active=1 ORDER BY platform, created_at"
     ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["today_published"] = _count_today_published(conn, d["id"])
+        d["daily_limit"] = int(d.get("daily_limit") or 10)
+        result.append(_mask_account(d))
     conn.close()
-    return [_mask_account(dict(r)) for r in rows]
+    return result
 
 
 @router.post("/accounts")
@@ -287,6 +313,192 @@ async def _fetch_asset_bytes(url: str) -> bytes:
 def _asset_filename(url: str) -> str:
     name = url.rsplit("/", 1)[-1].split("?", 1)[0]
     return name or "asset.bin"
+
+
+# ══════════════════════════════════════════════════════════════
+# 账号矩阵：配额控制 / 批量导入 / 失败换号
+# ══════════════════════════════════════════════════════════════
+
+def _ensure_account_columns(conn) -> None:
+    """幂等补列：publish_accounts.daily_limit（每账号每日发布上限）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(publish_accounts)").fetchall()]
+    if "daily_limit" not in cols:
+        conn.execute("ALTER TABLE publish_accounts ADD COLUMN daily_limit INTEGER DEFAULT 10")
+        conn.commit()
+
+
+def _count_today_published(conn, acc_id: str) -> int:
+    """统计账号当日已成功发布数（防限流配额）。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM publish_records "
+        "WHERE account_id=? AND status='success' AND substr(created_at,1,10)=?",
+        (acc_id, today),
+    ).fetchone()
+    return int(row["c"] or 0)
+
+
+def _pick_account(conn, platform: str, account_id: str = "") -> dict | None:
+    """配额感知选号：优先指定账号；超当日限额自动轮换同平台下一个有配额账号。"""
+    _ensure_account_columns(conn)
+    rows = conn.execute(
+        "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at",
+        (platform,),
+    ).fetchall()
+    if not rows:
+        return None
+    if account_id:
+        row = next((r for r in rows if r["id"] == account_id), None)
+        if row and _count_today_published(conn, row["id"]) < int(row.get("daily_limit") or 10):
+            return dict(row)
+    for r in rows:
+        if _count_today_published(conn, r["id"]) < int(r.get("daily_limit") or 10):
+            return dict(r)
+    return None
+
+
+class BatchAccountRequest(BaseModel):
+    platform: str = Field(..., description="wechat/douyin/kuaishou")
+    lines: str = Field(..., description="每行一个账号：名称|AppID|AppSecret")
+
+
+@router.post("/accounts/batch")
+async def batch_import_accounts(req: BatchAccountRequest, current_user: dict = require_auth()):
+    """账号矩阵：一次粘贴多行批量导入账号（矩阵号运营）。"""
+    if req.platform not in PLATFORM_LABELS:
+        raise HTTPException(400, f"未知平台: {req.platform}")
+    conn = get_db()
+    _ensure_account_columns(conn)
+    now = datetime.now().isoformat()
+    imported, skipped = [], []
+    for i, line in enumerate(req.lines.strip().splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            skipped.append(f"第 {i} 行格式错误（应为：名称|AppID|AppSecret）")
+            continue
+        name, app_id, app_secret = parts[0], parts[1], parts[2]
+        if not app_id or not app_secret:
+            skipped.append(f"第 {i} 行缺少 AppID/AppSecret")
+            continue
+        acc_id = f"pubacc_{uuid.uuid4().hex[:12]}"
+        conn.execute(
+            """INSERT INTO publish_accounts (id, platform, name, app_id, app_secret,
+               configured, created_at, updated_at, active) VALUES (?,?,?,?,?,?,?,?,1)""",
+            (acc_id, req.platform, name, app_id, app_secret, 1, now, now),
+        )
+        imported.append({"id": acc_id, "name": name, "app_id": app_id})
+    conn.commit()
+    conn.close()
+    return {"count": len(imported), "imported": imported, "skipped": skipped}
+
+
+# ══════════════════════════════════════════════════════════════
+# 多平台自动适配：封面裁切 + 正文改写 + 话题标签
+# ══════════════════════════════════════════════════════════════
+
+_ADAPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "adapted")
+_ADAPT_SYSTEM = """你是一位资深新媒体运营主编，负责把同一篇内容适配到不同平台发布，提升阅读与互动。
+严格只输出一个 JSON 对象（不要解释文字、不要 markdown 代码块）：
+{"title": "改写后的标题", "content": "改写后的正文", "topics": ["话题1", "话题2", "话题3"]}
+要求：保留原意与关键信息，不编造事实；标题 10-25 字，有吸引力但不标题党；话题 3-5 个。"""
+
+
+def _extract_json_loose(text: str) -> dict:
+    """从 LLM 输出中提取 JSON 对象（容忍噪音）。"""
+    import re as _re
+
+    text = (text or "").strip()
+    m = _re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if m:
+        text = m.group(1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("输出中未找到 JSON 对象")
+    return json.loads(text[start:end + 1])
+
+
+def _crop_cover(data: bytes, target: tuple[int, int], out_path: str) -> bool:
+    """中心裁切 + 缩放封面到目标尺寸（Pillow），成功返回 True。"""
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        tw, th = target
+        w, h = img.size
+        target_ratio = tw / th
+        ratio = w / h
+        if ratio > target_ratio:
+            nw = int(h * target_ratio)
+            x = (w - nw) // 2
+            img = img.crop((x, 0, x + nw, h))
+        else:
+            nh = int(w / target_ratio)
+            y = (h - nh) // 2
+            img = img.crop((0, y, w, y + nh))
+        img = img.resize((tw, th), Image.LANCZOS)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        img.save(out_path, "PNG")
+        return True
+    except Exception as e:
+        logger.warning("cover crop failed: %s", e)
+        return False
+
+
+async def _adapt_content(req: PublishRequest) -> dict:
+    """多平台自动适配：封面按平台规格裁切 + 正文按平台调性 LLM 改写 + 话题标签生成。
+
+    LLM 改写失败不影响发布（回退原文），返回 adapted 记录供展示与追溯。
+    """
+    spec = PLATFORM_SPECS.get(req.platform, {})
+    adapted = {
+        "platform": req.platform,
+        "title": req.title,
+        "content": req.content,
+        "topics": list(req.topics),
+        "cover_url": req.asset_urls[0] if req.asset_urls else "",
+        "note": [],
+    }
+    # 1. 封面按平台规格裁切（仅首张图片素材）
+    if req.asset_urls and spec.get("cover"):
+        try:
+            data = await _fetch_asset_bytes(req.asset_urls[0])
+            fname = f"{uuid.uuid4().hex[:10]}_{req.platform}.png"
+            out_path = os.path.join(_ADAPT_DIR, fname)
+            if _crop_cover(data, spec["cover"], out_path):
+                adapted["cover_url"] = f"/uploads/adapted/{fname}"
+                adapted["note"].append(f"封面已适配为 {spec['cover_note']}")
+            else:
+                adapted["note"].append("封面裁切失败，使用原图")
+        except Exception as e:
+            logger.warning("cover fetch failed: %s", e)
+            adapted["note"].append("封面下载失败，使用原图")
+    # 2. 正文按平台调性改写 + 话题标签生成
+    if spec.get("tone") and (req.content or req.title):
+        try:
+            prompt = (
+                f"目标平台：{PLATFORM_LABELS[req.platform]}。平台调性：{spec['tone']}\n\n"
+                f"原标题：{req.title or '（无）'}\n原正文：{req.content or '（无）'}\n"
+                f"已有话题：{' '.join('#' + t for t in req.topics) if req.topics else '（无）'}\n\n"
+                "请按平台调性改写标题与正文，并生成平台话题标签（如已有话题则优化补充）。"
+            )
+            result = await call_llm_async(_ADAPT_SYSTEM, prompt, max_tokens=1500, temperature=0.6, timeout=90)
+            data = _extract_json_loose(result)
+            if data.get("title"):
+                adapted["title"] = str(data["title"])[:200]
+            if data.get("content"):
+                adapted["content"] = str(data["content"])[:20000]
+            if data.get("topics"):
+                adapted["topics"] = [str(t).strip("#").strip() for t in data["topics"] if str(t).strip()][:8]
+            adapted["note"].append("正文已按平台调性改写，话题标签已生成")
+        except Exception as e:
+            logger.warning("content adapt skipped: %s", e)
+            adapted["note"].append("AI 改写不可用，保留原文")
+    return adapted
 
 
 # ── 微信公众号：草稿箱 + 群发 ────────────────────────────────
@@ -502,12 +714,27 @@ async def _auto_publish(acc: dict, req: PublishRequest) -> str:
     return await _publish_kuaishou(acc, req)
 
 
+def _ensure_publish_columns(conn) -> None:
+    """幂等补列：publish_records.adapted（多平台适配结果 JSON）+ review_status（审核状态）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(publish_records)").fetchall()]
+    if "adapted" not in cols:
+        conn.execute("ALTER TABLE publish_records ADD COLUMN adapted TEXT DEFAULT ''")
+    if "review_status" not in cols:
+        conn.execute("ALTER TABLE publish_records ADD COLUMN review_status TEXT DEFAULT 'draft'")
+    if "review_note" not in cols:
+        conn.execute("ALTER TABLE publish_records ADD COLUMN review_note TEXT DEFAULT ''")
+    if "reviewed_by" not in cols:
+        conn.execute("ALTER TABLE publish_records ADD COLUMN reviewed_by TEXT DEFAULT ''")
+    conn.commit()
+
+
 @router.post("/submit")
 async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):
-    """一键发布。
+    """一键发布（增长引擎版）。
 
-    - 平台账号已配置且该组合支持自动发布 → auto 模式（调用平台 API）
-    - 否则 → guide 模式（返回素材包：正文/话题/素材/分步指引），记录 pending
+    - 多平台自动适配：封面按平台规格裁切、正文按平台调性改写、话题标签生成
+    - 账号矩阵：配额感知选号（指定账号超当日限额自动轮换），自动发布失败自动换号重试
+    - 平台账号已配置且组合支持自动发布 → auto 模式；否则 → guide 模式（返回素材包）
     """
     if req.platform not in PLATFORM_LABELS:
         raise HTTPException(400, f"未知平台: {req.platform}")
@@ -516,34 +743,38 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
     start = time.time()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
 
-    conn = get_db()
-    if req.account_id:
-        row = conn.execute("SELECT * FROM publish_accounts WHERE id=? AND active=1", (req.account_id,)).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at LIMIT 1",
-            (req.platform,),
-        ).fetchone()
     record_id = f"pub_{uuid.uuid4().hex[:12]}"
-    topics_json = json.dumps(req.topics, ensure_ascii=False)
+
+    # 1. 多平台自动适配（封面裁切 + 正文改写 + 话题标签，失败回退原文不影响发布）
+    #    注意：线程级共享 sqlite 连接不能跨越 await，适配完成后再统一取连接
+    adapted = await _adapt_content(req)
+    adapted_json = json.dumps(adapted, ensure_ascii=False)
+    topics_json = json.dumps(adapted["topics"], ensure_ascii=False)
     assets_json = json.dumps(req.asset_urls, ensure_ascii=False)
 
     def save_record(status, mode, post_id="", error=""):
-        conn.execute(
+        # 自管理连接：内部取用/关闭，避免闭包连接跨 await 失效
+        c = get_db()
+        _ensure_publish_columns(c)
+        c.execute(
             """INSERT INTO publish_records (id, user_id, platform, content_type, title, content,
-               topics, asset_urls, account_id, mode, status, platform_post_id, error, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (record_id, user, req.platform, req.content_type, req.title, req.content,
-             topics_json, assets_json, req.account_id, mode, status, post_id, error,
+               topics, asset_urls, account_id, mode, status, platform_post_id, error, adapted, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (record_id, user, req.platform, req.content_type, adapted["title"], adapted["content"],
+             topics_json, assets_json, req.account_id, mode, status, post_id, error, adapted_json,
              datetime.now().isoformat()),
         )
-        conn.commit()
+        c.commit()
+        c.close()
 
-    # 无账号或组合不支持自动发布 → 引导式
-    can_auto = bool(row) and AUTO_SUPPORT.get(req.platform, {}).get(req.content_type, False)
+    # 2. 配额感知选号（指定账号超限自动轮换同平台其他账号）
+    conn = get_db()
+    _ensure_account_columns(conn)
+    acc = _pick_account(conn, req.platform, req.account_id)
+    can_auto = bool(acc) and AUTO_SUPPORT.get(req.platform, {}).get(req.content_type, False)
     if not can_auto:
-        save_record("pending", "guide")
         conn.close()
+        save_record("pending", "guide")
         elapsed = round(time.time() - start, 2)
         log_usage("publish_guide", len(req.content or ""), len(GUIDE_STEPS[req.platform][req.content_type]), elapsed)
         return {
@@ -552,52 +783,86 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
             "status": "pending",
             "platform": req.platform,
             "content_type": req.content_type,
-            "title": req.title,
-            "content": req.content,
-            "topics": req.topics,
+            "title": adapted["title"],
+            "content": adapted["content"],
+            "topics": adapted["topics"],
+            "cover_url": adapted.get("cover_url", ""),
+            "adapted": adapted,
             "asset_urls": req.asset_urls,
             "steps": GUIDE_STEPS[req.platform][req.content_type],
             "platform_label": PLATFORM_LABELS[req.platform],
             "message": "未配置自动发布账号，已生成引导式素材包（到官方 App 粘贴即可发布）",
         }
 
-    # 自动发布
-    acc = dict(row)
-    try:
-        post_id = await _auto_publish(acc, req)
-        save_record("success", "auto", post_id=post_id)
-        elapsed = round(time.time() - start, 2)
-        log_usage("publish_auto", len(req.content or ""), len(post_id), elapsed)
-        return {
-            "record_id": record_id,
-            "mode": "auto",
-            "status": "success",
-            "platform": req.platform,
-            "platform_post_id": post_id,
-            "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功",
-        }
-    except HTTPException as e:
-        save_record("failed", "auto", error=str(e.detail))
-        elapsed = round(time.time() - start, 2)
-        log_usage("publish_auto", len(req.content or ""), 0, elapsed, success=False)
-        # 自动发布失败 → 回退返回引导素材包，不阻断用户
-        return {
-            "record_id": record_id,
-            "mode": "guide_fallback",
-            "status": "failed",
-            "error": str(e.detail),
-            "platform": req.platform,
-            "content_type": req.content_type,
-            "title": req.title,
-            "content": req.content,
-            "topics": req.topics,
-            "asset_urls": req.asset_urls,
-            "steps": GUIDE_STEPS[req.platform][req.content_type],
-            "platform_label": PLATFORM_LABELS[req.platform],
-            "message": f"自动发布未成功（{e.detail}），已为你生成素材包，可手动发布",
-        }
-    finally:
-        conn.close()
+    # 3. 自动发布 + 账号矩阵换号重试（同平台有配额账号逐个尝试）
+    candidates = []
+    if acc:
+        candidates.append(acc)
+    conn2 = get_db()
+    for r in conn2.execute(
+        "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at",
+        (req.platform,),
+    ).fetchall():
+        if all(c["id"] != r["id"] for c in candidates) and \
+           _count_today_published(conn2, r["id"]) < int(r.get("daily_limit") or 10):
+            candidates.append(dict(r))
+    conn2.close()
+
+    last_err = ""
+    for acc_try in candidates[:3]:
+        try:
+            post_id = await _auto_publish(acc_try, req)
+            conn = get_db()
+            _ensure_publish_columns(conn)
+            conn.execute(
+                """UPDATE publish_records SET status='success', mode='auto', account_id=?, platform_post_id=?,
+                   adapted=? WHERE id=?""",
+                (acc_try["id"], post_id, adapted_json, record_id),
+            )
+            conn.commit()
+            conn.close()
+            elapsed = round(time.time() - start, 2)
+            log_usage("publish_auto", len(req.content or ""), len(post_id), elapsed)
+            return {
+                "record_id": record_id,
+                "mode": "auto",
+                "status": "success",
+                "platform": req.platform,
+                "platform_post_id": post_id,
+                "account_id": acc_try["id"],
+                "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功（账号：{acc_try.get('name') or '默认'}" + ("，已换号重试" if acc_try["id"] != (acc or {}).get("id") else "") + "）",
+            }
+        except HTTPException as e:
+            last_err = str(e.detail)
+            logger.warning("auto publish failed with account %s: %s", acc_try["id"], last_err)
+            continue
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("auto publish unexpected error with account %s: %s", acc_try["id"], last_err)
+            continue
+
+    # 全部账号失败 → 回退引导式素材包（不阻断用户）
+    save_record("failed", "guide_fallback", error=last_err)
+    elapsed = round(time.time() - start, 2)
+    log_usage("publish_auto", len(req.content or ""), 0, elapsed, success=False)
+    conn.close()
+    return {
+        "record_id": record_id,
+        "mode": "guide_fallback",
+        "status": "failed",
+        "error": last_err,
+        "platform": req.platform,
+        "content_type": req.content_type,
+        "title": adapted["title"],
+        "content": adapted["content"],
+        "topics": adapted["topics"],
+        "cover_url": adapted.get("cover_url", ""),
+        "adapted": adapted,
+        "asset_urls": req.asset_urls,
+        "steps": GUIDE_STEPS[req.platform][req.content_type],
+        "platform_label": PLATFORM_LABELS[req.platform],
+        "message": f"自动发布未成功（{last_err}），已生成素材包可手动发布",
+    }
 
 
 @router.get("/records")
@@ -641,6 +906,7 @@ async def list_records(
         d = dict(r)
         d["topics"] = json.loads(d.get("topics") or "[]")
         d["asset_urls"] = json.loads(d.get("asset_urls") or "[]")
+        d["adapted"] = json.loads(d.get("adapted") or "null")
         d["platform_label"] = PLATFORM_LABELS.get(d["platform"], d["platform"])
         d["content_label"] = CONTENT_LABELS.get(d["content_type"], d["content_type"])
         result.append(d)
@@ -897,6 +1163,68 @@ async def execute_schedule(sched_id: str, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return result
+
+
+# ══════════════════════════════════════════════════════════════
+# 团队审核流
+# ══════════════════════════════════════════════════════════════
+
+class ReviewRequest(BaseModel):
+    action: str = Field(..., description="approve / reject / reset")
+    note: str = Field("", max_length=500)
+
+
+@router.get("/review-queue")
+async def review_queue(
+    platform: str = "",
+    limit: int = 50,
+    current_user: dict = require_auth(),
+):
+    """审核队列：待审核的发布记录列表。"""
+    conn = get_db()
+    _ensure_publish_columns(conn)
+    where, params = ["review_status='pending_review'"], []
+    if platform:
+        where.append("platform=?")
+        params.append(platform)
+    rows = conn.execute(
+        f"SELECT * FROM publish_records WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT ?",
+        params + [limit],
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["topics"] = json.loads(d.get("topics") or "[]")
+        d["adapted"] = json.loads(d.get("adapted") or "null")
+        d["platform_label"] = PLATFORM_LABELS.get(d["platform"], d["platform"])
+        result.append(d)
+    return result
+
+
+@router.put("/records/{record_id}/review")
+async def review_record(record_id: str, req: ReviewRequest, current_user: dict = require_auth()):
+    """审核发布记录：approve 通过 / reject 驳回 / reset 重置为草稿。"""
+    if req.action not in ("approve", "reject", "reset"):
+        raise HTTPException(400, "action 必须为 approve/reject/reset")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    status_map = {"approve": "approved", "reject": "rejected", "reset": "draft"}
+    conn = get_db()
+    _ensure_publish_columns(conn)
+    row = conn.execute("SELECT * FROM publish_records WHERE id=?", (record_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "发布记录不存在")
+    conn.execute(
+        """UPDATE publish_records SET review_status=?, review_note=?, reviewed_by=?
+           WHERE id=?""",
+        (status_map[req.action], req.note, user, record_id),
+    )
+    conn.commit()
+    conn.close()
+    label = {"approve": "已通过", "reject": "已驳回", "reset": "已重置为草稿"}
+    return {"success": True, "record_id": record_id, "status": status_map[req.action],
+            "message": f"审核{label[req.action]}"}
 
 
 # ══════════════════════════════════════════════════════════════

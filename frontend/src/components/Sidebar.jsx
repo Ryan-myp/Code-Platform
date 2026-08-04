@@ -66,6 +66,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp', group: '智能工坊' },
         { path: '/voice', label: '配音工坊', icon: Mic2, pageId: 'voice', group: '智能工坊' },
         { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish', group: '发布社区' },
+        { path: '/growth', label: '增长工坊', icon: TrendingUp, pageId: 'growth', group: '发布社区' },
         { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery', group: '发布社区' },
         { path: '/templates', label: '模板市场', icon: Store, pageId: 'templates', group: '发布社区' },
       ] },
