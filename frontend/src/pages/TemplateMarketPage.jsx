@@ -176,7 +176,7 @@ export default function TemplateMarketPage() {
             { path: '/games', label: '小游戏工坊', icon: Gamepad2 },
             { path: '/miniapp', label: '小程序工坊', icon: Smartphone },
             { path: '/meme', label: '表情包工坊', icon: Sticker },
-            { path: '/voice', label: '配音工坊', icon: Mic2 },
+            { path: '/voice-dubbing', label: '配音工坊', icon: Mic2 },
           ].map((b) => (
             <button
               key={b.path}

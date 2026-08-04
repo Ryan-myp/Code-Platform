@@ -73,13 +73,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/forecast', label: '数据预测', icon: TrendingUp, pageId: 'forecast' },
         { path: '/doc-qa', label: '文档问答', icon: Search, pageId: 'doc-qa' },
         { path: '/web-search', label: '联网搜索', icon: Globe, pageId: 'web-search' },
-        { path: '/code-sandbox', label: '代码解释器', icon: Terminal, pageId: 'code-sandbox' },
+        { path: '/code-interpreter', label: '代码解释器', icon: Terminal, pageId: 'code-interpreter' },
       ] },
     { key: 'apps', label: '应用与社区', icon: Gamepad2, color: 'from-rose-500 to-pink-600',
       items: [
         { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games' },
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp' },
-        { path: '/voice', label: '配音工坊', icon: Volume2, pageId: 'voice' },
+        { path: '/voice-dubbing', label: '配音工坊', icon: Volume2, pageId: 'voice-dubbing' },
         { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish' },
         { path: '/growth', label: '增长工坊', icon: Target, pageId: 'growth' },
         { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery' },
@@ -105,7 +105,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
     { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
       items: [
         { path: '/config', label: '模型配置', icon: Settings },
-        { path: '/api-docs', label: 'API开放平台', icon: Key },
+        { path: '/api-platform', label: 'API开放平台', icon: Key, pageId: 'api-platform' },
         { path: '/scheduler', label: '定时任务', icon: Clock },
         { path: '/plugins', label: '插件市场', icon: Puzzle, pageId: 'plugins' },
         ...(user?.role === 'admin'

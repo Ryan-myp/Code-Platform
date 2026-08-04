@@ -138,7 +138,7 @@ async def template_market(q: str = "", current_user: dict = require_auth()):
             "description": t.get("desc", ""),
             "icon": "🎙️",
             "color": "from-sky-500 to-blue-600",
-            "path": "/voice",
+            "path": "/voice-dubbing",
             "tags": ["配音", "TTS"],
             "used": usage["voice"].get(t["id"], 0),
         }

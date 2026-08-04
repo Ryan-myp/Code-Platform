@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/drafts", tags=["草稿箱"])
 
 # 草稿所属工具的可读信息（供首页展示跳转）
 TOOL_META = {
-    "voice": {"label": "配音工坊", "path": "/voice"},
+    "voice": {"label": "配音工坊", "path": "/voice-dubbing"},
     "meme": {"label": "表情包工坊", "path": "/meme"},
     "copywriting": {"label": "文案工厂", "path": "/copywriting"},
     "image": {"label": "图片工厂", "path": "/image-factory"},

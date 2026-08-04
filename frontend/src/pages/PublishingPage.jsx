@@ -425,7 +425,7 @@ export default function PublishingPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="内容发布中心"
+        title="发布中心"
         description="文章、图片、视频一键发布到公众号 / 抖音 / 快手，支持引导式与自动发布"
         icon={Send}
         iconColor="from-blue-500 to-indigo-600"

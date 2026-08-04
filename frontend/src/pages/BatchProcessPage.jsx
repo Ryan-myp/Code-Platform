@@ -67,7 +67,7 @@ export default function BatchProcessPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="批量处理中心"
+        title="批量处理"
         description="一次上传多个文件，AI自动批量处理：摘要/翻译/关键词/情感分析"
         icon={FileSpreadsheet}
         iconColor="from-teal-500 to-emerald-600"

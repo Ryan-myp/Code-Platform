@@ -61,7 +61,7 @@ const SCENE_GROUPS = [
       { label: '数据预测', desc: 'CSV趋势分析预测', path: '/forecast', icon: TrendingUp, keywords: '数据,预测,分析,趋势' },
       { label: '文档问答', desc: '上传文档AI问答', path: '/doc-qa', icon: Search, keywords: '文档,问答,PDF,合同' },
       { label: '联网搜索', desc: 'AI联网搜索+摘要', path: '/web-search', icon: Globe, keywords: '搜索,联网,网页,信息' },
-      { label: '代码解释器', desc: '在线Python运行分析', path: '/code-sandbox', icon: Terminal, keywords: '代码,Python,编程,沙箱' },
+      { label: '代码解释器', desc: '在线Python运行分析', path: '/code-interpreter', icon: Terminal, keywords: '代码,Python,编程,解释器' },
     ],
   },
   {
@@ -70,7 +70,7 @@ const SCENE_GROUPS = [
     items: [
       { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, keywords: '游戏,微信,娱乐' },
       { label: '小程序工坊', desc: 'AI 生成微信小程序', path: '/miniapp', icon: Smartphone, keywords: '微信,程序,应用' },
-      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice', icon: Volume2, keywords: '配音,语音,tts,音频' },
+      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice-dubbing', icon: Volume2, keywords: '配音,语音,tts,音频' },
       { label: '发布中心', desc: '一键发布公众号·抖音·快手', path: '/publish', icon: Send, hot: true, keywords: '发布,公众号,抖音,快手' },
       { label: '增长工坊', desc: '用户增长与数据分析', path: '/growth', icon: Target, keywords: '增长,运营,数据' },
       { label: '作品广场', desc: '全平台作品聚合·点赞评论', path: '/gallery', icon: GalleryVerticalEnd, hot: true, keywords: '作品,点赞,评论,社区,广场' },
@@ -108,7 +108,7 @@ const SCENE_GROUPS = [
     color: 'from-slate-500 to-gray-700',
     items: [
       { label: '模型配置', desc: '多供应商模型路由', path: '/config', icon: Settings, keywords: '模型,配置,API' },
-      { label: 'API开放平台', desc: '创建Key接入能力', path: '/api-docs', icon: Key, keywords: 'API,Key,接口,开放' },
+      { label: 'API开放平台', desc: '创建Key接入能力', path: '/api-platform', icon: Key, keywords: 'API,Key,接口,开放' },
       { label: '定时任务', desc: '自动化报告与同步', path: '/scheduler', icon: Clock, keywords: '定时,任务,自动化,报告' },
       { label: '插件市场', desc: '扩展平台能力', path: '/plugins', icon: Puzzle, keywords: '插件,扩展,市场' },
       { label: '管理后台', desc: '用户·权限·数据', path: '/admin', icon: Shield, keywords: '管理,后台,用户' },

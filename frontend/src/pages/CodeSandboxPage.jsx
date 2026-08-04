@@ -112,7 +112,7 @@ export default function CodeSandboxPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="代码解释器"
+        title="AI代码解释器"
         description="在线编写并运行Python代码：数据分析、算法演示、可视化图表，即写即得"
         icon={Terminal}
         iconColor="from-gray-700 to-gray-900"

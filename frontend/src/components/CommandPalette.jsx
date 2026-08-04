@@ -50,12 +50,12 @@ const COMMANDS = [
   { id: 'nav-forecast', label: '数据预测', description: '上传CSV → AI趋势分析 + 预测', icon: TrendingUp, path: '/forecast', category: 'AI工坊' },
   { id: 'nav-doc-qa', label: '文档问答', description: '上传文档，AI理解后自由提问', icon: Search, path: '/doc-qa', category: 'AI工坊' },
   { id: 'nav-web-search', label: '联网搜索', description: 'AI联网搜索 + 智能摘要 + 来源引用', icon: Globe, path: '/web-search', category: 'AI工坊' },
-  { id: 'nav-code-sandbox', label: '代码解释器', description: 'Python在线运行，数据分析/可视化', icon: Terminal, path: '/code-sandbox', category: 'AI工坊' },
+  { id: 'nav-code-interpreter', label: '代码解释器', description: 'Python在线运行，数据分析/可视化', icon: Terminal, path: '/code-interpreter', category: 'AI工坊' },
 
   // 应用与社区
   { id: 'nav-games', label: '小游戏工坊', description: 'AI 生成双版本小游戏', icon: Gamepad2, path: '/games', category: '应用与社区' },
   { id: 'nav-miniapp', label: '小程序工坊', description: 'AI 生成微信小程序', icon: Smartphone, path: '/miniapp', category: '应用与社区' },
-  { id: 'nav-voice', label: '配音工坊', description: '文字转语音，场景预设', icon: Volume2, path: '/voice', category: '应用与社区' },
+  { id: 'nav-voice-dubbing', label: '配音工坊', description: '文字转语音，场景预设', icon: Volume2, path: '/voice-dubbing', category: '应用与社区' },
   { id: 'nav-publish', label: '发布中心', description: '一键发布公众号、抖音、快手 + 排期', icon: Send, path: '/publish', category: '应用与社区' },
   { id: 'nav-growth', label: '增长工坊', description: '用户增长与数据分析', icon: Target, path: '/growth', category: '应用与社区' },
   { id: 'nav-gallery', label: '作品广场', description: '全平台作品聚合浏览、点赞、评论', icon: GalleryVerticalEnd, path: '/gallery', category: '应用与社区' },
@@ -75,7 +75,7 @@ const COMMANDS = [
 
   // 系统
   { id: 'nav-config', label: '模型配置', description: '配置 AI 模型', icon: Settings, path: '/config', category: '系统' },
-  { id: 'nav-api-docs', label: 'API开放平台', description: '创建API Key接入平台能力', icon: Key, path: '/api-docs', category: '系统' },
+  { id: 'nav-api-platform', label: 'API开放平台', description: '创建API Key接入平台能力', icon: Key, path: '/api-platform', category: '系统' },
   { id: 'nav-scheduler', label: '定时任务', description: '定时报告/同步/提醒自动化', icon: Clock, path: '/scheduler', category: '系统' },
   { id: 'nav-plugins', label: '插件市场', description: '浏览插件', icon: Puzzle, path: '/plugins', category: '系统' },
 

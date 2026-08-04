@@ -215,7 +215,7 @@ export default function App() {
                     {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
                     <Route path="/games" element={<AccessGuard path="/games"><GameFactoryPage /></AccessGuard>} />
                     {/* v9.5 AI 配音 + 表情包 */}
-                    <Route path="/voice" element={<AccessGuard path="/voice"><VoicePage /></AccessGuard>} />
+                    <Route path="/voice-dubbing" element={<AccessGuard path="/voice-dubbing"><VoicePage /></AccessGuard>} />
                     <Route path="/meme" element={<AccessGuard path="/meme"><MemePage /></AccessGuard>} />
                     <Route path="/digital-human" element={<AccessGuard path="/digital-human"><DigitalHumanPage /></AccessGuard>} />
                     <Route path="/voice-chat" element={<AccessGuard path="/voice-chat"><VoiceChatPage /></AccessGuard>} />
@@ -227,8 +227,8 @@ export default function App() {
                     {/* v10.1 新功能 */}
                     <Route path="/web-search" element={<AccessGuard path="/web-search"><WebSearchPage /></AccessGuard>} />
                     <Route path="/batch-process" element={<AccessGuard path="/batch-process"><BatchProcessPage /></AccessGuard>} />
-                    <Route path="/code-sandbox" element={<AccessGuard path="/code-sandbox"><CodeSandboxPage /></AccessGuard>} />
-                    <Route path="/api-docs" element={<AccessGuard path="/api-docs"><ApiDocsPage /></AccessGuard>} />
+                    <Route path="/code-interpreter" element={<AccessGuard path="/code-interpreter"><CodeSandboxPage /></AccessGuard>} />
+                    <Route path="/api-platform" element={<AccessGuard path="/api-platform"><ApiDocsPage /></AccessGuard>} />
                     <Route path="/usage-analytics" element={<UsageAnalyticsPage />} />
                     <Route path="/scheduler" element={<SchedulerPage />} />
                     {/* v10.0 社区与变现 */}
