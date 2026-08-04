@@ -865,6 +865,47 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
     }
 
 
+class CrossPostRequest(BaseModel):
+    platforms: list[str] = Field(..., min_length=1, description="目标平台列表 [wechat, douyin, kuaishou]")
+    content_type: str = Field("article", description="article/image/video")
+    title: str = Field("", max_length=200)
+    content: str = Field("", max_length=20000)
+    topics: list[str] = Field(default_factory=list)
+    asset_urls: list[str] = Field(default_factory=list)
+
+
+@router.post("/cross-post")
+async def cross_post(req: CrossPostRequest, current_user: dict = require_auth()):
+    """跨平台一键分发：一次编辑，同时发布到多个平台。
+
+    循环每个目标平台：独立适配 → 选号 → 发布，聚合返回结果。
+    """
+    results = []
+    for p in req.platforms:
+        if p not in PLATFORM_LABELS:
+            results.append({"platform": p, "status": "error", "message": f"未知平台: {p}"})
+            continue
+        try:
+            sub_req = PublishRequest(
+                platform=p, content_type=req.content_type,
+                title=req.title, content=req.content,
+                topics=req.topics, asset_urls=req.asset_urls,
+            )
+            r = await submit_publish(sub_req, current_user)
+            results.append({
+                "platform": p, "status": r.get("status", "pending"),
+                "mode": r.get("mode", "guide"),
+                "record_id": r.get("record_id", ""),
+                "message": r.get("message", ""),
+                "adapted": r.get("adapted"),
+            })
+        except Exception as e:
+            results.append({"platform": p, "status": "error", "message": str(e)})
+    success_count = sum(1 for r in results if r["status"] in ("success", "pending"))
+    return {"total": len(req.platforms), "success": success_count, "results": results,
+            "message": f"已向{success_count}/{len(req.platforms)}个平台提交发布"}
+
+
 @router.get("/records")
 async def list_records(
     platform: str = "",

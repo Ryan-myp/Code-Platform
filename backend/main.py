@@ -36,6 +36,7 @@ load_dotenv()
 from admin_api import router as admin_api_router  # noqa: E402
 from chat_engine import router as chat_engine_router  # noqa: E402
 from collab_engine import router as collab_engine_router  # noqa: E402
+from content_strategy import router as content_strategy_router  # noqa: E402
 from drafts import router as drafts_router  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
@@ -2248,6 +2249,7 @@ app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)
 app.include_router(collab_engine_router)
+app.include_router(content_strategy_router)
 app.include_router(realtime_router)
 
 # v9.0: Platform API

@@ -491,3 +491,128 @@ async def ai_review(
     log_usage("growth_review", len(user_prompt), len(report), 0)
     return {"report": report, "data_points": len(rows),
             "total_views": total_v, "total_likes": total_l, "total_followers": total_f}
+
+
+# ══════════════════════════════════════════════════════════════
+# 阶段 3 补充：评论互动聚合 + AI 回复
+# ══════════════════════════════════════════════════════════════
+
+def _ensure_comments_table(conn) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS publish_comments (
+            id TEXT PRIMARY KEY,
+            record_id TEXT NOT NULL,
+            platform TEXT DEFAULT '',
+            author TEXT DEFAULT '',
+            content TEXT DEFAULT '',
+            likes INTEGER DEFAULT 0,
+            replied INTEGER DEFAULT 0,
+            reply_content TEXT DEFAULT '',
+            source TEXT DEFAULT 'manual',
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.commit()
+
+
+class CommentAddRequest(BaseModel):
+    record_id: str = Field(..., description="发布记录 ID")
+    author: str = Field("匿名用户", max_length=100)
+    content: str = Field(..., min_length=1, max_length=2000)
+    platform: str = Field("")
+    likes: int = Field(0)
+
+
+@router.get("/comments")
+async def list_comments(record_id: str = "", platform: str = "", limit: int = 50, current_user: dict = require_auth()):
+    """评论列表：按发布记录筛选，未指定 record_id 时返回最近评论。"""
+    conn = get_db()
+    _ensure_comments_table(conn)
+    where, params = [], []
+    if record_id:
+        where.append("record_id=?")
+        params.append(record_id)
+    if platform:
+        where.append("platform=?")
+        params.append(platform)
+    sql = "SELECT * FROM publish_comments"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/comments")
+async def add_comment(req: CommentAddRequest, current_user: dict = require_auth()):
+    """手动添加评论（平台 API 不可用时兜底录入）。"""
+    conn = get_db()
+    _ensure_comments_table(conn)
+    # 自动获取发布记录的 platform
+    platform = req.platform
+    if not platform:
+        pub = conn.execute("SELECT platform FROM publish_records WHERE id=?", (req.record_id,)).fetchone()
+        if pub:
+            platform = pub["platform"]
+    cid = f"cmt_{uuid.uuid4().hex[:10]}"
+    conn.execute(
+        """INSERT INTO publish_comments (id, record_id, platform, author, content,
+           likes, replied, source, created_at) VALUES (?,?,?,?,?,?,0,?,?)""",
+        (cid, req.record_id, platform, req.author, req.content,
+         req.likes, "manual", datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": cid, "message": "评论已录入"}
+
+
+REPLY_SYSTEM = """你是专业的内容运营，负责回复读者评论。
+
+要求：
+- 语气亲切自然，像真人回复而非机器
+- 根据评论内容个性化回复（赞同/感谢/解答/引导讨论）
+- 控制在 50 字以内
+- 不要用"亲爱的用户"等模板化开头
+- 直接给出回复内容，不要多余说明"""
+
+
+@router.post("/comments/{comment_id}/reply")
+async def ai_reply_suggest(comment_id: str, current_user: dict = require_auth()):
+    """AI 生成评论回复建议（不自动发送，用户确认后手动粘贴回复）。"""
+    conn = get_db()
+    _ensure_comments_table(conn)
+    row = conn.execute("SELECT * FROM publish_comments WHERE id=?", (comment_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "评论不存在")
+    comment = dict(row)
+    conn.close()
+
+    user_prompt = f"读者评论：{comment['content']}\n作者：{comment.get('author', '匿名')}\n请生成一条亲切自然的回复。"
+    try:
+        reply = call_llm(REPLY_SYSTEM, user_prompt, max_tokens=200, temperature=0.7, timeout=30)
+    except Exception as e:
+        logger.exception("ai reply failed")
+        reply = f"感谢你的留言！（AI回复生成失败：{e}）"
+
+    # 保存回复到数据库
+    conn = get_db()
+    conn.execute(
+        "UPDATE publish_comments SET reply_content=?, replied=1 WHERE id=?",
+        (reply, comment_id),
+    )
+    conn.commit()
+    conn.close()
+    log_usage("growth_reply", len(comment["content"]), len(reply), 0)
+    return {"comment_id": comment_id, "reply": reply, "author": comment.get("author", "")}
+
+
+@router.delete("/comments/{comment_id}")
+async def delete_comment(comment_id: str, current_user: dict = require_auth()):
+    conn = get_db()
+    conn.execute("DELETE FROM publish_comments WHERE id=?", (comment_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}

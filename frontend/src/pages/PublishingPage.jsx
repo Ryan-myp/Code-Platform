@@ -4,7 +4,7 @@ import {
   FileText, Image as ImageIcon, Film, Tag, Link2, Download, ExternalLink,
   MessageSquare, Music2, Clapperboard, AlertCircle, CheckCircle2, CircleDashed,
   Calendar, CalendarPlus, BarChart3, Play, TrendingUp, ChevronLeft, ChevronRight,
-  PieChart, Search, CheckSquare, Square, X,
+  PieChart, Search, CheckSquare, Square, X, ShieldCheck, Clock3, ArrowRight,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -89,7 +89,7 @@ export default function PublishingPage() {
   // ── 发布工作台状态 ──
   const [assets, setAssets] = useState({ articles: [], media: [] })
   const [assetTab, setAssetTab] = useState('articles')
-  const [platform, setPlatform] = useState('wechat')
+  const [platforms, setPlatforms] = useState(['wechat'])
   const [contentType, setContentType] = useState('article')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -114,6 +114,29 @@ export default function PublishingPage() {
   const [batchModal, setBatchModal] = useState(false)
   const [batchText, setBatchText] = useState('')
   const [batchLoading, setBatchLoading] = useState(false)
+
+  // ── 合规预检 + 最佳时间 ──
+  const [complianceResult, setComplianceResult] = useState(null)
+  const [complianceModal, setComplianceModal] = useState(false)
+  const [pendingSubmit, setPendingSubmit] = useState(null)
+  const [bestTimes, setBestTimes] = useState(null)
+  const [bestTimeLoading, setBestTimeLoading] = useState(false)
+
+  const checkCompliance = async () => {
+    try {
+      const res = await api.post('/api/strategy/compliance-check', { title, content })
+      return res.data
+    } catch { return null }
+  }
+
+  const loadBestTime = async (p = platforms[0]) => {
+    setBestTimeLoading(true)
+    try {
+      const res = await api.get(`/api/strategy/best-time?platform=${p}`)
+      setBestTimes(res.data?.top_slots?.slice(0, 3) || [])
+    } catch {}
+    finally { setBestTimeLoading(false) }
+  }
 
   // 素材包 ZIP 一键下载（README 步骤 + 正文 + 全部素材文件）
   const downloadPackage = async () => {
@@ -181,10 +204,15 @@ export default function PublishingPage() {
     try { const res = await api.get('/api/publish/accounts'); setAccounts(res.data || []) } catch (e) {}
   }
 
-  // 平台切换时自动建议内容类型
-  const switchPlatform = (p) => {
-    setPlatform(p)
-    setContentType(p === 'wechat' ? 'article' : 'image')
+  // 平台多选切换
+  const togglePlatform = (p) => {
+    setPlatforms(prev => {
+      if (prev.includes(p)) {
+        if (prev.length <= 1) return prev // 至少保留一个平台
+        return prev.filter(x => x !== p)
+      }
+      return [...prev, p]
+    })
   }
 
   // 使用素材库中的文章
@@ -219,17 +247,60 @@ export default function PublishingPage() {
     if (!title.trim() && contentType !== 'image') { toast.error('请填写标题'); return }
     if (contentType === 'article' && !content.trim()) { toast.error('请填写正文内容（可直接从素材库加载文章）'); return }
     if (selectedAssets.length === 0 && contentType !== 'article') { toast.error('请从素材库选择要发布的图片/视频'); return }
-    setLoading(true); setResult(null)
+
+    // 合规预检
+    const comp = await checkCompliance()
+    const payload = { content_type: contentType, title, content, topics, asset_urls: selectedAssets.map((s) => s.url) }
+    if (comp && comp.risk === 'high') {
+      setComplianceResult(comp)
+      setComplianceModal(true)
+      setPendingSubmit({ platforms, ...payload })
+      return
+    }
+    if (comp && comp.risk !== 'safe') {
+      setComplianceResult(comp)
+    }
+
+    if (platforms.length > 1) {
+      await doCrossPost(payload)
+    } else {
+      await doSubmit({ platform: platforms[0], ...payload })
+    }
+  }
+
+  const doSubmit = async (payload) => {
+    setLoading(true); setResult(null); setComplianceResult(null)
     try {
-      const res = await api.post('/api/publish/submit', {
-        platform, content_type: contentType, title, content,
-        topics, asset_urls: selectedAssets.map((s) => s.url),
-      })
+      const res = await api.post('/api/publish/submit', payload)
       setResult(res.data)
       loadRecords()
       toast.success(res.data.mode === 'auto' ? '已自动发布成功' : '素材包已生成')
     } catch (e) { toast.error(`发布失败：${e.message}`) }
     finally { setLoading(false) }
+  }
+
+  const doCrossPost = async (payload) => {
+    setLoading(true); setResult(null); setComplianceResult(null)
+    try {
+      const res = await api.post('/api/publish/cross-post', { platforms, ...payload })
+      setResult(res.data)
+      loadRecords()
+      toast.success(res.data.message || `已向 ${res.data.success}/${res.data.total} 个平台提交发布`)
+    } catch (e) { toast.error(`跨平台发布失败：${e.message}`) }
+    finally { setLoading(false) }
+  }
+
+  const confirmRiskySubmit = () => {
+    setComplianceModal(false)
+    if (pendingSubmit) {
+      const { platforms: pts, ...payload } = pendingSubmit
+      if (pts && pts.length > 1) {
+        doCrossPost(payload)
+      } else {
+        doSubmit({ platform: pts ? pts[0] : platforms[0], ...payload })
+      }
+      setPendingSubmit(null)
+    }
   }
 
   const copy = async (text, key) => {
@@ -348,7 +419,7 @@ export default function PublishingPage() {
     finally { setCancelling(false) }
   }
 
-  const platformMeta = PLATFORMS.find((p) => p.value === platform)
+  const platformMeta = PLATFORMS.find((p) => p.value === platforms[0])
   const ctypeMeta = CONTENT_TYPES.find((c) => c.value === contentType)
 
   return (
@@ -468,16 +539,18 @@ export default function PublishingPage() {
               </div>
             </Card>
 
-            {/* 平台选择 */}
+            {/* 平台选择（多选） */}
             <Card>
               <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <ExternalLink className="w-4 h-4 text-indigo-500" /> 发布到
+                <ExternalLink className="w-4 h-4 text-indigo-500" /> 发布到（可多选）
               </h3>
               <div className="space-y-2">
-                {PLATFORMS.map((p) => (
-                  <button key={p.value} onClick={() => switchPlatform(p.value)}
+                {PLATFORMS.map((p) => {
+                  const selected = platforms.includes(p.value)
+                  return (
+                  <button key={p.value} onClick={() => togglePlatform(p.value)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left ${
-                      platform === p.value ? `${p.border} ring-2 ring-blue-500/20` : 'border-gray-200 hover:bg-gray-50'
+                      selected ? `${p.border} ring-2 ring-blue-500/20` : 'border-gray-200 hover:bg-gray-50'
                     }`}>
                     <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}>
                       <p.icon className="w-4.5 h-4.5 text-white" />
@@ -486,18 +559,19 @@ export default function PublishingPage() {
                       <div className="text-sm font-medium text-gray-900">{p.label}</div>
                       <div className="text-xs text-gray-500">{p.desc}</div>
                     </div>
-                    {platform === p.value && <CheckCircle2 className={`w-4 h-4 ${p.text} flex-shrink-0`} />}
+                    {selected ? <CheckSquare className={`w-4 h-4 ${p.text} flex-shrink-0`} /> : <Square className="w-4 h-4 text-gray-300 flex-shrink-0" />}
                   </button>
-                ))}
+                  )
+                })}
               </div>
               <div className="mt-3 px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-100 text-xs text-indigo-600 flex items-start gap-2">
                 <Sparkles className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-                <span>当前平台：{platformMeta.label} · 内容类型：{ctypeMeta.label}。{platformMeta.auto}；未配置或暂不支持时自动生成本引导式素材包。</span>
+                <span>已选 {platforms.length} 个平台：{platforms.map(p => PLATFORMS.find(x => x.value === p)?.label).join('、')} · 内容类型：{ctypeMeta.label}。多选时将调用跨平台一键分发。</span>
               </div>
             </Card>
 
             <Button variant="primary" size="lg" icon={Send} loading={loading} onClick={submit} className="w-full">
-              {loading ? '发布中…' : '一键发布'}
+              {loading ? '发布中…' : platforms.length > 1 ? `一键分发到 ${platforms.length} 个平台` : '一键发布'}
             </Button>
           </div>
 
@@ -564,7 +638,7 @@ export default function PublishingPage() {
             </Card>
 
             {/* 发布结果 */}
-            {result && (
+            {result && !result.results && (
               <Card className={result.mode === 'auto' ? 'border-emerald-200' : result.mode === 'guide_fallback' ? 'border-amber-200' : 'border-blue-200'}>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
@@ -585,6 +659,39 @@ export default function PublishingPage() {
                       <p className="font-medium">{result.message}</p>
                       <p className="mt-1 text-xs opacity-80">发布目标：{result.platform_label} · {result.content_type === 'article' ? '图文' : result.content_type}</p>
                     </div>
+
+                    {/* 合规检测结果 */}
+                    {complianceResult && complianceResult.risk !== 'safe' && (
+                      <div className={`p-3 rounded-xl text-sm ${
+                        complianceResult.risk === 'high' ? 'bg-red-50 border border-red-200' :
+                        complianceResult.risk === 'medium' ? 'bg-amber-50 border border-amber-200' : 'bg-blue-50 border border-blue-100'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <ShieldCheck className={`w-4 h-4 ${
+                            complianceResult.risk === 'high' ? 'text-red-500' :
+                            complianceResult.risk === 'medium' ? 'text-amber-500' : 'text-blue-500'
+                          }`} />
+                          <span className={`font-medium ${
+                            complianceResult.risk === 'high' ? 'text-red-800' :
+                            complianceResult.risk === 'medium' ? 'text-amber-800' : 'text-blue-700'
+                          }`}>
+                            合规检测：{complianceResult.risk_label}（{complianceResult.total_hits} 处提示）
+                          </span>
+                        </div>
+                        <p className="text-xs opacity-80">{complianceResult.message}</p>
+                        {complianceResult.suggestions?.length > 0 && (
+                          <div className="mt-2 space-y-0.5">
+                            {complianceResult.suggestions.slice(0, 5).map((s, i) => (
+                              <div key={i} className="text-xs flex items-center gap-1.5">
+                                <span className="line-through text-red-400">{s.original}</span>
+                                <ArrowRight className="w-3 h-3 text-gray-300" />
+                                <span className="text-emerald-600">{s.suggest}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* 多平台适配说明 */}
                     {result.adapted?.note?.length > 0 && (
@@ -671,6 +778,42 @@ export default function PublishingPage() {
                     </div>
                   </div>
                 )}
+              </Card>
+            )}
+
+            {/* 跨平台分发结果 */}
+            {result && result.results && (
+              <Card className="border-indigo-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Send className="w-4 h-4 text-indigo-500" /> 跨平台分发结果
+                  </h3>
+                  <Badge color="indigo">{result.success}/{result.total} 成功</Badge>
+                </div>
+                <div className="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-sm text-indigo-800 mb-3">
+                  {result.message}
+                </div>
+                <div className="space-y-2">
+                  {result.results.map((r, i) => {
+                    const pm = PLATFORMS.find(x => x.value === r.platform)
+                    return (
+                      <div key={i} className={`p-3 rounded-xl border ${
+                        r.status === 'success' ? 'border-emerald-200 bg-emerald-50/50' :
+                        r.status === 'pending' ? 'border-blue-200 bg-blue-50/50' : 'border-red-200 bg-red-50/50'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          {pm && <span className={`w-6 h-6 rounded-md bg-gradient-to-br ${pm.color} flex items-center justify-center flex-shrink-0`}><pm.icon className="w-3 h-3 text-white" /></span>}
+                          <span className="text-sm font-medium text-gray-800">{pm?.label || r.platform}</span>
+                          <Badge color={r.status === 'success' ? 'green' : r.status === 'pending' ? 'blue' : 'red'}>
+                            {r.status === 'success' ? '已发布' : r.status === 'pending' ? '素材包' : '失败'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-gray-600">{r.message}</p>
+                        {r.record_id && <p className="text-[10px] text-gray-400 mt-1">记录 ID：{r.record_id}</p>}
+                      </div>
+                    )
+                  })}
+                </div>
               </Card>
             )}
           </div>
@@ -1088,10 +1231,38 @@ export default function PublishingPage() {
                 ))}
               </div>
               <div className="mt-3">
-                <label className="block text-xs font-medium text-gray-500 mb-1">计划发布时间</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-gray-500">计划发布时间</label>
+                  <button onClick={(e) => { e.preventDefault(); loadBestTime(schedForm.platform) }}
+                    className="text-xs text-purple-500 hover:text-purple-700 flex items-center gap-1">
+                    <Clock3 className="w-3 h-3" /> 最佳时间
+                  </button>
+                </div>
                 <input type="datetime-local" value={schedForm.scheduled_at}
                   onChange={(e) => setSchedForm({ ...schedForm, scheduled_at: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+                {bestTimes && bestTimes.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[10px] text-gray-400">推荐时段：</p>
+                    {bestTimes.map((t, i) => (
+                      <button key={i}
+                        onClick={() => {
+                          const now = new Date()
+                          const target = new Date()
+                          const dayDiff = (t.weekday_num - now.getDay() + 7) % 7
+                          target.setDate(target.getDate() + (dayDiff === 0 ? 0 : dayDiff))
+                          target.setHours(t.hour, 0, 0, 0)
+                          const iso = target.toISOString().slice(0, 16)
+                          setSchedForm({ ...schedForm, scheduled_at: iso })
+                        }}
+                        className="block w-full text-left px-2 py-1 rounded text-xs text-purple-600 hover:bg-purple-50 transition-colors">
+                        <span className="font-medium">{t.label}</span>
+                        {t.avg_views > 0 && <span className="text-gray-400 ml-2">均阅 {t.avg_views.toLocaleString()}</span>}
+                        {t.sample_count > 0 && <span className="text-gray-300 ml-1">({t.sample_count}篇)</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1162,6 +1333,34 @@ export default function PublishingPage() {
           <Button variant="primary" size="lg" icon={CalendarPlus} onClick={createSchedule} className="w-full">
             创建排期
           </Button>
+        </div>
+      </Modal>
+
+      {/* 合规风险确认 Modal */}
+      <Modal open={complianceModal} onClose={() => { setComplianceModal(false); setPendingSubmit(null) }} title="⚠️ 内容合规风险提示" size="md">
+        <div className="space-y-3">
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800">
+            <p className="font-medium">检测到高风险内容，可能违反平台规定导致限流或封号</p>
+            <p className="text-xs mt-1 opacity-80">共 {complianceResult?.total_hits || 0} 处风险提示</p>
+          </div>
+          {complianceResult?.suggestions?.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-1">修改建议：</p>
+              <div className="space-y-1">
+                {complianceResult.suggestions.slice(0, 8).map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className="line-through text-red-400 bg-red-50 px-1.5 py-0.5 rounded">{s.original}</span>
+                    <span className="text-gray-300">→</span>
+                    <span className="text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">{s.suggest}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => { setComplianceModal(false); setPendingSubmit(null) }}>返回修改</Button>
+            <Button variant="danger" onClick={confirmRiskySubmit}>仍要发布</Button>
+          </div>
         </div>
       </Modal>
 
