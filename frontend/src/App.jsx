@@ -78,6 +78,7 @@ const ApiDocsPage = lazy(() => import('./pages/ApiDocsPage'))
 const CodeSandboxPage = lazy(() => import('./pages/CodeSandboxPage'))
 const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 // 页面级加载骨架（懒加载期间展示）
 function PageFallback() {
@@ -251,6 +252,8 @@ export default function App() {
                     <Route path="/help" element={<HelpPage />} />
                     <Route path="/records" element={<RecordsPage />} />
                     <Route path="/" element={<Navigate to="/home" replace />} />
+                    {/* 404 兜底：未匹配路由展示 NotFound，避免空白空壳 */}
+                    <Route path="*" element={<NotFoundPage />} />
                   </Routes>
                   </ErrorBoundary>
                 </main>

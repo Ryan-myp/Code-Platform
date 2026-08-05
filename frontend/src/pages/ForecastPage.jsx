@@ -32,7 +32,7 @@ export default function ForecastPage() {
       const res = await api.post('/api/forecast/upload', form)
       setDataInfo(res.data)
       toast.success(`解析成功，${res.data.row_count} 行数据`)
-    } catch (err) { toast.error(`上传失败：${err.message}`) }
+    } catch (err) { toast.error(`上传失败：${err.response?.data?.detail || err.message}`) }
     setUploading(false)
   }
 
@@ -45,7 +45,7 @@ export default function ForecastPage() {
       })
       setResult(res.data); loadRecords()
       toast.success('预测分析完成')
-    } catch (err) { toast.error(`分析失败：${err.message}`) }
+    } catch (err) { toast.error(`分析失败：${err.response?.data?.detail || err.message}`) }
     setAnalyzing(false)
   }
 

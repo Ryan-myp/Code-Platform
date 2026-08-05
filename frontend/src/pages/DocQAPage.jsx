@@ -37,7 +37,7 @@ export default function DocQAPage() {
         content: `📄 已加载文档《${res.data.filename}》，共 ${res.data.text_length} 字符。\n\n${res.data.summary?.summary || '你有什么想了解的？请随时提问。'}`,
         time: new Date().toISOString(),
       }])
-    } catch (err) { toast.error(`上传失败：${err.message}`) }
+    } catch (err) { toast.error(`上传失败：${err.response?.data?.detail || err.message}`) }
     setUploading(false)
   }
 
@@ -54,7 +54,7 @@ export default function DocQAPage() {
       const res = await api.post('/api/doc-qa/ask', { doc_id: docInfo.doc_id, question: q, history })
       const aiMsg = { role: 'assistant', content: res.data.answer, time: new Date().toISOString(), source: res.data.source }
       setMessages((prev) => [...prev, aiMsg])
-    } catch (err) { toast.error(`问答失败：${err.message}`) }
+    } catch (err) { toast.error(`问答失败：${err.response?.data?.detail || err.message}`) }
     setLoading(false)
 
     // 滚动到底部

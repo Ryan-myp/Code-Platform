@@ -5,9 +5,7 @@ import {
 } from 'lucide-react'
 import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid } from '../components/ui'
 import { useToast } from '../lib/toast'
-import api from '../lib/api'
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8888'
+import api, { API_BASE } from '../lib/api'
 
 const TYPE_TABS = [
   { key: 'all', label: '全部作品', icon: Sparkles },

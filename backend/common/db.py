@@ -72,6 +72,9 @@ def get_db_context():
     用法::
         with get_db_context() as conn:
             conn.execute("...")
+
+    v10.1: 自动 commit/rollback — 正常退出自动提交，异常退出回滚，
+    彻底解决模块漏写 conn.commit() 导致数据丢失的问题。
     """
     conn = sqlite3.connect(_resolve_db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
@@ -80,6 +83,10 @@ def get_db_context():
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

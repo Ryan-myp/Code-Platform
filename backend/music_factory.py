@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
-import json
 import logging
 import time
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse
 
+from common.artifacts import save_artifact
 from common.config import load_config
-from common.db import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/music-factory", tags=["音乐工厂"])
@@ -45,33 +42,22 @@ def generate_music_id() -> str:
 
 def _save_artifact(filename: str, project_id: str, art_type: str, content: str,
                    duration: float = 0.0, extra_meta: dict | None = None) -> str:
-    """将音乐/歌词产物登记到 artifacts 表，返回 artifact id。
+    """将音乐/歌词产物登记到 artifacts 表（委托 common.artifacts.save_artifact），返回 artifact id。
 
     - art_type: 'lyrics' 或 'audio'
     - lyrics: content=歌词正文，media_url 指向 /api/music-factory/lyrics/{filename}
     - audio:  media_url 指向 /api/music-factory/audios/{filename}，duration 为估算时长
     - 失败静默
     """
-    art_id = f"art_{uuid.uuid4().hex[:12]}"
     meta = {"filename": filename, "type": art_type}
     if extra_meta:
         meta.update(extra_meta)
     media_url = (f"/api/music-factory/audios/{filename}" if art_type == "audio"
                  else f"/api/music-factory/lyrics/{filename}")
-    try:
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO artifacts
-               (id, project_id, type, content, version, author, created_at, active, media_url, duration, metadata)
-               VALUES (?, ?, ?, ?, 'v1', 'music_factory', ?, 1, ?, ?, ?)""",
-            (art_id, project_id or "", art_type, content, datetime.now().isoformat(),
-             media_url, float(duration or 0), json.dumps(meta, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"_save_artifact skipped: {e}")
-    return art_id
+    return save_artifact(
+        art_type=art_type, project_id=project_id, author="music_factory",
+        media_url=media_url, content=content, metadata=meta, duration=duration,
+    )
 
 
 @router.get("/stats")

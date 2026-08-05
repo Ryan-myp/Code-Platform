@@ -12,17 +12,16 @@ import json
 import logging
 import os
 import time
-import uuid
 import zipfile
 from datetime import datetime
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
 from PIL import Image, ImageChops, ImageDraw, ImageFont
+from pydantic import BaseModel, Field
 
+from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
 
@@ -219,27 +218,13 @@ def _ai_bg(prompt: str) -> Image.Image:
 
 
 def _save_artifact(filename: str, top_text: str, bottom_text: str, style: str, ai_prompt: str) -> str:
-    """登记 artifacts 表（type=image），失败静默。"""
-    art_id = f"art_{uuid.uuid4().hex[:12]}"
+    """登记 artifacts 表（type=image，委托 common.artifacts.save_artifact），失败静默。"""
     meta = {"filename": filename, "top_text": top_text, "bottom_text": bottom_text,
             "style": style, "ai_prompt": ai_prompt}
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO artifacts
-               (id, project_id, type, content, version, author, created_at, active, media_url, metadata)
-               VALUES (?, ?, 'image', ?, 'v1', 'meme_factory', ?, 1, ?, ?)""",
-            (art_id, "", json.dumps(meta, ensure_ascii=False),
-             datetime.now().isoformat(), f"/api/meme/images/{filename}",
-             json.dumps(meta, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"_save_artifact skipped: {e}")
-    return art_id
+    return save_artifact(
+        art_type="image", author="meme_factory",
+        media_url=f"/api/meme/images/{filename}", content=meta, metadata=meta,
+    )
 
 
 def _artifact_meta() -> dict:

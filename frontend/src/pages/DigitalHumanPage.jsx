@@ -3,11 +3,11 @@ import {
   Mic2, Sparkles, Play, Download, Trash2, UserCircle, Music2,
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
   Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
-  Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle,
+  Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle, Camera,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 import AnimatedAvatar, { EXPRESSION_NAMES, OUTFIT_NAMES, SCENE_NAMES } from '../components/AnimatedAvatar'
 
 const SCENES = [
@@ -59,6 +59,16 @@ export default function DigitalHumanPage() {
   const [recording, setRecording] = useState(false)
   const [videoBlob, setVideoBlob] = useState(null)
 
+  // 视频预览
+  const videoRef = useRef(null)
+  const [previewVideoUrl, setPreviewVideoUrl] = useState('')
+  const [playingVideo, setPlayingVideo] = useState(false)
+
+  // ★ AI 写真肖像
+  const [portraitMap, setPortraitMap] = useState({})         // avatarId → portraitUrl
+  const [generatingPortrait, setGeneratingPortrait] = useState(new Set())  // 正在生成的 avatarId
+  const [generatingAll, setGeneratingAll] = useState(false)   // 是否在批量生成
+
   useEffect(() => { loadData(); loadRecords() }, [])
 
   const loadData = async () => {
@@ -68,9 +78,20 @@ export default function DigitalHumanPage() {
         api.get('/api/digital-human/voices'),
         api.get('/api/digital-human/backgrounds'),
       ])
-      setAvatars(aRes.data?.avatars || [])
+      const avatarList = aRes.data?.avatars || []
+      setAvatars(avatarList)
       setVoices(vRes.data?.voices || [])
       setBackgrounds(bRes.data?.backgrounds || [])
+      // 构建写真映射（相对路径走 vite/nginx 代理，同源加载避免 CORS 缓存问题）
+      const pm = {}
+      avatarList.forEach(a => {
+        if (a.has_portrait && a.portrait_url) {
+          pm[a.id] = a.portrait_url.startsWith('http')
+            ? a.portrait_url
+            : a.portrait_url
+        }
+      })
+      setPortraitMap(pm)
     } catch (e) {}
   }
 
@@ -79,6 +100,53 @@ export default function DigitalHumanPage() {
       const res = await api.get('/api/digital-human/records')
       setRecords(res.data || [])
     } catch (e) {}
+  }
+
+  // ★ 生成单个数字人写真
+  const generatePortrait = async (avatarId) => {
+    const av = avatars.find(a => a.id === avatarId)
+    if (!av) return
+    // 避免重复生成
+    if (generatingPortrait.has(avatarId)) return
+    const newSet = new Set(generatingPortrait)
+    newSet.add(avatarId)
+    setGeneratingPortrait(newSet)
+    toast.info(`正在为 ${av.name} 生成AI写真...`)
+    try {
+      const res = await api.post(`/api/digital-human/generate-portrait/${avatarId}`)
+      // 相对路径走代理，同源加载（避免绝对地址跨域 CORS 缓存问题）
+      const portraitUrl = res.data.url
+      setPortraitMap(prev => ({ ...prev, [avatarId]: portraitUrl }))
+      toast.success(`${av.name} 写真生成成功！`)
+      // 刷新 avatar 列表以更新 has_portrait 状态
+      loadData()
+    } catch (e) {
+      toast.error(`${av.name} 写真生成失败：${e.message || '请稍后重试'}`)
+    } finally {
+      const finalSet = new Set(generatingPortrait)
+      finalSet.delete(avatarId)
+      setGeneratingPortrait(finalSet)
+    }
+  }
+
+  // ★ 一键生成全部写真
+  const generateAllPortraits = async () => {
+    setGeneratingAll(true)
+    toast.info('正在批量生成所有数字人写真，可能需要几分钟...')
+    try {
+      const res = await api.post('/api/digital-human/generate-all-portraits')
+      const { generated, cached, failed } = res.data
+      if (generated > 0 || cached > 0) {
+        toast.success(`写真生成完成！新增 ${generated} 个，已有 ${cached} 个${failed > 0 ? `，失败 ${failed} 个` : ''}`)
+        loadData() // 刷新
+      } else {
+        toast.error('所有写真生成失败，请检查API配置')
+      }
+    } catch (e) {
+      toast.error(`批量生成失败：${e.message}`)
+    } finally {
+      setGeneratingAll(false)
+    }
   }
 
   const loadArticles = async () => {
@@ -99,11 +167,15 @@ export default function DigitalHumanPage() {
       })
       setResult(res.data)
       loadRecords()
+      // 如果有视频URL，自动预览
+      if (res.data.video_url) {
+        playPreviewVideo(res.data.video_url)
+      }
       // 如果有音频URL，自动播放
       if (res.data.audio_url) {
         const fullUrl = res.data.audio_url.startsWith('http')
           ? res.data.audio_url
-          : `http://127.0.0.1:8000${res.data.audio_url}`
+          : `${API_BASE}${res.data.audio_url}`
         setAudioUrl(fullUrl)
         // 延迟确保 audio 元素挂载后再播放
         setTimeout(() => {
@@ -165,6 +237,34 @@ export default function DigitalHumanPage() {
     a.click(); URL.revokeObjectURL(url); toast.success('下载中')
   }, [videoBlob, toast])
 
+  // 通用文件下载（通过 axios blob 获取，支持认证 + 跨域）
+  const downloadFile = useCallback(async (urlPath, filename) => {
+    try {
+      const res = await api.get(urlPath, { responseType: 'blob' })
+      const blobUrl = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = filename
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+    } catch (e) {
+      toast.error('下载失败')
+    }
+  }, [toast])
+
+  // 播放服务器生成的视频
+  const playPreviewVideo = useCallback((url) => {
+    const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
+    setPreviewVideoUrl(fullUrl)
+    setPlayingVideo(false)
+    // 等 video 元素挂载后播放
+    setTimeout(() => {
+      if (videoRef.current) {
+        videoRef.current.play().then(() => setPlayingVideo(true)).catch(() => {})
+      }
+    }, 200)
+  }, [])
+
   // 自动录制：生成 + 播放时同步录制
   const recordAndPlay = useCallback(async () => {
     if (!text.trim()) { toast.error('请输入口播文案'); return }
@@ -177,7 +277,7 @@ export default function DigitalHumanPage() {
       setResult(res.data); loadRecords()
       if (res.data.audio_url) {
         const fullUrl = res.data.audio_url.startsWith('http')
-          ? res.data.audio_url : `http://127.0.0.1:8000${res.data.audio_url}`
+          ? res.data.audio_url : `${API_BASE}${res.data.audio_url}`
         setAudioUrl(fullUrl)
         setTimeout(() => {
           if (audioRef.current && avatarRef.current) {
@@ -221,7 +321,7 @@ export default function DigitalHumanPage() {
     <div className="space-y-6">
       <PageHeader
         title="AI数字人"
-        description="文案→配音→口播视频，8大虚拟形象+8种音色+6款背景，一键生成数字人口播视频"
+        description="文案→配音→口播视频，12款虚拟形象（含性感女神/甜美女神）+ AI写真肖像 + 8种音色，一键生成专业数字人口播视频"
         icon={UserCircle}
         iconColor="from-violet-500 to-purple-600"
       />
@@ -252,22 +352,62 @@ export default function DigitalHumanPage() {
 
           {/* 数字人形象 */}
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <UserCircle className="w-4 h-4 text-blue-500" /> 数字人形象
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <UserCircle className="w-4 h-4 text-blue-500" /> 数字人形象
+              </h3>
+              <button
+                onClick={generateAllPortraits}
+                disabled={generatingAll}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                <Camera className="w-3 h-3" />
+                {generatingAll ? '生成中...' : '一键生成全部写真'}
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-2">
-              {avatars.map((a) => (
+              {avatars.map((a) => {
+                const hasPortrait = !!portraitMap[a.id]
+                const isGenerating = generatingPortrait.has(a.id)
+                return (
                 <button key={a.id} onClick={() => setAvatarId(a.id)}
-                  className={`flex flex-col items-center gap-1.5 p-2.5 rounded-xl border transition-all ${
+                  className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl border transition-all ${
                     avatarId === a.id ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-500/20' : 'border-gray-100 hover:border-violet-200 hover:bg-violet-50/30'
                   }`}>
-                  <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${a.bg_color} flex items-center justify-center text-lg`}>
-                    {a.emoji}
-                  </div>
+                  {/* 写真状态角标 */}
+                  {hasPortrait ? (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full ring-2 ring-white" title="AI写真已就绪" />
+                  ) : isGenerating ? (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-amber-400 rounded-full ring-2 ring-white animate-pulse" title="写真生成中..." />
+                  ) : null}
+                  {/* 头像预览 — 有写真则显示写真缩略图 */}
+                  {hasPortrait ? (
+                    <div className="w-12 h-12 rounded-full overflow-hidden ring-2 ring-violet-200 shadow-sm">
+                      <img src={portraitMap[a.id]} alt={a.name} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${a.bg_color} flex items-center justify-center text-lg`}>
+                      {a.emoji}
+                    </div>
+                  )}
                   <div className="text-xs font-medium text-gray-800">{a.name}</div>
                   <div className="text-[10px] text-gray-400">{a.style}</div>
+                  {/* 写真生成按钮（仅在选中且无写真时显示） */}
+                  {avatarId === a.id && !hasPortrait && !isGenerating && (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); generatePortrait(a.id) }}
+                      className="text-[10px] text-violet-500 hover:text-violet-700 cursor-pointer underline mt-0.5"
+                    >
+                      生成AI写真
+                    </span>
+                  )}
+                  {avatarId === a.id && isGenerating && (
+                    <span className="text-[10px] text-amber-500 animate-pulse mt-0.5">
+                      AI写真生成中...
+                    </span>
+                  )}
                 </button>
-              ))}
+              )})}
             </div>
           </Card>
 
@@ -450,26 +590,69 @@ export default function DigitalHumanPage() {
                 scene={avatarScene}
                 glasses={glasses}
                 hat={hat}
+                portraitUrl={portraitMap[avatarId] || null}
               />
               {/* 底部信息条 */}
               <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/50 to-transparent">
                 <div className="flex items-center justify-center gap-3 text-white/80 text-xs">
-                  <span className="flex items-center gap-1"><UserCircle className="w-3 h-3" /> {selectedAvatar?.name || '选择形象'}</span>
+                  <span className="flex items-center gap-1">
+                    {portraitMap[avatarId] ? (
+                      <img src={portraitMap[avatarId]} alt="" className="w-4 h-4 rounded-full object-cover ring-1 ring-white/50" />
+                    ) : (
+                      <UserCircle className="w-3 h-3" />
+                    )}
+                    {selectedAvatar?.name || '选择形象'}
+                  </span>
                   <span className="flex items-center gap-1"><Volume2 className="w-3 h-3" /> {selectedVoice?.name || ''}</span>
                   <span className="flex items-center gap-1"><Smile className="w-3 h-3" /> {EXPRESSION_NAMES[currentExpression]}</span>
+                  {portraitMap[avatarId] && <span className="text-[10px] text-emerald-300">● AI写真</span>}
                 </div>
               </div>
             </div>
-            {/* 隐藏的 audio 元素 */}
+            {/* 音频播放条 */}
             {audioUrl && (
-              <audio
-                ref={audioRef}
-                src={audioUrl}
-                onEnded={() => { setPlaying(false); setTalking(false) }}
-                onPause={() => setPlaying(false)}
-                className="hidden"
-                crossOrigin="anonymous"
-              />
+              <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden bg-gray-50 px-3 py-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-violet-500" /> 配音音频
+                    {playing && <span className="text-[10px] text-emerald-500 animate-pulse">● 播放中</span>}
+                  </span>
+                  <span className="text-[10px] text-gray-400">{selectedVoice?.name || ''}</span>
+                </div>
+                <audio
+                  ref={audioRef}
+                  src={audioUrl}
+                  controls
+                  onPlay={() => { setPlaying(true); setTalking(true) }}
+                  onPause={() => { setPlaying(false); setTalking(false) }}
+                  onEnded={() => { setPlaying(false); setTalking(false) }}
+                  className="w-full h-8"
+                  crossOrigin="anonymous"
+                />
+              </div>
+            )}
+            {/* 视频播放器 */}
+            {previewVideoUrl && (
+              <div className="mt-3 border border-violet-200 rounded-xl overflow-hidden bg-black">
+                <div className="flex items-center justify-between px-3 py-1.5 bg-violet-50 border-b border-violet-200">
+                  <span className="text-xs font-medium text-violet-700 flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5" /> 生成的视频
+                    {playingVideo && <span className="text-[10px] text-emerald-500 animate-pulse">● 播放中</span>}
+                  </span>
+                  <button onClick={() => { setPreviewVideoUrl(''); setPlayingVideo(false) }}
+                    className="text-xs text-gray-400 hover:text-gray-600">关闭</button>
+                </div>
+                <video
+                  ref={videoRef}
+                  src={previewVideoUrl}
+                  controls
+                  onPlay={() => setPlayingVideo(true)}
+                  onPause={() => setPlayingVideo(false)}
+                  onEnded={() => setPlayingVideo(false)}
+                  className="w-full"
+                  style={{ maxHeight: 360 }}
+                />
+              </div>
             )}
           </Card>
         </div>
@@ -482,7 +665,9 @@ export default function DigitalHumanPage() {
               <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-500" /> 生成结果
               </h3>
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 mb-3">
+              <div className={`p-3 rounded-xl border text-sm mb-3 ${
+                result.status === 'done' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}>
                 {result.message}
               </div>
               <div className="space-y-2 text-xs text-gray-600">
@@ -504,10 +689,46 @@ export default function DigitalHumanPage() {
                     {result.status === 'done' ? '已完成' : '仅音频'}
                   </Badge>
                 </div>
-                {result.record_id && (
-                  <div className="text-[10px] text-gray-400 mt-2">记录 ID：{result.record_id}</div>
+              </div>
+              {/* 下载/播放按钮 */}
+              <div className="flex gap-2 mt-3">
+                {result.audio_url && (
+                  <button onClick={() => {
+                    const fullUrl = result.audio_url.startsWith('http')
+                      ? result.audio_url : `${API_BASE}${result.audio_url}`
+                    setAudioUrl(fullUrl)
+                    setTimeout(() => {
+                      if (audioRef.current) {
+                        audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
+                      }
+                    }, 200)
+                  }}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-medium hover:bg-blue-100 transition-colors">
+                    <Play className="w-3.5 h-3.5" /> 播放音频
+                  </button>
+                )}
+                {result.audio_url && (
+                  <button onClick={() => downloadFile(result.audio_url, 'digital-human-audio.mp3')}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-violet-50 border border-violet-200 text-violet-700 text-xs font-medium hover:bg-violet-100 transition-colors">
+                    <Download className="w-3.5 h-3.5" /> 下载 MP3
+                  </button>
+                )}
+                {result.video_url && (
+                  <button onClick={() => playPreviewVideo(result.video_url)}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-medium hover:bg-blue-100 transition-colors">
+                    <Play className="w-3.5 h-3.5" /> 播放视频
+                  </button>
+                )}
+                {result.video_url && (
+                  <button onClick={() => downloadFile(result.video_url, 'digital-human-video.mp4')}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors">
+                    <Download className="w-3.5 h-3.5" /> 下载 MP4
+                  </button>
                 )}
               </div>
+              {result.record_id && (
+                <div className="text-[10px] text-gray-400 mt-2">记录 ID：{result.record_id}</div>
+              )}
             </Card>
           )}
 
@@ -548,7 +769,44 @@ export default function DigitalHumanPage() {
                         </div>
                       </div>
                       <p className="text-xs text-gray-500 truncate mt-1">{r.text?.slice(0, 60)}</p>
-                      <div className="text-[10px] text-gray-400 mt-1">{r.created_at?.slice(0, 16)?.replace('T', ' ')}</div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <div className="text-[10px] text-gray-400">{r.created_at?.slice(0, 16)?.replace('T', ' ')}</div>
+                        <div className="flex items-center gap-1">
+                          {r.audio_url && (
+                            <button onClick={() => {
+                              const fullUrl = r.audio_url.startsWith('http')
+                                ? r.audio_url : `${API_BASE}${r.audio_url}`
+                              setAudioUrl(fullUrl)
+                              setTimeout(() => {
+                                if (audioRef.current) {
+                                  audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
+                                }
+                              }, 200)
+                            }}
+                              className="text-[10px] text-blue-500 hover:text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50">
+                              播放
+                            </button>
+                          )}
+                          {r.audio_url && (
+                            <button onClick={() => downloadFile(r.audio_url, `${r.avatar_name || 'audio'}.mp3`)}
+                              className="text-[10px] text-violet-500 hover:text-violet-700 px-1.5 py-0.5 rounded hover:bg-violet-50">
+                              MP3
+                            </button>
+                          )}
+                          {r.video_url && (
+                            <button onClick={() => playPreviewVideo(r.video_url)}
+                              className="text-[10px] text-blue-500 hover:text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50">
+                              播放
+                            </button>
+                          )}
+                          {r.video_url && (
+                            <button onClick={() => downloadFile(r.video_url, `${r.avatar_name || 'video'}.mp4`)}
+                              className="text-[10px] text-emerald-500 hover:text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-50">
+                              MP4
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )
                 })}

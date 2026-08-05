@@ -4,8 +4,8 @@
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
 """
 
-import base64
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -33,28 +33,12 @@ from slowapi.util import get_remote_address
 # 加载 .env 文件
 load_dotenv()
 
+import skills_store  # noqa: E402
 from admin_api import router as admin_api_router  # noqa: E402
+from apikey_api import router as apikey_api_router  # noqa: E402
+from batch_api import router as batch_api_router  # noqa: E402
 from chat_engine import router as chat_engine_router  # noqa: E402
 from collab_engine import router as collab_engine_router  # noqa: E402
-from content_strategy import router as content_strategy_router  # noqa: E402
-from digital_human import router as digital_human_router  # noqa: E402
-from smart_dashboard import router as smart_dashboard_router  # noqa: E402
-from pdf_tools import router as pdf_tools_router  # noqa: E402
-from competitor_monitor import router as competitor_monitor_router  # noqa: E402
-from seo_analyzer import router as seo_analyzer_router  # noqa: E402
-from voice_chat import router as voice_chat_router  # noqa: E402
-from video_analyzer import router as video_analyzer_router  # noqa: E402
-from mindmap import router as mindmap_router  # noqa: E402
-from data_forecast import router as data_forecast_router  # noqa: E402
-from doc_qa import router as doc_qa_router  # noqa: E402
-from web_search import router as web_search_router  # noqa: E402
-from batch_api import router as batch_api_router  # noqa: E402
-from favorites_api import router as favorites_api_router  # noqa: E402
-from apikey_api import router as apikey_api_router  # noqa: E402
-from search_api import router as search_api_router  # noqa: E402
-from scheduler import router as scheduler_router, start_scheduler, stop_scheduler  # noqa: E402
-from notify_api import router as notify_api_router  # noqa: E402
-from drafts import router as drafts_router  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
     consume_quota,
@@ -98,23 +82,40 @@ from common.models import (  # noqa: E402
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
-import skills_store  # noqa: E402
+from competitor_monitor import router as competitor_monitor_router  # noqa: E402
+from content_strategy import router as content_strategy_router  # noqa: E402
+from data_forecast import router as data_forecast_router  # noqa: E402
+from digital_human import router as digital_human_router  # noqa: E402
+from doc_qa import router as doc_qa_router  # noqa: E402
+from drafts import router as drafts_router  # noqa: E402
+from extensions_agents import router as extensions_agents_router  # noqa: E402
+from favorites_api import router as favorites_api_router  # noqa: E402
+from gallery import router as gallery_router  # noqa: E402
 from game_factory import router as game_factory_router  # noqa: E402
 from growth_engine import router as growth_engine_router  # noqa: E402
-from gallery import router as gallery_router  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
 from meme_factory import router as meme_factory_router  # noqa: E402
+from mindmap import router as mindmap_router  # noqa: E402
 from miniapp import router as miniapp_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
+from notify_api import router as notify_api_router  # noqa: E402
+from pdf_tools import router as pdf_tools_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
 from publishing import router as publishing_router  # noqa: E402
-from voice_factory import router as voice_factory_router  # noqa: E402
 from realtime import router as realtime_router  # noqa: E402
+from scheduler import router as scheduler_router  # noqa: E402
+from scheduler import start_scheduler, stop_scheduler
+from search_api import router as search_api_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
+from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
+from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from templates_market import router as templates_market_router  # noqa: E402
+from video_analyzer import router as video_analyzer_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
-from extensions_agents import router as extensions_agents_router  # noqa: E402
+from voice_chat import router as voice_chat_router  # noqa: E402
+from voice_factory import router as voice_factory_router  # noqa: E402
+from web_search import router as web_search_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -163,6 +164,11 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# 数字人写真肖像静态目录
+PORTRAIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "image_factory", "avatars")
+os.makedirs(PORTRAIT_DIR, exist_ok=True)
+app.mount("/api/image-factory/avatars", StaticFiles(directory=PORTRAIT_DIR), name="avatar_portraits")
+
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
 app.state.limiter = limiter
@@ -173,6 +179,17 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试或联系管理员"})
+
+
+def _safe_serializable(obj):
+    """递归把不可 JSON 序列化的对象转成字符串（如 UploadFile 校验失败时的 bytes）。"""
+    if isinstance(obj, bytes):
+        return f"<{len(obj)} bytes>"
+    if isinstance(obj, dict):
+        return {k: _safe_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serializable(v) for v in obj]
+    return obj
 
 
 @app.exception_handler(RequestValidationError)
@@ -190,7 +207,8 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
     if "required" in str(msg):
         hint = f"缺少必填参数「{field}」"
     logger.warning("Validation error %s %s: %s", request.method, request.url.path, exc)
-    return JSONResponse(status_code=422, content={"detail": hint, "errors": errors[:5]})
+    safe_errors = [_safe_serializable(e) for e in errors[:5]]
+    return JSONResponse(status_code=422, content={"detail": hint, "errors": safe_errors})
 
 app.add_middleware(
     CORSMiddleware,
@@ -298,7 +316,19 @@ async def register(request: Request, req: RegisterRequest):
 # ══════════════════════════════════════════════════════════════
 # 全局智能助手（页面右下角浮动机器人）
 # ══════════════════════════════════════════════════════════════
-_ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小团」，热情、专业、靠谱，用简体中文回答用户关于平台使用的一切问题。
+_ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小团」，一位热情、专业、靠谱的智能伙伴。用简体中文回答用户关于平台使用的一切问题。
+
+## 回复风格
+- 先理解再回答：简短确认用户意图，再给出答案（如"明白，你是想问XX对吧？"）
+- 结论先行：先给最直接的答案，再补充细节和延伸建议
+- 步骤化指引：操作类问题用"第1步→第2步→第3步"的叙述方式，不用列表序号
+- 场景化推荐：了解用户需求后，主动推荐1-2个相关功能（如"你如果经常做XX，还可以试试YY功能"）
+- 语气温度：像贴心同事而非冷冰冰的机器人，适当用"~"、"哦"等语气词
+
+## 回复长度
+- 简单问题：30-60字直接回答
+- 操作指引：80-150字步骤说明
+- 功能介绍：100-200字覆盖核心价值和访问路径
 
 # 平台简介
 小团智能平台是一个 AI 赋能各行各业的智能工作平台，提供研发管理、创作工厂、效率工具箱、个人中心四大板块，从需求到部署全流程 AI 驱动。
@@ -788,7 +818,7 @@ _AGENT_TEMPLATE_META = {
 def _parse_agent_template_file(skill_path: str) -> dict | None:
     """解析 SKILL.md：提取 frontmatter（name/description）+ Instructions 正文。"""
     try:
-        with open(skill_path, "r", encoding="utf-8") as f:
+        with open(skill_path, encoding="utf-8") as f:
             text = f.read()
     except OSError:
         return None
@@ -1741,7 +1771,7 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
         hits = []
         for fp in files:
             try:
-                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                with open(fp, encoding="utf-8", errors="ignore") as f:
                     content = f.read(200000)
             except OSError:
                 continue
@@ -2254,6 +2284,108 @@ async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: d
     return {"logs": logs, "container": f"sandbox-{project_id}"}
 
 
+# ── 代码沙箱静态检查（AI 代码解释器安全）──────────────────────
+# 黑名单：危险操作 token（小写匹配）；白名单：允许 import 的模块。
+# 策略：宁误伤勿放过——沙箱仅服务“纯计算 + 白名单绘图/分析”场景。
+_SANDBOX_BLOCKED_TOKENS = [
+    "os.", "system(", "subprocess", "socket", "shutil", "ctypes", "importlib",
+    "__import__", "eval(", "exec(", "open(", "path(", "tempfile", "glob",
+    "urllib", "http.", "ftp", "pickle", "marshal", "pty", "popen", "fork(",
+    "environ", "getenv", "chmod", "chown", "remove(", "unlink(", "rmdir",
+    "sqlite3", "requests", "multiprocessing", "threading", "signal", "compile(", "input(",
+]
+_SANDBOX_ALLOWED_IMPORTS = {
+    "math", "random", "json", "time", "datetime", "statistics", "collections",
+    "itertools", "functools", "re", "base64", "io", "string", "decimal",
+    "fractions", "heapq", "bisect", "array", "textwrap", "unicodedata",
+    "operator", "types", "copy", "pprint", "traceback",
+    "matplotlib", "pandas", "numpy", "PIL",
+}
+
+
+def _check_sandbox_code(code: str) -> str | None:
+    """沙箱静态检查：返回违规说明（None=通过）。"""
+    import re as _re
+
+    lowered = code.lower()
+    for tok in _SANDBOX_BLOCKED_TOKENS:
+        if tok in lowered:
+            return f"代码包含被禁止的操作: {tok!r}（沙箱仅允许纯计算与白名单库）"
+    for line in code.splitlines():
+        m = _re.match(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)", line)
+        if m and m.group(1) not in _SANDBOX_ALLOWED_IMPORTS:
+            return f"禁止导入模块: {m.group(1)}（不在沙箱白名单内）"
+    return None
+
+
+@app.post("/api/sandbox/execute")
+async def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
+    """AI 代码解释器：安全子进程执行 Python 代码。
+
+    安全措施：
+    - 静态扫描：禁止 os/subprocess/socket/open/eval/importlib 等危险操作，import 白名单
+    - 资源限制：CPU 10s / 单文件 2MB / 文件描述符 128（子进程 preexec_fn；
+      macOS 不支持 AS/DATA 内存限制，内存保护靠静态扫描+超时兜底）
+    - 隔离环境：独立临时工作目录，清空 HOME/TMPDIR，忽略 PYTHON* 环境变量
+    - 超时 30s + 输出截断 20KB
+    """
+    import resource as _resource
+    import shutil as _shutil
+    import subprocess as _sp
+    import sys as _sys
+    import tempfile as _tf
+
+    code = (req.get("code") or "").strip()
+    language = (req.get("language") or "python").lower()
+    if not code:
+        raise HTTPException(400, "代码不能为空")
+    if len(code) > 20000:
+        raise HTTPException(400, "代码过长（上限 20KB）")
+    if language not in ("python", "python3", "py"):
+        raise HTTPException(400, f"暂不支持语言: {language}（当前仅支持 python）")
+
+    # ── 静态安全检查 ──
+    blocked = _check_sandbox_code(code)
+    if blocked:
+        return {"output": "", "error": blocked, "duration": 0.0, "exit_code": -1}
+
+    def _limits():
+        """子进程资源限制。
+
+        注意：macOS 上 Python 进程 VIRT 基础值达十几 GB，RLIMIT_AS/RLIMIT_DATA
+        会导致 exec 失败，故内存保护依赖静态扫描 + 超时兜底。
+        """
+        _resource.setrlimit(_resource.RLIMIT_CPU, (10, 10))  # CPU 10 秒
+        _resource.setrlimit(_resource.RLIMIT_FSIZE, (2 * 1024 * 1024, 2 * 1024 * 1024))  # 单文件 2MB
+        _resource.setrlimit(_resource.RLIMIT_NOFILE, (128, 128))  # 文件描述符上限（解释器/绘图库需较多 fd）
+
+    workdir = _tf.mkdtemp(prefix="sandbox_exec_")
+    start = time.time()
+    try:
+        r = _sp.run(
+            [_sys.executable, "-E", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=workdir,
+            env={"HOME": workdir, "TMPDIR": workdir, "PYTHONIOENCODING": "utf-8"},
+            preexec_fn=_limits,
+        )
+        duration = round(time.time() - start, 2)
+        return {
+            "output": (r.stdout or "")[:20000],
+            "error": (r.stderr or "")[:20000],
+            "duration": duration,
+            "exit_code": r.returncode,
+        }
+    except _sp.TimeoutExpired:
+        return {"output": "", "error": "执行超时（30秒）", "duration": 30.0, "exit_code": -1}
+    except Exception as e:
+        return {"output": "", "error": f"执行器错误: {e}", "duration": 0.0, "exit_code": -1}
+    finally:
+        _shutil.rmtree(workdir, ignore_errors=True)
+
+
 app.include_router(image_factory_router)
 app.include_router(video_factory_router)
 app.include_router(music_factory_router)
@@ -2295,18 +2427,22 @@ app.include_router(notify_api_router)
 
 # v9.0: Platform API
 from platform_api import router as platform_api_router
+
 app.include_router(platform_api_router)
 
 # v9.0: Extended API (Phase 2-4 + Office)
 from extended_api import router as extended_api_router
+
 app.include_router(extended_api_router)
 
 # v9.0: Tool Hub API
 from tool_hub import router as tool_hub_router
+
 app.include_router(tool_hub_router)
 
 # v9.0: Stock Tools API
 from stock_tools import router as stock_tools_router
+
 app.include_router(stock_tools_router)
 
 # v9.1: 管理后台 API

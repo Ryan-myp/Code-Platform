@@ -9,8 +9,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 
+from common.auth import decode_access_token, get_user_profile, require_auth
 from common.config import BIZ_DELIVERY_DIR, DEFAULT_MODELS, load_config
 from common.db import get_db
 from common.llm import call_llm, log_usage
@@ -611,13 +613,40 @@ async def save_config(req: dict):
 # ══════════════════════════════════════════════════════════════
 
 @router.get("/api/usage-stats")
-async def usage_stats():
+async def usage_stats(request: Request):
+    # 可选：从 Authorization 头解析当前用户，返回会员等级与今日剩余额度（未登录则返回 free）
+    member_level, remaining_today = "free", None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            payload = decode_access_token(auth_header[7:])
+            uid = payload.get("user_id")
+            if uid:
+                profile = get_user_profile(uid)
+                member_level = profile.get("membership", "free")
+                remaining_today = profile.get("remaining_today")
+        except Exception:
+            pass
     conn = get_db()
     total = conn.execute("SELECT COUNT(*) c FROM usage_logs").fetchone()["c"]
     success = conn.execute("SELECT COUNT(*) c FROM usage_logs WHERE success=1").fetchone()["c"]
     avg_time = conn.execute("SELECT AVG(response_time) a FROM usage_logs").fetchone()["a"]
     by_type = conn.execute("SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs GROUP BY task_type").fetchall()
     recent = conn.execute("SELECT * FROM usage_logs ORDER BY timestamp DESC LIMIT 10").fetchall()
+    # 近7天每日趋势（date → 调用次数 + token 消耗）
+    daily = conn.execute(
+        "SELECT substr(timestamp,1,10) d, COUNT(*) c, SUM(input_length + output_length) tokens "
+        "FROM usage_logs WHERE timestamp >= datetime('now', '-7 days') GROUP BY d ORDER BY d"
+    ).fetchall()
+    # 模块分布（按任务类型聚合）
+    module = conn.execute(
+        "SELECT task_type module, COUNT(*) c FROM usage_logs GROUP BY task_type ORDER BY c DESC"
+    ).fetchall()
+    # 今日统计
+    today = conn.execute(
+        "SELECT COUNT(*) c, COALESCE(SUM(input_length + output_length), 0) tokens FROM usage_logs WHERE substr(timestamp,1,10) = substr(date('now'),1,10)"
+    ).fetchone()
+    total_tokens = conn.execute("SELECT COALESCE(SUM(input_length + output_length), 0) t FROM usage_logs").fetchone()["t"]
     conn.close()
     return {
         "total_calls": total,
@@ -625,7 +654,40 @@ async def usage_stats():
         "avg_response_time": round(avg_time, 2) if avg_time else 0,
         "by_type": [dict(r) for r in by_type],
         "recent": [dict(r) for r in recent],
+        "daily_breakdown": [{"date": r["d"], "count": r["c"], "tokens": r["tokens"] or 0} for r in daily],
+        "module_breakdown": [{"module": r["module"], "count": r["c"]} for r in module],
+        "total_tokens": total_tokens,
+        "today_calls": today["c"],
+        "today_tokens": today["tokens"],
+        "most_used": module[0]["module"] if module else "无",
+        "member_level": member_level,
+        "remaining_today": remaining_today,
     }
+
+
+@router.get("/api/usage-stats/export")
+async def usage_stats_export(current_user: dict = Depends(require_auth)):
+    """导出使用统计 CSV（按 日期×模块 聚合，供审计/归档）。"""
+    import csv
+    import io
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT substr(timestamp,1,10) d, task_type, COUNT(*) c, "
+        "SUM(input_length + output_length) tokens, ROUND(AVG(response_time),2) avg_ms, SUM(success) ok "
+        "FROM usage_logs GROUP BY d, task_type ORDER BY d DESC, c DESC LIMIT 10000"
+    ).fetchall()
+    conn.close()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["日期", "模块", "调用次数", "Token消耗", "平均耗时(s)", "成功次数"])
+    for r in rows:
+        w.writerow([r["d"], r["task_type"], r["c"], r["tokens"] or 0, r["avg_ms"] or 0, r["ok"] or 0])
+    return Response(
+        content="\ufeff" + buf.getvalue(),  # BOM：Excel 直接打开中文不乱码
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=usage_stats.csv"},
+    )
 
 
 @router.get("/api/evolution/prompt-history")

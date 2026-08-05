@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
-import { Card, Button, Empty, PageHeader } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -37,11 +37,16 @@ export default function ExcelPage() {
   const [uploadedFile, setUploadedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
   const [previewData, setPreviewData] = useState(null)
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState(null)
   const fileInputRef = useRef(null)
 
   useEffect(() => { loadHistory() }, [])
   const loadHistory = async () => {
-    try { const res = await api.get('/api/excel/history'); setHistory(res.data) } catch (e) {}
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try { const res = await api.get('/api/excel/history'); setHistory(res.data) } catch (e) { setHistoryError(e.message) }
+    finally { setHistoryLoading(false) }
   }
 
   const execute = async () => {
@@ -315,7 +320,18 @@ export default function ExcelPage() {
       </div>
 
       {/* 历史记录 */}
-      {history.length > 0 && (
+      {historyLoading ? (
+        <Card>
+          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-gray-400" /> 操作历史
+          </h3>
+          <SkeletonList count={3} />
+        </Card>
+      ) : historyError ? (
+        <Card>
+          <ErrorState message={`历史加载失败：${historyError}`} onRetry={loadHistory} />
+        </Card>
+      ) : history.length > 0 && (
         <Card>
           <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <Clock className="w-4 h-4 text-gray-400" /> 操作历史

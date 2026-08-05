@@ -6,7 +6,7 @@ import {
   Flame, ArrowRight, ShieldCheck, Layers, Search, Target, TrendingUp as TrendingIcon,
   Radar, UserPlus as Competitor, Zap, Crosshair,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -741,8 +741,10 @@ export default function GrowthPage() {
                   <Button variant="secondary" size="sm" icon={RefreshCw} loading={hotLoading} onClick={loadHotspots}>刷新</Button>
                 </div>
               </div>
-              {hotspots.length === 0 ? (
-                <Empty icon={Flame} title="加载中…" description="正在获取最新热点榜单" />
+              {hotLoading ? (
+                <SkeletonList count={5} />
+              ) : hotspots.length === 0 ? (
+                <Empty icon={Flame} title="暂无热点" description="点击刷新获取最新热点榜单" actionLabel="刷新" onAction={loadHotspots} />
               ) : (
                 <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
                   {hotspots.map((h) => (

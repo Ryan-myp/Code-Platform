@@ -36,7 +36,7 @@ export default function VideoAnalyzerPage() {
       setVideoInfo(res.data)
       toast.success(res.data.message || '上传成功')
     } catch (err) {
-      toast.error(`上传失败：${err.message}`)
+      toast.error(`上传失败：${err.response?.data?.detail || err.message}`)
     }
     setUploading(false)
   }
@@ -50,7 +50,7 @@ export default function VideoAnalyzerPage() {
       loadRecords()
       toast.success('视频分析完成')
     } catch (err) {
-      toast.error(`分析失败：${err.message}`)
+      toast.error(`分析失败：${err.response?.data?.detail || err.message}`)
     }
     setAnalyzing(false)
   }

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 
 const PLATFORMS = [
   {
@@ -52,7 +52,7 @@ const STATUS_BADGE = {
 function assetFull(url) {
   if (!url) return ''
   if (url.startsWith('http')) return url
-  return (api.defaults.baseURL || 'http://localhost:8888') + url
+  return API_BASE + url
 }
 
 const TABS = [

@@ -8,6 +8,7 @@
 - 支持 ZIP 打包下载（web/ + wx/ 双目录）
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -379,12 +380,23 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
     files = None
     qc = None
     last_err = ""
-    try:
-        result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"生成失败: {e}") from e
+    # 首次 LLM 调用：上游抖动自动重试（最多 3 次，指数退避）
+    result = None
+    for _attempt in range(3):
+        try:
+            result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
+            break
+        except HTTPException as e:
+            if e.status_code < 500:
+                raise  # 4xx 属业务/参数问题，不重试
+            last_err = f"{e.status_code}: {e.detail}"
+            logger.warning("game LLM upstream error (attempt %d): %s", _attempt + 1, str(e.detail)[:200])
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("game LLM exception (attempt %d): %s", _attempt + 1, str(e)[:200])
+        await asyncio.sleep(2 * (_attempt + 1))
+    if result is None:
+        raise HTTPException(502, f"LLM 服务暂时不可用，已自动重试仍失败，请稍后重试。详情: {last_err}")
 
     # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
     for attempt in range(3):

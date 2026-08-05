@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react'
 import {
   Smartphone, Sparkles, FolderOpen, FileCode2, Braces, FileText, Paintbrush,
   Copy, Check, Download, Trash2, Eye, Rocket, FolderTree, Loader2, Plus,
+  MonitorPlay, Maximize2, Code2, Smartphone as PhoneIcon,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import { wxmlToHtml } from '../lib/wxml-preview'
 
 const TEMPLATES = [
   { id: 'shop', name: '电商购物', icon: '🛍️', color: 'from-pink-500 to-rose-600', description: '商品列表 / 详情 / 购物车 / 结算' },
@@ -57,6 +59,9 @@ export default function MiniAppPage() {
   const [copied, setCopied] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
   const [guide, setGuide] = useState({ steps: [], note: '' })
+  const [viewMode, setViewMode] = useState('preview') // 'preview' | 'code'
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewPage, setPreviewPage] = useState('')
 
   useEffect(() => { loadProjects() }, [])
   useEffect(() => {
@@ -73,6 +78,20 @@ export default function MiniAppPage() {
     try { const res = await api.get('/api/miniapp/projects'); setProjects(res.data || []) } catch (e) {}
   }
 
+  const buildPreview = (files) => {
+    const result = wxmlToHtml(files, previewPage || undefined)
+    setPreviewHtml(result.html)
+    setPreviewPage(result.title)
+  }
+
+  const switchPreviewPage = (pagePath) => {
+    if (!viewing) return
+    setPreviewPage(pagePath)
+    const result = wxmlToHtml(viewing.files, pagePath)
+    setPreviewHtml(result.html)
+    setSelectedFile(pagePath)
+  }
+
   const generate = async () => {
     if (!name.trim()) { toast.error('请输入项目名称'); return }
     if (requirement.trim().length < 2) { toast.error('请描述你的功能需求'); return }
@@ -82,7 +101,10 @@ export default function MiniAppPage() {
       const data = res.data
       const files = data.files || {}
       setViewing({ id: data.id, name: data.name, files })
-      setSelectedFile(Object.keys(files)[0] || '')
+      setViewMode('preview')
+      buildPreview(files)
+      const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
+      setSelectedFile(wxmlFiles[0] || '')
       loadProjects()
       toast.success(`生成成功：${data.file_count} 个文件`)
     } catch (e) {
@@ -95,7 +117,10 @@ export default function MiniAppPage() {
       const res = await api.get(`/api/miniapp/${p.id}`)
       const files = res.data.files || {}
       setViewing({ id: p.id, name: p.name, files })
-      setSelectedFile(Object.keys(files)[0] || '')
+      setViewMode('preview')
+      buildPreview(files)
+      const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
+      setSelectedFile(wxmlFiles[0] || '')
     } catch (e) { toast.error(e.message) }
   }
 
@@ -136,6 +161,8 @@ export default function MiniAppPage() {
   const tree = viewing ? fileTree(Object.keys(viewing.files)) : []
   const current = viewing?.files[selectedFile] || ''
   const tpl = templates.find((t) => t.id === template)
+  const wxmlPages = viewing ? Object.keys(viewing.files).filter(k => k.endsWith('.wxml')) : []
+  const currentPageLabel = previewPage ? previewPage.replace('pages/', '').replace('/index.wxml', '') : ''
 
   return (
     <div className="space-y-6">
@@ -268,7 +295,7 @@ export default function MiniAppPage() {
       </div>
 
       {/* ── 项目查看 Modal ── */}
-      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `项目：${viewing.name}` : ''} size="2xl"
+      <Modal open={!!viewing} onClose={() => { setViewing(null); setViewMode('preview') }} title={viewing ? `项目：${viewing.name}` : ''} size="2xl"
         footer={
           <>
             <Button variant="secondary" icon={Rocket} onClick={loadGuide}>部署指引</Button>
@@ -276,32 +303,103 @@ export default function MiniAppPage() {
             <Button variant="primary" icon={Smartphone} onClick={() => { setViewing(null); toast.success('在微信开发者工具中导入解压后的目录即可运行') }}>完成</Button>
           </>
         }>
-        <div className="flex flex-col md:flex-row gap-4">
-          {/* 文件树 */}
-          <div className="md:w-64 flex-shrink-0 border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto bg-gray-50/50">
-            <div className="px-3 py-2 bg-gray-100/80 border-b border-gray-200 text-xs font-medium text-gray-500 flex items-center gap-1.5">
-              <FolderTree className="w-3.5 h-3.5" /> {Object.keys(viewing?.files || {}).length} 个文件
-            </div>
-            <div className="p-2 space-y-0.5">
-              {tree.map((node) => (
-                <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={setSelectedFile} />
-              ))}
-            </div>
-          </div>
-          {/* 代码预览 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-gray-700 truncate flex items-center gap-1.5">
-                {(() => { const { Icon, color } = fileIcon(selectedFile); return <Icon className={`w-4 h-4 ${color} flex-shrink-0`} /> })()}
-                {selectedFile}
-              </span>
-              <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyFile}>{copied ? '已复制' : '复制'}</Button>
-            </div>
-            <pre className="bg-gray-900 text-gray-100 text-xs leading-relaxed p-4 rounded-xl overflow-auto max-h-[52vh] font-mono whitespace-pre">
-              {current}
-            </pre>
-          </div>
+        {/* ── 模式切换 Tab ── */}
+        <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-4 w-fit">
+          <button
+            onClick={() => { setViewMode('preview'); if (viewing) buildPreview(viewing.files) }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              viewMode === 'preview' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}>
+            <MonitorPlay className="w-3.5 h-3.5" /> 可视化预览
+          </button>
+          <button
+            onClick={() => setViewMode('code')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              viewMode === 'code' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}>
+            <Code2 className="w-3.5 h-3.5" /> 代码查看
+          </button>
         </div>
+
+        {/* ── 可视化预览模式 ── */}
+        {viewMode === 'preview' && (
+          <div className="flex flex-col gap-3">
+            {/* 页面选择器 */}
+            {wxmlPages.length > 1 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-gray-400 flex items-center gap-1"><PhoneIcon className="w-3 h-3" /> 页面切换：</span>
+                {wxmlPages.map((p) => {
+                  const label = p.replace('pages/', '').replace('/index.wxml', '').replace('.wxml', '')
+                  const isActive = previewPage === p
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => switchPreviewPage(p)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                        isActive ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}>
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {/* 手机模拟框 */}
+            <div className="flex justify-center bg-gray-100 rounded-2xl p-4">
+              <div className="w-[375px] rounded-[36px] border-[6px] border-gray-800 bg-white shadow-2xl overflow-hidden">
+                {/* 状态栏 */}
+                <div className="h-7 bg-gray-800 flex items-center justify-between px-5 text-[10px] text-white">
+                  <span>9:41</span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-3 h-3 border border-white rounded-sm" />
+                    <span>▮▮▮▮</span>
+                  </span>
+                </div>
+                <iframe
+                  title="小程序预览"
+                  srcDoc={previewHtml}
+                  className="w-full bg-white"
+                  style={{ height: '60vh', maxHeight: '600px', border: 'none' }}
+                  sandbox="allow-scripts allow-same-origin"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-center gap-2 text-xs text-gray-400">
+              <MonitorPlay className="w-3 h-3" />
+              以上为浏览器内自动转换的预览效果，实际效果以微信开发者工具为准
+            </div>
+          </div>
+        )}
+
+        {/* ── 代码查看模式 ── */}
+        {viewMode === 'code' && (
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* 文件树 */}
+            <div className="md:w-64 flex-shrink-0 border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto bg-gray-50/50">
+              <div className="px-3 py-2 bg-gray-100/80 border-b border-gray-200 text-xs font-medium text-gray-500 flex items-center gap-1.5">
+                <FolderTree className="w-3.5 h-3.5" /> {Object.keys(viewing?.files || {}).length} 个文件
+              </div>
+              <div className="p-2 space-y-0.5">
+                {tree.map((node) => (
+                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={setSelectedFile} />
+                ))}
+              </div>
+            </div>
+            {/* 代码预览 */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-700 truncate flex items-center gap-1.5">
+                  {(() => { const { Icon, color } = fileIcon(selectedFile); return <Icon className={`w-4 h-4 ${color} flex-shrink-0`} /> })()}
+                  {selectedFile}
+                </span>
+                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyFile}>{copied ? '已复制' : '复制'}</Button>
+              </div>
+              <pre className="bg-gray-900 text-gray-100 text-xs leading-relaxed p-4 rounded-xl overflow-auto max-h-[52vh] font-mono whitespace-pre">
+                {current}
+              </pre>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ── 部署指引 Modal ── */}

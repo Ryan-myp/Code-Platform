@@ -14,7 +14,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -114,20 +114,37 @@ async def get_hotspots(source: str = "", limit: int = 30, current_user: dict = r
 # AI 选题建议
 # ══════════════════════════════════════════════════════════════
 
-TOPIC_SYSTEM = """你是资深内容策略师，专精于将热点转化为可落地的选题。
+TOPIC_SYSTEM = """你是资深内容策略师和新媒体热点运营专家，拥有8年+多平台内容策划经验，擅长从热点事件中挖掘高传播潜力的选题角度。
 
-用户选中一个热点话题，你为指定平台生成 3-5 个选题角度。每个选题包含：
-1. **标题方向**：15-25字，平台调性适配
-2. **切入角度**：30-50字，为什么这个角度能火
-3. **预估受众**：10-20字，谁会看、为什么关心
+## 选题方法论
+采用"热点×角度×平台"三维选题法：
+1. **热点拆解**：将热点事件拆解为核心冲突/争议点/情感触点/数据锚点
+2. **角度匹配**：根据目标平台调性选择最适合的切入角度
+3. **受众共鸣**：找到热点与目标受众最关心的利益/情感连接点
+
+## 平台差异化选题
+- **微信公众号**：深度分析型（"XX事件背后的3个底层逻辑"）、行业解读型
+- **抖音**：情绪共鸣型（"看完XX事件，我决定..."）、反转型（"你看到的可能不是真相"）
+- **快手**：真实视角型（"作为过来人，我想说..."）、共情型
+- **小红书**：个人体验型（"从XX事件中我学到了..."）、干货整理型
+
+## 角度类型（每组覆盖不同类型）
+1. **干货型**：提炼方法论/规律/经验
+2. **争议型**：提出不同观点/质疑主流看法
+3. **情感共鸣型**：连接大众情绪/个人故事
+4. **反转型**：揭示事件背后的另一面
+5. **清单型**：结构化总结（"XX的5个关键启示"）
+
+## 输出要求
+- 每个选题的title_direction要可直接用作标题框架
+- angle要说清楚为什么这个角度能火（受众心理/传播逻辑）
+- audience要具体可执行（如"25-35岁职场人，正面临类似决策困境"）
+- 3-5个选题角度不能重复，覆盖不同受众群体
 
 输出严格 JSON 数组：
 [{"title_direction":"...","angle":"...","audience":"..."}, ...]
 
-要求：
-- 角度多样化：干货型/争议型/情感共鸣型/反转型/清单型
-- 可操作性强，用户拿到就能写
-- 不要输出 JSON 数组之外的文字"""
+不要输出 JSON 数组之外的文字。"""
 
 
 class TopicSuggestRequest(BaseModel):
@@ -160,7 +177,7 @@ async def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_a
         suggestions = json.loads(raw)
         if not isinstance(suggestions, list):
             raise ValueError("LLM 返回的不是数组")
-    except Exception as e:
+    except Exception:
         logger.exception("topic suggest LLM failed")
         # 回退：返回简单的选题建议
         suggestions = [

@@ -1,15 +1,38 @@
 import React, { useState, useEffect } from 'react'
-import { BarChart3, TrendingUp, PieChart, Zap, Clock, Activity, DollarSign, Layers, Target } from 'lucide-react'
+import { BarChart3, TrendingUp, PieChart, Zap, Clock, Activity, DollarSign, Layers, Target, Download } from 'lucide-react'
 import { Card, PageHeader } from '../components/ui'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
+import { useToast } from '../lib/toast'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart as RePieChart, Pie, Cell } from 'recharts'
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316']
 
 export default function UsageAnalyticsPage() {
+  const toast = useToast()
   const [stats, setStats] = useState(null)
   const [dailyUsage, setDailyUsage] = useState([])
   const [moduleDist, setModuleDist] = useState([])
+
+  // 导出使用统计 CSV（带 token 的 fetch，触发浏览器下载）
+  const exportCsv = async () => {
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE}/api/usage-stats/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `usage_stats_${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('统计已导出')
+    } catch (e) {
+      toast.error(`导出失败：${e.message}`)
+    }
+  }
 
   useEffect(() => {
     loadStats()
@@ -17,7 +40,7 @@ export default function UsageAnalyticsPage() {
 
   const loadStats = async () => {
     try {
-      const res = await api.get('/api/usage/stats')
+      const res = await api.get('/api/usage-stats')
       const data = res.data || {}
       setStats(data)
 
@@ -70,6 +93,14 @@ export default function UsageAnalyticsPage() {
         description="全面了解你的AI使用情况：调用次数、Token消耗、模块分布、使用趋势"
         icon={BarChart3}
         iconColor="from-blue-500 to-indigo-600"
+        actions={
+          <button
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-sm text-gray-700 rounded-xl hover:bg-gray-50 hover:border-blue-300 transition-colors shadow-sm"
+          >
+            <Download className="w-4 h-4 text-blue-500" /> 导出CSV
+          </button>
+        }
       />
 
       {/* 总览卡片 */}

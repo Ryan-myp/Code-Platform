@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { Mic, MicOff, Volume2, Send, Trash2, Bot, User, Zap, Clock } from 'lucide-react'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 
 export default function VoiceChatPage() {
   const toast = useToast()
@@ -12,9 +12,6 @@ export default function VoiceChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const recognitionRef = useRef(null)
-
-  const handleSendRef = useRef(handleSend)
-  useEffect(() => { handleSendRef.current = handleSend }, [handleSend])
 
   // ── 浏览器语音识别 ──
   useEffect(() => {
@@ -90,7 +87,7 @@ export default function VoiceChatPage() {
       try {
         const ttsRes = await api.post('/api/voice-chat/tts', { text: res.data.reply, voice_id: 'zh-CN-XiaoxiaoNeural' })
         if (ttsRes.data.audio_url) {
-          const audio = new Audio(ttsRes.data.audio_url.startsWith('http') ? ttsRes.data.audio_url : `http://127.0.0.1:8888${ttsRes.data.audio_url}`)
+          const audio = new Audio(ttsRes.data.audio_url.startsWith('http') ? ttsRes.data.audio_url : `${API_BASE}${ttsRes.data.audio_url}`)
           audio.play().catch(() => {})
         }
       } catch {
@@ -101,6 +98,10 @@ export default function VoiceChatPage() {
     }
     setLoading(false)
   }, [input, messages, toast])
+
+  // 语音识别回调通过 ref 转发到最新的 handleSend（避免识别 effect 捕获旧闭包）
+  const handleSendRef = useRef(null)
+  useEffect(() => { handleSendRef.current = handleSend }, [handleSend])
 
   const clearChat = () => setMessages([])
 

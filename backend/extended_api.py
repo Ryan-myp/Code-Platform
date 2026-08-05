@@ -12,12 +12,12 @@ import time
 import traceback
 import uuid
 from datetime import datetime
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 
-from common.db import get_db
 from common.auth import require_auth
+from common.db import get_db
 from common.llm import call_llm
 
 logger = logging.getLogger(__name__)
@@ -492,8 +492,8 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
                      language: str, deploy: bool, target_stage: str, username: str) -> None:
     """后台执行全自动流水线：一句话需求 → 6 阶段产物 → 自动部署。"""
     import asyncio
-    from prd_engine import PRD_SYSTEM, REVIEW_SYSTEM, TD_SYSTEM, TEST_SYSTEM, CODE_SYSTEM
-    from prd_engine import save_pipeline_output
+
+    from prd_engine import CODE_SYSTEM, PRD_SYSTEM, REVIEW_SYSTEM, TD_SYSTEM, TEST_SYSTEM, save_pipeline_output
 
     def log(line: str) -> None:
         _auto_run_append(run_id, f"[{datetime.now().isoformat()[:19]}] {line}")
@@ -701,9 +701,24 @@ async def stop_auto_run(run_id: str, current_user: dict = require_auth()):
 async def generate_code(data: CodeGenRequest, current_user: dict = require_auth()):
     """AI 代码生成"""
     try:
-        system_prompt = f"你是一个专业的{data.language}开发工程师。根据用户需求生成高质量代码。只返回代码，不要解释。"
+        system_prompt = f"""你是一位资深{data.language}开发工程师，拥有10年+生产级项目经验。
+
+代码生成要求：
+1. 生产级质量：包含错误处理、输入验证、边界条件处理
+2. 可维护性：清晰的变量命名、适当的注释、单一职责原则
+3. 安全性：防止注入攻击、敏感信息不硬编码、使用参数化查询
+4. 性能意识：避免不必要的循环、合理使用缓存、注意内存管理
+5. 测试友好：函数粒度适中、依赖可注入、纯函数优先
+
+输出格式：
+```{data.language}
+// 完整可运行代码
+```
+后面附简要说明（3-5行）：核心技术选型、时间复杂度、使用方式
+
+只返回代码和说明，不要冗余解释。"""
         result = call_llm(system_prompt, data.prompt)
-        
+
         gen_id = f"cg_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
@@ -734,9 +749,34 @@ async def list_code_generations(current_user: dict = require_auth()):
 async def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
     """AI 代码审查"""
     try:
-        system_prompt = f"你是一个资深的{data.language}代码审查专家。审查以下代码，给出改进建议，包括：1.代码质量 2.潜在bug 3.性能优化 4.安全建议。"
+        system_prompt = f"""你是资深{data.language}代码审查专家，负责把关生产级代码质量。
+
+审查维度（按严重程度排列）：
+🔴 严重（必须修复）：
+1. 安全漏洞：注入攻击、越权访问、敏感信息泄露、不安全的反序列化
+2. 逻辑错误：边界条件错误、空指针/None引用、竞态条件、死锁风险
+3. 数据问题：数据丢失风险、事务不一致、类型转换错误
+
+🟡 重要（应该修复）：
+4. 性能瓶颈：N+1查询、不必要的循环、内存泄漏、阻塞IO
+5. 可维护性：过长函数、过深嵌套、重复代码、魔法数字
+
+🟢 建议（可选优化）：
+6. 代码风格：命名规范、注释质量、代码组织
+7. 最佳实践：设计模式运用、库函数使用建议
+
+输出格式：
+## 审查总结（1-2句整体评价）
+## 问题清单
+### 🔴 [严重] 问题标题
+- 位置：第X行 / 函数名
+- 问题：具体描述
+- 风险：可能导致什么后果
+- 修复：给出修改代码
+
+（每个问题独立一节，按严重程度排序，最多列出10个问题）"""
         result = call_llm(system_prompt, data.code)
-        
+
         review_id = f"cr_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
@@ -756,9 +796,19 @@ async def improve_code(data: CodeImproveRequest, current_user: dict = require_au
     """AI 根据代码审查意见修改代码：审查结果 → 修改后的完整代码。"""
     try:
         system_prompt = (
-            f"你是一个资深的{data.language}开发工程师。请根据代码审查意见修改下面的代码，"
-            "修复所有指出的问题（包括 bug、质量、性能、安全）。"
-            "直接返回修改后的完整代码，放在 ``` 代码块中，不要任何解释文字。"
+            f"你是一位资深{data.language}开发工程师，负责根据审查意见修复代码。\n\n"
+            "修复原则：\n"
+            "1. 逐一处理所有审查意见中标记为🔴严重和🟡重要的问题\n"
+            "2. 修复后代码必须保持原有功能不变，不引入新bug\n"
+            "3. 每次修改标注修复了哪个问题（行内注释 // fix: ...）\n"
+            "4. 如某个建议因架构限制无法采纳，标注说明原因\n\n"
+            "输出格式：\n"
+            "## 修改后的完整代码\n"
+            "```{data.language}\n...\n```\n"
+            "## 修改说明（表格格式）\n"
+            "| 问题 | 修复方式 | 影响范围 |\n"
+            "|------|----------|----------|\n"
+            "| ... | ... | ... |"
         )
         prompt = f"【原始代码】\n{data.code}\n\n【代码审查意见】\n{data.review}"
         result = call_llm(system_prompt, prompt)
@@ -1044,17 +1094,51 @@ class TranslationRequest(BaseModel):
 async def generate_copywriting(data: CopywritingRequest, current_user: dict = require_auth()):
     """AI 文案生成"""
     try:
-        type_prompts = {
-            "marketing": "营销文案专家，生成吸引眼球的营销文案",
-            "social": "社交媒体运营专家，生成适合社交平台的文案",
-            "seo": "SEO优化专家，生成搜索引擎友好的文案",
-            "email": "邮件营销专家，生成高转化率的邮件内容",
-            "ad": "广告创意专家，生成创意广告文案",
+        type_specs = {
+            "marketing": {
+                "role": "资深营销文案专家（8年+4A公司经验）",
+                "focus": ["卖点提炼", "行动号召(CTA)", "情感共鸣", "信任背书"],
+                "format": "标题（3-5个备选）+ 正文（300-500字）+ 标语Slogan + 发布建议"
+            },
+            "social": {
+                "role": "社交媒体内容策划专家",
+                "focus": ["话题性", "互动引导", "平台适配", "时效热点"],
+                "format": "标题 + 正文（150-300字）+ 话题标签# + 配图建议 + 发布时间建议"
+            },
+            "seo": {
+                "role": "SEO内容策略专家",
+                "focus": ["关键词密度", "标题标签优化", "元描述", "内部链接建议"],
+                "format": "SEO标题（含主关键词）+ 元描述（150-160字符）+ 正文（800-1500字）+ 关键词列表 + 结构建议"
+            },
+            "email": {
+                "role": "邮件营销转化率优化专家",
+                "focus": ["打开率优化", "点击率优化", "个性化", "A/B测试建议"],
+                "format": "邮件主题行（3个备选）+ 预览文本 + 正文HTML（含CTA按钮）+ 发送时间建议"
+            },
+            "ad": {
+                "role": "创意广告策略专家",
+                "focus": ["差异化定位", "用户痛点", "场景植入", "记忆点设计"],
+                "format": "广告语（5-8个备选）+ 长文案（200-400字）+ 视觉创意brief + 投放渠道建议"
+            },
         }
-        role = type_prompts.get(data.type, "专业文案写手")
-        system_prompt = f"你是一位{role}。根据用户需求生成高质量文案。"
+        spec = type_specs.get(data.type, type_specs["marketing"])
+
+        system_prompt = f"""你是{spec['role']}。
+
+核心能力：
+{chr(10).join(f'- {f}' for f in spec['focus'])}
+
+输出格式（必须严格遵循）：
+{spec['format']}
+
+创作原则：
+1. 始终以目标用户视角思考，回答"这对我有什么用？"
+2. 语言简洁有力，避免行业黑话和空洞形容词
+3. 每个观点用数据或场景支撑，拒绝泛泛而谈
+4. 结尾始终包含可衡量的下一步行动建议
+5. 如涉及品牌，需注明品牌调性建议（如：年轻活泼/专业稳重/温暖亲切）"""
         result = call_llm(system_prompt, data.prompt)
-        
+
         task_id = f"copy_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
@@ -1095,9 +1179,22 @@ async def delete_copywriting(task_id: str, current_user: dict = require_auth()):
 async def translate_text(data: TranslationRequest, current_user: dict = require_auth()):
     """AI 翻译"""
     try:
-        system_prompt = f"你是专业翻译，将以下内容从{data.source_lang}翻译为{data.target_lang}。保持原文格式和语气，只返回翻译结果。"
+        system_prompt = f"""你是专业翻译，精通{data.source_lang}和{data.target_lang}双语互译。
+
+翻译原则：
+1. 忠实原文：准确传达原文信息，不添加、不删减、不曲解
+2. 语言地道：目标语言表达自然流畅，符合母语者表达习惯
+3. 风格一致：保持原文的正式/非正式语体、行业术语、修辞手法
+4. 文化适配：涉及文化特定概念时，提供等效表达并标注注释
+5. 格式保留：保持原文的段落结构、列表、编号、Markdown标记
+
+输出要求：
+- 只返回翻译结果，不要任何前置说明或后记
+- 如果遇到专有名词、品牌名、人名，保持原文不翻译
+- 如果原文有歧义，选择最合理的解释并标注 [注: ...]
+- 技术术语统一使用目标语言行业标准译法"""
         result = call_llm(system_prompt, data.text)
-        
+
         trans_id = f"trans_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
@@ -1245,22 +1342,43 @@ async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_au
     """AI PPT 大纲生成"""
     conn = get_db()
     try:
-        system_prompt = """你是一个专业的PPT制作专家。根据用户提供的主题，生成PPT大纲。
-请按以下JSON格式返回：
+        system_prompt = """你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
+
+PPT大纲设计原则：
+1. 黄金结构：封面→目录→问题/背景（Why）→方案/产品（What）→执行/数据（How）→案例/成果→下一步行动→感谢页
+2. 每页原则：一页一个核心观点，标题即是结论（非描述性标题）
+3. 视觉思维：优先用图表代替文字（对比用柱状图、趋势用折线图、占比用饼图、流程用箭头）
+4. 数据说话：每个观点尽量用可量化数据支撑，标注数据来源
+5. 记忆锚点：设计一个贯穿全篇的视觉隐喻或故事线
+
+请严格按以下JSON格式返回（只返回JSON，不要任何其他文字）：
 {
+  "meta": {
+    "storyline": "一句话概括全篇叙述逻辑",
+    "visual_theme": "建议配色方案和视觉风格",
+    "estimated_duration": "预计演讲时长（分钟）"
+  },
   "slides": [
-    {"title": "幻灯片标题", "content": "要点1\\n要点2\\n要点3", "notes": "演讲备注"},
-    ...
+    {
+      "type": "cover|toc|content|data|case|summary|thanks",
+      "title": "结论式标题（不超过15字）",
+      "subtitle": "副标题或上下文说明",
+      "content": ["要点1", "要点2", "要点3"],
+      "chart_suggestion": "如适用，建议的图表类型和数据维度",
+      "notes": "演讲备注：过渡语、强调点、互动问题",
+      "duration_seconds": 60
+    }
   ]
 }
-生成6-10页幻灯片，包含封面、目录、内容页和总结页。只返回JSON。"""
-        
+
+生成8-12页幻灯片，确保逻辑递进、首尾呼应。"""
+
         prompt = f"主题：{data.title}"
         if data.outline:
             prompt += f"\n大纲：{data.outline}"
-        
+
         result = call_llm(system_prompt, prompt)
-        
+
         ppt_id = f"ppt_{uuid.uuid4().hex[:12]}"
         conn.execute(
             "INSERT INTO ppt_generations (id, title, outline, result, model) VALUES (?,?,?,?,?)",
@@ -1293,17 +1411,64 @@ async def excel_operate(data: ExcelRequest, current_user: dict = require_auth())
     try:
         op_id = f"excel_{uuid.uuid4().hex[:12]}"
         result = ""
-        
+
         if data.operation == "analyze":
-            system_prompt = "你是一个Excel数据分析专家。分析用户提供的数据，给出关键发现和建议。"
+            system_prompt = """你是资深数据分析师，精通Excel数据分析与商业洞察。
+
+分析框架（按此结构输出）：
+## 📊 数据概览
+- 数据规模（行数、列数）
+- 核心指标（均值、中位数、最大值、最小值）
+
+## 🔍 关键发现（3-5条）
+每条发现包含：
+- 发现描述（用数据说话）
+- 业务含义（这对业务意味着什么）
+- 行动建议（接下来该做什么）
+
+## 📈 趋势与模式
+- 时间趋势（如有日期列）
+- 相关性分析（如有多个数值列）
+- 异常值识别
+
+## ⚠️ 风险与机会
+- 潜在风险点
+- 改善机会点
+
+## 💡 建议的可视化方案
+- 图表类型 × 数据维度组合建议（如：柱状图 × 按月份销售额）
+
+要求：语言简洁务实，面向业务决策者，避免技术术语堆砌。"""
             result = call_llm(system_prompt, json.dumps(data.data, ensure_ascii=False))
         elif data.operation == "formula":
-            system_prompt = "你是一个Excel公式专家。根据用户需求生成Excel公式，解释公式含义。"
+            system_prompt = """你是Excel高级公式专家，精通VLOOKUP/XLOOKUP/INDEX-MATCH/SUMIFS/数组公式/Power Query等高级功能。
+
+输出格式：
+## 推荐公式
+```excel
+=公式表达式
+```
+
+## 公式解读
+- 函数说明：每个函数的用途
+- 参数解释：每个参数的含义
+- 计算逻辑：逐步解释公式如何工作
+
+## 使用场景
+- 适用版本：Excel 2016/2019/365/Mac
+- 前置条件：数据需要满足什么格式
+- 常见陷阱：使用时容易犯的错误
+
+## 替代方案（如有）
+- 方案2：XX公式（适用YY场景）
+- 方案的优缺点对比
+
+要求：用通俗语言解释，让非技术用户也能理解。"""
             prompt = data.data.get("prompt", "")
             result = call_llm(system_prompt, prompt)
         else:
             result = json.dumps({"status": "created", "data": data.data})
-        
+
         conn.execute(
             "INSERT INTO excel_operations (id, operation, title, data, result) VALUES (?,?,?,?,?)",
             (op_id, data.operation, data.title, json.dumps(data.data), result)

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Empty, Badge } from '../components/ui'
+import { Card, Empty, Badge, SkeletonGrid, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import {
@@ -64,6 +64,7 @@ const HOT_TOOLS = ['meeting-notes', 'xiaohongshu', 'viral-title', 'competitive-a
 export default function ToolHubPage() {
   const [tools, setTools] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('全部')
   const [viewMode, setViewMode] = useState('grid')
@@ -81,9 +82,11 @@ export default function ToolHubPage() {
 
   const loadTools = async () => {
     try {
+      setError(null)
       const res = await api.get('/api/tools')
       setTools(res.data)
     } catch (err) {
+      setError(err.message || '加载工具列表失败')
       toast.error('加载工具列表失败')
     } finally {
       setLoading(false)
@@ -147,8 +150,24 @@ export default function ToolHubPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="animate-spin w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full" />
+      <div className="flex-1 overflow-auto bg-gradient-to-b from-gray-50 to-white">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="mb-10 rounded-2xl bg-gradient-to-r from-gray-200 to-gray-300 p-8 animate-pulse">
+            <div className="h-8 bg-white/30 rounded w-2/3 mb-2" />
+            <div className="h-4 bg-white/30 rounded w-1/2" />
+          </div>
+          <SkeletonGrid count={8} />
+        </div>
+      </div>
+    )
+  }
+
+  if (error && tools.length === 0) {
+    return (
+      <div className="flex-1 overflow-auto bg-gradient-to-b from-gray-50 to-white">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <ErrorState message={`工具列表加载失败：${error}`} onRetry={() => { setLoading(true); setError(null); loadTools() }} />
+        </div>
       </div>
     )
   }

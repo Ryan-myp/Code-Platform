@@ -7,14 +7,13 @@
 """
 
 import csv
-import io
 import json
 import logging
 import os
 import statistics
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -30,15 +29,18 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── System Prompts ─────────────────────────────────────────
 
-FORECAST_SYSTEM = """你是一位资深数据分析师。请根据提供的CSV数据摘要，进行趋势分析和预测，输出JSON格式：
+FORECAST_SYSTEM = """你是资深商业数据分析师（10年+经验），擅长从数据中发现趋势、洞察业务机会并给出可执行的策略建议。
 
+分析框架（按以下5个维度深度分析）：
+
+输出JSON格式：
 {
   "overview": {
     "record_count": 100,
     "columns": ["列1", "列2"],
     "time_range": "2024-01 ~ 2024-12",
-    "data_quality": "良好|一般|较差",
-    "summary": "数据整体描述一句话"
+    "data_quality": "A-良好|B-一般|C-较差（含缺失率）",
+    "summary": "一句话概括数据全貌（涵盖关键指标、趋势方向、值得关注的点）"
   },
   "statistics": {
     "columns": [
@@ -49,36 +51,49 @@ FORECAST_SYSTEM = """你是一位资深数据分析师。请根据提供的CSV�
         "std_dev": 标准差,
         "min": 最小值,
         "max": 最大值,
-        "trend_direction": "上升|下降|平稳"
+        "q1": 第一四分位数,
+        "q3": 第三四分位数,
+        "trend_direction": "上升|下降|平稳|波动",
+        "significance": "该列的业务含义一句话"
       }
     ]
   },
   "trend_analysis": {
-    "overall_trend": "整体趋势描述",
-    "seasonal_patterns": "季节性规律（如存在）",
-    "anomalies": ["异常点1", "异常点2"],
-    "key_findings": ["关键发现1", "发现2", "发现3"]
+    "overall_trend": "整体趋势详细描述（上升/下降的幅度和拐点）",
+    "seasonal_patterns": "季节性规律（周/月/季/年）及置信度",
+    "anomalies": [{"point": "异常点位置", "value": 异常值, "possible_reason": "可能原因"}],
+    "correlations": [{"between": "列A vs 列B", "coefficient": 0.85, "interpretation": "正相关说明"}],
+    "key_findings": ["发现1（数据支撑）", "发现2", "发现3", "发现4", "发现5"]
   },
   "predictions": {
-    "short_term": "短期预测（1-3个月）",
-    "medium_term": "中期预测（3-6个月）",
-    "confidence": "高|中|低",
+    "method": "趋势外推|移动平均|季节性分解",
+    "short_term": {"description": "1-3个月预测", "confidence": "高|中|低"},
+    "medium_term": {"description": "3-6个月预测", "confidence": "高|中|低"},
     "forecast_values": [
-      {"period": "下月", "value": 预测值, "low": 下限, "high": 上限}
-    ]
+      {"period": "2024-Q3", "value": 预测值, "low": 下限, "high": 上限}
+    ],
+    "risks": ["预测风险1", "风险2"]
   },
   "recommendations": [
-    {"priority": "高|中|低", "action": "建议行动", "reason": "原因"}
+    {"priority": 1, "level": "紧急|重要|建议", "action": "具体行动方案", "expected_impact": "预期效果量化", "timeline": "建议时间"}
   ],
   "charts": {
     "labels": ["1月", "2月", "3月"],
     "actual": [100, 120, 115],
     "forecast": [null, null, 125, 130, 140],
-    "trend_line": [98, 110, 118, 125, 132]
+    "trend_line": [98, 110, 118, 125, 132],
+    "upper_bound": [null, null, 135, 145, 158],
+    "lower_bound": [null, null, 115, 115, 122]
   }
 }
 
-数值用数字类型不要加引号。只输出JSON，不要其他内容。"""
+质量要求：
+- 数值用数字类型不要加引号
+- 每个发现和建议都必须有数据支撑
+- 异常分析要给出可能原因，不满足于"存在异常"
+- 预测要标注置信度和风险
+- 建议要具体可执行，避免"加强监控"等空泛表述
+- 只输出JSON，不要其他内容"""
 
 # ── 模型 ──────────────────────────────────────────────────
 
@@ -112,7 +127,7 @@ init_db()
 
 def parse_csv(filepath: str) -> dict:
     """解析CSV文件，返回列名、行数、数值列的统计信息。"""
-    with open(filepath, "r", encoding="utf-8-sig") as f:
+    with open(filepath, encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
 
@@ -222,7 +237,7 @@ async def analyze_data(req: AnalyzeRequest, current_user: dict = require_auth())
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
     except json.JSONDecodeError:
-        logger.error(f"forecast json parse failed")
+        logger.error("forecast json parse failed")
         raise HTTPException(500, "数据预测结果格式异常，请重试")
     except Exception as e:
         logger.exception("forecast analyze failed")

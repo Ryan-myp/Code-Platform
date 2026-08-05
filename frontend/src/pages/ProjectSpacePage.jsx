@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, Film, Music, FileText, ListTodo, Package,
   Calendar, Eye, Play, Trash2,
 } from 'lucide-react'
-import { api } from '../lib/api'
+import { api, API_BASE } from '../lib/api'
 import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { formatDateTime, formatDate } from '../lib/format'
@@ -13,9 +13,6 @@ import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
   Badge, PageHeader, ConfirmDialog,
 } from '../components/ui'
-
-// 媒体资源前缀（与 api 实例 baseURL 保持一致，避免硬编码 localhost）
-const MEDIA_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8888'
 
 // 项目状态自定义映射
 const PROJECT_STATUS_MAP = {
@@ -378,13 +375,13 @@ export default function ProjectSpacePage() {
             {selectedArtifact.media_url && ['image', 'video', 'audio'].includes(selectedArtifact.type) && (
               <div className="mb-2">
                 {selectedArtifact.type === 'image' && (
-                  <img src={`${MEDIA_BASE}${selectedArtifact.media_url}`} alt={selectedArtifact.id} className="max-w-full rounded-lg mx-auto" />
+                  <img src={`${API_BASE}${selectedArtifact.media_url}`} alt={selectedArtifact.id} className="max-w-full rounded-lg mx-auto" />
                 )}
                 {selectedArtifact.type === 'video' && (
-                  <video src={`${MEDIA_BASE}${selectedArtifact.media_url}`} controls className="max-w-full rounded-lg mx-auto" />
+                  <video src={`${API_BASE}${selectedArtifact.media_url}`} controls className="max-w-full rounded-lg mx-auto" />
                 )}
                 {selectedArtifact.type === 'audio' && (
-                  <audio src={`${MEDIA_BASE}${selectedArtifact.media_url}`} controls className="w-full" />
+                  <audio src={`${API_BASE}${selectedArtifact.media_url}`} controls className="w-full" />
                 )}
               </div>
             )}
@@ -467,7 +464,7 @@ function ArtifactCard({ art, type, meta, onView }) {
   if (type === 'image' && art.media_url) {
     return (
       <div onClick={onView} className="group relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200">
-        <img src={`${MEDIA_BASE}${art.media_url}`} alt={art.id} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
+        <img src={`${API_BASE}${art.media_url}`} alt={art.id} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
           <Eye className="w-5 h-5 text-white opacity-0 group-hover:opacity-100" />
         </div>
@@ -478,7 +475,7 @@ function ArtifactCard({ art, type, meta, onView }) {
     return (
       <div onClick={onView} className="group bg-gray-900 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200">
         <div className="aspect-video flex items-center justify-center relative">
-          <video src={`${MEDIA_BASE}${art.media_url}`} className="w-full h-full object-cover" preload="metadata" muted />
+          <video src={`${API_BASE}${art.media_url}`} className="w-full h-full object-cover" preload="metadata" muted />
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/40">
             <Play className="w-10 h-10 text-white fill-white" />
           </div>

@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """股票分析工具 - 行情获取、趋势分析、模拟交易"""
 
-import json
+import time
 import uuid
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
+
+import pandas as pd
+import yfinance as yf
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
 
-import httpx
-import yfinance as yf
-import pandas as pd
-from pathlib import Path
-
-from common.db import get_db
 from common.auth import require_auth
+from common.db import get_db
 from common.llm import call_llm
 
 router = APIRouter()
@@ -39,19 +35,29 @@ class TradeRequest(BaseModel):
     symbol: str
     action: str  # buy, sell
     quantity: int
-    price: Optional[float] = None  # 如果不指定则用市价
+    price: float | None = None  # 如果不指定则用市价
 
 
 # ══════════════════════════════════════════════════════════════
 # 股票数据获取
 # ══════════════════════════════════════════════════════════════
 
-async def get_stock_data(symbol: str, period: str = "3mo") -> Dict:
-    """获取股票历史数据"""
+# 行情数据内存缓存（15 分钟 TTL，降低上游请求频率）
+_STOCK_CACHE: dict[str, tuple] = {}
+_STOCK_CACHE_TTL = 900
+
+
+async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
+    """获取股票历史数据（带 15 分钟内存缓存；上游不可用时降级为 503 友好提示）。"""
+    cache_key = f"{symbol.upper()}:{period}"
+    now = time.time()
+    hit = _STOCK_CACHE.get(cache_key)
+    if hit and now - hit[0] < _STOCK_CACHE_TTL:
+        return hit[1]
     try:
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period)
-        
+
         if hist.empty:
             # 尝试提供可能的替代建议
             suggestions = {
@@ -67,34 +73,34 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> Dict:
             else:
                 msg += "，请检查股票代码是否正确（如：AAPL, GOOGL, MSFT, TSLA）"
             raise HTTPException(404, msg)
-        
+
         # 获取基本信息
         info = ticker.info
-        
+
         # 计算技术指标
         df = hist.copy()
         df['MA5'] = df['Close'].rolling(window=5).mean()
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['MA60'] = df['Close'].rolling(window=60).mean()
-        
+
         # RSI
         delta = df['Close'].diff()
         gain = delta.where(delta > 0, 0).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         df['RSI'] = 100 - (100 / (1 + rs))
-        
+
         # MACD
         exp1 = df['Close'].ewm(span=12, adjust=False).mean()
         exp2 = df['Close'].ewm(span=26, adjust=False).mean()
         df['MACD'] = exp1 - exp2
         df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        
+
         # 布林带
         df['BB_middle'] = df['Close'].rolling(window=20).mean()
         df['BB_upper'] = df['BB_middle'] + 2 * df['Close'].rolling(window=20).std()
         df['BB_lower'] = df['BB_middle'] - 2 * df['Close'].rolling(window=20).std()
-        
+
         # 转换为 JSON 格式
         data_points = []
         for idx, row in df.iterrows():
@@ -112,11 +118,11 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> Dict:
                 "macd": round(float(row['MACD']), 4) if pd.notna(row['MACD']) else None,
                 "signal": round(float(row['Signal']), 4) if pd.notna(row['Signal']) else None,
             })
-        
+
         # 最新数据
         latest = data_points[-1] if data_points else {}
-        
-        return {
+
+        result = {
             "symbol": symbol.upper(),
             "name": info.get("longName", info.get("shortName", symbol)),
             "currency": info.get("currency", "USD"),
@@ -144,13 +150,15 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> Dict:
                 "ma60": latest.get("ma60"),
             }
         }
+        _STOCK_CACHE[cache_key] = (time.time(), result)
+        return result
     except HTTPException:
         raise  # 不要吞掉 HTTPException
     except Exception as e:
-        raise HTTPException(500, f"获取股票数据失败: {str(e)}")
+        raise HTTPException(503, f"行情数据服务暂时不可用（网络或上游限制），请稍后重试。详情: {str(e)[:150]}")
 
 
-def analyze_stock_trend(data: Dict) -> str:
+def analyze_stock_trend(data: dict) -> str:
     """基于技术分析给出趋势判断"""
     indicators = data.get("indicators", {})
     rsi = indicators.get("rsi")
@@ -159,9 +167,9 @@ def analyze_stock_trend(data: Dict) -> str:
     ma20 = indicators.get("ma20")
     ma60 = indicators.get("ma60")
     current = data.get("current_price", 0)
-    
+
     signals = []
-    
+
     # RSI 分析
     if rsi:
         if rsi > 70:
@@ -170,27 +178,27 @@ def analyze_stock_trend(data: Dict) -> str:
             signals.append("RSI 超卖区域，可能反弹")
         else:
             signals.append("RSI 处于正常区间")
-    
+
     # 均线分析
     if ma5 and ma20:
         if ma5 > ma20:
             signals.append("短期均线在长期均线上方，短期趋势向上")
         else:
             signals.append("短期均线在长期均线下方，短期趋势向下")
-    
+
     if ma20 and ma60:
         if ma20 > ma60:
             signals.append("中期趋势向上")
         else:
             signals.append("中期趋势向下")
-    
+
     # MACD 分析
     if macd:
         if macd > 0:
             signals.append("MACD 正值，多头力量较强")
         else:
             signals.append("MACD 负值，空头力量较强")
-    
+
     return "\n".join(signals)
 
 
@@ -206,10 +214,10 @@ async def search_stock(q: str = Query(..., min_length=1), current_user: dict = r
         import yfinance as yf
         ticker = yf.Ticker(q.upper())
         info = ticker.info
-        
+
         if not info or info.get("regularMarketPrice") is None:
             return {"results": []}
-        
+
         return {
             "results": [{
                 "symbol": q.upper(),
@@ -234,7 +242,7 @@ async def get_stock(symbol: str, period: str = "3mo", current_user: dict = requi
 async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_auth()):
     """AI 股票分析"""
     data = await get_stock_data(req.symbol, req.period)
-    
+
     # 构建分析提示
     analysis_prompts = {
         "technical": """你是一个专业的股票技术分析师。请根据以下股票数据和技术指标，给出详细的技术分析。
@@ -260,7 +268,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 5. 操作建议（买入/持有/卖出/观望）
 
 注意：仅供参考，不构成投资建议。""",
-        
+
         "fundamental": """你是一个专业的股票基本面分析师。请根据以下公司信息，给出基本面分析。
 
 ## 公司信息
@@ -280,7 +288,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 5. 长期投资价值评估
 
 注意：仅供参考，不构成投资建议。""",
-        
+
         "comprehensive": """你是一个资深的股票分析师。请综合技术面和基本面，给出全面的股票分析。
 
 ## 股票信息
@@ -306,9 +314,9 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 
 ⚠️ 免责声明：本分析仅供参考，不构成任何投资建议。投资有风险，入市需谨慎。"""
     }
-    
+
     prompt_template = analysis_prompts.get(req.analysis_type, analysis_prompts["comprehensive"])
-    
+
     prompt = prompt_template.format(
         symbol=data["symbol"],
         name=data.get("name", ""),
@@ -327,13 +335,13 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
         sector=data.get("sector", ""),
         industry=data.get("industry", ""),
     )
-    
+
     try:
         result = call_llm(
             "你是一个专业的股票分析师，请基于数据给出客观、专业的分析。",
             prompt
         )
-        
+
         # 保存分析记录
         conn = get_db()
         try:
@@ -346,7 +354,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
             conn.commit()
         finally:
             conn.close()
-        
+
         return {
             "ok": True,
             "id": record_id,
@@ -379,14 +387,14 @@ async def get_stock_history(symbol: str, days: int = 30, current_user: dict = re
 @router.get("/api/trading/portfolio")
 async def get_portfolio(current_user: dict = require_auth()):
     """获取模拟交易投资组合"""
-    user_id = current_user["id"]
+    user_id = current_user["user_id"]
     conn = get_db()
     try:
         # 获取账户信息
         account = conn.execute(
             "SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)
         ).fetchone()
-        
+
         if not account:
             # 创建默认账户
             account_id = f"acc_{uuid.uuid4().hex[:12]}"
@@ -399,7 +407,7 @@ async def get_portfolio(current_user: dict = require_auth()):
             account = {"id": account_id, "cash": 1000000, "total_value": 1000000}
         else:
             account = dict(account)
-        
+
         # 获取持仓
         positions = []
         for row in conn.execute(
@@ -419,7 +427,7 @@ async def get_portfolio(current_user: dict = require_auth()):
                 pos["profit_loss"] = 0
                 pos["profit_loss_pct"] = 0
             positions.append(pos)
-        
+
         # 获取交易历史
         trades = []
         for row in conn.execute(
@@ -427,13 +435,13 @@ async def get_portfolio(current_user: dict = require_auth()):
             (account["id"],)
         ).fetchall():
             trades.append(dict(row))
-        
+
         # 计算总资产
         total_market_value = sum(p["market_value"] for p in positions)
         account["total_value"] = account["cash"] + total_market_value
         account["positions"] = positions
         account["trades"] = trades
-        
+
         return account
     finally:
         conn.close()
@@ -442,45 +450,45 @@ async def get_portfolio(current_user: dict = require_auth()):
 @router.post("/api/trading/trade")
 async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
     """执行模拟交易"""
-    user_id = current_user["id"]
-    
+    user_id = current_user["user_id"]
+
     # 获取当前价格
     data = await get_stock_data(req.symbol, "1d")
     price = req.price or data.get("current_price", 0)
-    
+
     if price <= 0:
         raise HTTPException(400, "无法获取股票价格")
-    
+
     conn = get_db()
     try:
         # 获取账户
         account = conn.execute(
             "SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)
         ).fetchone()
-        
+
         if not account:
             raise HTTPException(400, "请先创建交易账户")
-        
+
         account = dict(account)
         trade_amount = price * req.quantity
-        
+
         if req.action == "buy":
             # 买入检查
             if account["cash"] < trade_amount:
                 raise HTTPException(400, f"现金不足，需要 {trade_amount}，当前 {account['cash']}")
-            
+
             # 更新现金
             conn.execute(
                 "UPDATE trading_accounts SET cash=? WHERE id=?",
                 (account["cash"] - trade_amount, account["id"])
             )
-            
+
             # 更新或创建持仓
             existing = conn.execute(
                 "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?",
                 (account["id"], req.symbol)
             ).fetchone()
-            
+
             if existing:
                 existing = dict(existing)
                 new_qty = existing["quantity"] + req.quantity
@@ -496,25 +504,25 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
                        VALUES (?,?,?,?,?,?)""",
                     (pos_id, account["id"], req.symbol, req.quantity, price, datetime.now().isoformat())
                 )
-        
+
         elif req.action == "sell":
             # 卖出检查
             existing = conn.execute(
                 "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?",
                 (account["id"], req.symbol)
             ).fetchone()
-            
+
             if not existing or existing["quantity"] < req.quantity:
                 raise HTTPException(400, "持仓不足")
-            
+
             existing = dict(existing)
-            
+
             # 更新现金
             conn.execute(
                 "UPDATE trading_accounts SET cash=? WHERE id=?",
                 (account["cash"] + trade_amount, account["id"])
             )
-            
+
             # 更新持仓
             new_qty = existing["quantity"] - req.quantity
             if new_qty > 0:
@@ -527,7 +535,7 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
                     "DELETE FROM trading_positions WHERE id=?",
                     (existing["id"],)
                 )
-        
+
         # 记录交易
         trade_id = f"trade_{uuid.uuid4().hex[:12]}"
         conn.execute(
@@ -535,9 +543,9 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
                VALUES (?,?,?,?,?,?,?,?)""",
             (trade_id, account["id"], req.symbol, req.action, req.quantity, price, trade_amount, datetime.now().isoformat())
         )
-        
+
         conn.commit()
-        
+
         return {
             "ok": True,
             "trade_id": trade_id,
@@ -554,19 +562,19 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
 @router.post("/api/trading/reset")
 async def reset_portfolio(current_user: dict = require_auth()):
     """重置模拟交易账户"""
-    user_id = current_user["id"]
+    user_id = current_user["user_id"]
     conn = get_db()
     try:
         # 删除旧账户和关联数据
         account = conn.execute(
             "SELECT id FROM trading_accounts WHERE user_id=?", (user_id,)
         ).fetchone()
-        
+
         if account:
             conn.execute("DELETE FROM trading_positions WHERE account_id=?", (account["id"],))
             conn.execute("DELETE FROM trading_history WHERE account_id=?", (account["id"],))
             conn.execute("DELETE FROM trading_accounts WHERE id=?", (account["id"],))
-        
+
         # 创建新账户
         account_id = f"acc_{uuid.uuid4().hex[:12]}"
         conn.execute(
@@ -575,7 +583,7 @@ async def reset_portfolio(current_user: dict = require_auth()):
             (account_id, user_id, datetime.now().isoformat())
         )
         conn.commit()
-        
+
         return {"ok": True, "message": "账户已重置，初始资金 100 万"}
     finally:
         conn.close()

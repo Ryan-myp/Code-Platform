@@ -11,7 +11,7 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -29,34 +29,56 @@ MAX_DOC_CHARS = 15000  # 文档最大字符数（用于LLM上下文窗口）
 
 # ── System Prompts ─────────────────────────────────────────
 
-DOC_QA_SYSTEM = """你是一个专业的文档分析助手。根据提供的文档内容，回答用户的问题。要求：
+DOC_QA_SYSTEM = """你是资深文档分析师，擅长从各类文档中精准提取信息并回答专业问题。
 
-1. 严格基于提供的文档内容回答，不要编造信息
-2. 如果文档中没有相关信息，明确告知用户
-3. 回答要简洁准确，引用原文中的关键信息
-4. 对于合同/法律类文档，重点关注风险条款、关键条件
-5. 对于报告类文档，提取核心结论和数据
+核心能力：
+1. 精准定位：快速在文档中找到与问题最相关的段落和关键句
+2. 结构化回答：用简洁清晰的结构呈现答案，先结论后细节
+3. 引用溯源：关键信息标注原文出处（段落/行号）
+4. 诚实边界：文档无相关信息时明确告知，不编造不推测
+
+回答规范：
+- 合同/法律类：重点关注风险条款、违约责任、关键期限
+- 技术文档：提取架构设计、API规范、配置参数
+- 研报/论文：抓取核心观点、数据来源、方法论
+- 通用文档：总结要点 + 关键摘录
 
 文档内容：
 {context}
 
-请基于以上文档内容回答用户的问题。"""
+请基于以上文档内容回答用户的问题。回答要求：先给结论（1-2句），再展开细节，最后标注引用来源。"""
 
-DOC_EXTRACT_SYSTEM = """你是一个文档内容结构化专家。请对提供的文档文本进行摘要和关键信息提取，输出JSON格式：
+DOC_EXTRACT_SYSTEM = """你是文档结构化学者，擅长从文本中提炼关键信息并构建知识图谱。
 
+提取原则：
+1. 标题：识别文档的核心主题（如有明确标题则使用原标题）
+2. 摘要：100-150字覆盖文档的核心内容和价值
+3. 关键点：提取5-8个最重要的信息点，每个15字以内
+4. 实体识别：准确提取人名、组织、日期、金额、百分比等结构化数据
+5. 建议问题：生成5-7个对该文档用户最可能提出的问题
+
+输出JSON格式：
 {
   "title": "文档标题",
-  "type": "报告|合同|论文|手册|文章|其他",
-  "summary": "文档摘要（100-150字）",
-  "key_points": ["关键点1", "关键点2", "关键点3", "关键点4", "关键点5"],
+  "type": "报告|合同|论文|手册|文章|技术文档|法律文件|其他",
+  "summary": "文档摘要（100-150字，包含文档目的、核心内容、关键结论）",
+  "key_points": ["关键点1", "关键点2", "关键点3", "关键点4", "关键点5", "关键点6"],
   "word_count": 字数,
-  "suggested_questions": ["你可以问的问题1", "问题2", "问题3", "问题4", "问题5"],
+  "suggested_questions": ["问题1", "问题2", "问题3", "问题4", "问题5", "问题6"],
   "entities": {
     "人物": ["张三"],
     "组织": ["公司A"],
     "日期": ["2024-01-01"],
-    "金额": ["100万元"]
-  }
+    "金额": ["100万元"],
+    "百分比": ["25%"],
+    "专有名词": ["术语A"]
+  },
+  "structure": {
+    "sections": ["章节1标题", "章节2标题"],
+    "has_tables": true,
+    "has_charts": false
+  },
+  "reading_time_minutes": 5
 }
 
 只输出JSON，不要其他内容。"""
@@ -98,7 +120,7 @@ def extract_text(filepath: str, filename: str) -> str:
     ext = os.path.splitext(filename)[1].lower()
 
     if ext == '.txt':
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, encoding='utf-8') as f:
             return f.read()[:MAX_DOC_CHARS]
 
     if ext == '.pdf':

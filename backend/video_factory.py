@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """视频工厂模块 - 基于 Agnes AI Video API v2.0"""
 
-import json
 import logging
 import time
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse
 
+from common.artifacts import save_artifact
 from common.config import load_config
-from common.db import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/video-factory", tags=["视频工厂"])
@@ -50,31 +47,20 @@ def generate_video_id() -> str:
 
 def _save_artifact(filename: str, project_id: str, prompt: str, duration: float,
                    extra_meta: dict | None = None) -> str:
-    """将视频产物登记到 artifacts 表，返回 artifact id。
+    """将视频产物登记到 artifacts 表（委托 common.artifacts.save_artifact），返回 artifact id。
 
     - type=video，media_url 指向 /api/video-factory/videos/{filename}
     - metadata 含 prompt / video_id / 尺寸等
     - 失败静默
     """
-    art_id = f"art_{uuid.uuid4().hex[:12]}"
     meta = {"prompt": prompt, "filename": filename}
     if extra_meta:
         meta.update(extra_meta)
-    try:
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO artifacts
-               (id, project_id, type, content, version, author, created_at, active, media_url, duration, metadata)
-               VALUES (?, ?, 'video', ?, 'v1', 'video_factory', ?, 1, ?, ?, ?)""",
-            (art_id, project_id or "", json.dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False),
-             datetime.now().isoformat(), f"/api/video-factory/videos/{filename}",
-             float(duration or 0), json.dumps(meta, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"_save_artifact skipped: {e}")
-    return art_id
+    return save_artifact(
+        art_type="video", project_id=project_id, author="video_factory",
+        media_url=f"/api/video-factory/videos/{filename}",
+        content={"filename": filename, "prompt": prompt}, metadata=meta, duration=duration,
+    )
 
 
 @router.get("/stats")

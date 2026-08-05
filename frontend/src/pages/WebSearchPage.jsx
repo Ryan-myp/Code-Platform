@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { Search, Globe, ExternalLink, Clock, Sparkles, FileText, Loader2, Zap } from 'lucide-react'
-import { Card, Button, Empty, PageHeader } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -9,22 +9,25 @@ export default function WebSearchPage() {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
   const [history, setHistory] = useState([])
   const [loadedHistory, setLoadedHistory] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const loadHistory = async () => {
+    setHistoryLoading(true)
     try { const res = await api.get('/api/search/history'); setHistory(res.data || []) } catch {}
-    setLoadedHistory(true)
+    finally { setLoadedHistory(true); setHistoryLoading(false) }
   }
 
   const handleSearch = async () => {
     if (!query.trim()) return
-    setLoading(true); setResult(null)
+    setLoading(true); setResult(null); setError(null)
     try {
       const res = await api.post('/api/search/web', { query: query.trim() })
       setResult(res.data)
       loadHistory()
-    } catch (e) { toast.error(`搜索失败：${e.message}`) }
+    } catch (e) { setError(e.message); toast.error(`搜索失败：${e.message}`) }
     setLoading(false)
   }
 
@@ -74,9 +77,11 @@ export default function WebSearchPage() {
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-500" /> 搜索历史
-              {!loadedHistory && <button onClick={loadHistory} className="text-xs text-cyan-500 hover:underline ml-auto">加载</button>}
+              {!loadedHistory && !historyLoading && <button onClick={loadHistory} className="text-xs text-cyan-500 hover:underline ml-auto">加载</button>}
             </h3>
-            {history.length === 0 ? (
+            {historyLoading ? (
+              <SkeletonList count={3} />
+            ) : history.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无搜索记录</div>
             ) : (
               <div className="space-y-1 max-h-64 overflow-y-auto">
@@ -94,7 +99,13 @@ export default function WebSearchPage() {
 
         {/* 右侧：结果 */}
         <div className="lg:col-span-2 space-y-4">
-          {!result ? (
+          {loading ? (
+            <Card>
+              <SkeletonList count={4} />
+            </Card>
+          ) : error ? (
+            <ErrorState message={`搜索失败：${error}`} onRetry={handleSearch} />
+          ) : !result ? (
             <Empty icon={Globe} title="开始搜索" description="输入关键词搜索互联网，AI将为你整合多源信息并生成摘要" />
           ) : (
             <>

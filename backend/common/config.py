@@ -69,10 +69,14 @@ def validate_security_config() -> None:
     if is_production() and len(SECRET_KEY) < 32:
         raise RuntimeError("SECRET_KEY 长度不足 32 字节，生产环境要求更强密钥！")
 
-# CORS 允许来源（逗号分隔），默认仅本地开发
+# CORS 允许来源（逗号分隔），默认仅本地开发（含 127.0.0.1 防止 Chrome 缓存/直连登录被拦；
+# 5173 为 vite 默认端口，5174 为端口被占用时 vite 自动递补的端口）
 ALLOWED_ORIGINS = [
     o.strip()
-    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:80,http://localhost").split(",")
+    for o in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:80,http://localhost,http://127.0.0.1",
+    ).split(",")
     if o.strip()
 ]
 

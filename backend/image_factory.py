@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import time
-import uuid
 from datetime import datetime
 from io import BytesIO
 
@@ -26,8 +25,8 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from common.artifacts import save_artifact
 from common.config import load_config
-from common.db import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -45,31 +44,20 @@ os.makedirs(TEMPLATE_DIR, exist_ok=True)
 
 
 def _save_artifact(filename: str, project_id: str, prompt: str, extra_meta: dict | None = None) -> str:
-    """将生成的图片产物登记到 artifacts 表，返回 artifact id。
+    """将生成的图片产物登记到 artifacts 表（委托 common.artifacts.save_artifact）。
 
     - type=image，media_url 指向 /api/image-factory/images/{filename} 的相对路径
     - metadata 含 prompt + 额外字段（size/model 等）
     - 失败静默（不影响主流程）
     """
-    art_id = f"art_{uuid.uuid4().hex[:12]}"
     meta = {"prompt": prompt, "filename": filename}
     if extra_meta:
         meta.update(extra_meta)
-    try:
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO artifacts
-               (id, project_id, type, content, version, author, created_at, active, media_url, metadata)
-               VALUES (?, ?, 'image', ?, 'v1', 'image_factory', ?, 1, ?, ?)""",
-            (art_id, project_id or "", json.dumps({"filename": filename, "prompt": prompt}, ensure_ascii=False),
-             datetime.now().isoformat(), f"/api/image-factory/images/{filename}",
-             json.dumps(meta, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"_save_artifact skipped: {e}")
-    return art_id
+    return save_artifact(
+        art_type="image", project_id=project_id, author="image_factory",
+        media_url=f"/api/image-factory/images/{filename}",
+        content={"filename": filename, "prompt": prompt}, metadata=meta,
+    )
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────

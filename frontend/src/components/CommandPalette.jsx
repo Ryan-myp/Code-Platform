@@ -103,18 +103,35 @@ const PIPE_DOT = {
   failed: 'bg-red-500',
 }
 
+// 全局平台搜索结果的图标/配色（与后端 /api/search/global 的 type 对应）
+const GLOBAL_ICONS = {
+  agents: Bot, skills: BookOpen, workflows: Layers, tools: Wrench,
+  docs: Database, history: MessageSquare, requirement: FileText,
+}
+const GLOBAL_CLS = {
+  agents: 'bg-violet-100 text-violet-600', skills: 'bg-emerald-100 text-emerald-600',
+  workflows: 'bg-blue-100 text-blue-600', tools: 'bg-amber-100 text-amber-600',
+  docs: 'bg-cyan-100 text-cyan-600', history: 'bg-gray-100 text-gray-600',
+  requirement: 'bg-brand-100 text-brand-600',
+}
+
 export default function CommandPalette({ isOpen, onClose }) {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [reqs, setReqs] = useState([])
   const [pipelines, setPipelines] = useState([])
+  const [globalResults, setGlobalResults] = useState([])
   const inputRef = useRef(null)
+
+  // 查询词（须在 useEffect 依赖数组引用之前声明，避免 TDZ）
+  const q = query.trim().toLowerCase()
 
   useEffect(() => {
     if (isOpen) {
       setQuery('')
       setSelectedIndex(0)
+      setGlobalResults([])
       setTimeout(() => inputRef.current?.focus(), 50)
       // 打开时异步刷新动态数据（需求/流水线）
       Promise.all([
@@ -123,6 +140,25 @@ export default function CommandPalette({ isOpen, onClose }) {
       ])
     }
   }, [isOpen])
+
+  // 全局平台搜索（防抖 300ms；需求/流水线已在本地匹配，这里只查扩展类型）
+  useEffect(() => {
+    if (!isOpen || q.length < 2) {
+      setGlobalResults([])
+      return
+    }
+    const timer = setTimeout(() => {
+      api
+        .post('/api/search/global', {
+          query: q,
+          types: ['agents', 'skills', 'workflows', 'tools', 'docs', 'history'],
+          limit: 5,
+        })
+        .then((r) => setGlobalResults((r.data?.results || []).slice(0, 5)))
+        .catch(() => setGlobalResults([]))
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [q, isOpen])
 
   // 键盘快捷键
   useEffect(() => {
@@ -142,8 +178,6 @@ export default function CommandPalette({ isOpen, onClose }) {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
-
-  const q = query.trim().toLowerCase()
 
   // 需求进度：x/6 阶段完成 + 待更新数
   const reqProgress = (req) => {
@@ -203,6 +237,16 @@ export default function CommandPalette({ isOpen, onClose }) {
         path: '/pipelines',
       }
     }),
+    // 全局平台搜索结果（Agent/Skill/工作流/工具/知识库/历史对话）
+    ...globalResults.map((r) => ({
+      id: `g-${r.type}-${r.id}`,
+      kind: 'global',
+      label: r.title || r.id,
+      description: `${r.module || r.category || r.type} · ${(r.description || '').slice(0, 50)}`,
+      icon: GLOBAL_ICONS[r.type] || Search,
+      iconCls: GLOBAL_CLS[r.type] || 'bg-gray-100 text-gray-600',
+      path: r.path,
+    })),
   ]
 
   const flatItems = [...dynamicItems, ...filteredCommands]

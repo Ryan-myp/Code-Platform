@@ -17,16 +17,15 @@ import shutil
 import subprocess
 import tempfile
 import time
-import uuid
 import zipfile
 from datetime import datetime
-from typing import Optional
 
 import requests
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
 
@@ -209,25 +208,11 @@ def _audio_duration(path: str) -> float:
 
 
 def _save_artifact(filename: str, text: str, extra: dict) -> str:
-    """登记 artifacts 表（type=audio），失败静默。"""
-    art_id = f"art_{uuid.uuid4().hex[:12]}"
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        conn.execute(
-            """INSERT INTO artifacts
-               (id, project_id, type, content, version, author, created_at, active, media_url, duration, metadata)
-               VALUES (?, ?, 'audio', ?, 'v1', 'voice_factory', ?, 1, ?, ?, ?)""",
-            (art_id, "", text[:500],
-             datetime.now().isoformat(), f"/api/voice/audios/{filename}",
-             0.0, __import__("json").dumps(extra, ensure_ascii=False)),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"_save_artifact skipped: {e}")
-    return art_id
+    """登记 artifacts 表（type=audio，委托 common.artifacts.save_artifact），失败静默。"""
+    return save_artifact(
+        art_type="audio", author="voice_factory",
+        media_url=f"/api/voice/audios/{filename}", content=text[:500], metadata=extra, duration=0.0,
+    )
 
 
 def _artifact_meta() -> dict:

@@ -10,11 +10,10 @@ import csv
 import io
 import json
 import logging
-import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -26,24 +25,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["智能看板"])
 
 # ── NL→图表 System Prompt ─────────────────────────────────
-CHART_SYSTEM = """你是一个数据分析助手。根据用户用自然语言提出的数据查询需求，生成一个 ECharts 图表配置JSON。
+CHART_SYSTEM = """你是一位资深数据可视化分析师，精通ECharts图表配置和商业数据洞察呈现，擅长将复杂数据转化为一目了然的可视化图表。
 
-规则：
-1. 分析查询意图，确定图表类型：bar(柱状图)、line(折线图)、pie(饼图)、scatter(散点图)、radar(雷达图)
-2. 如果查询包含具体数字，直接构造模拟数据(通常5-8行)使图表合理美观
-3. 如果没有具体数据可参考，构造合理的示例数据
-4. 输出纯JSON，格式如下：
+## 图表类型决策树
+- **比较/排名** → bar（柱状图）：横向对比多类别数据
+- **趋势/变化** → line（折线图）：展示时间序列变化
+- **占比/构成** → pie（饼图）：显示各部分占整体的比例（≤8个分类）
+- **相关性/分布** → scatter（散点图）：展示两变量间的关系
+- **多维度对比** → radar（雷达图）：展示多指标的综合对比
+- **流程/漏斗** → funnel（漏斗图）：展示转化递减过程
+
+## 可视化设计原则
+1. **降噪原则**：只展示关键数据，删除无关元素（chart junk）
+2. **颜色语义**：
+   - 增长/正面 → 蓝色系(#4A90D9)或绿色系(#38A169)
+   - 下降/负面 → 红色系(#E53E3E)或橙色系(#DD6B20)
+   - 中性/对比 → 灰色系(#718096)
+   - 多系列用差异化配色（避免相近色导致混淆）
+3. **数据标注**：关键数据点加label标注具体数值
+4. **响应式标题**：标题简洁有信息量（≤15字），不重复axis标签信息
+
+## 数据洞察要求
+- insight包含：最显著的趋势/对比/异常 + 可能的业务含义
+- 示例："Q3销售额环比增长23%，主要受新品上市拉动；华东区贡献超40%"
+- 如果用户提供了CSV数据，基于真实数据生成图表，不要构造模拟数据
+- 如果无数据，构造5-8行合理美观的示例数据
+
+输出严格JSON：
 {
-  "chart_type": "bar|line|pie|scatter|radar",
-  "title": "图表标题",
-  "insight": "一句话数据洞察",
+  "chart_type": "bar|line|pie|scatter|radar|funnel",
+  "title": "图表标题（≤15字）",
+  "insight": "一句话数据洞察（含关键数据和业务含义）",
   "option": {
-    // 标准 ECharts option 配置，需要包含 xAxis/yAxis/series 等
-    // 使用合理的颜色方案
+    "tooltip": {"trigger": "axis|item"},
+    "legend": {"data": ["系列名"]},
+    "xAxis": {"type": "category", "data": ["类别"]},
+    "yAxis": {"type": "value"},
+    "series": [{"name": "系列名", "type": "bar|line|pie", "data": [数值]}]
   }
 }
 
-输出仅包含JSON，不要任何额外说明。"""
+只输出JSON，不要任何额外说明。"""
 
 
 def _ensure_tables(conn) -> None:
@@ -114,7 +136,7 @@ async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
     except json.JSONDecodeError:
-        raise HTTPException(500, f"LLM返回格式异常，无法解析为JSON")
+        raise HTTPException(500, "LLM返回格式异常，无法解析为JSON")
     except Exception as e:
         logger.exception("nl-query failed")
         raise HTTPException(500, f"查询失败：{e}")

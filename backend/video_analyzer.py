@@ -9,10 +9,9 @@
 import json
 import logging
 import os
-import tempfile
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -30,29 +29,57 @@ os.makedirs(FRAME_DIR, exist_ok=True)
 
 # ── System Prompts ─────────────────────────────────────────
 
-VIDEO_ANALYZE_SYSTEM = """你是一个专业的视频内容分析专家。请根据提供的视频元数据信息，进行分析并输出JSON格式：
+VIDEO_ANALYZE_SYSTEM = """你是一位资深视频内容策略专家，拥有8年+短视频/中视频运营经验，精通抖音/快手/B站/YouTube等平台的视频内容分析和爆款规律。
 
+## 分析框架
+基于提供的视频元数据和用户描述，从以下4个维度进行深度分析：
+
+### 1. 内容理解
+- 判断视频类型（教程/评测/Vlog/剧情/带货/新闻/娱乐等）
+- 识别核心内容和叙事结构（开头钩子→主体内容→结尾CTA）
+- 提取关键信息和核心观点
+
+### 2. 受众分析
+- 目标观众画像（年龄/兴趣/需求）
+- 内容对受众的吸引力要素
+- 可能引发的观众反应和讨论点
+
+### 3. 爆款要素
+- 标题吸引力评估
+- 前3秒/15秒黄金开头质量
+- 情绪节奏和信息密度
+- 互动引导设计（点赞/评论/转发动机）
+
+### 4. 优化建议
+- 标题优化方向
+- 封面和缩略图建议
+- 内容剪辑节奏调整
+- 话题标签策略
+- 发布时间建议
+
+## 输出规范
+- key_scenes：3-5个关键时间戳场景，importance标注准确（高=决定完播率的关键节点）
+- highlights：提炼2-3个最能打动观众的内容亮点
+- recommendations：3-5条具体可执行的优化建议
+- tone判断：从 正式/轻松/教育/娱乐/促销/感人/震撼/幽默 中选择
+
+输出严格JSON：
 {
-  "title": "视频标题建议",
+  "title": "视频标题建议（含平台适配思路）",
   "summary": "视频内容一句话总结（50字以内）",
-  "detailed_summary": "详细内容概述（200-300字）",
+  "detailed_summary": "详细内容概述（200-300字，涵盖开头-主体-结尾）",
   "key_scenes": [
-    {"timestamp": "00:00", "description": "场景描述", "importance": "高|中|低"}
+    {"timestamp": "00:00", "description": "场景描述", "importance": "高|中|低", "why_important": "为什么这个场景关键"}
   ],
   "topics": ["话题1", "话题2", "话题3"],
-  "tone": "整体基调（正式/轻松/教育/娱乐/促销）",
-  "target_audience": "目标观众群体",
+  "tone": "整体基调",
+  "target_audience": "目标观众群体（年龄/兴趣/需求）",
   "highlights": ["亮点1", "亮点2"],
   "subtitles_text": "模拟字幕文本（前30秒内容的口语化转写）",
-  "recommendations": ["内容优化建议1", "建议2"]
+  "recommendations": ["具体可执行的优化建议1", "建议2"]
 }
 
-提供的元数据：
-- 文件信息
-- 时长（如果有）
-- 用户描述（如果有）
-
-请基于视频主题和上下文进行智能推测和分析。只输出JSON，不要其他内容。"""
+只输出JSON，不要其他内容。"""
 
 # ── 模型 ──────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Sparkles, Download, Trash2, Clock, RefreshCw, Share2, Maximize2, Minimize2 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -128,12 +128,17 @@ export default function MindMapPage() {
   const [generating, setGenerating] = useState(false)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
+  const [recordsLoading, setRecordsLoading] = useState(true)
+  const [recordsError, setRecordsError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => { loadRecords() }, [])
 
   const loadRecords = async () => {
-    try { const res = await api.get('/api/mindmap/records'); setRecords(res.data || []) } catch {}
+    setRecordsLoading(true)
+    setRecordsError(null)
+    try { const res = await api.get('/api/mindmap/records'); setRecords(res.data || []) } catch (e) { setRecordsError(e.message) }
+    finally { setRecordsLoading(false) }
   }
 
   const generate = async () => {
@@ -206,7 +211,11 @@ export default function MindMapPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{records.length}）
             </h3>
-            {records.length === 0 ? (
+            {recordsLoading ? (
+              <SkeletonList count={3} />
+            ) : recordsError ? (
+              <ErrorState message={`加载失败：${recordsError}`} onRetry={loadRecords} />
+            ) : records.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
             ) : (
               <div className="space-y-1.5 max-h-64 overflow-y-auto">

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { BarChart, Bar, PieChart as RPieChart, Pie, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts'
-import { Card, Button, PageHeader, Badge } from '../components/ui'
+import { Card, Button, PageHeader, Badge, SkeletonGrid, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -101,6 +101,7 @@ export default function DashboardPage() {
   const toast = useToast()
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [tab, setTab] = useState('overview')
 
   // 智能查询状态
@@ -121,7 +122,8 @@ export default function DashboardPage() {
         api.get('/api/analytics/overview'),
       ])
       setStats({ ...statsRes.data, ...overviewRes.data })
-    } catch (e) { toast.error('加载数据失败') }
+      setError(null)
+    } catch (e) { setError(e) }
     finally { setLoading(false) }
   }
 
@@ -164,7 +166,19 @@ export default function DashboardPage() {
     } catch (err) { toast.error(`CSV上传失败：${err.message}`) }
   }
 
-  if (loading) return <div className="flex justify-center py-12"><div className="animate-spin h-6 w-6 border-b-2 border-brand-500 rounded-full" /></div>
+  if (loading) return (
+    <div className="space-y-6">
+      <PageHeader title="数据仪表盘" description="平台全局数据概览 + 自然语言智能图表查询" icon={BarChart3} iconColor="from-blue-500 to-indigo-600" />
+      <SkeletonGrid count={6} />
+    </div>
+  )
+
+  if (error && !stats) return (
+    <div className="space-y-6">
+      <PageHeader title="数据仪表盘" description="平台全局数据概览 + 自然语言智能图表查询" icon={BarChart3} iconColor="from-blue-500 to-indigo-600" />
+      <ErrorState error={error} onRetry={() => { setLoading(true); setError(null); loadStats() }} />
+    </div>
+  )
 
   return (
     <div className="space-y-6">

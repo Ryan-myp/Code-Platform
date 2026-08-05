@@ -88,3 +88,4 @@ htmlcov/
 backend/game_covers/
 backend/image_factory/img_*.png
 backend/uploads/qr/
+backend/pdf_factory/
