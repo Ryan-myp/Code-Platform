@@ -29,7 +29,7 @@ export default function ConfirmDialog({
       if (result !== false) {
         onClose?.()
       }
-    } catch (e) {
+    } catch {
       // 错误由调用方在 onConfirm 内处理 toast
     } finally {
       setLoading(false)

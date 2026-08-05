@@ -307,7 +307,7 @@ export default function PipelinesPage() {
   const handleRun = async (p) => {
     setRunningId(p.id)
     try {
-      const res = await api.post(`/api/pipelines/${p.id}/run`)
+      await api.post(`/api/pipelines/${p.id}/run`)
       toast.success(`「${p.name}」执行成功`)
       load()
     } catch (e) {
@@ -321,7 +321,7 @@ export default function PipelinesPage() {
   const handleAutoFix = async (p) => {
     setFixingId(p.id)
     try {
-      const res = await api.post(`/api/pipelines/${p.id}/auto-fix`)
+      await api.post(`/api/pipelines/${p.id}/auto-fix`)
       toast.success('AI 诊断修复已启动，正在分析日志并修复代码…')
       setLogTarget(p)
       load()

@@ -20,7 +20,7 @@ export default function ForecastPage() {
   useEffect(() => { loadRecords() }, [])
 
   const loadRecords = async () => {
-    try { const res = await api.get('/api/forecast/records'); setRecords(res.data || []) } catch {}
+    try { const res = await api.get('/api/forecast/records'); setRecords(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const handleUpload = async (e) => {
@@ -137,7 +137,15 @@ export default function ForecastPage() {
                     <div className="font-medium text-gray-700">{r.filename}</div>
                     <div className="text-gray-400">{r.row_count}行 · {r.created_at?.slice(0,10)}</div>
                   </div>
-                  <Badge color={r.status === 'done' ? 'green' : 'gray'}>{r.status === 'done' ? '已分析' : '已上传'}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge color={r.status === 'done' ? 'green' : 'gray'}>{r.status === 'done' ? '已分析' : '已上传'}</Badge>
+                    <button
+                      onClick={() => deleteRecord(r.id)}
+                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                      title="删除记录">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

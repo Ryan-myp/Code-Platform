@@ -102,14 +102,14 @@ export default function DigitalHumanPage() {
         }
       })
       setPortraitMap(pm)
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const loadRecords = async () => {
     try {
       const res = await api.get('/api/digital-human/records')
       setRecords(res.data || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   // ★ 生成单个数字人写真
@@ -164,7 +164,7 @@ export default function DigitalHumanPage() {
       const res = await api.get('/api/publish/assets')
       setArticles(res.data?.articles || [])
       setShowArticles(true)
-    } catch (e) { toast.error('加载文案失败') }
+    } catch { toast.error('加载文案失败') }
   }
 
   const generate = async () => {
@@ -257,7 +257,7 @@ export default function DigitalHumanPage() {
       a.download = filename
       a.click()
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
-    } catch (e) {
+    } catch {
       toast.error('下载失败')
     }
   }, [toast])
@@ -317,7 +317,7 @@ export default function DigitalHumanPage() {
     catch (e) { toast.error(e.message) }
   }
 
-  const useArticle = (a) => {
+  const loadArticle = (a) => {
     setText(a.result || a.prompt || '')
     setShowArticles(false)
     toast.success('已加载文案')
@@ -325,7 +325,6 @@ export default function DigitalHumanPage() {
 
   const selectedAvatar = avatars.find(a => a.id === avatarId)
   const selectedVoice = voices.find(v => v.id === voiceId)
-  const selectedBg = backgrounds.find(b => b.id === bgId)
 
   return (
     <div className="space-y-6">
@@ -345,16 +344,38 @@ export default function DigitalHumanPage() {
               <Radio className="w-4 h-4 text-amber-500" /> 场景模板
             </h3>
             <div className="space-y-1.5">
-              {(cloudScenes.length > 0 ? cloudScenes : SCENES).map((s) => (
+              {(cloudScenes.length > 0 ? cloudScenes : SCENES).map((s) => {
+                const SceneIcon = s.icon || Sparkles
+                return (
                 <button key={s.id} onClick={() => { setSceneId(s.id) }}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-xs transition-all ${
                     sceneId === s.id ? 'bg-violet-50 border border-violet-200 text-violet-700 font-medium' : 'border border-gray-100 text-gray-600 hover:bg-gray-50'
                   }`}>
-                  <s.icon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <SceneIcon className="w-3.5 h-3.5 flex-shrink-0" />
                   <div>
                     <div className="font-medium">{s.name}</div>
                     <div className="text-[10px] text-gray-400">{s.desc}</div>
                   </div>
+                </button>
+                )
+              })}
+            </div>
+          </Card>
+
+          {/* 背景模板 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-emerald-500" /> 背景模板
+            </h3>
+            <div className="grid grid-cols-3 gap-2">
+              {(backgrounds.length > 0 ? backgrounds : [{ id: 'tech', name: '科技蓝幕', color: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }, { id: 'office', name: '现代办公室', color: '#1a1a2e' }, { id: 'studio', name: '简约演播室', color: '#16213e' }]).map((b) => (
+                <button key={b.id} onClick={() => setBgId(b.id)}
+                  className={`h-12 rounded-lg text-[10px] font-medium overflow-hidden transition-all ${
+                    bgId === b.id ? 'ring-2 ring-emerald-500' : 'opacity-75 hover:opacity-100'
+                  }`}
+                  style={{ background: b.color }}
+                  title={b.name}>
+                  <span className="flex items-center justify-center h-full w-full bg-black/35 text-white">{b.name}</span>
                 </button>
               ))}
             </div>
@@ -860,7 +881,7 @@ export default function DigitalHumanPage() {
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {articles.map((a) => (
               <div key={a.id} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-violet-200 hover:bg-violet-50/30 transition-all cursor-pointer"
-                onClick={() => useArticle(a)}>
+                onClick={() => loadArticle(a)}>
                 <FileText className="w-4 h-4 text-violet-400 flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-gray-800 truncate">{a.title || a.prompt?.slice(0, 40) || '未命名'}</div>

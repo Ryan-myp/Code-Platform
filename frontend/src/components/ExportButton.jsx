@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useState } from 'react'
 import { Check, Download, FileDown, FileText, Loader2 } from 'lucide-react'
 import { useToast } from '../lib/toast'
 
@@ -12,7 +12,6 @@ export default function ExportButton({ content, title = '导出内容', classNam
   const toast = useToast()
   const [open, setOpen] = useState(false)
   const [exporting, setExporting] = useState('')
-  const printRef = useRef(null)
 
   const downloadFile = (text, filename, mime) => {
     const blob = new Blob(['\ufeff', text], { type: mime })

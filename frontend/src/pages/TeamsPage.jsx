@@ -48,7 +48,7 @@ function generateActivityLog(team) {
   return activities
 }
 
-function TeamCard({ team, members, onView, onEdit, onDelete, onRun, viewMode }) {
+function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
   const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
   const memberIds = Array.isArray(team.members) ? team.members : (team.members ? JSON.parse(team.members) : [])
   const memberCount = memberIds.length

@@ -97,7 +97,7 @@ export default function ToolHubPage() {
     try {
       const res = await api.get('/api/tools/favorites/list')
       setFavorites(res.data)
-    } catch (err) {
+    } catch {
       // ignore
     }
   }
@@ -106,7 +106,7 @@ export default function ToolHubPage() {
     try {
       const res = await api.get('/api/tools/stats')
       setStats(res.data)
-    } catch (err) {
+    } catch {
       // ignore
     }
   }
@@ -121,7 +121,7 @@ export default function ToolHubPage() {
         toast.info('已取消收藏')
       }
       loadFavorites()
-    } catch (err) {
+    } catch {
       toast.error('操作失败')
     }
   }

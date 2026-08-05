@@ -115,7 +115,7 @@ export default function GrowthPage() {
       if (varFilter) params.set('platform', varFilter)
       const res = await api.get(`/api/growth/variants?${params}`)
       setVariants(res.data || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const loadDashboard = async () => {
@@ -124,7 +124,7 @@ export default function GrowthPage() {
       if (metPlatform) params.set('platform', metPlatform)
       const res = await api.get(`/api/growth/metrics-dashboard?${params}`)
       setDashboard(res.data)
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const generate = async () => {
@@ -227,7 +227,7 @@ export default function GrowthPage() {
       if (hotSource) params.set('source', hotSource)
       const res = await api.get(`/api/strategy/hotspots?${params}`)
       setHotspots(res.data?.items || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
     finally { setHotLoading(false) }
   }
 
@@ -255,7 +255,7 @@ export default function GrowthPage() {
     try {
       const res = await api.get('/api/strategy/series')
       setSeries(res.data || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const createSeries = async () => {
@@ -310,7 +310,7 @@ export default function GrowthPage() {
     try {
       const res = await api.get(`/api/growth/comments?record_id=${commentRecordId}`)
       setComments(res.data || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const addComment = async () => {
@@ -333,7 +333,7 @@ export default function GrowthPage() {
   const generateReply = async (commentId) => {
     setReplyLoading(commentId)
     try {
-      const res = await api.post(`/api/growth/comments/${commentId}/reply`)
+      await api.post(`/api/growth/comments/${commentId}/reply`)
       toast.success('AI 回复已生成')
       loadComments()
     } catch (e) { toast.error(e.message) }
@@ -348,7 +348,7 @@ export default function GrowthPage() {
   // ── 竞品监控 ──
   const loadCompetitors = async () => {
     try { const res = await api.get('/api/monitor/competitors'); setCompetitors(res.data || []) }
-    catch (e) {}
+    catch {/* 静默失败，不阻塞 UI */}
   }
 
   const addCompetitor = async () => {

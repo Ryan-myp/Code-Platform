@@ -53,7 +53,7 @@ function parseArgs(str) {
 const AUTH_LABELS = { bearer: 'Bearer', basic: 'Basic', api_key: 'API Key' }
 
 // MCP 服务器卡片
-function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, viewMode }) {
+function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, toggling, viewMode }) {
   const isActive = server.status === 'active'
   const transport = server.transport || server.transport_type || 'stdio'
   const authType = server.auth_type || 'none'
@@ -97,12 +97,13 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, vi
           </button>
           <button
             onClick={() => onToggle(server)}
-            className={`p-2 rounded-lg transition-colors ${
+            disabled={toggling === server.id}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               isActive ? 'hover:bg-red-50 text-gray-400 hover:text-red-600' : 'hover:bg-emerald-50 text-gray-400 hover:text-emerald-600'
             }`}
             title={isActive ? '停止' : '启动'}
           >
-            {isActive ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            {toggling === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : isActive ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>
           <button onClick={() => onEdit(server)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
             <Edit2 className="w-4 h-4" />
@@ -498,7 +499,6 @@ export default function MCPServersPage() {
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [togglingId, setTogglingId] = useState(null)
   const [testingId, setTestingId] = useState(null)
 
   const loadData = useCallback(async () => {
@@ -588,6 +588,8 @@ export default function MCPServersPage() {
       return false
     }
   }
+
+  const [togglingId, setTogglingId] = useState(null)
 
   const handleToggle = async (server) => {
     setTogglingId(server.id)
@@ -712,6 +714,7 @@ export default function MCPServersPage() {
               onToggle={handleToggle}
               onTest={handleTest}
               testing={testingId}
+              toggling={togglingId}
               viewMode="grid"
             />
           ))}
@@ -727,6 +730,7 @@ export default function MCPServersPage() {
               onToggle={handleToggle}
               onTest={handleTest}
               testing={testingId}
+              toggling={togglingId}
               viewMode="list"
             />
           ))}

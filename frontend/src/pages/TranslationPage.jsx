@@ -161,7 +161,7 @@ export default function TranslationPage() {
 
   const deleteHistory = async (id, e) => {
     e.stopPropagation()
-    try { await api.delete(`/api/translation/${id}`); loadHistory(); toast.success('已删除') } catch (e) {}
+    try { await api.delete(`/api/translation/${id}`); loadHistory(); toast.success('已删除') } catch {/* 静默失败，不阻塞 UI */}
   }
 
   return (

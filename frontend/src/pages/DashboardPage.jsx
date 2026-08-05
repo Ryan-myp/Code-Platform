@@ -285,7 +285,7 @@ export default function DashboardPage() {
             </h2>
             <div className="text-center py-12 text-gray-400">
               <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>切换到"智能查询"tab，用自然语言探索数据趋势</p>
+              <p>切换到&quot;智能查询&quot;tab，用自然语言探索数据趋势</p>
             </div>
           </Card>
         </>

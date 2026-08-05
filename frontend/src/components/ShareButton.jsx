@@ -41,7 +41,7 @@ export default function ShareButton({ content, title = '', contentType = 'text',
       setShared(true)
       toast.success('分享链接已复制，快去发给朋友吧！')
       setTimeout(() => setShared(false), 3000)
-    } catch (err) {
+    } catch {
       toast.error('复制失败，请手动复制')
     }
   }

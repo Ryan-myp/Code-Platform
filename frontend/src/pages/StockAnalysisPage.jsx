@@ -27,7 +27,7 @@ export default function StockAnalysisPage() {
   const [stockData, setStockData] = useState(null)
   const [analysis, setAnalysis] = useState('')
   const [loading, setLoading] = useState(false)
-  const [analysisType, setAnalysisType] = useState('comprehensive')
+  const [analysisType] = useState('comprehensive')
   const [period, setPeriod] = useState('3mo')
   const [portfolio, setPortfolio] = useState(null)
   const [tradeAction, setTradeAction] = useState('buy')
@@ -43,7 +43,7 @@ export default function StockAnalysisPage() {
     try {
       const res = await api.get('/api/trading/portfolio')
       setPortfolio(res.data)
-    } catch (err) {
+    } catch {
       // ignore
     }
   }
@@ -88,7 +88,7 @@ export default function StockAnalysisPage() {
       return
     }
     try {
-      const res = await api.post('/api/trading/trade', {
+      await api.post('/api/trading/trade', {
         symbol: stockData.symbol,
         action: tradeAction,
         quantity: parseInt(tradeQty),
@@ -108,7 +108,7 @@ export default function StockAnalysisPage() {
       await api.post('/api/trading/reset')
       toast.success('账户已重置')
       loadPortfolio()
-    } catch (err) {
+    } catch {
       toast.error('重置失败')
     }
   }

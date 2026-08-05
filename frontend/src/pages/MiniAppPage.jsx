@@ -75,7 +75,7 @@ export default function MiniAppPage() {
   }, [])
 
   const loadProjects = async () => {
-    try { const res = await api.get('/api/miniapp/projects'); setProjects(res.data || []) } catch (e) {}
+    try { const res = await api.get('/api/miniapp/projects'); setProjects(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const buildPreview = (files) => {
@@ -162,7 +162,6 @@ export default function MiniAppPage() {
   const current = viewing?.files[selectedFile] || ''
   const tpl = templates.find((t) => t.id === template)
   const wxmlPages = viewing ? Object.keys(viewing.files).filter(k => k.endsWith('.wxml')) : []
-  const currentPageLabel = previewPage ? previewPage.replace('pages/', '').replace('/index.wxml', '') : ''
 
   return (
     <div className="space-y-6">

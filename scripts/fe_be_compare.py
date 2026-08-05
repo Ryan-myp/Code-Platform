@@ -73,12 +73,24 @@ def fe_to_regex(path):
             regex += re.escape(p)
     return '^' + regex + '$'
 
+# 后端参数化路径（/api/drafts/{tool_id}）转正则，支持前端字面量（/api/drafts/meme）反向匹配
+def be_to_regex(path):
+    segs = path.split('/')
+    out = []
+    for seg in segs:
+        if seg.startswith('{') and seg.endswith('}'):
+            out.append(r'[^/]+')
+        else:
+            out.append(re.escape(seg))
+    return '^' + '/'.join(out) + '$'
+
 # ---------- 4. 对照 ----------
 def match_backend(fe_path):
     regex = fe_to_regex(fe_path)
     matched = []
     for method, full, fname in backend_routes:
-        if re.match(regex, full):
+        # 双向匹配：前端模板->后端字面，或前端字面->后端参数化
+        if re.match(regex, full) or re.match(be_to_regex(full), fe_path):
             matched.append((method, full, fname))
     return matched
 

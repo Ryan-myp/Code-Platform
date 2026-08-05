@@ -87,7 +87,7 @@ function DeployModal({ info, onClose }) {
         const found = (res.data || []).find((r) => r.id === trackingRunId) || null
         setRun(found)
         if (found && found.status !== 'running') clearInterval(timer)
-      } catch (e) {
+      } catch {
         // 轮询失败静默，下次重试
       } finally {
         if (alive) setLoading(false)
@@ -705,7 +705,7 @@ export default function AIWorkspacePage() {
       toast.error('无可部署代码，请先完成代码生成')
       return
     }
-    const base = (selectedReq?.name || 'ai-service').replace(/[^\w\-]+/g, '-').slice(0, 20) || 'ai-service'
+    const base = (selectedReq?.name || 'ai-service').replace(/[^\w-]+/g, '-').slice(0, 20) || 'ai-service'
     const name = `${base}-${Math.random().toString(36).slice(2, 6)}`
     try {
       const res = await api.post('/api/deployments', {

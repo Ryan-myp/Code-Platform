@@ -32,6 +32,7 @@ export default function ShareViewPage() {
   useEffect(() => {
     const plainText = (content) =>
       (content || '')
+        // eslint-disable-next-line no-useless-escape -- `[` 在 class 内去掉转义会导致 `]` 提前结束字符类
         .replace(/[#*`>\[\]()!|~-]/g, '')
         .replace(/\s+/g, ' ')
         .trim()

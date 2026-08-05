@@ -75,7 +75,7 @@ function LogModal({ project, onClose }) {
     fetchLogs()
     timer = setInterval(fetchLogs, 3000)
     return () => { alive = false; clearInterval(timer) }
-  }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project])
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -472,7 +472,7 @@ export default function SandboxPage() {
       setServices(Array.isArray(list)
         ? list
         : Object.entries(list).map(([id, s]) => ({ id, ...s })))
-    } catch (e) {
+    } catch {
       setServices([])
     }
   }, [])
@@ -481,7 +481,7 @@ export default function SandboxPage() {
     try {
       const res = await api.get('/api/sandbox/images')
       setImages(Array.isArray(res.data) ? res.data : (res.data.images || []))
-    } catch (e) {
+    } catch {
       setImages([])
     }
   }, [])

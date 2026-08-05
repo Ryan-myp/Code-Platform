@@ -19,7 +19,7 @@ export default function DocQAPage() {
   useEffect(() => { loadRecords() }, [])
 
   const loadRecords = async () => {
-    try { const res = await api.get('/api/doc-qa/records'); setRecords(res.data || []) } catch {}
+    try { const res = await api.get('/api/doc-qa/records'); setRecords(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const handleUpload = async (e) => {

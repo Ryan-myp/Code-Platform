@@ -23,7 +23,7 @@ const PLAN_META = {
 
 export default function MembershipPage() {
   const toast = useToast()
-  const { quota, refresh: refreshQuota } = useQuota()
+  const { quota } = useQuota()
   const [plans, setPlans] = useState(null)
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)

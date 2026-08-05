@@ -22,7 +22,7 @@ export default function ApiDocsPage() {
       ])
       setKeys(keysRes.data || [])
       setDocs(docsRes.data)
-    } catch {}
+    } catch {/* 静默失败，不阻塞 UI */}
     setLoaded(true)
   }
 

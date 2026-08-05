@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../lib/api'
 
 /**
@@ -9,7 +9,6 @@ import { api } from '../lib/api'
 export default function useQuota() {
   const [quota, setQuota] = useState(null)
   const [loading, setLoading] = useState(true)
-  const loadedRef = useRef(false)
 
   const refresh = async () => {
     try {
@@ -31,7 +30,6 @@ export default function useQuota() {
       window.removeEventListener('quota-exhausted', refreshHandler)
       window.removeEventListener('quota-changed', refreshHandler)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return { quota, loading, refresh }

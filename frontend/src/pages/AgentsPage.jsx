@@ -178,7 +178,7 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
 }
 
 // 资源多选组件：工具 / 知识库 / Skills / MCP 通用
-function ResourceMultiSelect({ title, icon: Icon, options, selected, onChange, loading, placeholder }) {
+function ResourceMultiSelect({ title, options, selected, onChange, loading, placeholder }) {
   const [q, setQ] = useState('')
   const filtered = options.filter((o) =>
     !q || (o.name || o.label || '').toLowerCase().includes(q.toLowerCase())
@@ -431,7 +431,7 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
 }
 
 // 主页面组件
-export default function AgentsPage({ tab }) {
+export default function AgentsPage() {
   const navigate = useNavigate()
   const toast = useToast()
   const [agents, setAgents] = useState([])
@@ -515,9 +515,6 @@ export default function AgentsPage({ tab }) {
     return matchSearch && matchFilter && matchTag
   })
 
-  const toggleSelect = (id) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
-  }
   const toggleSelectAll = () => {
     if (selectedIds.length === filteredAgents.length) setSelectedIds([])
     else setSelectedIds(filteredAgents.map(a => a.id))

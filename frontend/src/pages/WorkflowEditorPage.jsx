@@ -324,31 +324,6 @@ export default function WorkflowEditorPage() {
     }
   }
 
-  const handleOutputHandleClick = (nodeId, e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (pendingConnection === nodeId) {
-      // 再次点击同一个节点退出连线模式
-      setPendingConnection(null)
-      toast.info('已退出连线模式')
-    } else {
-      setPendingConnection(nodeId)
-      setSelectedNodeId(nodeId)
-      const label = nodes.find(n => n.id === nodeId)?.label || nodeId
-      toast.success(`从「${label}」开始连线，可连续创建分支`)
-    }
-  }
-
-  const handleInputHandleClick = (nodeId, e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (pendingConnection && pendingConnection !== nodeId) {
-      addEdge(pendingConnection, nodeId)
-      toast.success(`已连线 → ${nodes.find(n => n.id === nodeId)?.label || nodeId}`)
-      // 不清除 pendingConnection，支持连续分支
-    }
-  }
-
   // 运行工作流
   const runWorkflow = async () => {
     if (!workflow) return

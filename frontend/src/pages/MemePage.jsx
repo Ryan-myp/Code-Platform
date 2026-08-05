@@ -107,7 +107,7 @@ export default function MemePage() {
       fd.append('bottom_text', bottomText.trim())
       fd.append('style', style)
       fd.append('ai_prompt', aiPrompt.trim())
-      const res = await api.post('/api/meme/generate', fd, { timeout: 180000 })
+      await api.post('/api/meme/generate', fd, { timeout: 180000 })
       toast.success(style === 'ai' ? 'AI 表情包生成完成' : '表情包已生成')
       await clearDraft()
       loadList()

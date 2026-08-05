@@ -16,7 +16,6 @@ const PLATFORMS = [
 ]
 
 export default function ContentStrategyPage() {
-  const toast = useToast()
   const [tab, setTab] = useState('hotspots')
 
   return (

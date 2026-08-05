@@ -43,7 +43,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
     try {
       const res = await api.get('/api/invite')
       setInvite(res.data)
-    } catch (err) {
+    } catch {
       /* 邀请信息加载失败不打扰用户 */
     }
   }
@@ -54,7 +54,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
     try {
       await navigator.clipboard.writeText(link)
       toast.success('邀请链接已复制，好友注册双方各得 5 次额度')
-    } catch (err) {
+    } catch {
       toast.error('复制失败，请手动复制邀请码')
     }
   }

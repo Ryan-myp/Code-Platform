@@ -146,7 +146,7 @@ export default function CopywritingPage() {
 
   const deleteHistory = async (id, e) => {
     e.stopPropagation()
-    try { await api.delete(`/api/copywriting/${id}`); loadHistory(); toast.success('已删除') } catch (e) {}
+    try { await api.delete(`/api/copywriting/${id}`); loadHistory(); toast.success('已删除') } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const currentType = TYPES.find(t => t.value === type)

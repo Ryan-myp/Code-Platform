@@ -129,7 +129,7 @@ export default function PublishingPage() {
   const [complianceModal, setComplianceModal] = useState(false)
   const [pendingSubmit, setPendingSubmit] = useState(null)
   const [bestTimes, setBestTimes] = useState(null)
-  const [bestTimeLoading, setBestTimeLoading] = useState(false)
+  const [, setBestTimeLoading] = useState(false)
 
   const checkCompliance = async () => {
     try {
@@ -143,7 +143,7 @@ export default function PublishingPage() {
     try {
       const res = await api.get(`/api/strategy/best-time?platform=${p}`)
       setBestTimes(res.data?.top_slots?.slice(0, 3) || [])
-    } catch {}
+    } catch {/* 静默失败，不阻塞 UI */}
     finally { setBestTimeLoading(false) }
   }
 
@@ -189,16 +189,16 @@ export default function PublishingPage() {
   useEffect(() => { if (tab === 'stats') { loadStats(); loadSchedules() } }, [tab])
 
   const loadSchedules = async () => {
-    try { const res = await api.get(`/api/publish/schedules?month=${calMonth}`); setSchedules(res.data || []) } catch (e) {}
+    try { const res = await api.get(`/api/publish/schedules?month=${calMonth}`); setSchedules(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
   const loadStats = async () => {
-    try { const res = await api.get('/api/publish/stats'); setStats(res.data || null) } catch (e) {}
+    try { const res = await api.get('/api/publish/stats'); setStats(res.data || null) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   useEffect(() => { loadAssets(); loadStats() }, [])
 
   const loadAssets = async () => {
-    try { const res = await api.get('/api/publish/assets'); setAssets(res.data || { articles: [], media: [] }) } catch (e) {}
+    try { const res = await api.get('/api/publish/assets'); setAssets(res.data || { articles: [], media: [] }) } catch {/* 静默失败，不阻塞 UI */}
   }
   const loadRecords = async () => {
     try {
@@ -208,10 +208,10 @@ export default function PublishingPage() {
       if (recQ.trim()) params.set('q', recQ.trim())
       const res = await api.get(`/api/publish/records?${params.toString()}`)
       setRecords(res.data || [])
-    } catch (e) {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
   const loadAccounts = async () => {
-    try { const res = await api.get('/api/publish/accounts'); setAccounts(res.data || []) } catch (e) {}
+    try { const res = await api.get('/api/publish/accounts'); setAccounts(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   // 平台多选切换
@@ -226,7 +226,7 @@ export default function PublishingPage() {
   }
 
   // 使用素材库中的文章
-  const useArticle = (a) => {
+  const loadArticle = (a) => {
     setTitle(a.title || '')
     setContent(a.result || a.prompt || '')
     setContentType('article')
@@ -399,7 +399,7 @@ export default function PublishingPage() {
     if (!schedForm.title.trim() && schedForm.content_type !== 'image') { toast.error('请填写标题'); return }
     if (!schedForm.scheduled_at) { toast.error('请选择计划发布时间'); return }
     try {
-      const res = await api.post('/api/publish/schedules', {
+      await api.post('/api/publish/schedules', {
         platform: schedForm.platform, content_type: schedForm.content_type,
         title: schedForm.title, content: schedForm.content, topics: schedForm.topics,
         asset_urls: schedAssets.map((s) => s.url), scheduled_at: schedForm.scheduled_at,
@@ -453,7 +453,7 @@ export default function PublishingPage() {
     finally { setCancelling(false) }
   }
 
-  const platformMeta = PLATFORMS.find((p) => p.value === platforms[0])
+
   const ctypeMeta = CONTENT_TYPES.find((c) => c.value === contentType)
 
   return (
@@ -643,7 +643,7 @@ export default function PublishingPage() {
                           <div className="text-xs text-gray-400 truncate">{(a.result || a.prompt || '').slice(0, 80)}</div>
                         </div>
                         <span className="text-xs text-gray-400 flex-shrink-0">{a.created_at?.slice(0, 10)}</span>
-                        <Button variant="secondary" size="sm" icon={FileText} onClick={() => useArticle(a)}>加载正文</Button>
+                        <Button variant="secondary" size="sm" icon={FileText} onClick={() => loadArticle(a)}>加载正文</Button>
                       </div>
                     ))}
                   </div>
@@ -1075,7 +1075,7 @@ export default function PublishingPage() {
                   {stats.trend_30d.map((t, i) => {
                     const max = Math.max(...stats.trend_30d.map((x) => x.count), 1)
                     const h = Math.max((t.count / max) * 100, t.count > 0 ? 8 : 2)
-                    const isWeekEnd = new Date(t.date).getDay() === 0 || new Date(t.date).getDay() === 6
+
                     return (
                       <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
                         <div className="w-full rounded-t bg-gradient-to-t from-indigo-500 to-blue-400 transition-all" style={{ height: `${h}%`, opacity: t.count > 0 ? 1 : 0.15 }} />

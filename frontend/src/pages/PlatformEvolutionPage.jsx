@@ -29,21 +29,13 @@ export default function PlatformEvolutionPage() {
   const [confirmOptimize, setConfirmOptimize] = useState(false)
 
   const loadStats = useCallback(async () => {
-    try {
-      const res = await api.get('/api/usage-stats')
-      setStats(res.data)
-    } catch (e) {
-      throw e
-    }
+    const res = await api.get('/api/usage-stats')
+    setStats(res.data)
   }, [])
 
   const loadOptimizations = useCallback(async () => {
-    try {
-      const res = await api.get('/api/evolution/prompt-history')
-      setPromptHistory(res.data || [])
-    } catch (e) {
-      throw e
-    }
+    const res = await api.get('/api/evolution/prompt-history')
+    setPromptHistory(res.data || [])
   }, [])
 
   const loadAll = useCallback(async () => {

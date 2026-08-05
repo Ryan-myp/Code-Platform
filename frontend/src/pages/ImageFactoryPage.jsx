@@ -106,7 +106,6 @@ export default function ImageFactoryPage() {
   const [templateModal, setTemplateModal] = useState(false) // 'create' | 'upload' | null
   const [templateForm, setTemplateForm] = useState({ name: '', width: 1080, height: 1920, background: '#FFFFFF', layers: '' })
   const [templateSaving, setTemplateSaving] = useState(false)
-  const [uploadFileRef, setUploadFileRef] = useState(null)
   const [deletingTemplate, setDeletingTemplate] = useState(null)
 
   // 编辑

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState } from 'react'
 import { Search, Globe, ExternalLink, Clock, Sparkles, FileText, Loader2, Zap } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -16,7 +16,7 @@ export default function WebSearchPage() {
 
   const loadHistory = async () => {
     setHistoryLoading(true)
-    try { const res = await api.get('/api/search/history'); setHistory(res.data || []) } catch {}
+    try { const res = await api.get('/api/search/history'); setHistory(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
     finally { setLoadedHistory(true); setHistoryLoading(false) }
   }
 

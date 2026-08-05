@@ -14,7 +14,7 @@ export default function ABTestingPage() {
   useEffect(() => { load() }, [])
   const load = async () => {
     setLoading(true)
-    try { const res = await api.get('/api/ab-tests'); setTests(res.data) } catch (e) { toast.error('加载失败') }
+    try { const res = await api.get('/api/ab-tests'); setTests(res.data) } catch { toast.error('加载失败') }
     finally { setLoading(false) }
   }
 
@@ -29,7 +29,7 @@ export default function ABTestingPage() {
 
   const remove = async (id) => {
     if (!confirm('确定删除？')) return
-    try { await api.delete(`/api/ab-tests/${id}`); toast.success('已删除'); load() } catch (e) { toast.error('删除失败') }
+    try { await api.delete(`/api/ab-tests/${id}`); toast.success('已删除'); load() } catch { toast.error('删除失败') }
   }
 
   return (

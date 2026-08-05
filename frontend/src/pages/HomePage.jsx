@@ -249,7 +249,7 @@ export default function HomePage() {
       setToolStats(toolRes.data || [])
       setDrafts(draftRes.data || [])
       if (widgetsRes?.data) setWidgets(widgetsRes.data)
-    } catch (e) {
+    } catch {
       toast.error('加载数据失败')
     } finally {
       setLoading(false)
@@ -288,7 +288,7 @@ export default function HomePage() {
     try {
       await api.put(`/api/notifications/${notifId}/read`)
       loadData()
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
   }
 
   // ── 首页组件配置 ──

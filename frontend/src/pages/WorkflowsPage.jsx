@@ -72,16 +72,6 @@ const WORKFLOW_TEMPLATES = [
     } },
 ]
 
-// 状态元数据
-const STATUS_META = {
-  active:    { label: '运行中', className: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
-  inactive:  { label: '已停止', className: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
-  draft:     { label: '草稿', className: 'bg-blue-50 text-blue-700', dot: 'bg-blue-500' },
-  paused:    { label: '已暂停', className: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
-  archived:  { label: '已归档', className: 'bg-gray-50 text-gray-500', dot: 'bg-gray-400' },
-}
-
-const getStatusMeta = (status) => STATUS_META[status] || STATUS_META.inactive
 
 // Workflow 卡片组件
 function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
@@ -381,7 +371,6 @@ export default function WorkflowsPage() {
     navigate(`/workflows/${workflow.id}`)
   }
 
-  const today = new Date().toISOString().split('T')[0]
   const totalExecutions = workflows.reduce((sum, w) => sum + (w.execution_count || 0), 0)
   const avgSuccess = workflows.filter(w => w.success_rate != null)
   const avgRate = avgSuccess.length > 0

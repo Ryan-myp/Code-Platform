@@ -102,7 +102,7 @@ export default function ProjectSpacePage() {
     } else {
       setLoading(true)
       Promise.all([fetchProjects(), api.get('/api/requirements')])
-        .then(([_, reqRes]) => setRequirements(reqRes.data || []))
+        .then(([, reqRes]) => setRequirements(reqRes.data || []))
         .catch(() => setError(new Error('加载数据失败')))
         .finally(() => setLoading(false))
     }

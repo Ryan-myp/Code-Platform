@@ -23,7 +23,7 @@ export default function TemplateMarketPage() {
   const navigate = useNavigate()
   const toast = useToast()
   const [data, setData] = useState(null)
-  const [cat, setCat] = useState('all')
+  const [cat] = useState('all')
   const [loading, setLoading] = useState(true)
   const [marketTab, setMarketTab] = useState('builtin') // builtin | c2c | mine | purchases
 

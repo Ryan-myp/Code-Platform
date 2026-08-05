@@ -31,7 +31,7 @@ export default function NotificationsPage() {
       if (filter.unreadOnly) url += 'unread_only=true&'
       const res = await api.get(url)
       setNotifications(res.data)
-    } catch (e) {
+    } catch {
       toast.error('加载通知失败')
     } finally {
       setLoading(false)
@@ -42,7 +42,7 @@ export default function NotificationsPage() {
     try {
       await api.put(`/api/notifications/${notifId}/read`)
       loadNotifications()
-    } catch (e) {
+    } catch {
       toast.error('操作失败')
     }
   }
@@ -52,7 +52,7 @@ export default function NotificationsPage() {
       await api.put('/api/notifications/read-all')
       toast.success('已全部标记为已读')
       loadNotifications()
-    } catch (e) {
+    } catch {
       toast.error('操作失败')
     }
   }
@@ -62,7 +62,7 @@ export default function NotificationsPage() {
       await api.delete(`/api/notifications/${notifId}`)
       toast.success('已删除')
       loadNotifications()
-    } catch (e) {
+    } catch {
       toast.error('删除失败')
     }
   }

@@ -73,7 +73,7 @@ export default function ToolRunPage() {
     try {
       const res = await api.get(`/api/tools/${toolId}`)
       setTool(res.data)
-    } catch (err) {
+    } catch {
       toast.error('工具不存在')
       navigate('/tool-hub')
     }
@@ -83,7 +83,7 @@ export default function ToolRunPage() {
     try {
       const res = await api.get(`/api/tools/${toolId}/history`)
       setHistory(res.data)
-    } catch (err) {
+    } catch {
       // ignore
     }
   }

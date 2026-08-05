@@ -20,7 +20,7 @@ export default function VideoAnalyzerPage() {
     try {
       const res = await api.get('/api/video/records')
       setRecords(res.data || [])
-    } catch {}
+    } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const handleUpload = async (e) => {

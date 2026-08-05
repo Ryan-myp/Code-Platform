@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- 画布动画引擎：导出常量供其他组件复用 */
 import React, { useRef, useEffect, useCallback, useImperativeHandle, forwardRef, useState } from 'react'
 
 /**
@@ -191,7 +192,7 @@ const AnimatedAvatar = forwardRef(function AnimatedAvatar({
   useImperativeHandle(ref, () => ({ startRecording, stopRecording, canvas: canvasRef.current }), [startRecording, stopRecording])
 
   // ══ 写真模式：口型动画覆盖层 ══
-  const drawPortraitOverlay = useCallback((ctx, w, h, state, t) => {
+  const drawPortraitOverlay = useCallback((ctx, w, h, state) => {
     ctx.clearRect(0, 0, w, h)
 
     if (!talking || state.mouthOpen < 0.02) return
@@ -278,7 +279,7 @@ const AnimatedAvatar = forwardRef(function AnimatedAvatar({
     }
   }
 
-  const drawHair = (ctx, cx, cy, s, state, st, t) => {
+  const drawHair = (ctx, cx, cy, s, state, st) => {
     ctx.fillStyle = st.hairHi; ctx.beginPath(); ctx.ellipse(cx, cy * 0.55, 62 * s, 70 * s, 0, 0, Math.PI * 2); ctx.fill()
     ctx.fillStyle = st.hair; ctx.beginPath()
     ctx.moveTo(cx - 42 * s, cy * 0.25); ctx.quadraticCurveTo(cx - 50 * s, cy * 0.0, cx - 20 * s, cy * 0.05)
@@ -293,7 +294,7 @@ const AnimatedAvatar = forwardRef(function AnimatedAvatar({
     }
   }
 
-  const drawBody = (ctx, cx, cy, s, state, w, h, t) => {
+  const drawBody = (ctx, cx, cy, s, state, w, h) => {
     const breath = Math.sin(state.breathPhase) * 3 * s
     ctx.fillStyle = style.skin; ctx.beginPath(); ctx.roundRect(cx - 12 * s, cy * 0.85, 24 * s, 30 * s, 6 * s); ctx.fill()
     ctx.fillStyle = topColor; ctx.beginPath()
@@ -307,7 +308,7 @@ const AnimatedAvatar = forwardRef(function AnimatedAvatar({
     ctx.beginPath(); ctx.moveTo(cx, cy * 0.92); ctx.lineTo(cx - 6 * s, cy * 0.98); ctx.lineTo(cx, cy * 1.05); ctx.lineTo(cx + 6 * s, cy * 0.98); ctx.closePath(); ctx.fill()
   }
 
-  const drawArm = (ctx, cx, cy, s, state, side, t) => {
+  const drawArm = (ctx, cx, cy, s, state, side) => {
     const gPhase = state.handPhase; const gType = state.gestureType
     ctx.save()
     const shoulderX = cx + side * 48 * s; const shoulderY = cy * 0.98

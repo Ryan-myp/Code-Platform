@@ -37,7 +37,7 @@ function fmtTime(iso) {
 }
 
 // 作品卡片：图片/视频/音频统一媒体渲染 + 点赞 + 评论入口
-function WorkCard({ work, onLike, onComment, onPreview, user }) {
+function WorkCard({ work, onLike, onComment, onPreview }) {
   const [imgErr, setImgErr] = useState(false)
   const mediaUrl = mediaFull(work.media_url)
   return (
@@ -310,7 +310,7 @@ export default function GalleryPage() {
       if (author) params.set('author', author)
       const res = await api.get(`/api/gallery/works?${params.toString()}`)
       setWorks(res.data || [])
-    } catch (e) { toast.error('加载作品失败') } finally { setLoading(false) }
+    } catch { toast.error('加载作品失败') } finally { setLoading(false) }
   }
 
   // 搜索防抖 + 条件变化自动刷新

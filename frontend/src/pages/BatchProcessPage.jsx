@@ -23,7 +23,7 @@ export default function BatchProcessPage() {
   const [jobs, setJobs] = useState([])
 
   const loadJobs = async () => {
-    try { const res = await api.get('/api/batch/jobs'); setJobs(res.data || []) } catch {}
+    try { const res = await api.get('/api/batch/jobs'); setJobs(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
   }
 
   const handleFileSelect = (e) => {
@@ -64,7 +64,6 @@ export default function BatchProcessPage() {
     setLoading(false)
   }
 
-  const currentTask = TASK_TYPES.find((t) => t.key === task)
 
   return (
     <div className="space-y-6">

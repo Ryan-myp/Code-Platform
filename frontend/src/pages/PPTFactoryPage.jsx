@@ -97,7 +97,7 @@ export default function PPTFactoryPage() {
           const parsed = JSON.parse(jsonMatch[0])
           if (parsed.slides) setSlides(parsed.slides)
         }
-      } catch (e) { /* not valid JSON */ }
+      } catch { /* not valid JSON */ }
       loadHistory(); toast.success('PPT 大纲生成完成')
     } catch (e) { toast.error(`生成失败：${e.message}`) }
     finally { setLoading(false) }

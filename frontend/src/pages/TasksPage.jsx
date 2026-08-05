@@ -42,7 +42,7 @@ export default function TasksPage() {
       if (filter.priority) url += `priority=${filter.priority}&`
       const res = await api.get(url)
       setTasks(res.data)
-    } catch (e) {
+    } catch {
       toast.error('加载任务失败')
     } finally {
       setLoading(false)
