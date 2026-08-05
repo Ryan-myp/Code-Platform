@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import CodeTreeView from '../components/CodeTreeView'
 import {
   FileText, Code2, TestTube2, Send, Loader2, BookOpen, MessageSquare,
   Copy, Sparkles, Bot, User, Edit2, Save, X, FolderGit2, ListTodo,
@@ -545,9 +546,7 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
             </button>
           </div>
           {stage?.mono ? (
-            <pre className="bg-gray-900 text-gray-100 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[55vh] whitespace-pre-wrap">
-              {content}
-            </pre>
+            <CodeTreeView content={content} title={`${stage?.label}（按工程结构展示）`} />
           ) : (
             <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-gray-200 p-4">
               <MarkdownRenderer content={content} />

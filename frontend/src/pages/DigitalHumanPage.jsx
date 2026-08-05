@@ -4,6 +4,7 @@ import {
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
   Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
   Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle, Camera,
+  Upload, Rocket, X,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -36,6 +37,15 @@ export default function DigitalHumanPage() {
   const [backgrounds, setBackgrounds] = useState([])
   const [records, setRecords] = useState([])
   const [result, setResult] = useState(null)
+
+  // 自定义形象 / 声音（用户上传）
+  const [customAvatars, setCustomAvatars] = useState([])
+  const [customVoices, setCustomVoices] = useState([])
+  const [showAvatarModal, setShowAvatarModal] = useState(false)
+  const [showVoiceModal, setShowVoiceModal] = useState(false)
+  const [avatarForm, setAvatarForm] = useState({ name: '', desc: '', file: null, preview: '' })
+  const [voiceForm, setVoiceForm] = useState({ name: '', desc: '', file: null })
+  const [uploading, setUploading] = useState(false)
 
   // 云端素材：场景预设 + 写真画廊
   const [cloudScenes, setCloudScenes] = useState([])
@@ -88,6 +98,20 @@ export default function DigitalHumanPage() {
       api.get('/api/digital-human/portraits')
         .then((res) => setPortraitList(res.data?.portraits || []))
         .catch(() => {})
+      // 自定义形象/声音（需登录，失败静默）
+      api.get('/api/digital-human/custom-avatars')
+        .then((res) => {
+          const list = res.data?.avatars || []
+          setCustomAvatars(list)
+          // 自定义形象直接展示上传图片（无需 AI 写真）
+          const pm = {}
+          list.forEach((a) => { if (a.image_url) pm[a.id] = a.image_url })
+          setPortraitMap(prev => ({ ...prev, ...pm }))
+        })
+        .catch(() => {})
+      api.get('/api/digital-human/custom-voices')
+        .then((res) => setCustomVoices(res.data?.voices || []))
+        .catch(() => {})
       const avatarList = aRes.data?.avatars || []
       setAvatars(avatarList)
       setVoices(vRes.data?.voices || [])
@@ -110,6 +134,90 @@ export default function DigitalHumanPage() {
       const res = await api.get('/api/digital-human/records')
       setRecords(res.data || [])
     } catch {/* 静默失败，不阻塞 UI */}
+  }
+
+  // ★ 上传自定义形象（自己的头像/照片 → 数字人形象）
+  const uploadCustomAvatar = async () => {
+    if (!avatarForm.file) { toast.error('请先选择一张图片（jpg/png/webp）'); return }
+    if (!avatarForm.name.trim()) { toast.error('请输入形象名称'); return }
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', avatarForm.file)
+      fd.append('name', avatarForm.name.trim())
+      fd.append('desc', avatarForm.desc.trim())
+      const res = await api.post('/api/digital-human/custom-avatars', fd)
+      const av = res.data?.avatar
+      setAvatarForm({ name: '', desc: '', file: null, preview: '' })
+      setShowAvatarModal(false)
+      setCustomAvatars(prev => [...prev, av])
+      if (av?.image_url) setPortraitMap(prev => ({ ...prev, [av.id]: av.image_url }))
+      setAvatarId(av.id) // 上传后直接选中，便于立即试用
+      toast.success(`自定义形象「${av.name}」已创建，可直接生成视频`)
+    } catch (e) { toast.error(`上传失败：${e.message}`) }
+    finally { setUploading(false) }
+  }
+
+  // ★ 上传自定义声音（自己的录音/音频 → 数字人配音）
+  const uploadCustomVoice = async () => {
+    if (!voiceForm.file) { toast.error('请先选择一个音频文件（mp3/wav/m4a）'); return }
+    if (!voiceForm.name.trim()) { toast.error('请输入声音名称'); return }
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', voiceForm.file)
+      fd.append('name', voiceForm.name.trim())
+      fd.append('desc', voiceForm.desc.trim())
+      const res = await api.post('/api/digital-human/custom-voices', fd)
+      const v = res.data?.voice
+      setVoiceForm({ name: '', desc: '', file: null })
+      setShowVoiceModal(false)
+      setCustomVoices(prev => [...prev, v])
+      setVoiceId(v.id) // 上传后直接选中
+      toast.success(`自定义声音「${v.name}」已创建，生成时直接使用该音频作为配音`)
+    } catch (e) { toast.error(`上传失败：${e.message}`) }
+    finally { setUploading(false) }
+  }
+
+  const deleteCustomAvatar = async (id) => {
+    try {
+      await api.delete(`/api/digital-human/custom-avatars/${id}`)
+      setCustomAvatars(prev => prev.filter(a => a.id !== id))
+      if (avatarId === id) setAvatarId('business-female')
+      toast.success('已删除自定义形象')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const deleteCustomVoice = async (id) => {
+    try {
+      await api.delete(`/api/digital-human/custom-voices/${id}`)
+      setCustomVoices(prev => prev.filter(v => v.id !== id))
+      if (voiceId === id) setVoiceId('zh-CN-XiaoxiaoNeural')
+      toast.success('已删除自定义声音')
+    } catch (e) { toast.error(e.message) }
+  }
+
+  // ★ 发布视频到内容平台（复用发布中心的账号矩阵与素材包能力）
+  const publishVideo = async (videoUrl, contentText, recordName) => {
+    const platform = window.prompt('选择发布平台：请输入 douyin（抖音）/ kuaishou（快手）/ wechat（公众号）')
+    if (!platform || !['douyin', 'kuaishou', 'wechat'].includes(platform)) return
+    try {
+      const res = await api.post('/api/publish/submit', {
+        platform,
+        content_type: 'video',
+        title: `数字人视频 - ${recordName || '口播'}`,
+        content: (contentText || '').slice(0, 2000),
+        topics: ['数字人', 'AI'],
+        asset_urls: [videoUrl],
+      })
+      const mode = res.data?.mode
+      if (mode === 'auto') {
+        toast.success(`已自动发布到${res.data?.platform_label || platform}！${res.data?.message || ''}`)
+      } else {
+        toast.info('已生成发布素材包：请到发布中心查看引导步骤完成发布')
+        window.open(`/publish`, '_blank')
+      }
+    } catch (e) { toast.error(`发布失败：${e.message}`) }
   }
 
   // ★ 生成单个数字人写真
@@ -387,16 +495,44 @@ export default function DigitalHumanPage() {
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <UserCircle className="w-4 h-4 text-blue-500" /> 数字人形象
               </h3>
-              <button
-                onClick={generateAllPortraits}
-                disabled={generatingAll}
-                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                <Camera className="w-3 h-3" />
-                {generatingAll ? '生成中...' : '一键生成全部写真'}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => { setAvatarForm({ name: '', desc: '', file: null, preview: '' }); setShowAvatarModal(true) }}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-all"
+                >
+                  <Upload className="w-3 h-3" /> 上传我的形象
+                </button>
+                <button
+                  onClick={generateAllPortraits}
+                  disabled={generatingAll}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  <Camera className="w-3 h-3" />
+                  {generatingAll ? '生成中...' : '一键生成全部写真'}
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
+              {/* 自定义形象（用户上传，带删除） */}
+              {customAvatars.map((a) => (
+                <div key={a.id} className="relative group">
+                  <button onClick={() => setAvatarId(a.id)}
+                    className={`relative w-full flex flex-col items-center gap-1.5 p-2.5 rounded-xl border transition-all ${
+                      avatarId === a.id ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-500/20' : 'border-blue-100 hover:border-blue-200 hover:bg-blue-50/30'
+                    }`}>
+                    <div className="w-12 h-12 rounded-full overflow-hidden ring-2 ring-blue-200 shadow-sm">
+                      <img src={a.image_url} alt={a.name} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="text-xs font-medium text-gray-800">{a.name}</div>
+                    <div className="text-[10px] text-blue-500">我的形象</div>
+                  </button>
+                  <button onClick={() => deleteCustomAvatar(a.id)}
+                    className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-red-500 text-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="删除该形象">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
               {avatars.map((a) => {
                 const hasPortrait = !!portraitMap[a.id]
                 const isGenerating = generatingPortrait.has(a.id)
@@ -444,10 +580,39 @@ export default function DigitalHumanPage() {
 
           {/* 声音选择 */}
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Mic2 className="w-4 h-4 text-pink-500" /> 声音选择
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Mic2 className="w-4 h-4 text-pink-500" /> 声音选择
+              </h3>
+              <button
+                onClick={() => { setVoiceForm({ name: '', desc: '', file: null }); setShowVoiceModal(true) }}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-pink-200 bg-pink-50 text-pink-600 hover:bg-pink-100 transition-all"
+              >
+                <Upload className="w-3 h-3" /> 上传我的声音
+              </button>
+            </div>
             <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+              {/* 自定义声音（用户上传录音，直接作为配音） */}
+              {customVoices.map((v) => (
+                <div key={v.id} className="relative group">
+                  <button onClick={() => setVoiceId(v.id)}
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                      voiceId === v.id ? 'bg-pink-50 border border-pink-200 text-pink-700 font-medium' : 'border border-pink-100 text-gray-600 hover:bg-gray-50'
+                    }`}>
+                    <span className="text-base">🎙️</span>
+                    <div className="flex-1 text-left">
+                      <div className="font-medium">{v.name} · 我的声音</div>
+                      <div className="text-[10px] text-gray-400">{v.desc || `时长 ${Math.round(v.duration || 0)}s 的录音，直接作为配音`}</div>
+                    </div>
+                    {voiceId === v.id && <Check className="w-3.5 h-3.5 text-pink-500 flex-shrink-0" />}
+                  </button>
+                  <button onClick={() => deleteCustomVoice(v.id)}
+                    className="absolute top-1 right-7 p-1 rounded-full bg-red-500 text-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="删除该声音">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
               {voices.map((v) => (
                 <button key={v.id} onClick={() => setVoiceId(v.id)}
                   className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
@@ -756,6 +921,12 @@ export default function DigitalHumanPage() {
                     <Download className="w-3.5 h-3.5" /> 下载 MP4
                   </button>
                 )}
+                {result.video_url && (
+                  <button onClick={() => publishVideo(result.video_url, text, result.avatar?.name)}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium hover:bg-rose-100 transition-colors">
+                    <Rocket className="w-3.5 h-3.5" /> 发布
+                  </button>
+                )}
               </div>
               {result.record_id && (
                 <div className="text-[10px] text-gray-400 mt-2">记录 ID：{result.record_id}</div>
@@ -862,6 +1033,12 @@ export default function DigitalHumanPage() {
                               MP4
                             </button>
                           )}
+                          {r.video_url && (
+                            <button onClick={() => publishVideo(r.video_url, r.text, r.avatar_name)}
+                              className="text-[10px] text-rose-500 hover:text-rose-700 px-1.5 py-0.5 rounded hover:bg-rose-50">
+                              🚀 发布
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -872,6 +1049,90 @@ export default function DigitalHumanPage() {
           </Card>
         </div>
       </div>
+
+      {/* 上传自定义形象 Modal */}
+      <Modal open={showAvatarModal} onClose={() => setShowAvatarModal(false)} title="上传我的形象" size="sm">
+        <p className="text-xs text-gray-400 mb-3">
+          上传你自己的头像/照片，生成视频时以该形象出镜（自动居中裁切，建议竖版人像图效果最佳）
+        </p>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-400 cursor-pointer overflow-hidden flex items-center justify-center bg-gray-50 flex-shrink-0">
+              {avatarForm.preview ? (
+                <img src={avatarForm.preview} alt="预览" className="w-full h-full object-cover" />
+              ) : (
+                <Upload className="w-5 h-5 text-gray-400" />
+              )}
+              <input
+                type="file" accept="image/*" className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  setAvatarForm(prev => ({ ...prev, file: f, preview: URL.createObjectURL(f) }))
+                }}
+              />
+            </label>
+            <div className="flex-1 space-y-2">
+              <input
+                value={avatarForm.name} placeholder="形象名称（如：我的真人形象）" maxLength={20}
+                onChange={(e) => setAvatarForm(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+              <input
+                value={avatarForm.desc} placeholder="描述（选填，如：休闲装、办公室背景）" maxLength={100}
+                onChange={(e) => setAvatarForm(prev => ({ ...prev, desc: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowAvatarModal(false)}>取消</Button>
+            <Button variant="primary" size="sm" icon={Upload} loading={uploading} onClick={uploadCustomAvatar}>
+              上传并创建
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 上传自定义声音 Modal */}
+      <Modal open={showVoiceModal} onClose={() => setShowVoiceModal(false)} title="上传我的声音" size="sm">
+        <p className="text-xs text-gray-400 mb-3">
+          上传你自己的录音/音频（mp3/wav/m4a，最长 10 分钟），生成视频时直接用这段声音作为配音——
+          记得把文案填成和录音内容一致，字幕才能对上
+        </p>
+        <div className="space-y-3">
+          <label className="flex items-center justify-center gap-2 px-3 py-4 rounded-xl border-2 border-dashed border-gray-300 hover:border-pink-400 cursor-pointer bg-gray-50">
+            <Upload className="w-4 h-4 text-gray-400" />
+            <span className="text-xs text-gray-500">
+              {voiceForm.file ? voiceForm.file.name : '点击选择音频文件'}
+            </span>
+            <input
+              type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg" className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (!f) return
+                setVoiceForm(prev => ({ ...prev, file: f }))
+              }}
+            />
+          </label>
+          <input
+            value={voiceForm.name} placeholder="声音名称（如：我的声音）" maxLength={20}
+            onChange={(e) => setVoiceForm(prev => ({ ...prev, name: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 outline-none"
+          />
+          <input
+            value={voiceForm.desc} placeholder="描述（选填，如：普通话男声、居家录音）" maxLength={100}
+            onChange={(e) => setVoiceForm(prev => ({ ...prev, desc: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowVoiceModal(false)}>取消</Button>
+            <Button variant="primary" size="sm" icon={Upload} loading={uploading} onClick={uploadCustomVoice}>
+              上传并创建
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* 文案素材库 Modal */}
       <Modal open={showArticles} onClose={() => setShowArticles(false)} title="从素材库加载文案" size="md">

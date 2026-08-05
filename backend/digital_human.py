@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
@@ -27,9 +27,14 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_AUDIO_DIR = os.path.join(_BASE_DIR, "uploads", "audio")
 UPLOAD_VIDEO_DIR = os.path.join(_BASE_DIR, "uploads", "videos")
 PORTRAIT_DIR = os.path.join(_BASE_DIR, "image_factory", "avatars")
+# 自定义形象/声音（用户上传）：与 uploads 静态目录同根，URL 可直接访问
+UPLOAD_DH_AVATAR_DIR = os.path.join(_BASE_DIR, "uploads", "dh_avatars")
+UPLOAD_DH_VOICE_DIR = os.path.join(_BASE_DIR, "uploads", "dh_voices")
 os.makedirs(UPLOAD_AUDIO_DIR, exist_ok=True)
 os.makedirs(UPLOAD_VIDEO_DIR, exist_ok=True)
 os.makedirs(PORTRAIT_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DH_AVATAR_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DH_VOICE_DIR, exist_ok=True)
 
 router = APIRouter(prefix="/api/digital-human", tags=["AI数字人"])
 
@@ -281,9 +286,12 @@ def _audio_duration(path: str) -> float:
 
 
 def _build_portrait_src(avatar: dict):
-    """预加载并缩放写真 → (RGBA图, 圆角遮罩, 宽, 高)；无写真返回 None。"""
-    portrait_path = _get_portrait_path(avatar["id"])
-    if not os.path.exists(portrait_path):
+    """预加载并缩放写真 → (RGBA图, 圆角遮罩, 宽, 高)；无写真返回 None。
+
+    自定义形象使用用户上传图片（local_image_path），内置形象用 AI 写真缓存。
+    """
+    portrait_path = avatar.get("local_image_path") or (_get_portrait_path(avatar["id"]) if not avatar.get("is_custom") else "")
+    if not portrait_path or not os.path.exists(portrait_path):
         return None
     try:
         portrait = Image.open(portrait_path).convert("RGBA")
@@ -789,7 +797,228 @@ def _ensure_tables(conn) -> None:
             created_at TEXT DEFAULT ''
         )"""
     )
+    # 用户自定义形象（上传头像图片）
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS digital_human_custom_avatars (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            style TEXT DEFAULT '自定义形象',
+            gender TEXT DEFAULT '自定义',
+            desc TEXT DEFAULT '',
+            emoji TEXT DEFAULT '🖼️',
+            image_url TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    # 用户自定义声音（上传音频样本，生成时直接作为配音）
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS digital_human_custom_voices (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            desc TEXT DEFAULT '',
+            emoji TEXT DEFAULT '🎙️',
+            audio_url TEXT DEFAULT '',
+            duration REAL DEFAULT 0,
+            created_at TEXT DEFAULT ''
+        )"""
+    )
     conn.commit()
+
+
+# ── 自定义形象 / 声音（用户上传）──────────────────────────────
+def _load_custom_avatars(user_id: str = "") -> dict:
+    """按用户加载自定义形象 → {id: avatar_dict}；avatar_dict 含本地图片路径映射。"""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM digital_human_custom_avatars WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["is_custom"] = True
+        # /uploads/dh_avatars/xxx.jpg → 本地绝对路径（渲染引擎用）
+        url = d.get("image_url") or ""
+        d["local_image_path"] = os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        out[d["id"]] = d
+    return out
+
+
+def _load_custom_voices(user_id: str = "") -> dict:
+    """按用户加载自定义声音 → {id: voice_dict}；含本地音频路径映射。"""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM digital_human_custom_voices WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["is_custom"] = True
+        url = d.get("audio_url") or ""
+        d["local_audio_path"] = os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        out[d["id"]] = d
+    return out
+
+
+_ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp"}
+_ALLOWED_AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg"}
+
+
+@router.post("/custom-avatars")
+async def upload_custom_avatar(
+    file: UploadFile = File(...),
+    name: str = Form("我的形象"),
+    desc: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """上传自定义数字人形象（头像图片）→ 保存到 uploads/dh_avatars/ 并入表。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMG_EXT:
+        raise HTTPException(400, f"不支持的图片格式: {ext or '未知'}（支持 jpg/png/webp）")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(400, "图片不能超过 10MB")
+    avatar_id = f"custom_{uuid.uuid4().hex[:10]}"
+    filename = f"{avatar_id}.jpg"
+    path = os.path.join(UPLOAD_DH_AVATAR_DIR, filename)
+    try:
+        # PIL 校验并统一转 RGB JPEG（透明/异常图片兜底）
+        img = Image.open(__import__("io").BytesIO(content))
+        img = img.convert("RGB")
+        img.thumbnail((1024, 1024), Image.LANCZOS)
+        img.save(path, "JPEG", quality=92)
+    except Exception as e:
+        raise HTTPException(400, f"图片解析失败: {e}")
+    image_url = f"/uploads/dh_avatars/{filename}"
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO digital_human_custom_avatars (id, user_id, name, style, gender, desc, emoji, image_url, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (avatar_id, user, (name or "我的形象").strip()[:20], "自定义形象", "自定义",
+             (desc or "").strip()[:100], "🖼️", image_url, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"avatar": {"id": avatar_id, "name": name.strip()[:20] or "我的形象", "image_url": image_url, "is_custom": True}}
+
+
+@router.get("/custom-avatars")
+async def list_custom_avatars(current_user: dict = require_auth()):
+    """我的自定义数字人形象列表。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    return {"avatars": list(_load_custom_avatars(user).values())}
+
+
+@router.delete("/custom-avatars/{avatar_id}")
+async def delete_custom_avatar(avatar_id: str, current_user: dict = require_auth()):
+    """删除自定义形象（记录 + 图片文件）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT image_url FROM digital_human_custom_avatars WHERE id=? AND user_id=?", (avatar_id, user),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "自定义形象不存在")
+        conn.execute("DELETE FROM digital_human_custom_avatars WHERE id=? AND user_id=?", (avatar_id, user))
+        conn.commit()
+    finally:
+        conn.close()
+    url = row["image_url"] or ""
+    if url.startswith("/uploads/"):
+        local = os.path.join(_BASE_DIR, *url.lstrip("/").split("/"))
+        if os.path.exists(local):
+            os.remove(local)
+    return {"success": True}
+
+
+@router.post("/custom-voices")
+async def upload_custom_voice(
+    file: UploadFile = File(...),
+    name: str = Form("我的声音"),
+    desc: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """上传自定义声音（音频样本）→ 生成视频时直接作为配音。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_AUDIO_EXT:
+        raise HTTPException(400, f"不支持的音频格式: {ext or '未知'}（支持 mp3/wav/m4a/aac/ogg）")
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "音频不能超过 20MB")
+    voice_id = f"custom_{uuid.uuid4().hex[:10]}"
+    filename = f"{voice_id}{ext}"
+    path = os.path.join(UPLOAD_DH_VOICE_DIR, filename)
+    with open(path, "wb") as f:
+        f.write(content)
+    # ffprobe 校验时长（无效音频拦截，避免下游渲染失败）
+    duration = _audio_duration(path)
+    if duration <= 0:
+        os.remove(path)
+        raise HTTPException(400, "音频文件无效或无法解析，请重新上传")
+    if duration > 600:
+        os.remove(path)
+        raise HTTPException(400, "音频不能超过 10 分钟")
+    audio_url = f"/uploads/dh_voices/{filename}"
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO digital_human_custom_voices (id, user_id, name, desc, emoji, audio_url, duration, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (voice_id, user, (name or "我的声音").strip()[:20], (desc or "").strip()[:100], "🎙️",
+             audio_url, round(duration, 1), datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"voice": {"id": voice_id, "name": name.strip()[:20] or "我的声音", "audio_url": audio_url, "duration": round(duration, 1), "is_custom": True}}
+
+
+@router.get("/custom-voices")
+async def list_custom_voices(current_user: dict = require_auth()):
+    """我的自定义声音列表。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    return {"voices": list(_load_custom_voices(user).values())}
+
+
+@router.delete("/custom-voices/{voice_id}")
+async def delete_custom_voice(voice_id: str, current_user: dict = require_auth()):
+    """删除自定义声音（记录 + 音频文件）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT audio_url FROM digital_human_custom_voices WHERE id=? AND user_id=?", (voice_id, user),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "自定义声音不存在")
+        conn.execute("DELETE FROM digital_human_custom_voices WHERE id=? AND user_id=?", (voice_id, user))
+        conn.commit()
+    finally:
+        conn.close()
+    url = row["audio_url"] or ""
+    if url.startswith("/uploads/"):
+        local = os.path.join(_BASE_DIR, *url.lstrip("/").split("/"))
+        if os.path.exists(local):
+            os.remove(local)
+    return {"success": True}
 
 
 # ── 请求模型 ──────────────────────────────────────────────────
@@ -929,11 +1158,15 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     start = datetime.now()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
 
-    # 验证形象/声音/背景/场景
+    # 验证形象/声音/背景/场景（内置 + 用户自定义）
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
+    voice = next((v for v in VOICES if v["id"] == req.voice_id), None)
+    if not avatar and req.avatar_id.startswith("custom_"):
+        avatar = _load_custom_avatars(user).get(req.avatar_id)
+    if not voice and req.voice_id.startswith("custom_"):
+        voice = _load_custom_voices(user).get(req.voice_id)
     if not avatar:
         raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
-    voice = next((v for v in VOICES if v["id"] == req.voice_id), None)
     if not voice:
         raise HTTPException(400, f"未知声音: {req.voice_id}")
     bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
@@ -955,28 +1188,35 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     except Exception as e:
         logger.warning("script optimization failed, using original: %s", e)
 
-    # 2. TTS 配音 — 保存到 uploads/audio/
+    # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音
     audio_url = ""
     audio_error = ""
     audio_path = ""
-    try:
-        from voice_factory import _tts_one
-        audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
-        if not audio_bytes:
-            raise RuntimeError("TTS 返回空音频")
-        audio_filename = f"{record_id}.mp3"
-        audio_path = os.path.join(UPLOAD_AUDIO_DIR, audio_filename)
-        with open(audio_path, "wb") as f:
-            f.write(audio_bytes)
-        # 极小/空文件视为生成失败：避免前端误显"音频已生成"、下游 ffmpeg 报错
-        if os.path.getsize(audio_path) < 512:
-            os.remove(audio_path)
-            audio_path = ""
-            raise RuntimeError("TTS 生成的音频无效（文件过小）")
-        audio_url = f"/uploads/audio/{audio_filename}"
-    except Exception as e:
-        logger.exception("TTS failed for digital human %s", record_id)
-        audio_error = str(e)
+    if voice.get("is_custom"):
+        audio_path = voice.get("local_audio_path") or ""
+        if audio_path and os.path.exists(audio_path):
+            audio_url = voice["audio_url"]
+        else:
+            audio_error = "自定义声音文件缺失，请重新上传"
+    if not audio_url:
+        try:
+            from voice_factory import _tts_one
+            audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
+            if not audio_bytes:
+                raise RuntimeError("TTS 返回空音频")
+            audio_filename = f"{record_id}.mp3"
+            audio_path = os.path.join(UPLOAD_AUDIO_DIR, audio_filename)
+            with open(audio_path, "wb") as f:
+                f.write(audio_bytes)
+            # 极小/空文件视为生成失败：避免前端误显"音频已生成"、下游 ffmpeg 报错
+            if os.path.getsize(audio_path) < 512:
+                os.remove(audio_path)
+                audio_path = ""
+                raise RuntimeError("TTS 生成的音频无效（文件过小）")
+            audio_url = f"/uploads/audio/{audio_filename}"
+        except Exception as e:
+            logger.exception("TTS failed for digital human %s", record_id)
+            audio_error = str(e)
 
     # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
     video_url = ""
