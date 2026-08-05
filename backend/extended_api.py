@@ -2,6 +2,7 @@
 """Platform v9.0 Extended API - 研发增强/内容创作/运营分析/办公效率"""
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -140,8 +141,78 @@ def _finish_run(run_id: str, pid: str, status: str, log: str) -> None:
         conn.close()
 
 
-def _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run) -> tuple:
-    """单轮部署：构建镜像 → 启动容器 → 健康检查。返回 (ok, info)，info 为 HTTP 码或错误信息。"""
+def _safe_slug(name: str) -> str:
+    """容器/镜像名安全化：Docker 标签仅允许 [a-zA-Z0-9][a-zA-Z0-9_.-]*，
+    中文/特殊字符名用 md5 摘要后缀生成合法 slug（原名保留用于展示）。"""
+    if re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", name):
+        return name
+    digest = hashlib.md5(name.encode("utf-8")).hexdigest()[:8]
+    return f"svc-{digest}"
+
+
+_INFRA_ERROR_MARKERS = (
+    "cannot connect to podman", "connection refused",
+    "no space left", "command not found", "permission denied",
+    "cannot connect to the docker daemon", "docker daemon is not running",
+    "executable file not found",
+)
+
+
+def _is_infra_error(msg: str) -> bool:
+    """是否为基础设施故障（Docker/Podman 环境问题）——此类错误 AI 改代码无法解决，跳过修复。"""
+    low = (msg or "").lower()
+    return any(m in low for m in _INFRA_ERROR_MARKERS)
+
+
+def _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg=None) -> tuple:
+    """单轮部署：构建镜像 → 启动依赖容器 → 启动服务容器 → 健康检查。返回 (ok, info)。"""
+    cfg = cfg or {}
+    # 阶段 1.5：外部依赖容器（Redis/MySQL）。podman 5.x 已移除 --link，
+    # 改用自定义网络 + --network-alias（同网络容器名/别名可直接解析）
+    deps = cfg.get("dependencies") or {}
+    net = f"{container_name}-net"
+    if deps:
+        append(f"  - 依赖: 准备网络 {net} …")
+        step_run(["podman", "rm", "-f", container_name], timeout=30)
+        step_run(["podman", "network", "rm", "-f", net], timeout=30)
+        ok, out = step_run(["podman", "network", "create", net], timeout=30)
+        if not ok and "already exists" not in (out or "").lower():
+            return False, f"创建依赖网络失败: {out[-300:]}"
+    if deps.get("redis"):
+        dep = f"{container_name}-redis"
+        append(f"  - 依赖: 启动 Redis 容器 {dep} …")
+        step_run(["podman", "rm", "-f", dep], timeout=30)
+        ok, out = step_run([
+            "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
+            "docker.io/library/redis:7-alpine",
+        ], timeout=300)
+        if not ok:
+            return False, f"Redis 依赖容器启动失败: {out[-300:]}"
+    if deps.get("mysql"):
+        dep = f"{container_name}-mysql"
+        pw = deps.get("mysql_password", "platform123")
+        db = deps.get("mysql_database", "platform")
+        img = deps.get("mysql_image", "docker.io/library/mysql:8")  # 国内网络可配置 mirror 源
+        append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
+        step_run(["podman", "rm", "-f", dep], timeout=30)
+        ok, out = step_run([
+            "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
+            "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}",
+            img,
+        ], timeout=600)
+        if not ok:
+            return False, f"MySQL 依赖容器启动失败: {out[-300:]}"
+        append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
+        ready = False
+        for _ in range(60):
+            time.sleep(2)
+            ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+            if ok2:
+                ready = True
+                break
+        if not ready:
+            return False, "MySQL 依赖容器初始化超时"
+
     # 阶段 2：构建镜像
     append(f"  - 构建镜像: podman build -t {image_tag} …（首次拉取基础镜像较慢）")
     ok, out = step_run(["podman", "build", "-t", image_tag, project_dir])
@@ -154,8 +225,14 @@ def _deploy_once(name, project_dir, port, image_tag, container_name, append, ste
     append("  - 构建镜像: 完成 ✓")
     # 阶段 3：启动沙箱容器（先清理同名旧容器，支持修复重部署）
     step_run(["podman", "rm", "-f", container_name], timeout=30)
-    append(f"  - 启动容器: podman run -d --name {container_name} -p {port}:8000")
-    ok, out = step_run(["podman", "run", "-d", "--name", container_name, "-p", f"{port}:8000", image_tag])
+    append(f"  - 启动容器: podman run -d --name {container_name} -p {port}:8000" + (f" --network {net}" if deps else ""))
+    cmd = ["podman", "run", "-d", "--name", container_name, "-p", f"{port}:8000"]
+    if deps:
+        cmd += ["--network", net]
+        cmd += ["-e", "REDIS_URL=redis://redis:6379/0"] if deps.get("redis") else []
+        cmd += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{deps.get('mysql_password', 'platform123')}@mysql:3306/{deps.get('mysql_database', 'platform')}?charset=utf8mb4"] if deps.get("mysql") else []
+    cmd += [image_tag]
+    ok, out = step_run(cmd)
     if out:
         append("      " + out)
     if not ok:
@@ -178,15 +255,16 @@ def _deploy_once(name, project_dir, port, image_tag, container_name, append, ste
     return False, "健康检查未通过，服务可能启动失败（查看容器日志定位问题）"
 
 
-def _register_sandbox(name, port, project_dir, image_tag, cfg) -> None:
-    """把部署服务注册到沙箱管理（可在沙箱页停止/删除/查看日志）。"""
+def _register_sandbox(slug, port, project_dir, image_tag, cfg, display_name=None) -> None:
+    """把部署服务注册到沙箱管理（可在沙箱页停止/删除/查看日志）。slug 为容器安全名，display_name 为展示名。"""
+    name = display_name or slug
     now = datetime.now().isoformat()
     conn = get_db()
     try:
         conn.execute(
             "INSERT INTO sandbox_projects (id, name, status, port, project_dir, image, ports, config, created_at, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=?, port=?, project_dir=?, image=?, ports=?, config=?, updated_at=?",
-            (f"deploy-{name}", name, "running", port, project_dir, image_tag, json.dumps([port]), json.dumps(cfg, ensure_ascii=False), now, now,
+            (f"deploy-{slug}", name, "running", port, project_dir, image_tag, json.dumps([port]), json.dumps(cfg, ensure_ascii=False), now, now,
              "running", port, project_dir, image_tag, json.dumps([port]), json.dumps(cfg, ensure_ascii=False), now),
         )
         conn.commit()
@@ -219,10 +297,11 @@ def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_roun
     每轮把最新错误日志喂给 LLM，最多 max_rounds 轮；成功返回 True。
     """
     name = cfg["service_name"]
+    slug = _safe_slug(name)
     project_dir = cfg["project_dir"]
     port = cfg["port"]
-    image_tag = f"app-{name}"
-    container_name = f"sandbox-{name}"
+    image_tag = f"app-{slug}"
+    container_name = f"sandbox-{slug}"
     main_file = os.path.join(project_dir, "main.py")
     last_error = initial_error
     for round_no in range(1, max_rounds + 1):
@@ -249,7 +328,7 @@ def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_roun
         try:
             fix = call_llm(sys_prompt, prompt)
         except Exception as e:
-            append(f"  - ❌ LLM 调用失败: {e}")
+            append(f"  - ❌ LLM 调用失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
             return False
         fixed = _extract_code_block(fix)
         if not fixed:
@@ -271,11 +350,14 @@ def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_roun
         with open(main_file, "w", encoding="utf-8") as f:
             f.write(fixed)
         append(f"  - 修复代码已落盘（{len(fixed)} 字节），重新构建部署…")
-        ok, info = _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run)
+        ok, info = _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg)
         if ok:
             append(f"  - 第 {round_no} 轮修复成功 ✓（HTTP {info}）访问地址: http://localhost:{port}")
-            _register_sandbox(name, port, project_dir, image_tag, cfg)
+            _register_sandbox(slug, port, project_dir, image_tag, cfg, display_name=name)
             return True
+        if _is_infra_error(info):
+            append("  - ⚠ 检测到基础设施故障（Docker/Podman 环境问题），AI 修复无法解决，停止修复")
+            return False
         append(f"  - 第 {round_no} 轮仍失败: {info[-300:]}")
         last_error = info
     append("  - ❌ AI 修复达到轮次上限，请人工查看日志处理")
@@ -285,10 +367,11 @@ def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_roun
 def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
     """后台执行部署流水线：构建镜像 → 启动沙箱容器 → 健康检查；失败自动进入 AI 修复循环。"""
     name = cfg["service_name"]
+    slug = _safe_slug(name)
     project_dir = cfg["project_dir"]
     port = cfg["port"]
-    image_tag = f"app-{name}"
-    container_name = f"sandbox-{name}"
+    image_tag = f"app-{slug}"
+    container_name = f"sandbox-{slug}"
     log: list = []
 
     def append(line: str) -> None:
@@ -311,9 +394,14 @@ def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
         if not os.path.exists(main_file):
             raise RuntimeError("main.py 不存在，无法构建")
         append(f"  - 检出代码: 就绪（artifacts/{name}/，{os.path.getsize(main_file)} 字节）")
-        ok, info = _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run)
+        ok, info = _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg)
         if not ok:
             append(f"  - ❌ {info}")
+            if _is_infra_error(info):
+                # 环境故障（podman 未启动/磁盘满等）：AI 改代码无法解决，直接终止避免无效修复轮次
+                append("  - ⚠ 检测到基础设施故障（Docker/Podman 环境问题），AI 修复无法解决，请检查容器环境后重新部署")
+                _finish_run(run_id, pid, "failed", "\n".join(log))
+                return
             if cfg.get("auto_fix", True):
                 append("  - ⚡ 失败自动修复已开启，进入 AI 诊断修复…")
                 if _fix_rounds(pid, run_id, cfg, log, append, step_run, info, max_rounds=3):
@@ -324,7 +412,7 @@ def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
             raise RuntimeError(info)
         append(f"  - 健康检查: 通过 ✓（HTTP {info}）")
         append(f"  - 部署完成 ✓ 访问地址: http://localhost:{port}")
-        _register_sandbox(name, port, project_dir, image_tag, cfg)
+        _register_sandbox(slug, port, project_dir, image_tag, cfg, display_name=name)
         _finish_run(run_id, pid, "success", "\n".join(log))
     except Exception as e:
         append(f"  - ❌ {e}")
@@ -334,7 +422,8 @@ def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
 def _exec_auto_fix(pid: str, run_id: str, cfg: dict) -> None:
     """手动触发 AI 诊断修复：拉取现有容器日志 → 修复循环 → 重建部署。"""
     name = cfg["service_name"]
-    container_name = f"sandbox-{name}"
+    slug = _safe_slug(name)
+    container_name = f"sandbox-{slug}"
     log: list = []
 
     def append(line: str) -> None:

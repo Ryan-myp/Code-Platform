@@ -101,12 +101,17 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
     """单段 TTS 合成，返回 mp3 字节。
 
     优先 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
-    失败回退中转站 /audio/speech（需开通 tts-1 渠道）。pitch 为音调百分比（-20~+20）。
+    子进程偶发崩溃/空输出时重试 1 次，仍失败回退中转站 /audio/speech（需开通 tts-1 渠道）。
+    pitch 为音调百分比（-20~+20）。
     """
-    try:
-        return _tts_edge(text, voice, speed, pitch)
-    except Exception as e:
-        logger.warning(f"edge-tts 失败，回退中转站 API: {e}")
+    for attempt in range(2):
+        try:
+            return _tts_edge(text, voice, speed, pitch)
+        except Exception as e:
+            logger.warning(f"edge-tts 第{attempt + 1}次失败: {e}")
+            if attempt == 0:
+                continue  # 崩溃/空输出偶发，重试一次
+            logger.warning("edge-tts 重试仍失败，回退中转站 API")
     if not AGNES_API_KEY:
         raise HTTPException(500, "TTS 通道不可用（edge-tts 与中转站均失败），请稍后重试")
     resp = requests.post(
@@ -137,7 +142,12 @@ def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode(errors="replace")[:200] or f"exit {result.returncode}")
         with open(tmp, "rb") as f:
-            return f.read()
+            content = f.read()
+        if not content:
+            # edge-tts 偶发静默失败：进程正常退出但产出 0 字节文件，必须拦截，
+            # 否则下游拿到空音频（ffmpeg 合成必然报错）
+            raise RuntimeError("edge-tts 返回空音频（0 字节）")
+        return content
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)

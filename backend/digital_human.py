@@ -267,7 +267,7 @@ def _load_font(size: int, candidates: list[str]) -> ImageFont.FreeTypeFont:
 
 
 def _audio_duration(path: str) -> float:
-    """用 ffprobe 获取音频时长（秒），失败时保守返回 10s。"""
+    """用 ffprobe 获取音频时长（秒）；文件无效/不可读返回 0（调用方拦截）。"""
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -277,7 +277,7 @@ def _audio_duration(path: str) -> float:
         duration = float(out.stdout.strip())
         return max(duration, 1.0)
     except Exception:
-        return 10.0
+        return 0.0
 
 
 def _build_portrait_src(avatar: dict):
@@ -698,6 +698,9 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
 
     # 音频时长 → 帧率/帧数（动态效果更丰富，帧率相应提高）
     duration = _audio_duration(audio_path)
+    if duration <= 0:
+        # 空文件/损坏音频：ffprobe 读不出时长，ffmpeg 合成必然失败，提前拦截给出清晰错误
+        raise RuntimeError("配音音频无效或为空，请重新生成")
     fps = 12 if duration <= 30 else (10 if duration <= 60 else 8)
     total_frames = max(int(duration * fps), 6)
 
@@ -742,19 +745,24 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
             frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
 
         # ffmpeg：帧序列 + 音频 → MP4
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-framerate", str(fps),
-                "-i", os.path.join(frames_dir, "%04d.jpg"),
-                "-i", audio_path,
-                "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "128k",
-                "-shortest", "-movflags", "+faststart",
-                output_path,
-            ],
-            check=True, capture_output=True, timeout=900,
-        )
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-framerate", str(fps),
+                    "-i", os.path.join(frames_dir, "%04d.jpg"),
+                    "-i", audio_path,
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k",
+                    "-shortest", "-movflags", "+faststart",
+                    output_path,
+                ],
+                check=True, capture_output=True, timeout=900,
+            )
+        except subprocess.CalledProcessError as e:
+            # 把 ffmpeg stderr 带进错误信息，否则用户只能看到 exit code，无法诊断
+            detail = e.stderr.decode(errors="replace")[-500:].strip() if e.stderr else "未知错误"
+            raise RuntimeError(f"视频编码失败（ffmpeg exit {e.returncode}）：{detail}") from e
         logger.info(f"动态视频生成成功：{output_path} ({total_frames}帧 @{fps}fps, {duration:.1f}s)")
     finally:
         shutil.rmtree(frames_dir, ignore_errors=True)
@@ -954,10 +962,17 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     try:
         from voice_factory import _tts_one
         audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
+        if not audio_bytes:
+            raise RuntimeError("TTS 返回空音频")
         audio_filename = f"{record_id}.mp3"
         audio_path = os.path.join(UPLOAD_AUDIO_DIR, audio_filename)
         with open(audio_path, "wb") as f:
             f.write(audio_bytes)
+        # 极小/空文件视为生成失败：避免前端误显"音频已生成"、下游 ffmpeg 报错
+        if os.path.getsize(audio_path) < 512:
+            os.remove(audio_path)
+            audio_path = ""
+            raise RuntimeError("TTS 生成的音频无效（文件过小）")
         audio_url = f"/uploads/audio/{audio_filename}"
     except Exception as e:
         logger.exception("TTS failed for digital human %s", record_id)
