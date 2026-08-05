@@ -512,3 +512,48 @@ async def execute_plugin(plugin_name: str, req: dict):
         return {"status": "success", "result": r}
     except Exception as e:
         return {"status": "failed", "error": str(e)}
+
+
+# ══════════════════════════════════════════════════════════════
+# 会话记忆（复用 memories 表，session_id = conversation_id）
+# ══════════════════════════════════════════════════════════════
+
+@router.get("/api/conversations/{conv_id}/memories")
+async def get_conversation_memories(conv_id: str):
+    """获取会话记忆（按时间倒序）"""
+    from sessions import get_memories
+    return get_memories(conv_id)
+
+
+@router.post("/api/conversations/{conv_id}/memories")
+async def add_conversation_memory(conv_id: str, req: dict):
+    """添加会话记忆（如用户偏好、关键决定等，供后续对话引用）"""
+    from sessions import add_memory
+    content = (req.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "记忆内容不能为空")
+    memory_type = req.get("memory_type", "short")
+    agent_id = req.get("agent_id", "") or ""
+    # memories 表外键指向 sessions(id)，对话 id 不同源，需先确保占位会话存在
+    conn = get_db()
+    try:
+        if not conn.execute("SELECT id FROM sessions WHERE id=?", (conv_id,)).fetchone():
+            conn.execute(
+                "INSERT INTO sessions (id, agent_id, title) VALUES (?,?,?)",
+                (conv_id, agent_id, "对话记忆"),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+    mem_id = add_memory(conv_id, agent_id, content, memory_type)
+    return {"id": mem_id, "session_id": conv_id}
+
+
+@router.delete("/api/conversations/memories/{mem_id}")
+async def delete_conversation_memory(mem_id: str):
+    """删除单条会话记忆"""
+    conn = get_db()
+    conn.execute("DELETE FROM memories WHERE id=?", (mem_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}

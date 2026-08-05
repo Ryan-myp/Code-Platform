@@ -206,30 +206,6 @@ def analyze_stock_trend(data: dict) -> str:
 # API 端点
 # ══════════════════════════════════════════════════════════════
 
-@router.get("/api/stock/search")
-async def search_stock(q: str = Query(..., min_length=1), current_user: dict = require_auth()):
-    """搜索股票"""
-    try:
-        # 使用 yfinance 搜索
-        import yfinance as yf
-        ticker = yf.Ticker(q.upper())
-        info = ticker.info
-
-        if not info or info.get("regularMarketPrice") is None:
-            return {"results": []}
-
-        return {
-            "results": [{
-                "symbol": q.upper(),
-                "name": info.get("longName", info.get("shortName", q)),
-                "exchange": info.get("exchange", ""),
-                "type": info.get("quoteType", ""),
-            }]
-        }
-    except Exception as e:
-        return {"results": [], "error": str(e)}
-
-
 @router.get("/api/stock/{symbol}")
 async def get_stock(symbol: str, period: str = "3mo", current_user: dict = require_auth()):
     """获取股票详细数据"""
@@ -368,16 +344,6 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
         }
     except Exception as e:
         raise HTTPException(500, f"分析失败: {str(e)}")
-
-
-@router.get("/api/stock/{symbol}/history")
-async def get_stock_history(symbol: str, days: int = 30, current_user: dict = require_auth()):
-    """获取股票历史数据（简化版）"""
-    data = await get_stock_data(symbol, f"{days}d")
-    return {
-        "symbol": symbol,
-        "data_points": data["data_points"],
-    }
 
 
 # ══════════════════════════════════════════════════════════════

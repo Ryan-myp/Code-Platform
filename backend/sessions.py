@@ -149,7 +149,3 @@ async def api_delete_session(session_id: str):
     return {"success": True}
 
 
-@router.get("/api/sessions/{session_id}/memories")
-async def api_get_memories(session_id: str, agent_id: str = None):
-    """获取会话记忆"""
-    return get_memories(session_id, agent_id)

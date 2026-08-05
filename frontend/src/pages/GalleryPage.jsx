@@ -106,7 +106,76 @@ function WorkCard({ work, onLike, onComment, onPreview, user }) {
   )
 }
 
-// 评论面板（复用 /api/comments，target_type='work'）
+// 评论面板（thread 视图：点赞 / 回复 / 删除）
+function CommentItemView({ c, user, onLike, onReply, onDelete }) {
+  const [replying, setReplying] = useState(false)
+  const [replyText, setReplyText] = useState('')
+  const mine = user && c.author_id === user.username
+
+  const submitReply = () => {
+    if (!replyText.trim()) return
+    onReply(c.id, replyText.trim())
+    setReplyText('')
+    setReplying(false)
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2.5">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-indigo-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+          {c.author_id?.[0]?.toUpperCase() || 'U'}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-gray-800">{c.author_id || '匿名'}</span>
+            <span className="text-[10px] text-gray-400">{fmtTime(c.created_at)}</span>
+            {mine && <span className="text-[10px] px-1 py-0.5 rounded bg-brand-50 text-brand-600 font-medium">我</span>}
+            <span className="ml-auto flex items-center gap-1">
+              <button onClick={() => onLike(c)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-all ${
+                  c.liked ? 'bg-rose-50 text-rose-500' : 'bg-gray-50 text-gray-400 hover:text-rose-500'
+                }`}>
+                <ThumbsUp className={`w-3 h-3 ${c.liked ? 'fill-rose-500' : ''}`} /> {c.likes || 0}
+              </button>
+              <button onClick={() => setReplying(!replying)}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-all ${
+                  replying ? 'bg-brand-50 text-brand-600' : 'bg-gray-50 text-gray-400 hover:text-brand-600 hover:bg-brand-50'
+                }`}>
+                回复
+              </button>
+              {mine && (
+                <button onClick={() => onDelete(c.id)}
+                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-50 text-gray-400 hover:text-red-500 hover:bg-red-50 transition-all">
+                  删除
+                </button>
+              )}
+            </span>
+          </div>
+          <p className="text-sm text-gray-700 mt-1 bg-gray-50 rounded-xl px-3 py-2">{c.content}</p>
+        </div>
+      </div>
+
+      {replying && (
+        <div className="flex items-center gap-2 pl-10">
+          <input value={replyText} onChange={(e) => setReplyText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && submitReply()}
+            placeholder={`回复 ${c.author_id || 'TA'}…`}
+            className="flex-1 px-3 py-1.5 rounded-xl border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-400" />
+          <Button size="sm" onClick={submitReply} disabled={!replyText.trim()}>回复</Button>
+        </div>
+      )}
+
+      {c.replies?.length > 0 && (
+        <div className="pl-10 space-y-2 border-l-2 border-gray-100 ml-4">
+          {c.replies.map((r) => (
+            <CommentItemView key={r.id} c={r} user={user} onLike={onLike} onReply={onReply} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CommentsPanel({ work, onClose, user }) {
   const toast = useToast()
   const [comments, setComments] = useState([])
@@ -115,7 +184,9 @@ function CommentsPanel({ work, onClose, user }) {
 
   const load = async () => {
     try {
-      const res = await api.get('/api/comments', { params: { target_type: 'work', target_id: work.id } })
+      const params = { target_type: 'work', target_id: work.id }
+      if (user?.username) params.user_id = user.username
+      const res = await api.get('/api/comments/thread', { params })
       setComments(res.data || [])
     } catch { setComments([]) }
   }
@@ -135,6 +206,39 @@ function CommentsPanel({ work, onClose, user }) {
     } catch (e) { toast.error(e.message) } finally { setSending(false) }
   }
 
+  // 递归更新树中的点赞状态
+  const patchComment = (node, id, data) => {
+    if (node.id === id) return { ...node, liked: data.liked, likes: data.likes }
+    if (node.replies?.length) return { ...node, replies: node.replies.map((r) => patchComment(r, id, data)) }
+    return node
+  }
+
+  const toggleLike = async (c) => {
+    try {
+      const res = await api.post(`/api/comments/${c.id}/like`, { user_id: user?.username || 'guest' })
+      setComments((prev) => prev.map((x) => patchComment(x, c.id, res.data)))
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const replyTo = async (parentId, content) => {
+    try {
+      await api.post('/api/comments', {
+        content, target_type: 'work', target_id: work.id,
+        author_id: user?.username || 'guest', parent_comment_id: parentId,
+      })
+      toast.success('回复已发布')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const remove = async (id) => {
+    try {
+      await api.delete(`/api/comments/${id}`)
+      toast.success('评论已删除')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
@@ -143,6 +247,7 @@ function CommentsPanel({ work, onClose, user }) {
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
               <MessageCircle className="w-4 h-4 text-brand-500" /> 作品评论
+              <span className="text-xs text-gray-400 font-normal">（可点赞 / 回复 / 删除）</span>
             </h3>
             <p className="text-xs text-gray-400 truncate mt-0.5">{work.prompt?.slice(0, 40) || work.author}</p>
           </div>
@@ -155,18 +260,7 @@ function CommentsPanel({ work, onClose, user }) {
             <div className="text-center py-8 text-gray-400 text-sm">还没有评论，来抢沙发~</div>
           ) : (
             comments.map((c) => (
-              <div key={c.id} className="flex gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-indigo-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                  {c.author_id?.[0]?.toUpperCase() || 'U'}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-gray-800">{c.author_id || '匿名'}</span>
-                    <span className="text-[10px] text-gray-400">{fmtTime(c.created_at)}</span>
-                  </div>
-                  <p className="text-sm text-gray-700 mt-1 bg-gray-50 rounded-xl px-3 py-2">{c.content}</p>
-                </div>
-              </div>
+              <CommentItemView key={c.id} c={c} user={user} onLike={toggleLike} onReply={replyTo} onDelete={remove} />
             ))
           )}
         </div>
@@ -239,6 +333,14 @@ export default function GalleryPage() {
   }
 
   const openComments = (work) => setActive(work)
+
+  // 作品详情：先用列表数据秒开，再拉取详情接口（GET /api/gallery/works/{id}）补充点赞/评论统计
+  const openPreview = (work) => {
+    setPreview(work)
+    api.get(`/api/gallery/works/${work.id}`)
+      .then((res) => setPreview(res.data || work))
+      .catch(() => { /* 列表数据已够用 */ })
+  }
 
   const statsCards = [
     { label: '作品总数', value: stats?.works ?? '-', icon: Sparkles, color: 'from-brand-500 to-indigo-600' },
@@ -324,7 +426,7 @@ export default function GalleryPage() {
       ) : (
         <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
           {works.map((w) => (
-            <WorkCard key={w.id} work={w} onLike={toggleLike} onComment={openComments} onPreview={setPreview} user={user} />
+            <WorkCard key={w.id} work={w} onLike={toggleLike} onComment={openComments} onPreview={openPreview} user={user} />
           ))}
         </div>
       )}
@@ -353,7 +455,7 @@ export default function GalleryPage() {
             </div>
             <p className="text-sm text-gray-800 leading-relaxed">{preview.prompt || '（无描述）'}</p>
             <div className="flex items-center gap-2 text-xs text-gray-400">
-              <Badge color="violet">{preview.author}</Badge>
+              <Badge color="purple">{preview.author}</Badge>
               <span>{fmtTime(preview.created_at)}</span>
               <div className="ml-auto flex items-center gap-2">
                 <button onClick={() => toggleLike(preview)}

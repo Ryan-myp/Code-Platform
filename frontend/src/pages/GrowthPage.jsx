@@ -72,6 +72,8 @@ export default function GrowthPage() {
   const [seriesForm, setSeriesForm] = useState({ name: '', description: '', platform: '' })
   const [seriesDetail, setSeriesDetail] = useState(null)
   const [seriesStats, setSeriesStats] = useState(null)
+  const [seriesItemInput, setSeriesItemInput] = useState('')
+  const [addingItem, setAddingItem] = useState(false)
 
   // ── 评论聚合状态 ──
   const [comments, setComments] = useState([])
@@ -277,6 +279,30 @@ export default function GrowthPage() {
   const deleteSeries = async (id) => {
     try { await api.delete(`/api/strategy/series/${id}`); toast.success('已删除'); loadSeries(); setSeriesDetail(null); setSeriesStats(null) }
     catch (e) { toast.error(e.message) }
+  }
+
+  const addSeriesItem = async () => {
+    if (!seriesDetail) { toast.error('请先选择一个系列'); return }
+    if (!seriesItemInput.trim()) { toast.error('请输入发布记录 ID'); return }
+    setAddingItem(true)
+    try {
+      await api.post(`/api/strategy/series/${seriesDetail}/items`, { record_id: seriesItemInput.trim() })
+      toast.success('已加入系列')
+      setSeriesItemInput('')
+      loadSeries()
+      loadSeriesStats(seriesDetail)
+    } catch (e) { toast.error(e.message) }
+    finally { setAddingItem(false) }
+  }
+
+  const removeSeriesItem = async (itemId) => {
+    if (!seriesDetail) return
+    try {
+      await api.delete(`/api/strategy/series/${seriesDetail}/items/${itemId}`)
+      toast.success('已从系列移除')
+      loadSeries()
+      loadSeriesStats(seriesDetail)
+    } catch (e) { toast.error(e.message) }
   }
 
   // ── 评论聚合 + AI 回复 ──
@@ -877,14 +903,23 @@ export default function GrowthPage() {
                 {seriesStats.items?.length > 0 && (
                   <div className="space-y-1.5">
                     {seriesStats.items.map((item, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
+                      <div key={item.id || i} className="flex items-center gap-2 text-xs">
                         <span className="text-gray-400 w-5">#{i + 1}</span>
                         <span className="flex-1 text-gray-700 truncate">{item.title || '(无标题)'}</span>
                         <span className="text-gray-400">{item.views?.toLocaleString()} 阅读</span>
+                        <button onClick={() => removeSeriesItem(item.id)}
+                          className="p-1 text-gray-300 hover:text-red-500 rounded hover:bg-red-50"
+                          title="从系列移除"><Trash2 className="w-3 h-3" /></button>
                       </div>
                     ))}
                   </div>
                 )}
+                <div className="flex gap-2 mt-3">
+                  <input type="text" value={seriesItemInput} onChange={(e) => setSeriesItemInput(e.target.value)}
+                    placeholder="发布记录 ID，如 pub_xxxx"
+                    className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+                  <Button variant="primary" size="sm" icon={Plus} loading={addingItem} onClick={addSeriesItem}>加入</Button>
+                </div>
               </Card>
             )}
           </div>

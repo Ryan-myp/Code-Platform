@@ -478,6 +478,16 @@ _SCHEMA_STATEMENTS = [
         updated_at TEXT, favorite INTEGER DEFAULT 0, tags TEXT DEFAULT '[]',
         iterations INTEGER DEFAULT 0, iteration_log TEXT DEFAULT '[]'
     )""",
+    # 模板市场积分（templates_market 扣减/分成，此前表缺失导致购买付费模板 500）
+    """CREATE TABLE IF NOT EXISTS user_quotas (
+        username TEXT PRIMARY KEY, credits INTEGER DEFAULT 0, updated_at TEXT
+    )""",
+    # 游戏/小程序项目可回滚历史版本（common/artifacts.py 版本快照）
+    """CREATE TABLE IF NOT EXISTS project_versions (
+        id TEXT PRIMARY KEY, project_type TEXT NOT NULL, project_id TEXT NOT NULL,
+        version_no INTEGER DEFAULT 1, files TEXT DEFAULT '{}',
+        requirement TEXT DEFAULT '', note TEXT DEFAULT '', created_at TEXT
+    )""",
 ]
 
 _INDEX_STATEMENTS = [

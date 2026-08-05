@@ -37,6 +37,10 @@ export default function DigitalHumanPage() {
   const [records, setRecords] = useState([])
   const [result, setResult] = useState(null)
 
+  // 云端素材：场景预设 + 写真画廊
+  const [cloudScenes, setCloudScenes] = useState([])
+  const [portraitList, setPortraitList] = useState([])
+
   // 文案素材库
   const [articles, setArticles] = useState([])
   const [showArticles, setShowArticles] = useState(false)
@@ -78,6 +82,12 @@ export default function DigitalHumanPage() {
         api.get('/api/digital-human/voices'),
         api.get('/api/digital-human/backgrounds'),
       ])
+      api.get('/api/digital-human/scenes')
+        .then((res) => setCloudScenes(res.data?.scenes || []))
+        .catch(() => {})
+      api.get('/api/digital-human/portraits')
+        .then((res) => setPortraitList(res.data?.portraits || []))
+        .catch(() => {})
       const avatarList = aRes.data?.avatars || []
       setAvatars(avatarList)
       setVoices(vRes.data?.voices || [])
@@ -335,7 +345,7 @@ export default function DigitalHumanPage() {
               <Radio className="w-4 h-4 text-amber-500" /> 场景模板
             </h3>
             <div className="space-y-1.5">
-              {SCENES.map((s) => (
+              {(cloudScenes.length > 0 ? cloudScenes : SCENES).map((s) => (
                 <button key={s.id} onClick={() => { setSceneId(s.id) }}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-xs transition-all ${
                     sceneId === s.id ? 'bg-violet-50 border border-violet-200 text-violet-700 font-medium' : 'border border-gray-100 text-gray-600 hover:bg-gray-50'
@@ -732,7 +742,33 @@ export default function DigitalHumanPage() {
             </Card>
           )}
 
-          {/* 历史记录 */}
+          {/* 写真画廊（云端素材 /api/digital-human/portraits） */}
+          {portraitList.some((p) => p.exists) && (
+            <Card>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-violet-500" /> AI写真画廊
+                  <Badge color="purple">{portraitList.filter((p) => p.exists).length} 张已生成</Badge>
+                </h3>
+                <Button variant="secondary" size="sm" icon={RefreshCw}
+                  onClick={() => api.get('/api/digital-human/portraits').then((res) => setPortraitList(res.data?.portraits || [])).catch(() => {})}>
+                  刷新
+                </Button>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                {portraitList.filter((p) => p.exists).map((p) => (
+                  <div key={p.avatar_id} className="group relative">
+                    <img src={p.url} alt={p.avatar_name}
+                      onClick={() => { setAvatarId(p.avatar_id); toast.info(`已选中 ${p.avatar_name}`) }}
+                      className="w-full aspect-square object-cover rounded-xl border border-gray-200 cursor-pointer group-hover:ring-2 group-hover:ring-violet-400 transition-all" />
+                    <div className="mt-1 text-[10px] text-gray-500 truncate text-center">{p.avatar_name}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+        {/* 历史记录 */}
           <Card>
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">

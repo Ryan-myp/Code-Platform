@@ -9,7 +9,8 @@ import {
   Brain, Puzzle, MessageSquare, Settings, Crown, HelpCircle, History as HistoryIcon,
   Search, Shield, Users, Server, X, FlaskConical, Send, Smartphone, Gamepad2, Mic2, Sticker,
   Star, FileEdit, Trash2, GalleryVerticalEnd, Store, Video, UserCircle, Share2,
-  Globe, Terminal, Key, Activity, Target, Volume2, Monitor, Landmark, FileSearch, Files, BookOpen
+  Globe, Terminal, Key, Activity, Target, Volume2, Monitor, Landmark, FileSearch, Files, BookOpen,
+  ChevronUp, ChevronDown, Save
 } from 'lucide-react'
 import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -122,6 +123,15 @@ const ALL_CAPABILITIES = SCENE_GROUPS.flatMap((g) =>
   g.items.map((it) => ({ ...it, group: g.label, groupKey: g.key }))
 )
 
+// 首页组件元数据（与后端 dashboard_widgets 的 widget_type 对应）
+const WIDGET_META = [
+  { type: 'stats', label: '数据概览', desc: '统计卡片：Agent/Workflow/项目/任务等', icon: BarChart3 },
+  { type: 'recent', label: '智能流水线', desc: '最近需求进度与部署状态', icon: GitBranch },
+  { type: 'tasks', label: '待办任务', desc: '待办任务与右侧面板', icon: CheckCircle2 },
+  { type: 'quick_actions', label: '快捷操作', desc: '常用功能快捷入口', icon: Zap },
+  { type: 'notifications', label: '最新通知', desc: '未读通知预览', icon: Bell },
+]
+
 const PRIORITY_COLORS = { P0: 'red', P1: 'orange', P2: 'blue', P3: 'gray' }
 const STATUS_CONFIG = {
   todo: { label: '待办', color: 'gray' },
@@ -211,12 +221,17 @@ export default function HomePage() {
   const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'P2' })
   const [capKw, setCapKw] = useState('')
 
+  // 首页组件配置（null=未加载，默认全显示）
+  const [widgets, setWidgets] = useState(null)
+  const [widgetModal, setWidgetModal] = useState(false)
+  const [widgetSaving, setWidgetSaving] = useState(false)
+
   useEffect(() => { loadData() }, [])
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [statsRes, recentRes, tasksRes, notifsRes, favRes, toolRes, draftRes] = await Promise.all([
+      const [statsRes, recentRes, tasksRes, notifsRes, favRes, toolRes, draftRes, widgetsRes] = await Promise.all([
         api.get('/api/home/stats'),
         api.get('/api/home/recent'),
         api.get('/api/tasks?status=todo'),
@@ -224,6 +239,7 @@ export default function HomePage() {
         api.get('/api/tools/favorites/list').catch(() => ({ data: [] })),
         api.get('/api/tools/stats').catch(() => ({ data: [] })),
         api.get('/api/drafts').catch(() => ({ data: [] })),
+        api.get('/api/home/widgets').catch(() => ({ data: null })),
       ])
       setStats(statsRes.data)
       setRecent(recentRes.data)
@@ -232,6 +248,7 @@ export default function HomePage() {
       setFavorites(favRes.data || [])
       setToolStats(toolRes.data || [])
       setDrafts(draftRes.data || [])
+      if (widgetsRes?.data) setWidgets(widgetsRes.data)
     } catch (e) {
       toast.error('加载数据失败')
     } finally {
@@ -272,6 +289,63 @@ export default function HomePage() {
       await api.put(`/api/notifications/${notifId}/read`)
       loadData()
     } catch (e) { /* ignore */ }
+  }
+
+  // ── 首页组件配置 ──
+  const widgetVisible = (type) => {
+    if (!widgets) return true
+    const w = widgets.find((x) => x.widget_type === type)
+    if (!w) return true
+    return w.visible === 1 || w.visible === true
+  }
+
+  const openWidgetConfig = async () => {
+    setWidgetModal(true)
+    if (!widgets) {
+      try {
+        const res = await api.get('/api/home/widgets')
+        setWidgets(res.data || [])
+      } catch { /* 静默 */ }
+    }
+  }
+
+  const toggleWidget = (type) => {
+    setWidgets((prev) => (prev || []).map((w) =>
+      w.widget_type === type ? { ...w, visible: (w.visible === 1 || w.visible === true) ? 0 : 1 } : w
+    ))
+  }
+
+  const moveWidget = (type, dir) => {
+    setWidgets((prev) => {
+      if (!prev) return prev
+      const idx = prev.findIndex((w) => w.widget_type === type)
+      const target = idx + dir
+      if (idx < 0 || target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      const [w] = next.splice(idx, 1)
+      next.splice(target, 0, w)
+      return next
+    })
+  }
+
+  const saveWidgets = async () => {
+    if (!widgets) return
+    setWidgetSaving(true)
+    try {
+      await Promise.all(widgets.map((w, i) =>
+        api.put(`/api/home/widgets/${w.id || w.widget_type}`, {
+          widget_type: w.widget_type,
+          title: w.title || '',
+          config: w.config || {},
+          position: i,
+          size: w.size || 'md',
+          visible: w.visible === 1 || w.visible === true,
+        })
+      ))
+      toast.success('首页布局已保存')
+      setWidgetModal(false)
+    } catch (e) { toast.error(`保存失败：${e.message}`) }
+    finally { setWidgetSaving(false) }
   }
 
   // 问候语（随时间段变化）
@@ -329,6 +403,9 @@ export default function HomePage() {
             </Button>
             <Button icon={Plus} onClick={() => setShowTaskModal(true)} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
               新建任务
+            </Button>
+            <Button icon={Settings} onClick={openWidgetConfig} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
+              首页配置
             </Button>
           </div>
         </div>
@@ -432,6 +509,7 @@ export default function HomePage() {
       </div>
 
       {/* 统计卡片 */}
+      {widgetVisible('stats') && (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {statCards.map((card) => (
           <div
@@ -450,8 +528,10 @@ export default function HomePage() {
           </div>
         ))}
       </div>
+      )}
 
       {/* 智能研发工作流：最近需求 + 最近部署 */}
+      {widgetVisible('recent') && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 最近需求（AI 流水线进度） */}
         <div className="lg:col-span-2">
@@ -600,7 +680,9 @@ export default function HomePage() {
           </Card>
         </div>
       </div>
+      )}
 
+      {widgetVisible('tasks') && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 待办任务 */}
         <div className="lg:col-span-2">
@@ -652,6 +734,7 @@ export default function HomePage() {
         {/* 右侧面板 */}
         <div className="space-y-6">
           {/* 快捷操作 */}
+          {widgetVisible('quick_actions') && (
           <Card>
             <div className="flex items-center gap-2 mb-4">
               <Zap className="w-5 h-5 text-blue-500" />
@@ -672,8 +755,10 @@ export default function HomePage() {
               ))}
             </div>
           </Card>
+          )}
 
           {/* 最新通知 */}
+          {widgetVisible('notifications') && (
           <Card>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -716,6 +801,7 @@ export default function HomePage() {
               </div>
             )}
           </Card>
+          )}
 
           {/* 常用工具（使用统计 TOP6） */}
           {toolStats.length > 0 && (
@@ -771,6 +857,7 @@ export default function HomePage() {
           )}
         </div>
       </div>
+      )}
 
       {/* 草稿箱 */}
       {drafts.length > 0 && (
@@ -885,6 +972,60 @@ export default function HomePage() {
               <option value="P3">P3 - 低</option>
             </select>
           </div>
+        </div>
+      </Modal>
+
+      {/* 首页组件配置弹窗 */}
+      <Modal
+        open={widgetModal}
+        onClose={() => setWidgetModal(false)}
+        title="首页组件配置"
+        size="md"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setWidgetModal(false)}>取消</Button>
+            <Button variant="primary" icon={Save} loading={widgetSaving} onClick={saveWidgets}>保存布局</Button>
+          </div>
+        }
+      >
+        <div className="space-y-2">
+          {(widgets || WIDGET_META.map((m, i) => ({ id: m.type, widget_type: m.type, title: m.label, config: {}, position: i, size: 'md', visible: 1 }))).map((w, i) => {
+            const meta = WIDGET_META.find((m) => m.type === w.widget_type)
+            if (!meta) return null
+            const visible = w.visible === 1 || w.visible === true
+            return (
+              <div key={meta.type} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${visible ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50 opacity-60'}`}>
+                <span className="w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <meta.icon className="w-4 h-4 text-white" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                    {meta.label}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{meta.type}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 truncate">{meta.desc}</div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => moveWidget(meta.type, -1)} disabled={i === 0}
+                    className="p-1.5 text-gray-400 hover:text-brand-600 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg hover:bg-gray-100" title="上移">
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => moveWidget(meta.type, 1)} disabled={i === (widgets || WIDGET_META).length - 1}
+                    className="p-1.5 text-gray-400 hover:text-brand-600 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg hover:bg-gray-100" title="下移">
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => toggleWidget(meta.type)}
+                    className={`relative w-9 h-5 rounded-full transition-colors ${visible ? 'bg-brand-500' : 'bg-gray-300'}`}
+                    title={visible ? '点击隐藏' : '点击显示'}
+                  >
+                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${visible ? 'left-4' : 'left-0.5'}`} />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-xs text-gray-400 pt-1">布局保存在云端（GET/PUT /api/home/widgets），隐藏/显示与排序即时生效</p>
         </div>
       </Modal>
     </div>

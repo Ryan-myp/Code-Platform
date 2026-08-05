@@ -5,6 +5,7 @@ import {
   MessageSquare, Music2, Clapperboard, AlertCircle, CheckCircle2, CircleDashed,
   Calendar, CalendarPlus, BarChart3, Play, TrendingUp, ChevronLeft, ChevronRight,
   PieChart, Search, CheckSquare, Square, X, ShieldCheck, Clock3, ArrowRight,
+  ClipboardCheck, ThumbsUp, ThumbsDown, RotateCcw,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -60,6 +61,7 @@ const TABS = [
   { key: 'calendar', label: '排期日历', icon: Calendar },
   { key: 'stats', label: '数据看板', icon: BarChart3 },
   { key: 'records', label: '发布记录', icon: Clock },
+  { key: 'review', label: '审核队列', icon: ClipboardCheck },
   { key: 'accounts', label: '账号配置', icon: Settings2 },
 ]
 
@@ -114,6 +116,13 @@ export default function PublishingPage() {
   const [batchModal, setBatchModal] = useState(false)
   const [batchText, setBatchText] = useState('')
   const [batchLoading, setBatchLoading] = useState(false)
+
+  // ── 审核队列 ──
+  const [reviewList, setReviewList] = useState([])
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [reviewingId, setReviewingId] = useState('')
+  const [reviewNote, setReviewNote] = useState('')
+  const [reviewTarget, setReviewTarget] = useState(null) // {record, action}
 
   // ── 合规预检 + 最佳时间 ──
   const [complianceResult, setComplianceResult] = useState(null)
@@ -175,6 +184,7 @@ export default function PublishingPage() {
     return () => clearTimeout(t)
   }, [tab, recPlatform, recStatus, recQ])
   useEffect(() => { if (tab === 'accounts') loadAccounts() }, [tab])
+  useEffect(() => { if (tab === 'review') loadReviewQueue() }, [tab])
   useEffect(() => { if (tab === 'calendar') { loadSchedules() } }, [tab, calMonth])
   useEffect(() => { if (tab === 'stats') { loadStats(); loadSchedules() } }, [tab])
 
@@ -241,6 +251,30 @@ export default function PublishingPage() {
     if (!t) return
     if (topics.includes(t)) { toast.error('话题已存在'); return }
     setTopics((prev) => [...prev, t]); setTopicInput('')
+  }
+
+  // ── 审核队列操作 ──
+  const loadReviewQueue = async () => {
+    setReviewLoading(true)
+    try {
+      const res = await api.get('/api/publish/review-queue')
+      setReviewList(res.data || [])
+    } catch (e) { toast.error(`审核队列加载失败：${e.message}`) } finally { setReviewLoading(false) }
+  }
+
+  const handleReview = async () => {
+    if (!reviewTarget) return
+    setReviewingId(reviewTarget.record.id)
+    try {
+      const res = await api.put(`/api/publish/records/${reviewTarget.record.id}/review`, {
+        action: reviewTarget.action,
+        note: reviewNote.trim(),
+      })
+      toast.success(res.data?.message || '审核完成')
+      setReviewTarget(null)
+      setReviewNote('')
+      loadReviewQueue()
+    } catch (e) { toast.error(`审核失败：${e.message}`) } finally { setReviewingId('') }
   }
 
   const submit = async () => {
@@ -1113,6 +1147,74 @@ export default function PublishingPage() {
           )}
         </Card>
       )}
+
+      {tab === 'review' && (
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <ClipboardCheck className="w-4 h-4 text-violet-500" /> 审核队列
+              <Badge color="purple">{reviewList.length}</Badge>
+            </h3>
+            <Button variant="ghost" size="sm" onClick={loadReviewQueue} loading={reviewLoading}>刷新</Button>
+          </div>
+          {reviewList.length === 0 ? (
+            <Empty icon={ClipboardCheck} title="队列已清空" description="待审核的发布内容会出现在这里，通过后进入发布流程" />
+          ) : (
+            <div className="space-y-2">
+              {reviewList.map((r) => (
+                <div key={r.id} className="p-4 rounded-xl border border-violet-100 bg-violet-50/30 hover:border-violet-300 transition-all">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Badge color={PLATFORMS.find((p) => p.value === r.platform) ? 'green' : 'gray'}>
+                      {PLATFORMS.find((p) => p.value === r.platform)?.label || r.platform_label}
+                    </Badge>
+                    <Badge color="blue">{r.content_label}</Badge>
+                    <Badge color="amber">待审核</Badge>
+                    <span className="flex-1 text-sm text-gray-700 truncate min-w-0">{r.title || '(无标题)'}</span>
+                    <span className="text-xs text-gray-400">{r.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                  </div>
+                  {r.content && <p className="mt-2 text-xs text-gray-500 line-clamp-2">{r.content}</p>}
+                  <div className="flex items-center gap-2 mt-3 pt-3 border-t border-violet-100">
+                    <Button size="sm" variant="primary" icon={ThumbsUp} loading={reviewingId === r.id}
+                      onClick={() => { setReviewTarget({ record: r, action: 'approve' }); setReviewNote('') }}>
+                      通过
+                    </Button>
+                    <Button size="sm" variant="danger" icon={ThumbsDown} loading={reviewingId === r.id}
+                      onClick={() => { setReviewTarget({ record: r, action: 'reject' }); setReviewNote('') }}>
+                      驳回
+                    </Button>
+                    <Button size="sm" variant="ghost" icon={RotateCcw}
+                      onClick={() => { setReviewTarget({ record: r, action: 'reset' }); setReviewNote('') }}>
+                      重置为草稿
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* 审核操作弹窗 */}
+      <Modal open={!!reviewTarget} onClose={() => setReviewTarget(null)} title={reviewTarget?.action === 'approve' ? '通过审核' : reviewTarget?.action === 'reject' ? '驳回内容' : '重置为草稿'}>
+        <p className="text-sm text-gray-600 mb-4">
+          {reviewTarget?.action === 'approve'
+            ? `确认通过「${reviewTarget?.record?.title || '无标题'}」？通过后将进入发布流程。`
+            : reviewTarget?.action === 'reject'
+              ? `驳回「${reviewTarget?.record?.title || '无标题'}」？请填写驳回原因。`
+              : `将「${reviewTarget?.record?.title || '无标题'}」重置为草稿？`}
+        </p>
+        <textarea
+          value={reviewNote}
+          onChange={(e) => setReviewNote(e.target.value)}
+          rows={3}
+          placeholder="审核备注（可选）"
+          className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
+        />
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="ghost" onClick={() => setReviewTarget(null)}>取消</Button>
+          <Button variant="primary" loading={reviewingId === reviewTarget?.record?.id} onClick={handleReview}>确认</Button>
+        </div>
+      </Modal>
 
       {tab === 'accounts' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

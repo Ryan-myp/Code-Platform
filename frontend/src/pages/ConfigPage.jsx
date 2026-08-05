@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Settings, Save, RefreshCw, Eye, EyeOff, Key, Globe, Cpu,
-  CheckCircle2, Wifi, Plus, Trash2, Loader2,
+  CheckCircle2, Wifi, Plus, Trash2, Loader2, Bell, Mail, Webhook, Send,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -36,6 +36,49 @@ export default function ConfigPage() {
   const [deletingModel, setDeletingModel] = useState('')
   const [editingModel, setEditingModel] = useState(null) // 编辑弹窗
   const [savingModel, setSavingModel] = useState(false)
+
+  // ── 通知渠道配置 ──
+  const [notifyCfg, setNotifyCfg] = useState(null)
+  const [savingNotify, setSavingNotify] = useState(false)
+  const [testingEmail, setTestingEmail] = useState(false)
+  const [testingWebhook, setTestingWebhook] = useState(false)
+
+  const fetchNotifyConfig = useCallback(async () => {
+    try {
+      const res = await api.get('/api/notify/config')
+      setNotifyCfg(res.data || {})
+    } catch { setNotifyCfg(null) }
+  }, [])
+
+  useEffect(() => { fetchNotifyConfig() }, [fetchNotifyConfig])
+
+  const handleSaveNotify = async () => {
+    if (!notifyCfg) return
+    setSavingNotify(true)
+    try {
+      await api.put('/api/notify/config', notifyCfg)
+      toast.success('通知配置已保存')
+      fetchNotifyConfig()
+    } catch (e) { toast.error(`保存失败：${e.message}`) } finally { setSavingNotify(false) }
+  }
+
+  const handleTestEmail = async () => {
+    setTestingEmail(true)
+    try {
+      const res = await api.post('/api/notify/test-email')
+      toast.success(res.data?.message || '测试邮件已发送')
+    } catch (e) { toast.error(e.message || '测试邮件失败') } finally { setTestingEmail(false) }
+  }
+
+  const handleTestWebhook = async () => {
+    setTestingWebhook(true)
+    try {
+      const res = await api.post('/api/notify/test-webhook')
+      toast.success(res.data?.message || 'Webhook 测试成功')
+    } catch (e) { toast.error(e.message || 'Webhook 测试失败') } finally { setTestingWebhook(false) }
+  }
+
+  const setNotifyField = (key, val) => setNotifyCfg((p) => ({ ...(p || {}), [key]: val }))
 
   const fetchConfig = useCallback(async () => {
     setLoading(true)
@@ -487,6 +530,121 @@ export default function ConfigPage() {
           上次更新：{formatDateTime(config.updated_at)}
         </p>
       )}
+
+      {/* ── 通知渠道配置 ── */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-soft">
+            <Bell className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <h2 className="text-sm font-semibold text-gray-900">通知渠道配置</h2>
+            <p className="text-xs text-gray-500 mt-0.5">配置 SMTP 邮件 / Webhook 通知渠道，用于发布、任务等场景的消息推送</p>
+          </div>
+          <Button variant="primary" size="sm" icon={Save} loading={savingNotify} onClick={handleSaveNotify}>
+            保存通知配置
+          </Button>
+        </div>
+
+        {!notifyCfg ? (
+          <p className="text-sm text-gray-400 py-4">通知配置加载失败或暂无数据</p>
+        ) : (
+          <div className="space-y-5">
+            {/* 邮件 */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Mail className="w-4 h-4 text-blue-500" />
+                  <span className="text-sm font-medium text-gray-800">SMTP 邮件</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-xs text-gray-500">启用</span>
+                  <input type="checkbox" checked={!!notifyCfg.email_enabled}
+                    onChange={(e) => setNotifyField('email_enabled', e.target.checked ? 1 : 0)}
+                    className="w-4 h-4 rounded accent-blue-500" />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">SMTP 服务器</label>
+                  <input value={notifyCfg.email_smtp_host || ''} onChange={(e) => setNotifyField('email_smtp_host', e.target.value)}
+                    placeholder="smtp.qq.com"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">端口</label>
+                  <input type="number" value={notifyCfg.email_smtp_port ?? 587} onChange={(e) => setNotifyField('email_smtp_port', Number(e.target.value) || 587)}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">账号</label>
+                  <input value={notifyCfg.email_smtp_user || ''} onChange={(e) => setNotifyField('email_smtp_user', e.target.value)}
+                    placeholder="xxx@qq.com"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">密码（授权码）</label>
+                  <input type="password" value={notifyCfg.email_smtp_password || ''} onChange={(e) => setNotifyField('email_smtp_password', e.target.value)}
+                    placeholder={notifyCfg.email_smtp_password === '••••••••' ? '已配置，留空保持不变' : 'SMTP 授权码'}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">发件人</label>
+                  <input value={notifyCfg.email_from || ''} onChange={(e) => setNotifyField('email_from', e.target.value)}
+                    placeholder="小团智能平台 <xxx@qq.com>"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">收件人</label>
+                  <input value={notifyCfg.email_to || ''} onChange={(e) => setNotifyField('email_to', e.target.value)}
+                    placeholder="接收通知的邮箱"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                </div>
+              </div>
+              <button onClick={handleTestEmail} disabled={testingEmail}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 disabled:opacity-50 transition-all">
+                {testingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                发送测试邮件
+              </button>
+            </div>
+
+            {/* Webhook */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50/50 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Webhook className="w-4 h-4 text-indigo-500" />
+                  <span className="text-sm font-medium text-gray-800">Webhook</span>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <span className="text-xs text-gray-500">启用</span>
+                  <input type="checkbox" checked={!!notifyCfg.webhook_enabled}
+                    onChange={(e) => setNotifyField('webhook_enabled', e.target.checked ? 1 : 0)}
+                    className="w-4 h-4 rounded accent-indigo-500" />
+                </label>
+              </div>
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Webhook URL</label>
+                  <input value={notifyCfg.webhook_url || ''} onChange={(e) => setNotifyField('webhook_url', e.target.value)}
+                    placeholder="https://hooks.example.com/xxx"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">密钥（X-Webhook-Secret）</label>
+                  <input type="password" value={notifyCfg.webhook_secret || ''} onChange={(e) => setNotifyField('webhook_secret', e.target.value)}
+                    placeholder={notifyCfg.webhook_secret === '••••••••' ? '已配置，留空保持不变' : '可选'}
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                </div>
+              </div>
+              <button onClick={handleTestWebhook} disabled={testingWebhook}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-medium hover:bg-indigo-50 disabled:opacity-50 transition-all">
+                {testingWebhook ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                发送测试 Webhook
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

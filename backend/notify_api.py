@@ -87,7 +87,9 @@ def get_config(current_user: dict = Depends(require_auth)):
 
 @router.put("/config")
 def update_config(payload: dict, current_user: dict = Depends(require_auth)):
-    """更新通知配置（upsert）。"""
+    """更新通知配置（upsert）。
+    密码/密钥字段为脱敏占位符（••••••••）或空时保留旧值。
+    """
     now = datetime.now().isoformat()
     conn = get_db()
     try:
@@ -96,17 +98,31 @@ def update_config(payload: dict, current_user: dict = Depends(require_auth)):
             (current_user["user_id"],),
         ).fetchone()
 
+        old = {}
+        if existing:
+            old = dict(conn.execute(
+                "SELECT * FROM notify_config WHERE user_id=?",
+                (current_user["user_id"],),
+            ).fetchone())
+
+        def _keep_secret(key: str) -> str:
+            new_val = payload.get(key, "")
+            # 脱敏占位符或未填写 -> 保留旧值
+            if new_val in ("", "••••••••"):
+                return str(old.get(key) or "")
+            return new_val
+
         fields = {
             "email_enabled": int(payload.get("email_enabled", False)),
             "email_smtp_host": payload.get("email_smtp_host", ""),
             "email_smtp_port": payload.get("email_smtp_port", 587),
             "email_smtp_user": payload.get("email_smtp_user", ""),
-            "email_smtp_password": payload.get("email_smtp_password", ""),
+            "email_smtp_password": _keep_secret("email_smtp_password"),
             "email_from": payload.get("email_from", ""),
             "email_to": payload.get("email_to", ""),
             "webhook_enabled": int(payload.get("webhook_enabled", False)),
             "webhook_url": payload.get("webhook_url", ""),
-            "webhook_secret": payload.get("webhook_secret", ""),
+            "webhook_secret": _keep_secret("webhook_secret"),
             "updated_at": now,
         }
 

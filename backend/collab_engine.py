@@ -22,22 +22,27 @@ router = APIRouter(tags=["协作评论"])
 # ══════════════════════════════════════════════════════════════
 
 @router.get("/api/comments/thread")
-async def get_comment_thread(target_type: str, target_id: str):
-    """获取评论线程（含回复树）"""
+async def get_comment_thread(target_type: str, target_id: str, user_id: str = ""):
+    """获取评论线程（含回复树 + 点赞统计）"""
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM comments WHERE target_type=? AND target_id=? AND active=1 ORDER BY created_at ASC",
         (target_type, target_id),
     ).fetchall()
-    conn.close()
-
     comments = [dict(r) for r in rows]
+    # 附加点赞统计
+    for c in comments:
+        cnt = conn.execute("SELECT COUNT(*) c FROM comment_likes WHERE comment_id=?", (c["id"],)).fetchone()["c"]
+        c["likes"] = cnt
+        c["liked"] = bool(conn.execute(
+            "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
+        ).fetchone()) if user_id else False
+    conn.close()
     # 构建树结构
     by_id = {}
     roots = []
     for c in comments:
         c["replies"] = []
-        c["likes"] = 0
         by_id[c["id"]] = c
     for c in comments:
         parent = c.get("parent_comment_id")
@@ -49,8 +54,8 @@ async def get_comment_thread(target_type: str, target_id: str):
 
 
 @router.get("/api/comments")
-async def list_comments(target_type: str = None, target_id: str = None):
-    """获取评论列表（平铺）"""
+async def list_comments(target_type: str = None, target_id: str = None, user_id: str = ""):
+    """获取评论列表（平铺 + 点赞统计）"""
     conn = get_db()
     if target_type and target_id:
         rows = conn.execute(
@@ -59,8 +64,16 @@ async def list_comments(target_type: str = None, target_id: str = None):
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM comments WHERE active=1 ORDER BY created_at DESC").fetchall()
+    result = []
+    for r in rows:
+        c = dict(r)
+        c["likes"] = conn.execute("SELECT COUNT(*) c FROM comment_likes WHERE comment_id=?", (c["id"],)).fetchone()["c"]
+        c["liked"] = bool(conn.execute(
+            "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
+        ).fetchone()) if user_id else False
+        result.append(c)
     conn.close()
-    return [dict(r) for r in rows]
+    return result
 
 
 @router.post("/api/comments")

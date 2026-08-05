@@ -107,6 +107,9 @@ export default function VideoFactoryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  // 云端提示词库
+  const [cloudPrompts, setCloudPrompts] = useState([])
+
   // 生成
   const [prompt, setPrompt] = useState('')
   const [width, setWidth] = useState(1152)
@@ -149,8 +152,16 @@ export default function VideoFactoryPage() {
   useEffect(() => {
     fetchStats()
     fetchVideos()
+    fetchCloudPrompts()
     return () => { if (pollingRef.current) clearInterval(pollingRef.current) }
   }, [fetchStats, fetchVideos])
+
+  const fetchCloudPrompts = async () => {
+    try {
+      const res = await api.get('/api/video-factory/prompts')
+      setCloudPrompts(res.data?.prompts || [])
+    } catch { /* 静默：后端无此接口时降级为本地模板 */ }
+  }
 
   const startPolling = (videoId) => {
     if (pollingRef.current) clearInterval(pollingRef.current)
@@ -287,7 +298,8 @@ export default function VideoFactoryPage() {
           </h2>
           <button
             onClick={() => {
-              const allPresets = PRESET_CATEGORIES.flatMap(c => c.presets)
+              const localPresets = PRESET_CATEGORIES.flatMap(c => c.presets)
+              const allPresets = cloudPrompts.length > 0 ? [...cloudPrompts, ...localPresets] : localPresets
               setPrompt(allPresets[Math.floor(Math.random() * allPresets.length)])
             }}
             className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
@@ -330,6 +342,26 @@ export default function VideoFactoryPage() {
             ))}
           </div>
         </div>
+
+        {/* 云端提示词库 */}
+        {cloudPrompts.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+              云端提示词库
+              <span className="text-xs text-gray-400 font-normal">（来自 /api/video-factory/prompts）</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {cloudPrompts.map((p, pi) => (
+                <button key={pi} onClick={() => setPrompt(p)}
+                  title={p}
+                  className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-xs text-blue-700 truncate max-w-xs transition-colors">
+                  {p.slice(0, 46)}...
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 视频风格 + 镜头语言 */}
         <div className="grid grid-cols-2 gap-4">

@@ -2144,7 +2144,8 @@ async def sandbox_services(current_user: dict = require_auth()):
     """获取预置服务模板"""
     from sandbox import SERVICE_TEMPLATES
 
-    return {"services": SERVICE_TEMPLATES}
+    # 转 list 返回并补充 id（前端以 id 作 React key）
+    return {"services": [{**v, "id": k} for k, v in SERVICE_TEMPLATES.items()]}
 
 
 @app.get("/api/sandbox/projects")

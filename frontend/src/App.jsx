@@ -78,6 +78,10 @@ const ApiDocsPage = lazy(() => import('./pages/ApiDocsPage'))
 const CodeSandboxPage = lazy(() => import('./pages/CodeSandboxPage'))
 const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
+// 全量修复 v1：内容策略 / 竞品监控 / 收藏中心
+const ContentStrategyPage = lazy(() => import('./pages/ContentStrategyPage'))
+const CompetitorMonitorPage = lazy(() => import('./pages/CompetitorMonitorPage'))
+const FavoritesPage = lazy(() => import('./pages/FavoritesPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 // 页面级加载骨架（懒加载期间展示）
@@ -235,6 +239,10 @@ export default function App() {
                     {/* v10.0 社区与变现 */}
                     <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
                     <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />
+                    {/* v11 全量修复：内容策略 / 竞品监控 / 收藏中心 */}
+                    <Route path="/strategy" element={<AccessGuard path="/strategy"><ContentStrategyPage /></AccessGuard>} />
+                    <Route path="/monitor" element={<AccessGuard path="/monitor"><CompetitorMonitorPage /></AccessGuard>} />
+                    <Route path="/favorites" element={<AccessGuard path="/favorites"><FavoritesPage /></AccessGuard>} />
                     {/* v9.0 Phase 4: 运营分析 */}
                     <Route path="/dashboard" element={<DashboardPage />} />
                     <Route path="/ab-testing" element={<ABTestingPage />} />

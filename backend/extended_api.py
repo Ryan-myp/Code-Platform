@@ -646,25 +646,6 @@ async def create_auto_run(data: AutoRunRequest, current_user: dict = require_aut
     return {"ok": True, "run_id": run_id, "requirement_id": req_id, "status": "running"}
 
 
-@router.get("/api/auto-runs")
-async def list_auto_runs(current_user: dict = require_auth()):
-    """最近的全自动运行记录（含进度）"""
-    conn = get_db()
-    try:
-        rows = conn.execute(
-            "SELECT * FROM auto_runs WHERE created_by=? ORDER BY created_at DESC LIMIT 20",
-            (current_user["username"],),
-        ).fetchall()
-    finally:
-        conn.close()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["stage_progress"] = json.loads(d.get("stage_progress") or "{}")
-        out.append(d)
-    return out
-
-
 @router.get("/api/auto-runs/{run_id}")
 async def get_auto_run(run_id: str, current_user: dict = require_auth()):
     """查询单条全自动运行进度"""

@@ -3,6 +3,7 @@ import {
   BarChart3, Bot, Layers, FolderKanban, CheckCircle2, GitBranch, Code2, Languages,
   FileText, TrendingUp, Search, Sparkles, Send, Brain, Upload, Eye, Clock,
   BarChart as BarChartIcon, PieChart, TrendingUp as TrendingUpIcon, Activity,
+  Save, FolderOpen, Trash2, ListRestart,
 } from 'lucide-react'
 import { BarChart, Bar, PieChart as RPieChart, Pie, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts'
@@ -113,6 +114,14 @@ export default function DashboardPage() {
   const [chartResult, setChartResult] = useState(null)
   const [queryHistory, setQueryHistory] = useState([])
 
+  // 看板保存/恢复
+  const [savedDashboards, setSavedDashboards] = useState([])
+  const [savedLoading, setSavedLoading] = useState(false)
+  const [saveModal, setSaveModal] = useState(false)
+  const [dashForm, setDashForm] = useState({ title: '', description: '' })
+  const [savingDash, setSavingDash] = useState(false)
+  const [deletingDash, setDeletingDash] = useState(null)
+
   useEffect(() => { loadStats() }, [])
 
   const loadStats = async () => {
@@ -152,6 +161,54 @@ export default function DashboardPage() {
       setQueryHistory(prev => [{ query: nlQuery, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)])
     } catch (e) { toast.error(`查询失败：${e.message}`) }
     finally { setQuerying(false) }
+  }
+
+  const loadSaved = async () => {
+    setSavedLoading(true)
+    try {
+      const res = await api.get('/api/dashboard/saved')
+      setSavedDashboards(res.data || [])
+    } catch { /* 静默 */ } finally { setSavedLoading(false) }
+  }
+
+  const saveDashboard = async () => {
+    if (!dashForm.title.trim()) { toast.error('请输入看板名称'); return }
+    if (!chartResult) { toast.error('请先生成一张图表再保存'); return }
+    setSavingDash(true)
+    try {
+      await api.post('/api/dashboard/save', {
+        title: dashForm.title.trim(),
+        description: dashForm.description.trim(),
+        cards: [chartResult],
+        csv_data: csvData,
+        csv_filename: csvPreview?.filename || '',
+      })
+      toast.success('看板已保存')
+      setSaveModal(false)
+      setDashForm({ title: '', description: '' })
+      loadSaved()
+    } catch (e) { toast.error(`保存失败：${e.message}`) } finally { setSavingDash(false) }
+  }
+
+  const restoreDashboard = (d) => {
+    const card = d.cards?.[0]
+    if (card) {
+      setChartResult(card)
+      setTab('smart')
+      toast.success(`已恢复「${d.title}」`)
+    } else {
+      toast.error('该看板没有可恢复的图表')
+    }
+  }
+
+  const deleteDashboard = async () => {
+    if (!deletingDash) return
+    try {
+      await api.delete(`/api/dashboard/saved/${deletingDash}`)
+      toast.success('看板已删除')
+      setDeletingDash(null)
+      loadSaved()
+    } catch (e) { toast.error(`删除失败：${e.message}`) }
   }
 
   const uploadCsv = async (e) => {
@@ -286,6 +343,40 @@ export default function DashboardPage() {
                 </div>
               </Card>
             )}
+
+            {/* 看板保存 / 恢复 */}
+            <Card>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
+                  <Save className="w-4 h-4 text-blue-500" /> 我的看板
+                  <Badge color="blue">{savedDashboards.length}</Badge>
+                </h3>
+                <Button size="sm" variant="ghost" icon={FolderOpen} onClick={loadSaved} loading={savedLoading}>刷新</Button>
+              </div>
+              <Button size="sm" variant="primary" icon={Save} className="w-full mb-3 justify-center"
+                disabled={!chartResult} onClick={() => { setDashForm({ title: chartResult?.title ? `看板：${chartResult.title}` : '', description: '' }); setSaveModal(true) }}>
+                保存当前图表
+              </Button>
+              {savedDashboards.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-4">暂无保存的看板</p>
+              ) : (
+                <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                  {savedDashboards.map((d) => (
+                    <div key={d.id} className="group flex items-center gap-2 p-2 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition-all">
+                      <button onClick={() => restoreDashboard(d)} className="flex-1 text-left min-w-0">
+                        <p className="text-xs font-medium text-gray-800 truncate">{d.title}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{d.description || d.updated_at?.slice(0, 16).replace('T', ' ')}</p>
+                      </button>
+                      <button onClick={() => setDeletingDash(d.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all"
+                        title="删除看板">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
 
           <div className="lg:col-span-2">
@@ -302,6 +393,57 @@ export default function DashboardPage() {
                 </div>
               </Card>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 保存看板弹窗 */}
+      {saveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setSaveModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+              <Save className="w-4 h-4 text-blue-500" /> 保存看板
+            </h3>
+            <p className="text-xs text-gray-400 mb-5">保存当前图表，之后可一键恢复查看</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">看板名称 *</label>
+                <input
+                  value={dashForm.title}
+                  onChange={(e) => setDashForm({ ...dashForm, title: e.target.value })}
+                  placeholder="如：Q3 内容运营看板"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
+                <textarea
+                  value={dashForm.description}
+                  onChange={(e) => setDashForm({ ...dashForm, description: e.target.value })}
+                  rows={2}
+                  placeholder="可选"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <Button variant="ghost" onClick={() => setSaveModal(false)}>取消</Button>
+              <Button variant="primary" icon={Save} loading={savingDash} onClick={saveDashboard}>保存</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 删除看板确认 */}
+      {deletingDash && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setDeletingDash(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-gray-900 mb-2">删除看板？</h3>
+            <p className="text-sm text-gray-500">删除后无法恢复，图表数据仅保存在服务端。</p>
+            <div className="flex justify-end gap-2 mt-6">
+              <Button variant="ghost" onClick={() => setDeletingDash(null)}>取消</Button>
+              <Button variant="danger" icon={Trash2} onClick={deleteDashboard}>删除</Button>
+            </div>
           </div>
         </div>
       )}

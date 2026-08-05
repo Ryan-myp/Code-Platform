@@ -6449,15 +6449,6 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
         conn.close()
 
 
-@router.get("/api/tools/{tool_id}/templates")
-async def get_tool_templates(tool_id: str, current_user: dict = require_auth()):
-    """获取工具模板列表"""
-    if tool_id not in TOOL_DEFINITIONS:
-        raise HTTPException(404, "工具不存在")
-    tool = TOOL_DEFINITIONS[tool_id]
-    return tool.get("templates", [])
-
-
 @router.post("/api/tools/upload")
 async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):
     """上传文件并提取内容"""
@@ -6642,16 +6633,3 @@ async def toggle_favorite(tool_id: str, current_user: dict = require_auth()):
         conn.close()
 
 
-@router.get("/api/tools/favorites/check/{tool_id}")
-async def check_favorite(tool_id: str, current_user: dict = require_auth()):
-    """检查工具是否已收藏"""
-    user_id = current_user.get("id", "default")
-    conn = get_db()
-    try:
-        row = conn.execute(
-            "SELECT id FROM tool_favorites WHERE user_id=? AND tool_id=?",
-            (user_id, tool_id)
-        ).fetchone()
-        return {"favorited": row is not None}
-    finally:
-        conn.close()

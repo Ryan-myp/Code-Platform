@@ -6,7 +6,7 @@ import {
   HeadphonesIcon, Languages, LayoutGrid, List as ListIcon,
   MessageSquare, Clock, X, Sparkles, ChevronDown,
   CheckSquare, Square, Power, PowerOff,
-  Wrench, Database, Cable,
+  Wrench, Database, Cable, Loader2,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'

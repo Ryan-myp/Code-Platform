@@ -8,7 +8,8 @@ import {
   Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
   Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun, UserCircle,
   GalleryVerticalEnd, Store, Globe, Key, Clock,
-  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen, Terminal
+  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen, Terminal,
+  Radar, Star, Lightbulb
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -33,6 +34,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/home', label: '首页', icon: Home },
         { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
         { path: '/records', label: '记录中心', icon: HistoryIcon },
+        { path: '/favorites', label: '收藏中心', icon: Star },
         { path: '/notifications', label: '通知中心', icon: Bell },
         { path: '/membership', label: '会员中心', icon: Crown },
       ] },
@@ -81,6 +83,8 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp' },
         { path: '/voice-dubbing', label: '配音工坊', icon: Volume2, pageId: 'voice-dubbing' },
         { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish' },
+        { path: '/strategy', label: '内容策略', icon: Lightbulb, pageId: 'strategy' },
+        { path: '/monitor', label: '竞品监控', icon: Radar, pageId: 'monitor' },
         { path: '/growth', label: '增长工坊', icon: Target, pageId: 'growth' },
         { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery' },
         { path: '/templates', label: '模板市场', icon: Store, pageId: 'templates' },

@@ -6,6 +6,7 @@ import api from '../lib/api'
 
 const TASK_TYPES = [
   { key: 'summarize', label: '批量摘要', icon: FileText, desc: '多个文档一键生成摘要' },
+  { key: 'doc_summary', label: '文档摘要（独立通道）', icon: FileText, desc: '走专用接口，返回标题/摘要/要点' },
   { key: 'keywords', label: '提取关键词', icon: Zap, desc: '提取每个文档的核心关键词' },
   { key: 'translate_en', label: '批量翻译', icon: Languages, desc: '多文档翻译为英文' },
   { key: 'sentiment', label: '情感分析', icon: Sparkles, desc: '分析每个文档的情感倾向' },
@@ -38,8 +39,9 @@ export default function BatchProcessPage() {
     try {
       const form = new FormData()
       files.forEach((f) => form.append('files', f))
-      form.append('task', task)
-      const res = await api.post('/api/batch/process', form)
+      const endpoint = task === 'doc_summary' ? '/api/batch/doc-summary' : '/api/batch/process'
+      if (task !== 'doc_summary') form.append('task', task)
+      const res = await api.post(endpoint, form)
       setResults(res.data)
       loadJobs()
       toast.success(`批量处理完成：${res.data.file_count} 个文件`)

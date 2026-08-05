@@ -1,7 +1,7 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   FileText, Merge, Scissors, Table, Shield, UserCheck, Upload, Download,
-  Sparkles, Loader2, AlertTriangle, Check, FileWarning,
+  Sparkles, Loader2, AlertTriangle, Check, FileWarning, History,
 } from 'lucide-react'
 import { Card, Button, PageHeader, Badge, Empty, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -46,6 +46,27 @@ export default function PDFToolPage() {
   const [targetPosition, setTargetPosition] = useState('')
   const [optimizing, setOptimizing] = useState(false)
   const [resumeResult, setResumeResult] = useState(null)
+
+  // 任务记录（GET /api/pdf/jobs）
+  const [jobs, setJobs] = useState([])
+  const [jobsLoading, setJobsLoading] = useState(false)
+
+  const loadJobs = async () => {
+    setJobsLoading(true)
+    try {
+      const res = await api.get('/api/pdf/jobs?limit=20')
+      setJobs(res.data || [])
+    } catch { /* 未登录或异常时静默 */ }
+    finally { setJobsLoading(false) }
+  }
+
+  useEffect(() => { loadJobs() }, [])
+
+  const JOB_LABELS = {
+    merge: 'PDF合并', split: 'PDF拆分', extract_table: '表格提取',
+    contract_review: '合同审查', resume_optimize: '简历优化',
+  }
+  const JOB_STATUS_COLOR = { done: 'green', failed: 'red', processing: 'blue' }
 
   // ── Merge ──
   const uploadMerge = (e) => {
@@ -376,6 +397,42 @@ export default function PDFToolPage() {
           )}
         </Card>
       )}
+
+      {/* 任务记录（历史） */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <History className="w-4 h-4 text-gray-500" /> 任务记录
+            <span className="text-xs text-gray-400 font-normal">（合同审查 / 简历优化会在这里留痕）</span>
+          </h3>
+          <Button variant="secondary" size="sm" icon={Loader2} onClick={loadJobs} disabled={jobsLoading}>
+            刷新
+          </Button>
+        </div>
+        {jobsLoading ? (
+          <div className="text-center py-6 text-gray-400 text-sm">加载中…</div>
+        ) : jobs.length === 0 ? (
+          <Empty icon={History} title="暂无任务记录" description="使用合同审查 / 简历优化后这里会显示历史记录" />
+        ) : (
+          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+            {jobs.map((j) => (
+              <div key={j.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-4 h-4 text-white" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-gray-800 truncate">
+                    {JOB_LABELS[j.job_type] || j.job_type}
+                    <span className="text-xs text-gray-400 font-normal ml-2">#{j.original_filename || j.id.slice(0, 8)}</span>
+                  </div>
+                  <div className="text-xs text-gray-400">{j.created_at?.replace('T', ' ').slice(0, 16)}</div>
+                </div>
+                <Badge color={JOB_STATUS_COLOR[j.status] || 'gray'}>{j.status}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }

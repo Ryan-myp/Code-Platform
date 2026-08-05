@@ -467,7 +467,11 @@ export default function SandboxPage() {
   const fetchServices = useCallback(async () => {
     try {
       const res = await api.get('/api/sandbox/services')
-      setServices(Array.isArray(res.data) ? res.data : (res.data.services || []))
+      const list = Array.isArray(res.data) ? res.data : (res.data.services || [])
+      // 兼容后端返回 dict 的旧格式：{id: {name, image, ...}}
+      setServices(Array.isArray(list)
+        ? list
+        : Object.entries(list).map(([id, s]) => ({ id, ...s })))
     } catch (e) {
       setServices([])
     }
@@ -513,10 +517,17 @@ export default function SandboxPage() {
   const handleCreateService = async (formData) => {
     setSavingService(true)
     try {
-      await api.post('/api/sandbox/services', formData)
+      // 自定义服务为本地展示模板（无后端持久化接口），合并入列表
+      const custom = {
+        id: `custom-${Date.now()}`,
+        name: formData.name,
+        image: formData.image,
+        ports: formData.ports ? formData.ports.split(',').map((p) => p.trim()).filter(Boolean) : [],
+        description: '自定义服务',
+      }
+      setServices((prev) => [...(Array.isArray(prev) ? prev : []), custom])
       toast.success(`服务「${formData.name}」已添加`)
       setShowServiceForm(false)
-      fetchServices()
     } catch (e) {
       toast.error(`添加失败：${e.message}`)
     } finally {

@@ -1,9 +1,7 @@
 """AI实时语音对话 — 语音转文字 → LLM 回复 → 语音合成。
 
-- POST /api/voice-chat/transcribe  语音转文字（接收 Base64 音频）
 - POST /api/voice-chat/respond     LLM 智能回复
 - POST /api/voice-chat/tts         文字转语音
-- POST /api/voice-chat/chat        一站式：文字输入 → LLM 回复（简化模式）
 """
 
 import logging
@@ -75,22 +73,6 @@ class ChatRequest(BaseModel):
 
 # ── API ──────────────────────────────────────────────────
 
-@router.post("/transcribe")
-async def voice_to_text(req: TranscribeRequest, current_user: dict = require_auth()):
-    """语音转文字：模拟STT，实际返回提示让前端使用浏览器Web Speech API。"""
-    start = datetime.now()
-
-    # 目前后端不处理真实STT（需要额外服务），引导前端使用浏览器内置Web Speech API
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("voice_transcribe", len(req.audio_base64), 0, elapsed)
-
-    return {
-        "mode": "client_side",
-        "message": "请使用浏览器内置Web Speech API进行语音识别（前端已集成）",
-        "hint": "浏览器支持SpeechRecognition，无需后端处理音频",
-    }
-
-
 @router.post("/respond")
 async def voice_respond(req: RespondRequest, current_user: dict = require_auth()):
     """LLM智能语音回复：根据用户输入生成适合语音朗读的回复。"""
@@ -150,22 +132,3 @@ async def text_to_speech(req: TTSRequest, current_user: dict = require_auth()):
     }
 
 
-@router.post("/chat")
-async def voice_chat(req: ChatRequest, current_user: dict = require_auth()):
-    """一站式语音对话：文字 → LLM回复。前端Web Speech API处理语音部分。"""
-    start = datetime.now()
-
-    try:
-        raw = call_llm(VOICE_CHAT_SYSTEM, f"用户：{req.message}", max_tokens=300, temperature=0.7, timeout=30)
-        reply = raw.strip()
-    except Exception as e:
-        logger.exception("voice chat failed")
-        raise HTTPException(500, f"AI对话失败：{e}")
-
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("voice_chat", len(req.message), len(reply), elapsed)
-
-    return {
-        "reply": reply,
-        "input": req.message,
-    }

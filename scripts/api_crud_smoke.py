@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """核心业务 POST/PUT 接口闭环验证：创建→查询→更新→删除。"""
 import json
+import uuid
 import urllib.request
+import urllib.error
 
 BASE = "http://127.0.0.1:8888"
 results = []
+
 
 def http(method, path, token=None, body=None, timeout=90):
     url = BASE + path
@@ -21,9 +24,41 @@ def http(method, path, token=None, body=None, timeout=90):
     except Exception as e:
         return -1, str(e).encode()
 
+
+def http_upload(path, token, file_path, fields=None, timeout=90):
+    """multipart/form-data 上传：图片编辑接口契约（UploadFile + Form）。"""
+    boundary = uuid.uuid4().hex
+    parts = []
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; "
+        f"filename=\"{file_path.rsplit('/', 1)[-1]}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
+        + file_bytes
+        + b"\r\n"
+    )
+    for k, v in (fields or {}).items():
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+        )
+    body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(BASE + path, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except Exception as e:
+        return -1, str(e).encode()
+
+
 def check(name, ok, detail=""):
     results.append((name, ok, detail))
     print(f"  {'✓' if ok else '✗'} {name}" + (f"  [{detail[:120]}]" if detail else ""))
+
 
 def main():
     code, body = http("POST", "/api/auth/login", body={"username": "admin", "password": "admin123"})
@@ -101,7 +136,7 @@ def main():
     c, _ = http("DELETE", f"/api/mcp-servers/{srv_id}", token)
     check("删除 MCP Server", c == 200, str(c))
 
-    # ── 7. 图片编辑（本地处理链路）──
+    # ── 7. 图片编辑（本地处理链路，multipart 契约）──
     print("\n== 图片工厂编辑 ==")
     test_img = "/tmp/img_smoke.png"
     # 先准备一张测试图
@@ -112,17 +147,13 @@ def main():
         pass
     import os
     if os.path.exists(test_img):
-        import base64
-        with open(test_img, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        payload = {"image": b64, "format": "png"}
-        c, _ = http("POST", "/api/image-factory/edit/resize", token, {**payload, "width": 100, "height": 100})
+        c, _ = http_upload("/api/image-factory/edit/resize", token, test_img, {"width": "100", "height": "100", "maintain_aspect": "false"})
         check("resize", c == 200, str(c))
-        c, _ = http("POST", "/api/image-factory/edit/rotate", token, {**payload, "degrees": 45})
+        c, _ = http_upload("/api/image-factory/edit/rotate", token, test_img, {"degrees": "45"})
         check("rotate", c == 200, str(c))
-        c, _ = http("POST", "/api/image-factory/edit/blur", token, {**payload, "radius": 3})
+        c, _ = http_upload("/api/image-factory/edit/blur", token, test_img, {"radius": "3"})
         check("blur", c == 200, str(c))
-        c, _ = http("POST", "/api/image-factory/edit/filter", token, {**payload, "filter": "grayscale"})
+        c, _ = http_upload("/api/image-factory/edit/filter", token, test_img, {"filter": "grayscale"})
         check("filter(grayscale)", c == 200, str(c))
     else:
         check("图片编辑(跳过-无PIL)", False)
@@ -143,7 +174,7 @@ def main():
 
     # ── 10. 搜索/通知 ──
     print("\n== 其他 ==")
-    c, _ = http("GET", "/api/search?q=测试", token)
+    c, _ = http("POST", "/api/search/global", token, {"query": "测试", "types": ["requirements", "tools", "docs", "history"]})
     check("全平台搜索", c == 200, str(c))
     c, _ = http("GET", "/api/notifications", token)
     check("通知列表", c == 200, str(c))

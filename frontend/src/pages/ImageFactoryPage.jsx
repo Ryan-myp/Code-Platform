@@ -4,7 +4,7 @@ import {
   Download, Trash2, Eye, Upload, Wand2,
   RefreshCw, TrendingUp, LayoutGrid, List as ListIcon,
   UserCircle, Shirt, Camera, Crop, RotateCw, FlipHorizontal, Sliders,
-  DownloadCloud, Search,
+  DownloadCloud, Search, Image, Plus, FileJson2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -61,6 +61,7 @@ const EDIT_TOOLS = [
 
 const TABS = [
   { id: 'generate', label: '文生图', icon: Sparkles, desc: 'AI 生成图片' },
+  { id: 'img2img', label: '图生图', icon: Image, desc: '参考图变体' },
   { id: 'template', label: '模板合成', icon: LayoutTemplate, desc: '电商模板' },
   { id: 'try-on', label: '虚拟试衣', icon: UserCircle, desc: '上传照片试穿' },
   { id: 'edit', label: '图片编辑', icon: Scissors, desc: '裁剪/缩放' },
@@ -91,6 +92,22 @@ export default function ImageFactoryPage() {
   // 模板
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [rendering, setRendering] = useState(false)
+
+  // 图生图
+  const [img2imgPrompt, setImg2imgPrompt] = useState('')
+  const [img2imgFile, setImg2imgFile] = useState(null) // File
+  const [img2imgPreview, setImg2imgPreview] = useState('')
+  const [img2imgStrength, setImg2imgStrength] = useState(0.35)
+  const [img2imgSize, setImg2imgSize] = useState('1024x1024')
+  const [img2imgBusy, setImg2imgBusy] = useState(false)
+  const img2imgRef = useRef(null)
+
+  // 模板管理
+  const [templateModal, setTemplateModal] = useState(false) // 'create' | 'upload' | null
+  const [templateForm, setTemplateForm] = useState({ name: '', width: 1080, height: 1920, background: '#FFFFFF', layers: '' })
+  const [templateSaving, setTemplateSaving] = useState(false)
+  const [uploadFileRef, setUploadFileRef] = useState(null)
+  const [deletingTemplate, setDeletingTemplate] = useState(null)
 
   // 编辑
   const [uploadedImage, setUploadedImage] = useState(null) // { url, filename }
@@ -230,6 +247,99 @@ export default function ImageFactoryPage() {
       toast.error(`渲染失败：${e.message}`)
     } finally {
       setRendering(false)
+    }
+  }
+
+  // ── 图生图 ──
+  const handleImg2ImgUpload = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImg2imgFile(file)
+    setImg2imgPreview(URL.createObjectURL(file))
+  }
+
+  const handleImg2Img = async () => {
+    if (!img2imgPrompt.trim()) { toast.error('请输入提示词'); return }
+    if (!img2imgFile) { toast.error('请先上传参考图'); return }
+    setImg2imgBusy(true)
+    try {
+      const form = new FormData()
+      form.append('prompt', img2imgPrompt)
+      form.append('image', img2imgFile)
+      form.append('size', img2imgSize)
+      form.append('strength', img2imgStrength)
+      const res = await api.post('/api/image-factory/generate/image-to-image', form, { timeout: 200000 })
+      const data = res.data
+      if (data.url || data.image_url) {
+        const url = data.url || data.image_url
+        setGeneratedImages([{ ...data, url: absUrl(url), prompt: img2imgPrompt, filename: data.filename || url.split('/').pop() }])
+        toast.success('图生图完成')
+        fetchImages()
+      } else {
+        toast.error('生成失败，请检查 API Key 配置')
+      }
+    } catch (e) {
+      toast.error(`图生图失败：${e.message}`)
+    } finally {
+      setImg2imgBusy(false)
+    }
+  }
+
+  // ── 模板管理 ──
+  const handleCreateTemplate = async () => {
+    if (!templateForm.name.trim()) { toast.error('请输入模板名称'); return }
+    setTemplateSaving(true)
+    try {
+      let layers = []
+      try { layers = templateForm.layers.trim() ? JSON.parse(templateForm.layers) : [] } catch { toast.error('图层 JSON 格式错误'); setTemplateSaving(false); return }
+      const res = await api.post('/api/image-factory/template/create', {
+        name: templateForm.name.trim(),
+        width: Number(templateForm.width) || 1080,
+        height: Number(templateForm.height) || 1920,
+        background: templateForm.background,
+        layers,
+      })
+      toast.success(`模板「${res.data.name}」已创建`)
+      setTemplateModal(false)
+      setTemplateForm({ name: '', width: 1080, height: 1920, background: '#FFFFFF', layers: '' })
+      fetchTemplates()
+    } catch (e) {
+      toast.error(`创建失败：${e.message}`)
+    } finally {
+      setTemplateSaving(false)
+    }
+  }
+
+  const handleUploadTemplate = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setTemplateSaving(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('name', file.name.replace(/\.json$/i, '') || '上传模板')
+      const res = await api.post('/api/image-factory/template/upload', form)
+      toast.success(`模板「${res.data.name || '未命名'}」已上传`)
+      setTemplateModal(false)
+      fetchTemplates()
+    } catch (e) {
+      toast.error(`上传失败：${e.message}`)
+    } finally {
+      setTemplateSaving(false)
+      e.target.value = ''
+    }
+  }
+
+  const handleDeleteTemplate = async () => {
+    if (!deletingTemplate) return
+    try {
+      await api.delete(`/api/image-factory/templates/${deletingTemplate}`)
+      toast.success('模板已删除')
+      setDeletingTemplate(null)
+      if (selectedTemplate === deletingTemplate) setSelectedTemplate('')
+      fetchTemplates()
+    } catch (e) {
+      toast.error(`删除失败：${e.message}`)
     }
   }
 
@@ -561,13 +671,237 @@ export default function ImageFactoryPage() {
         </div>
       )}
 
+      {/* Img2Img Tab */}
+      {activeTab === 'img2img' && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-5">
+              <input ref={img2imgRef} type="file" accept="image/*" className="hidden" onChange={handleImg2ImgUpload} />
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
+                {img2imgPreview ? (
+                  <div className="relative rounded-xl overflow-hidden border border-gray-200">
+                    <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
+                    <button
+                      onClick={() => { setImg2imgFile(null); setImg2imgPreview('') }}
+                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-red-500 transition-colors"
+                      title="移除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => img2imgRef.current?.click()}
+                    className="w-full border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-violet-500 transition-colors"
+                  >
+                    <Upload className="w-10 h-10 mx-auto text-violet-500 mb-2" />
+                    <p className="text-sm font-medium text-gray-900">点击上传参考图</p>
+                    <p className="text-xs text-gray-500 mt-1">支持 JPG、PNG 格式</p>
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">提示词</label>
+                <textarea
+                  value={img2imgPrompt}
+                  onChange={(e) => setImg2imgPrompt(e.target.value)}
+                  rows={4}
+                  placeholder="描述想要的风格/元素变化，如：把照片变成油画风格、保持人物不变…"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SIZES.slice(0, 6).map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => setImg2imgSize(s.value)}
+                      className={`px-2 py-2 rounded-lg border text-center transition-all ${img2imgSize === s.value ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}
+                    >
+                      <div className="text-xs font-medium">{s.label}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">变化强度：{img2imgStrength}</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={img2imgStrength}
+                  onChange={(e) => setImg2imgStrength(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">越小越接近原图，越大变化越明显</p>
+              </div>
+
+              <Button
+                variant="gradient"
+                size="lg"
+                icon={Image}
+                loading={img2imgBusy}
+                disabled={!img2imgPrompt.trim() || !img2imgFile}
+                onClick={handleImg2Img}
+                className="w-full"
+              >
+                {img2imgBusy ? '生成中...' : '生成变体'}
+              </Button>
+            </div>
+
+            <div className="lg:col-span-2">
+              <h3 className="font-medium text-gray-900 mb-4">生成结果</h3>
+              {img2imgBusy ? (
+                <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
+              ) : generatedImages.length > 0 ? (
+                <div className="relative group rounded-xl overflow-hidden shadow-sm">
+                  <img src={generatedImages[0].url} alt={img2imgPrompt} className="w-full h-64 object-cover" />
+                  {renderImageActions(generatedImages[0])}
+                </div>
+              ) : (
+                <div className="h-64">
+                  <Empty icon={Image} title="暂无结果" description="上传参考图并输入提示词，生成风格变体" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Img2Img Tab */}
+      {activeTab === 'img2img' && (
+        <div className="bg-white rounded-2xl border border-gray-200 p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-5">
+              <input ref={img2imgRef} type="file" accept="image/*" className="hidden" onChange={handleImg2ImgUpload} />
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
+                {img2imgPreview ? (
+                  <div className="relative rounded-xl overflow-hidden border border-gray-200">
+                    <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
+                    <button
+                      onClick={() => { setImg2imgFile(null); setImg2imgPreview('') }}
+                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-red-500 transition-colors"
+                      title="移除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => img2imgRef.current?.click()}
+                    className="w-full border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-violet-500 transition-colors"
+                  >
+                    <Upload className="w-10 h-10 mx-auto text-violet-500 mb-2" />
+                    <p className="text-sm font-medium text-gray-900">点击上传参考图</p>
+                    <p className="text-xs text-gray-500 mt-1">支持 JPG、PNG 格式</p>
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">提示词</label>
+                <textarea
+                  value={img2imgPrompt}
+                  onChange={(e) => setImg2imgPrompt(e.target.value)}
+                  rows={4}
+                  placeholder="描述想要的风格/元素变化，如：把照片变成油画风格、保持人物不变…"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SIZES.map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => setImg2imgSize(s.value)}
+                      className={`px-2 py-2 rounded-lg border text-center transition-all ${img2imgSize === s.value ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}
+                    >
+                      <div className="text-xs font-medium">{s.label}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">变化强度：{img2imgStrength}</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={img2imgStrength}
+                  onChange={(e) => setImg2imgStrength(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <p className="text-[11px] text-gray-400 mt-1">越小越接近原图，越大变化越明显</p>
+              </div>
+
+              <Button
+                variant="gradient"
+                size="lg"
+                icon={Image}
+                loading={img2imgBusy}
+                disabled={!img2imgPrompt.trim() || !img2imgFile}
+                onClick={handleImg2Img}
+                className="w-full"
+              >
+                {img2imgBusy ? '生成中...' : '生成变体'}
+              </Button>
+            </div>
+
+            <div className="lg:col-span-2">
+              <h3 className="font-medium text-gray-900 mb-4">生成结果</h3>
+              {img2imgBusy ? (
+                <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
+              ) : generatedImages.length > 0 ? (
+                <div className="relative group rounded-xl overflow-hidden shadow-sm">
+                  <img src={generatedImages[0].url} alt={img2imgPrompt} className="w-full h-64 object-cover" />
+                  {renderImageActions(generatedImages[0])}
+                </div>
+              ) : (
+                <div className="h-64">
+                  <Empty icon={Image} title="暂无结果" description="上传参考图并输入提示词，生成风格变体" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Template Tab */}
       {activeTab === 'template' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1 space-y-6">
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-3 block">选择模板</label>
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-sm font-medium text-gray-700">选择模板</label>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => setTemplateModal('create')}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-100 transition-all"
+                    >
+                      <Plus className="w-3 h-3" /> 新建
+                    </button>
+                    <button
+                      onClick={() => document.getElementById('tmpl-upload-input')?.click()}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
+                    >
+                      <Upload className="w-3 h-3" /> 上传
+                    </button>
+                    <input id="tmpl-upload-input" type="file" accept=".json" className="hidden" onChange={handleUploadTemplate} />
+                  </div>
+                </div>
                 {templates.length === 0 ? (
                   <p className="text-sm text-gray-500">暂无可用模板</p>
                 ) : (
@@ -584,7 +918,16 @@ export default function ImageFactoryPage() {
                           <div className="font-medium text-gray-900">{t.name}</div>
                           <div className="text-xs text-gray-500">{t.width} × {t.height}</div>
                         </div>
-                        {selectedTemplate === t.id && <div className="w-2 h-2 rounded-full bg-violet-500" />}
+                        <div className="flex items-center gap-1.5">
+                          {selectedTemplate === t.id && <div className="w-2 h-2 rounded-full bg-violet-500" />}
+                          <span
+                            onClick={(e) => { e.stopPropagation(); setDeletingTemplate(t.id) }}
+                            className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            title="删除模板"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -1057,6 +1400,81 @@ export default function ImageFactoryPage() {
       </Modal>
 
       {/* 删除确认 */}
+      {/* 模板管理弹窗 */}
+      <Modal open={templateModal === 'create'} onClose={() => setTemplateModal(false)} title="新建模板">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 *</label>
+            <input
+              value={templateForm.name}
+              onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+              placeholder="如：电商商品主图"
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">宽度</label>
+              <input
+                type="number"
+                value={templateForm.width}
+                onChange={(e) => setTemplateForm({ ...templateForm, width: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">高度</label>
+              <input
+                type="number"
+                value={templateForm.height}
+                onChange={(e) => setTemplateForm({ ...templateForm, height: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">背景色</label>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={templateForm.background}
+                onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
+                className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer"
+              />
+              <input
+                value={templateForm.background}
+                onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">图层配置（JSON，可选）</label>
+            <textarea
+              value={templateForm.layers}
+              onChange={(e) => setTemplateForm({ ...templateForm, layers: e.target.value })}
+              rows={5}
+              placeholder='[{"type":"text","content":"标题","x":50,"y":100}, {"type":"image","url":"…"}]'
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={() => setTemplateModal(false)}>取消</Button>
+          <Button variant="gradient" icon={Plus} loading={templateSaving} onClick={handleCreateTemplate}>创建模板</Button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deletingTemplate}
+        onClose={() => setDeletingTemplate(null)}
+        onConfirm={handleDeleteTemplate}
+        title="删除模板？"
+        message="删除后该模板将不可恢复，已生成的图片不受影响。"
+        confirmLabel="删除"
+        icon={Trash2}
+      />
+
       <ConfirmDialog
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}

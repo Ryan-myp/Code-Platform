@@ -119,6 +119,9 @@ export default function MusicFactoryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  // 歌词示例（来自 /api/music-factory/lyrics/examples）
+  const [lyricExamples, setLyricExamples] = useState({})
+
   // 歌词
   const [theme, setTheme] = useState('')
   const [style, setStyle] = useState('pop')
@@ -171,6 +174,9 @@ export default function MusicFactoryPage() {
   useEffect(() => {
     fetchStats()
     fetchAudios()
+    api.get('/api/music-factory/lyrics/examples')
+      .then((res) => setLyricExamples(res.data?.examples || {}))
+      .catch(() => { /* 静默 */ })
   }, [fetchStats, fetchAudios])
 
   const generateLyrics = async () => {
@@ -436,6 +442,22 @@ export default function MusicFactoryPage() {
               ))}
             </div>
           </div>
+
+          {/* 歌词示例（云端） */}
+          {Object.keys(lyricExamples).length > 0 && (
+            <div>
+              <span className="text-sm text-gray-500">歌词示例:</span>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {Object.entries(lyricExamples).map(([key, text]) => (
+                  <button key={key}
+                    onClick={() => { setLyrics(text); setSelectedLyrics(text); toast.success('已载入示例歌词') }}
+                    className="text-xs px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-full transition-colors border border-purple-100">
+                    {key === 'love' ? '❤️ 爱情' : key === 'nature' ? '🌿 自然' : key === 'dream' ? '✨ 梦想' : key}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <Button variant="gradient" size="lg" icon={Sparkles} loading={generatingLyrics} disabled={!theme.trim()} onClick={generateLyrics} className="w-full">
             {generatingLyrics ? '正在创作歌词...' : '生成歌词'}

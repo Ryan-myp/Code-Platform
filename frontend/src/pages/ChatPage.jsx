@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   MessageSquare, Send, Users, Layers, Menu, X,
   Sparkles, User, Plus, Trash2, Search, Clock,
-  Bot as BotIcon, ArrowRight, RefreshCw,
+  Bot as BotIcon, ArrowRight, RefreshCw, Brain, ChevronDown,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -47,6 +47,12 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+
+  // 会话记忆（GET/POST /api/conversations/{id}/memories）
+  const [memories, setMemories] = useState([])
+  const [memInput, setMemInput] = useState('')
+  const [memOpen, setMemOpen] = useState(false)
+  const [memBusy, setMemBusy] = useState(false)
 
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -125,6 +131,37 @@ export default function ChatPage() {
     return resolved
   }
 
+  // 加载会话记忆
+  const loadMemories = async (convId) => {
+    if (!convId) { setMemories([]); return }
+    try {
+      const res = await api.get(`/api/conversations/${convId}/memories`)
+      setMemories(res.data || [])
+    } catch { setMemories([]) }
+  }
+
+  // 添加记忆
+  const addMemory = async () => {
+    if (!memInput.trim() || !activeConversationId) return
+    setMemBusy(true)
+    try {
+      await api.post(`/api/conversations/${activeConversationId}/memories`, { content: memInput.trim() })
+      setMemInput('')
+      toast.success('记忆已保存，后续对话可引用')
+      loadMemories(activeConversationId)
+    } catch (e) { toast.error(`保存失败：${e.message}`) }
+    finally { setMemBusy(false) }
+  }
+
+  // 删除记忆
+  const deleteMemory = async (memId) => {
+    try {
+      await api.delete(`/api/conversations/memories/${memId}`)
+      setMemories((prev) => prev.filter((m) => m.id !== memId))
+      toast.success('记忆已删除')
+    } catch (e) { toast.error(`删除失败：${e.message}`) }
+  }
+
   // 加载某个会话的消息
   const loadConversation = async (convId) => {
     setMessagesLoading(true)
@@ -138,6 +175,7 @@ export default function ChatPage() {
       setMessages(msgs)
       setActiveConversationId(convId)
       setSidebarOpen(false)
+      loadMemories(convId)
     } catch (e) {
       toast.error(`加载会话失败：${e.message}`)
     } finally {
@@ -157,6 +195,7 @@ export default function ChatPage() {
       const res = await api.post(`/api/agents/${agentId}/conversations`, { title })
       setActiveConversationId(res.data.id)
       setMessages([])
+      setMemories([])
       setSidebarOpen(false)
       fetchConversations()
       inputRef.current?.focus()
@@ -175,6 +214,7 @@ export default function ChatPage() {
       if (activeConversationId === deleteTarget.id) {
         setActiveConversationId(null)
         setMessages([])
+        setMemories([])
       }
       setDeleteTarget(null)
       fetchConversations()
@@ -505,6 +545,51 @@ export default function ChatPage() {
             </>
           )}
         </div>
+
+        {/* 会话记忆面板 */}
+        {activeConversationId && (
+          <div className="border-t border-gray-100 bg-amber-50/40 px-3 py-2">
+            <button
+              onClick={() => setMemOpen(!memOpen)}
+              className="flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+            >
+              <Brain className="w-3.5 h-3.5 text-amber-500" />
+              会话记忆
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">{memories.length}</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${memOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {memOpen && (
+              <div className="mt-2 space-y-2">
+                {memories.length === 0 ? (
+                  <p className="text-xs text-gray-400">暂无记忆。记录用户偏好、关键决定，后续对话可直接引用。</p>
+                ) : (
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {memories.map((m) => (
+                      <div key={m.id} className="flex items-start gap-2 text-xs bg-white rounded-lg border border-amber-100 px-2.5 py-1.5">
+                        <span className="text-gray-600 flex-1">{m.content}</span>
+                        <button onClick={() => deleteMemory(m.id)} className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0" title="删除记忆">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input
+                    value={memInput}
+                    onChange={(e) => setMemInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addMemory()}
+                    placeholder="记一条要点，如：用户偏好简洁风格的回答…"
+                    className="flex-1 px-3 py-1.5 rounded-lg border border-amber-200 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                  <Button size="sm" onClick={addMemory} disabled={memBusy || !memInput.trim()}>
+                    保存记忆
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 输入区 */}
         <div className="border-t border-gray-200 bg-white p-3 md:p-4">

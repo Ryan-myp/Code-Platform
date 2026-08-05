@@ -3,7 +3,6 @@
 - POST   /api/favorites          添加收藏
 - GET    /api/favorites          收藏列表（支持按类型筛选）
 - DELETE /api/favorites/{id}     取消收藏
-- GET    /api/favorites/check    检查是否已收藏
 """
 
 import json
@@ -93,17 +92,3 @@ async def remove_favorite(fav_id: str, current_user: dict = require_auth()):
     return {"message": "已取消收藏"}
 
 
-@router.get("/check")
-async def check_favorite(
-    fav_type: str = Query(...),
-    target_id: str = Query(...),
-    current_user: dict = require_auth(),
-):
-    """检查是否已收藏。"""
-    user_id = current_user.get("user_id")
-    with get_db_context() as conn:
-        row = conn.execute(
-            "SELECT id FROM favorites WHERE user_id=? AND fav_type=? AND target_id=?",
-            (user_id, fav_type, target_id),
-        ).fetchone()
-    return {"favorited": row is not None, "id": row[0] if row else None}
