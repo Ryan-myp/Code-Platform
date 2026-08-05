@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Play, Square, Trash2, RefreshCw,
   FolderOpen, Server, Container, Search, Terminal,
-  LayoutGrid, List as ListIcon, Activity, Zap, Clock, Loader2,
+  LayoutGrid, List as ListIcon, Activity, Zap, Clock, Loader2, ExternalLink,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -38,6 +38,36 @@ function formatPorts(ports) {
   } catch {
     return String(ports)
   }
+}
+
+// 取第一个可访问端口（运行中的服务可直接打开）
+function firstPort(ports) {
+  if (!ports) return null
+  let arr = ports
+  if (!Array.isArray(arr)) {
+    try { arr = JSON.parse(ports) } catch { return null }
+  }
+  if (!Array.isArray(arr) || !arr.length) return null
+  const p = String(arr[0]).split(':').pop()
+  return /^\d+$/.test(p) ? Number(p) : null
+}
+
+// 运行中的服务访问链接按钮
+function AccessLink({ project }) {
+  const port = project.status === 'running' ? firstPort(project.ports) : null
+  if (!port) return null
+  return (
+    <a
+      href={`http://localhost:${port}`}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-medium transition-colors border border-emerald-200"
+      title={`打开 http://localhost:${port}`}
+    >
+      <ExternalLink className="w-3.5 h-3.5" />
+      访问
+    </a>
+  )
 }
 
 // 容器日志弹窗：轮询沙箱日志接口（运行中每 3s 刷新）；支持 AI 分析定位问题
@@ -154,6 +184,7 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
           <p className="text-sm text-gray-500 truncate">{project.image} · {ports}</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <AccessLink project={project} />
           <button
             onClick={() => onLogs(project)}
             className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
@@ -209,6 +240,7 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
       </div>
 
       <div className="flex items-center gap-2 pt-4 border-t border-gray-100 mt-auto">
+        <AccessLink project={project} />
         <button
           onClick={() => onLogs(project)}
           className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"

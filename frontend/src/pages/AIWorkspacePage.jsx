@@ -420,6 +420,145 @@ function AutoRunModal({ open, onClose }) {
   )
 }
 
+// 需求产物查看弹窗：PRD/审查/技术方案/测试用例/代码/代码审查 + 自动化测试记录，去黑盒
+const ARTIFACT_FIELDS = [
+  { key: 'prd', label: 'PRD', field: 'prd_text', mono: false },
+  { key: 'review', label: 'PRD 审查', field: 'review_report', mono: false },
+  { key: 'td', label: '技术方案', field: 'tech_design', mono: false },
+  { key: 'test', label: '测试用例', field: 'test_cases', mono: false },
+  { key: 'code', label: '代码', field: 'code', mono: true },
+  { key: 'review_code', label: '代码审查', field: 'code_review', mono: false },
+]
+
+function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onRefreshTests }) {
+  const [atab, setAtab] = useState('prd')
+  const [copyOk, setCopyOk] = useState(false)
+  useEffect(() => { if (open) { setAtab('prd'); setCopyOk(false) } }, [open])
+
+  const stage = ARTIFACT_FIELDS.find((s) => s.key === atab)
+  const content = requirement?.[stage?.field] || ''
+  const stageStatus = requirement?.pipeline_status
+    ? (typeof requirement.pipeline_status === 'string'
+      ? (() => { try { return JSON.parse(requirement.pipeline_status) } catch { return {} } })()
+      : requirement.pipeline_status)
+    : {}
+
+  const copyContent = async () => {
+    if (!content) return
+    await copyToClipboard(content)
+    setCopyOk(true)
+    setTimeout(() => setCopyOk(false), 1500)
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title={`需求产物 - ${requirement?.name || ''}`} size="lg">
+      <div className="flex items-center gap-1.5 border-b border-gray-200 pb-3 mb-4 overflow-x-auto">
+        {ARTIFACT_FIELDS.map((s) => {
+          const has = !!requirement?.[s.field]
+          const st = stageStatus[s.key]?.status
+          return (
+            <button
+              key={s.key}
+              onClick={() => setAtab(s.key)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                atab === s.key ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+              }`}
+              title={st === 'stale' ? '上游已变更，建议重新生成' : has ? '已生成' : '未生成'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${st === 'stale' ? 'bg-amber-500' : has ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+              {s.label}
+            </button>
+          )
+        })}
+        <button
+          onClick={() => setAtab('tests')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+            atab === 'tests' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+          }`}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+          测试记录
+          {testRuns?.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold">{testRuns.length}</span>
+          )}
+        </button>
+      </div>
+
+      {atab === 'tests' ? (
+        <div className="space-y-3 max-h-[55vh] overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-500">自动化测试执行记录（部署流水线中的测试门禁与 AI 修复循环）</p>
+            <button
+              onClick={onRefreshTests}
+              disabled={testLoading}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${testLoading ? 'animate-spin' : ''}`} /> 刷新
+            </button>
+          </div>
+          {testLoading ? (
+            <div className="py-10 text-center text-gray-400 text-sm">加载中…</div>
+          ) : testRuns?.length ? (
+            testRuns.map((r) => (
+              <div key={r.id} className="rounded-xl border border-gray-200 overflow-hidden">
+                <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                    {r.status === 'passed'
+                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      : <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                    {r.status === 'passed' ? '通过' : '失败'}
+                    <span className="text-gray-400 font-normal">· {r.summary || '—'}</span>
+                  </span>
+                  <span className="text-[10px] text-gray-400">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+                </div>
+                {r.log && (
+                  <pre className="bg-gray-900 text-green-400 p-3 text-[11px] font-mono overflow-auto max-h-[28vh] whitespace-pre-wrap">
+                    {r.log}
+                  </pre>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="py-10 text-center text-gray-400 text-sm">
+              暂无自动化测试记录。部署流水线开启「自动化测试」后，测试门禁与修复结果会记录在这里。
+            </div>
+          )}
+        </div>
+      ) : !content ? (
+        <div className="py-14 text-center">
+          <Empty
+            icon={stage?.mono ? <Code2 className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
+            title={`${stage?.label || ''}尚未生成`}
+            desc="切换到对应阶段页签生成后，产物会自动保存到需求，这里即可查看"
+          />
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-400">{content.length} 字符 · 与需求关联保存的产物一致</span>
+            <button
+              onClick={copyContent}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+            >
+              {copyOk ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+              {copyOk ? '已复制' : '复制全文'}
+            </button>
+          </div>
+          {stage?.mono ? (
+            <pre className="bg-gray-900 text-gray-100 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[55vh] whitespace-pre-wrap">
+              {content}
+            </pre>
+          ) : (
+            <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-gray-200 p-4">
+              <MarkdownRenderer content={content} />
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  )
+}
+
 export default function AIWorkspacePage() {
   const toast = useToast()
   const [tab, setTab] = useState('prd')
@@ -430,6 +569,9 @@ export default function AIWorkspacePage() {
   const [selectedReqId, setSelectedReqId] = useState(null)
   const [deployInfo, setDeployInfo] = useState(null)
   const [autoRunOpen, setAutoRunOpen] = useState(false)
+  const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [testRuns, setTestRuns] = useState([])
+  const [testLoading, setTestLoading] = useState(false)
   const messagesEndRef = useRef(null)
 
   const s = state[tab]
@@ -462,6 +604,25 @@ export default function AIWorkspacePage() {
   }, [fetchRequirements])
 
   const selectedReq = requirements.find((r) => r.id === selectedReqId) || null
+
+  // 加载需求的自动化测试执行记录
+  const fetchTestRuns = useCallback(async () => {
+    if (!selectedReqId) { setTestRuns([]); return }
+    setTestLoading(true)
+    try {
+      const res = await api.get(`/api/requirements/${selectedReqId}/test-runs`)
+      setTestRuns(res.data || [])
+    } catch {
+      setTestRuns([])
+    } finally {
+      setTestLoading(false)
+    }
+  }, [selectedReqId])
+
+  const openArtifacts = () => {
+    setArtifactsOpen(true)
+    fetchTestRuns()
+  }
 
   // 阶段状态：stale=上游变更需重新生成 / done=已有产物 / idle=未开始
   const stageStatus = (key) => {
@@ -783,6 +944,18 @@ export default function AIWorkspacePage() {
               )
             })}
           </div>
+          <button
+            onClick={openArtifacts}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-medium transition-colors border border-indigo-100 flex-shrink-0"
+            title="查看该需求已保存的全部产物与测试记录"
+          >
+            <FolderGit2 className="w-3.5 h-3.5" /> 查看全部产物
+            {ARTIFACT_FIELDS.filter((s) => selectedReq[s.field]).length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold">
+                {ARTIFACT_FIELDS.filter((s) => selectedReq[s.field]).length}
+              </span>
+            )}
+          </button>
         </div>
       )}
 
@@ -820,6 +993,14 @@ export default function AIWorkspacePage() {
 
       <DeployModal info={deployInfo} onClose={() => setDeployInfo(null)} />
       <AutoRunModal open={autoRunOpen} onClose={() => setAutoRunOpen(false)} />
+      <ArtifactsModal
+        open={artifactsOpen}
+        onClose={() => setArtifactsOpen(false)}
+        requirement={selectedReq}
+        testRuns={testRuns}
+        testLoading={testLoading}
+        onRefreshTests={fetchTestRuns}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
         {/* 左：输入面板 */}

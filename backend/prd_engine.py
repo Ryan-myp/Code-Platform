@@ -292,6 +292,25 @@ async def get_requirement(req_id: str):
     return _parse_req(row)
 
 
+@router.get("/api/requirements/{req_id}/test-runs")
+async def get_test_runs(req_id: str):
+    """查询需求的自动化测试执行记录（部署流水线测试门禁/修复循环写入）。"""
+    conn = get_db()
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS test_runs (id TEXT PRIMARY KEY, requirement_id TEXT, pipeline_id TEXT, "
+            "status TEXT, summary TEXT, log TEXT, created_at TEXT)"
+        )
+        rows = conn.execute(
+            "SELECT id, requirement_id, pipeline_id, status, summary, log, created_at FROM test_runs "
+            "WHERE requirement_id=? ORDER BY created_at DESC LIMIT 20",
+            (req_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 @router.put("/api/requirements/{req_id}")
 async def update_requirement(req_id: str, req: dict):
     conn = get_db()

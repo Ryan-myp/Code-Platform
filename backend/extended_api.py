@@ -89,8 +89,23 @@ def _detect_python_deps(code: str) -> list:
     return sorted(deps)
 
 
-def _gen_dockerfile() -> str:
-    """生成 Python 服务 Dockerfile（容器内固定 8000 端口）。"""
+def _gen_dockerfile(include_tests: bool = False) -> str:
+    """生成 Python 服务 Dockerfile（容器内固定 8000 端口）。
+
+    include_tests=True 时生成测试镜像 Dockerfile：额外复制 test_main.py 并安装 pytest，
+    用于自动化测试门禁在容器内真实执行用例。
+    """
+    if include_tests:
+        return (
+            "FROM python:3.11-slim\n"
+            "WORKDIR /app\n"
+            "COPY main.py .\n"
+            "COPY test_main.py .\n"
+            "COPY requirements.txt .\n"
+            "RUN pip install --no-cache-dir -r requirements.txt pytest\n"
+            "EXPOSE 8000\n"
+            'CMD ["python", "main.py"]\n'
+        )
     return (
         "FROM python:3.11-slim\n"
         "WORKDIR /app\n"
@@ -164,54 +179,84 @@ def _is_infra_error(msg: str) -> bool:
     return any(m in low for m in _INFRA_ERROR_MARKERS)
 
 
-def _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg=None) -> tuple:
-    """单轮部署：构建镜像 → 启动依赖容器 → 启动服务容器 → 健康检查。返回 (ok, info)。"""
-    cfg = cfg or {}
-    # 阶段 1.5：外部依赖容器（Redis/MySQL）。podman 5.x 已移除 --link，
-    # 改用自定义网络 + --network-alias（同网络容器名/别名可直接解析）
+def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:
+    """准备自定义网络 + 依赖容器（Redis/MySQL），已存在且健康则复用（幂等）。
+
+    podman 5.x 已移除 --link，改用自定义网络 + --network-alias（同网络容器名/别名可直接解析）。
+    返回 (net, env_flags, ok, err)。测试门禁与部署共用，避免重复重建依赖。
+    """
     deps = cfg.get("dependencies") or {}
     net = f"{container_name}-net"
+    env_flags: list = []
     if deps:
-        append(f"  - 依赖: 准备网络 {net} …")
-        step_run(["podman", "rm", "-f", container_name], timeout=30)
-        step_run(["podman", "network", "rm", "-f", net], timeout=30)
-        ok, out = step_run(["podman", "network", "create", net], timeout=30)
-        if not ok and "already exists" not in (out or "").lower():
-            return False, f"创建依赖网络失败: {out[-300:]}"
+        ok, out = step_run(["podman", "network", "exists", net], timeout=30)
+        if not ok:
+            ok, out = step_run(["podman", "network", "create", net], timeout=30)
+            if not ok and "already exists" not in (out or "").lower():
+                return "", [], False, f"创建依赖网络失败: {out[-300:]}"
     if deps.get("redis"):
         dep = f"{container_name}-redis"
-        append(f"  - 依赖: 启动 Redis 容器 {dep} …")
-        step_run(["podman", "rm", "-f", dep], timeout=30)
-        ok, out = step_run([
-            "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
-            "docker.io/library/redis:7-alpine",
-        ], timeout=300)
-        if not ok:
-            return False, f"Redis 依赖容器启动失败: {out[-300:]}"
+        ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
+        if ok and out.strip() == "true":
+            append(f"  - 依赖: Redis 容器 {dep} 已运行，复用 ✓")
+        else:
+            step_run(["podman", "rm", "-f", dep], timeout=30)
+            append(f"  - 依赖: 启动 Redis 容器 {dep} …")
+            ok, out = step_run([
+                "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
+                "docker.io/library/redis:7-alpine",
+            ], timeout=300)
+            if not ok:
+                return "", [], False, f"Redis 依赖容器启动失败: {out[-300:]}"
+        env_flags += ["-e", "REDIS_URL=redis://redis:6379/0"]
     if deps.get("mysql"):
         dep = f"{container_name}-mysql"
         pw = deps.get("mysql_password", "platform123")
         db = deps.get("mysql_database", "platform")
         img = deps.get("mysql_image", "docker.io/library/mysql:8")  # 国内网络可配置 mirror 源
-        append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
-        step_run(["podman", "rm", "-f", dep], timeout=30)
-        ok, out = step_run([
-            "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
-            "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}",
-            img,
-        ], timeout=600)
-        if not ok:
-            return False, f"MySQL 依赖容器启动失败: {out[-300:]}"
-        append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
-        ready = False
-        for _ in range(60):
-            time.sleep(2)
+        ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
+        if ok and out.strip() == "true":
+            # 已运行：仍校验 MySQL 可 ping（避免复用坏实例）
             ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
             if ok2:
-                ready = True
-                break
-        if not ready:
-            return False, "MySQL 依赖容器初始化超时"
+                append(f"  - 依赖: MySQL 容器 {dep} 已运行且就绪，复用 ✓")
+            else:
+                append(f"  - 依赖: MySQL 容器 {dep} 未就绪，重建 …")
+                ok, out = (False, "")
+        else:
+            ok, out = (False, "")
+        if not ok:
+            step_run(["podman", "rm", "-f", dep], timeout=30)
+            append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
+            ok, out = step_run([
+                "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
+                "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}",
+                img,
+            ], timeout=600)
+            if not ok:
+                return "", [], False, f"MySQL 依赖容器启动失败: {out[-300:]}"
+            append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
+            ready = False
+            for _ in range(60):
+                time.sleep(2)
+                ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+                if ok2:
+                    ready = True
+                    break
+            if not ready:
+                return "", [], False, "MySQL 依赖容器初始化超时"
+        env_flags += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{pw}@mysql:3306/{db}?charset=utf8mb4"]
+    return net, env_flags, True, ""
+
+
+def _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg=None) -> tuple:
+    """单轮部署：构建镜像 → 启动依赖容器 → 启动服务容器 → 健康检查。返回 (ok, info)。"""
+    cfg = cfg or {}
+    # 阶段 1.5：外部依赖容器（Redis/MySQL）。幂等准备：已运行则复用，避免测试门禁后重复初始化
+    deps = cfg.get("dependencies") or {}
+    net, env_flags, ok, err = _prepare_dependencies(cfg, container_name, append, step_run)
+    if not ok:
+        return False, err
 
     # 阶段 2：构建镜像
     append(f"  - 构建镜像: podman build -t {image_tag} …（首次拉取基础镜像较慢）")
@@ -229,8 +274,7 @@ def _deploy_once(name, project_dir, port, image_tag, container_name, append, ste
     cmd = ["podman", "run", "-d", "--name", container_name, "-p", f"{port}:8000"]
     if deps:
         cmd += ["--network", net]
-        cmd += ["-e", "REDIS_URL=redis://redis:6379/0"] if deps.get("redis") else []
-        cmd += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{deps.get('mysql_password', 'platform123')}@mysql:3306/{deps.get('mysql_database', 'platform')}?charset=utf8mb4"] if deps.get("mysql") else []
+    cmd += env_flags
     cmd += [image_tag]
     ok, out = step_run(cmd)
     if out:
@@ -276,6 +320,7 @@ def _extract_code_block(text: str) -> str:
     """从 LLM 输出提取完整代码（清洗 markdown 围栏）。
 
     - 优先提取所有 ``` 围栏代码块，取最长的一个（容忍前置解释文字/前导换行）
+    - 退化场景：只有开头围栏无闭合围栏（LLM 偶发截断），剥离首个围栏行后返回
     - 无围栏时若全文无明显解释性文字则原样返回
     """
     text = (text or "").strip()
@@ -284,11 +329,18 @@ def _extract_code_block(text: str) -> str:
     blocks = re.findall(r"```[a-zA-Z]*\s*\n(.*?)```", text, re.DOTALL)
     if blocks:
         return max(blocks, key=len).strip()
-    clean = re.sub(r"^```[a-zA-Z]*\s*$", "", text).strip()
+    # 退化：只有开头围栏、无闭合围栏（LLM 输出被截断时常见）→ 剥离首个围栏行
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", text).strip()
+    if cleaned != text:
+        # 剥离后仍带中文解释文字且无代码特征 → 视为无效输出
+        if re.search(r"[，。；：、]|以下是|修复建议|问题|错误|请提供|您好|需要", cleaned[:200]) \
+                and "def " not in cleaned[:200] and "import " not in cleaned[:200] and "class " not in cleaned[:200]:
+            return ""
+        return cleaned
     # 无明显解释性文字才视为纯代码（避免把 LLM 的说明文字写入 main.py）
-    if re.search(r"[，。；：、]|以下是|修复建议|问题|错误|请提供|您好|需要", clean[:200]):
+    if re.search(r"[，。；：、]|以下是|修复建议|问题|错误|请提供|您好|需要", text[:200]):
         return ""
-    return clean
+    return text
 
 
 def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_rounds=3) -> bool:
@@ -364,6 +416,496 @@ def _fix_rounds(pid, run_id, cfg, log, append, step_run, initial_error, max_roun
     return False
 
 
+TEST_FIX_SYSTEM = (
+    "你是一个资深的 Python 开发工程师。根据下面的构建/测试失败输出和当前 main.py 代码，"
+    "定位问题根因并输出修复后的完整 main.py（必须是可直接运行的 Web 服务，监听 0.0.0.0:8000，"
+    "提供 FastAPI 应用，可包含 Flask 等，但根路径 / 必须返回 200）。"
+    "保持原有功能与接口不变，只修复导致失败的问题。"
+    "只返回修复后的完整代码，放在 ```python 代码块中，不要任何解释文字。"
+)
+
+TEST_FILE_FIX_SYSTEM = (
+    "你是一个资深的测试工程师。根据下面的测试执行/语法错误输出和当前测试文件内容，"
+    "定位问题根因并输出修复后的完整 pytest 测试文件。"
+    "保持测试意图与覆盖范围不变，只修复导致失败的问题（语法/import/断言等）。"
+    "只返回修复后的完整代码，放在 ```python 代码块中，不要任何解释文字。"
+)
+
+PATCH_FIX_SYSTEM = (
+    "你是一个资深的 Python 开发工程师。根据下面的失败输出，定位问题根因，"
+    "输出修复代码所需的 unified diff（diff -u 格式）：\n"
+    "1. 只输出 diff 本身，放在 ```diff 围栏中，不要输出完整文件，不要任何解释文字\n"
+    "2. 文件头格式：--- a/文件名 和 +++ b/文件名（patch -p1 应用）\n"
+    "3. 只包含修复所需的最小改动，保留原有缩进，diff 必须格式合法\n"
+    "4. 若失败源于测试期望与实现不符（如外部依赖不可用），给出合理修复（mock 外部调用或调整逻辑），"
+    "   不得删除接口或改变接口语义"
+)
+
+FUNCTION_FIX_SYSTEM = (
+    "你是一个资深的 Python 开发工程师。根据下面的失败输出和当前函数代码，定位问题根因，"
+    "只输出修复后的完整函数定义：\n"
+    "1. 输出顺序：先按需输出修复后的路由装饰器行（@app.xxx(...)，仅当必须修改时，如 response_model "
+    "   与返回结构冲突），紧接着输出 def 函数定义本身（从 def 行到函数结束），不要 import、其他函数或解释文字\n"
+    "2. 保持既有参数不变，可新增可选参数（如 type: str = Query(None)）以满足测试用例的参数需求；"
+    "   保留 4 空格缩进风格\n"
+    "3. 若失败源于外部依赖不可用（如第三方 API Key 缺失/网络失败/下游 500），在函数内做合理降级"
+    "   （返回友好错误码或 mock 数据），不要抛出未处理异常；注意路由装饰器声明的 response_model："
+    "   返回的 dict 必须包含该模型所有必填字段（缺字段会触发 FastAPI ResponseValidationError 导致 500）\n"
+    "4. 若提供了失败测试用例，降级返回的数据结构与状态码必须满足其断言"
+    "   （如 data 下必须含 live/forecast 字段，或特定状态码），可用 mock/示例数据填充；"
+    "   可通过异常信息区分场景（如 'not found' 返回 404、网络/Key 问题降级 200）；"
+    "   若测试要求 data 为 list（如 type=forecast 返回 5 条列表）或 data 直接为 dict（如 type=live），"
+    "   与 response_model 的 Dict 约束冲突时，必须修改装饰器（移除 response_model 或改为兼容模型）\n"
+    "5. 修复后的函数必须完整不截断"
+)
+
+
+def _ensure_test_file(project_dir, cfg, append) -> bool:
+    """生成 pytest 测试文件 test_main.py（基于 main.py 与需求测试用例），已有则复用。
+
+    LLM 不可用时返回 False（调用方跳过测试门禁并提示），不阻塞部署。
+    """
+    test_file = os.path.join(project_dir, "test_main.py")
+    if os.path.exists(test_file) and os.path.getsize(test_file) > 50:
+        return True
+    try:
+        with open(os.path.join(project_dir, "main.py"), encoding="utf-8") as f:
+            code = f.read()
+    except Exception as e:
+        append(f"  - ⚠ 读取 main.py 失败: {e}")
+        return False
+    test_cases = ""
+    if cfg.get("requirement_id"):
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT test_cases FROM requirements WHERE id=?", (cfg["requirement_id"],)).fetchone()
+            if row and row["test_cases"]:
+                test_cases = row["test_cases"]
+        finally:
+            conn.close()
+    sys_prompt = (
+        "你是一个资深的测试工程师。根据需求测试用例和 main.py 代码，生成 pytest 测试文件 test_main.py：\n"
+        "1. 使用真实 HTTP 测试：fixture 中 subprocess 启动 uvicorn main:app（随机端口如 8911），用 httpx 同步请求；\n"
+        "   禁止使用 fastapi TestClient——若 main.py 接口为同步函数内部 asyncio.run()（AI 生成常见），TestClient 会报 Task attached to different loop\n"
+        "2. 覆盖核心接口的正常路径、参数校验与错误分支，断言要合理；FastAPI 参数校验失败返回 422（断言以 422 为准，不要预期 400）\n"
+        "3. 不依赖真实外部第三方 API（外部网络调用在服务端做降级或跳过）\n"
+        "4. 禁止使用 unittest.mock.patch 对 main 模块做 mock（测试运行在独立子进程 uvicorn 中，patch 不生效）\n"
+        "5. 全部使用同步调用，禁止 async/await 异步测试（容器未安装 pytest-asyncio）\n"
+        "6. 测试文件必须自包含（只 import 标准库/httpx/pytest），通过环境变量连接依赖（REDIS_URL/DATABASE_URL 已注入）\n"
+        "7. 只输出 ```python 围栏包裹的完整测试代码，不要任何解释文字，代码必须完整不截断\n"
+        "\n推荐测试骨架（可直接使用）：\n"
+        "import os, subprocess, time, httpx, pytest\n"
+        "@pytest.fixture(scope=\"module\")\n"
+        "def base_url():\n"
+        "    port = os.environ.get(\"TEST_PORT\", \"8911\")\n"
+        "    proc = subprocess.Popen([\"uvicorn\", \"main:app\", \"--host\", \"127.0.0.1\", \"--port\", port],\n"
+        "        env={**os.environ}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "    for _ in range(40):\n"
+        "        try:\n"
+        "            httpx.get(f\"http://127.0.0.1:{port}/docs\", timeout=1)\n"
+        "            break\n"
+        "        except Exception:\n"
+        "            time.sleep(0.5)\n"
+        "    yield f\"http://127.0.0.1:{port}\"\n"
+        "    proc.terminate()\n"
+        "测试用例通过 httpx.get(base_url + \"/路径\", params=...) 调用并断言。"
+    )
+    prompt = f"【需求测试用例】\n{test_cases or '（无，请基于 main.py 的接口自拟核心用例）'}\n\n【main.py】\n{code}"
+    # 代码过长会超 LLM 上下文/响应超时：截断到 15K 字符（头尾拼接，保留路由与入口）
+    if len(prompt) > 17000:
+        prompt = prompt[:11000] + "\n# ……（代码过长已截断）……\n" + prompt[-6000:]
+    try:
+        out = call_llm(sys_prompt, prompt, max_tokens=6000, timeout=180)
+    except Exception as e:
+        append(f"  - ⚠ LLM 生成测试文件失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
+        return False
+    fixed = _extract_code_block(out)
+    if not fixed:
+        append("  - ⚠ LLM 未输出测试代码，跳过自动化测试门禁")
+        return False
+    # 语法校验：生成物必须可被 Python 解析（LLM 偶发输出未闭合围栏/截断）
+    try:
+        import ast
+        ast.parse(fixed)
+    except SyntaxError as e:
+        append(f"  - ⚠ 生成测试文件语法错误（L{e.lineno}），LLM 重写中…")
+        try:
+            # 重写上下文：错误附近 40 行 + 文件头尾（避免全文过长再次超时）
+            flines = fixed.splitlines()
+            ctx_lines = flines[max(0, e.lineno - 22):e.lineno + 18]
+            ctx = "\n".join(f"{max(0, e.lineno - 22) + i + 1}| {l}" for i, l in enumerate(ctx_lines))
+            brief = fixed[:4000] + f"\n……（共 {len(flines)} 行，中间省略）……\n" + fixed[-2000:]
+            fix2 = call_llm(
+                TEST_FILE_FIX_SYSTEM,
+                f"【语法错误】{e.msg} at line {e.lineno}（常见原因：输出被 token 限制截断）\n"
+                f"【错误上下文】\n{ctx}\n\n【文件结构（头尾摘要）】\n{brief}\n\n"
+                "请重新输出修复后的完整 test_main.py（必须完整不截断，同步调用，禁止 async/await）。",
+                max_tokens=6000,
+                timeout=180,
+            )
+            fixed2 = _extract_code_block(fix2)
+            ast.parse(fixed2)
+        except Exception as e2:
+            append(f"  - ⚠ 测试文件重写失败: {e2}，跳过自动化测试门禁")
+            return False
+        if not fixed2:
+            append("  - ⚠ 测试文件重写仍无有效代码，跳过自动化测试门禁")
+            return False
+        fixed = fixed2
+        append(f"  - 测试文件重写成功（{len(fixed)} 字节）")
+    with open(test_file, "w", encoding="utf-8") as f:
+        f.write(fixed)
+    append(f"  - 测试文件已生成 test_main.py（{len(fixed)} 字节）")
+    return True
+
+
+def _record_test_run(requirement_id, pipeline_id, status, summary, log_text) -> None:
+    """记录一次自动化测试执行结果（需求维度，AI 工作台可见）。记录失败不阻塞主流程。"""
+    if not requirement_id:
+        return
+    conn = get_db()
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS test_runs (id TEXT PRIMARY KEY, requirement_id TEXT, pipeline_id TEXT, "
+            "status TEXT, summary TEXT, log TEXT, created_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO test_runs (id, requirement_id, pipeline_id, status, summary, log, created_at) VALUES (?,?,?,?,?,?,?)",
+            (f"test_{uuid.uuid4().hex[:12]}", requirement_id, pipeline_id, status, summary or "", log_text or "", datetime.now().isoformat()),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"记录测试结果失败: {e}")
+    finally:
+        conn.close()
+
+
+def _parse_pytest_summary(out: str) -> str:
+    """从 pytest 输出提取简短结果（如 '1 passed in 0.5s'）。"""
+    m = re.search(r"\d+ (?:passed|failed|error)[^\n]{0,60}", out or "")
+    return m.group(0).strip() if m else (out or "").splitlines()[-1][:120] if (out or "").strip() else "无输出"
+
+
+def _extract_failed_functions(project_dir: str, out: str) -> list:
+    """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。
+
+    pytest 无 -x 时输出所有失败：解析 FAILED ...::test_x 行（+ traceback 帧）→
+    定位测试函数源码 → 提取请求路径 → AST 匹配 @app.get("/path") 装饰器。
+    返回 [(name, start_line, end_line, [test_seg...]), ...]（按失败顺序、按函数去重）；
+    定位失败返回 []。test_seg 为失败测试用例源码（供 LLM 理解断言要求）。
+    """
+    import ast
+    main_file = os.path.join(project_dir, "main.py")
+    try:
+        with open(main_file, encoding="utf-8") as f:
+            code = f.read()
+        tree = ast.parse(code)
+    except Exception:
+        return []
+    # 失败测试名：FAILED test_main.py::Class::test_x - 原因（+ traceback ' in test_x' 帧兜底）
+    failed = re.findall(r"FAILED [^\n]*::([a-zA-Z0-9_]+) - ", out or "")
+    failed += re.findall(r" in (test_\w+)\b", out or "")
+    names, seen = [], set()
+    for n in failed:
+        if n not in seen:
+            seen.add(n)
+            names.append(n)
+    if not names:
+        return []
+    test_file = os.path.join(project_dir, "test_main.py")
+    try:
+        with open(test_file, encoding="utf-8") as f:
+            tcode = f.read()
+        ttree = ast.parse(tcode)
+    except Exception:
+        return []
+    # 测试函数 → {请求路径列表, 源码段}
+    test_info = {}
+    for node in ast.walk(ttree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
+            seg = ast.get_source_segment(tcode, node) or ""
+            paths = [p for p in re.findall(r'["\'][^"\']*?(/[^"\']+)[^"\']*["\']', seg)
+                     if p not in ("/", "/docs", "/openapi.json", "/redoc")]
+            info = test_info.setdefault(node.name, {"paths": [], "segs": []})
+            info["paths"] += [p for p in paths if p not in info["paths"]]
+            if seg not in info["segs"]:
+                info["segs"].append(seg)
+    # 路由函数匹配（保留路由装饰器行，只替换 def..函数尾）
+    funcs, order = {}, []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for d in node.decorator_list:
+            seg = ast.get_source_segment(code, d) or ""
+            m = re.search(r'["\'](/[^"\']+)["\']', seg)
+            if not m:
+                continue
+            for tname, info in test_info.items():
+                if m.group(1) in info["paths"]:
+                    if node.name not in funcs:
+                        funcs[node.name] = {"start": node.lineno,
+                                           "end": getattr(node, "end_lineno", node.lineno),
+                                           "segs": []}
+                        order.append(node.name)
+                    funcs[node.name]["segs"] += [s for s in info["segs"] if s not in funcs[node.name]["segs"]]
+                    break
+    return [(n, funcs[n]["start"], funcs[n]["end"], funcs[n]["segs"]) for n in order]
+
+
+def _replace_function(target_path: str, new_code: str, start_line: int, end_line: int) -> None:
+    """用修复后的函数源码替换文件指定行区间，并按原函数缩进适配。"""
+    with open(target_path, encoding="utf-8") as f:
+        lines = f.read().splitlines(keepends=True)
+    orig = lines[start_line - 1]
+    indent = orig[: len(orig) - len(orig.lstrip())]
+    body_lines = [l for l in new_code.strip("\n").splitlines()]
+    adapted = []
+    if body_lines:
+        base = body_lines[0][: len(body_lines[0]) - len(body_lines[0].lstrip())]
+        for l in body_lines:
+            if l.strip():
+                adapted.append(indent + (l[len(base):] if l.startswith(base) else l.lstrip()))
+            else:
+                adapted.append("")
+    lines[start_line - 1:end_line] = [l + "\n" for l in adapted]
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write("".join(lines))
+
+
+def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
+    """自动化测试门禁：生成 pytest 测试 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
+
+    返回 (ok, summary)；ok=False 表示测试多次失败且修复未解决，流水线应终止；summary='skip' 表示测试不可用已跳过。
+    每次执行结果写入 test_runs 表（AI 工作台可查看）。
+    """
+    name = cfg["service_name"]
+    slug = _safe_slug(name)
+    project_dir = cfg["project_dir"]
+    image_tag = f"app-{slug}:test"
+    container_name = f"sandbox-{slug}"
+    main_file = os.path.join(project_dir, "main.py")
+    # 0. 依赖容器（测试容器与部署容器同网络，可真实访问 Redis/MySQL）
+    net, env_flags, ok, err = _prepare_dependencies(cfg, container_name, append, step_run)
+    if not ok:
+        return False, err
+    # 1. 生成/复用测试文件
+    if not _ensure_test_file(project_dir, cfg, append):
+        return True, "skip"
+    # 2. 写测试镜像 Dockerfile
+    with open(os.path.join(project_dir, "Dockerfile.test"), "w", encoding="utf-8") as f:
+        f.write(_gen_dockerfile(include_tests=True))
+
+    def verify() -> tuple:
+        """构建测试镜像并执行 pytest。返回 (ok, out)。"""
+        append("  - 构建测试镜像（含 pytest + test_main.py）…")
+        ok, out = step_run(["podman", "build", "-f", "Dockerfile.test", "-t", image_tag, project_dir], timeout=900)
+        if not ok:
+            return False, f"测试镜像构建失败: {out[-600:]}"
+        append("  - 容器内执行 pytest …")
+        cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag, "pytest", "-q", "--tb=short", "test_main.py"]
+        ok, out = step_run(cmd, timeout=300)
+        return ok, out or ""
+
+    # 3. 初始验证 + 失败修复循环（最多 5 轮 AI 修复）
+    last_out = ""
+    for round_no in range(6):
+        ok, out = verify()
+        last_out = out
+        if ok:
+            summary = _parse_pytest_summary(out)
+            _record_test_run(cfg.get("requirement_id"), pid, "passed", summary, out)
+            append(f"  - 自动化测试通过 ✓（{summary}）")
+            return True, summary
+        if _is_infra_error(out):
+            append("  - ⚠ 检测到基础设施故障（Docker/Podman 环境问题），AI 修复无法解决，停止测试")
+            _record_test_run(cfg.get("requirement_id"), pid, "failed", "基础设施故障", out[-800:])
+            return False, out[-400:]
+        if round_no >= 3:
+            break
+        append(f"  - ⚠ 测试未通过（第 {round_no + 1} 次验证），AI 诊断修复中…")
+        # 智能选择修复目标：
+        # - 语法/收集/断言预期错误（422 vs 400 等）→ 测试文件自身问题 → 修 test_main.py
+        # - 服务端错误（500/Internal Server Error）→ 实现缺陷/外部依赖 → 修 main.py
+        low = out.lower()
+        if "syntax" in low or "collection" in low or "unresolved import" in low or "assert 422" in low or "assert 400" in low:
+            target = "test_main.py"
+        elif "internal server error" in low or " 500 " in out or "status_code == 500" in low \
+                or "keyerror" in low or "typeerror" in low or "attributeerror" in low or "valueerror" in low:
+            # 服务端错误/响应数据结构异常（KeyError 等）→ 实现缺陷 → 修 main.py
+            target = "main.py"
+        else:
+            target = "test_main.py"  # 其余断言类问题默认测试文件（断言预期与实现不符）
+        target_path = os.path.join(project_dir, target)
+        backup_path = target_path + ".bak"
+        import shutil
+        try:
+            with open(target_path, encoding="utf-8") as f:
+                content = f.read()
+            # 失败输出取头部（traceback 细节）+ 尾部（summary），避免超长
+            diag = (out[:2500] + "\n……\n" + out[-1000:]) if len(out) > 4000 else out
+            # 修复策略一（main.py 专属）：函数级批量修复。大文件全文喂 LLM 易超上下文返回空，
+            # 从 pytest 输出定位全部失败路由函数，逐个只让 LLM 重写该函数（小输入、修复率高）。
+            # 不依赖 target 判定：只要失败测试能映射到路由函数就优先修复（带断言上下文）；
+            # 避免 "assert 400" 等关键字把批次误判为测试文件问题而跳过 main.py 修复。
+            # ast 校验 + .bak 备份保证安全，修复无效会被拒绝。
+            try:
+                funcs = _extract_failed_functions(project_dir, out)
+            except Exception:
+                funcs = []
+            if funcs:
+                fixed_count = 0
+                # 自下而上替换（行号高的先替换，避免低行号区间的行号偏移）
+                for fname, fstart, fend, test_segs in sorted(funcs, key=lambda x: -x[1]):
+                    cur = open(target_path, encoding="utf-8").read()
+                    func_code = "\n".join(cur.splitlines()[fstart - 1:fend])
+                    # 定位函数上方连续的路由装饰器块（response_model 约束，允许 LLM 修改）
+                    cur_lines = cur.splitlines()
+                    deco_start = fstart - 1
+                    while deco_start > 0 and cur_lines[deco_start - 1].lstrip().startswith("@"):
+                        deco_start -= 1
+                    deco_lines = cur_lines[deco_start:fstart - 1]
+                    ctx_extra = ""
+                    if deco_lines:
+                        ctx_extra += "\n\n【路由装饰器（response_model 约束，可修改）】\n" + "\n".join(deco_lines)
+                    if test_segs:
+                        ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + \
+                            "\n---\n".join(s[:600] for s in test_segs[:3])
+                    try:
+                        fix = call_llm(
+                            FUNCTION_FIX_SYSTEM,
+                            f"【失败输出】\n{diag}\n\n【函数 {fname}（main.py {fstart}-{fend} 行）】\n{func_code}{ctx_extra}",
+                            max_tokens=4000,
+                            timeout=180,
+                        )
+                    except Exception:
+                        fix = ""
+                    fixed = _extract_code_block(fix)
+                    fstart_new = fstart
+                    if fixed:
+                        fstrip = fixed.strip()
+                        if fstrip.startswith("@"):
+                            # LLM 输出含修改后的装饰器：替换区间上扩到装饰器块起点
+                            fstart_new = deco_start + 1
+                        elif deco_lines and re.match(r"^(async\s+)?def ", fstrip):
+                            # LLM 仅输出 def：自动拼接原装饰器行，保留路由不丢失
+                            fixed = "\n".join(deco_lines) + "\n" + fixed
+                    if fixed and (re.match(r"^(async\s+)?def ", fixed.strip()) or fixed.strip().startswith("@")):
+                        import ast
+                        try:
+                            ast.parse(fixed)
+                            shutil.copy2(target_path, backup_path)
+                            _replace_function(target_path, fixed, fstart_new, fend)
+                            ast.parse(open(target_path, encoding="utf-8").read())
+                            os.remove(backup_path)
+                            fixed_count += 1
+                            append(f"  - AI 函数级修复 {fname} 成功")
+                        except Exception as e:
+                            append(f"  - ⚠ 函数级修复 {fname} 校验失败: {e}，恢复该函数")
+                            shutil.copy2(backup_path, target_path)
+                    else:
+                        append(f"  - ⚠ 函数级修复 {fname} 未产出有效函数，跳过")
+                if fixed_count:
+                    append(f"  - 本轮批量修复 {fixed_count} 个函数，重新构建并复跑测试…")
+                    continue
+                append("  - 函数级修复未产出任何有效修复，改用补丁/全量重写…")
+            # 修复策略二：unified diff 补丁（大文件全量重写易被 token 截断，优先最小补丁）
+            patch_text = ""
+            try:
+                fix = call_llm(PATCH_FIX_SYSTEM, f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}", timeout=180)
+                m = re.search(r"```diff\s*\n(.*?)```", fix or "", re.DOTALL)
+                patch_text = m.group(1).strip() if m else _extract_code_block(fix)
+            except Exception:
+                patch_text = ""
+            if patch_text:
+                shutil.copy2(target_path, backup_path)
+                pr = subprocess.run(
+                    ["patch", "-p1", "--forward", "--batch"],
+                    input=patch_text, capture_output=True, text=True, cwd=project_dir, timeout=30,
+                )
+                if pr.returncode != 0:
+                    # diff 质量不稳：携带 patch 错误让 LLM 重新生成一次合法 diff
+                    append(f"  - ⚠ diff 补丁应用失败（{pr.stderr.strip().splitlines()[-1][:80] if pr.stderr else '未知原因'}），要求 LLM 重新生成补丁…")
+                    try:
+                        fix2 = call_llm(
+                            PATCH_FIX_SYSTEM,
+                            f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}\n\n"
+                            f"（你上一次的 diff 应用失败：{pr.stderr.strip()[:300]}。请重新输出 diff 块，"
+                            f"确保 hunk 的上下文行数与 @@ 行号一致，只输出一个合法的 unified diff）",
+                            timeout=180,
+                        )
+                        m2 = re.search(r"```diff\s*\n(.*?)```", fix2 or "", re.DOTALL)
+                        patch_text = m2.group(1).strip() if m2 else _extract_code_block(fix2)
+                    except Exception:
+                        patch_text = ""
+                    if patch_text:
+                        shutil.copy2(target_path, backup_path)
+                        pr = subprocess.run(
+                            ["patch", "-p1", "--forward", "--batch"],
+                            input=patch_text, capture_output=True, text=True, cwd=project_dir, timeout=30,
+                        )
+                if pr.returncode == 0:
+                    try:
+                        import ast
+                        ast.parse(open(target_path, encoding="utf-8").read())
+                    except Exception:
+                        pr = subprocess.run(["patch", "-p1", "--batch"],
+                                            input=patch_text, capture_output=True, text=True,
+                                            cwd=project_dir, timeout=30)  # 首次可能部分应用，重试
+                    if pr.returncode == 0:
+                        try:
+                            import ast
+                            ast.parse(open(target_path, encoding="utf-8").read())
+                            os.remove(backup_path)
+                            append(f"  - AI 生成 diff 补丁并应用成功，重新构建并复跑测试…")
+                            continue
+                        except Exception as e:
+                            append(f"  - ⚠ 补丁后语法校验失败: {e}，恢复原文件并改用全量重写…")
+                            shutil.copy2(backup_path, target_path)
+                    else:
+                        append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，恢复原文件并改用全量重写…")
+                        shutil.copy2(backup_path, target_path)
+                else:
+                    append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，改用全量重写…")
+            # 修复策略三：全量重写（仅小文件兜底；大文件易被 token 截断破坏，测试文件重写会丢失既有用例）
+            if len(content) > 20000:
+                append("  - ⚠ 文件超过 20KB，跳过全量重写（避免 LLM 输出截断破坏文件）")
+                break
+            if target == "test_main.py":
+                append("  - ⚠ 测试文件断言问题不做全量重写（避免丢失既有用例覆盖），本轮跳过")
+                break
+            brief = content if len(content) <= 15000 else content[:9000] + "\n# ……（代码过长已截断）……\n" + content[-6000:]
+            try:
+                fix = call_llm(
+                    TEST_FILE_FIX_SYSTEM if target == "test_main.py" else TEST_FIX_SYSTEM,
+                    f"【构建/测试失败输出】\n{diag}\n\n【当前 {target}】\n{brief}",
+                    max_tokens=6000,
+                    timeout=180,
+                )
+            except Exception as e:
+                append(f"  - ❌ LLM 调用失败: {e}（可在系统配置-模型中设置模型 API Key）")
+                break
+            fixed = _extract_code_block(fix)
+            if fixed:
+                import ast
+                try:
+                    ast.parse(fixed)  # 修复产物必须可解析（LLM 偶发输出带围栏/截断），否则视为本轮无效
+                except SyntaxError as e:
+                    append(f"  - ⚠ 全量重写产物语法错误（L{e.lineno}），本轮修复无效")
+                    break
+        except Exception as e:
+            append(f"  - ❌ LLM 修复调用失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
+            break
+        if not fixed:
+            append("  - ⚠ LLM 未输出修复代码，本轮跳过")
+            break
+        shutil.copy2(target_path, backup_path)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(fixed)
+        append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
+    _record_test_run(cfg.get("requirement_id"), pid, "failed", "AI 修复轮次用尽", last_out[-1500:])
+    return False, "自动化测试多次失败且 AI 修复未解决: " + last_out[-300:]
+
+
 def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
     """后台执行部署流水线：构建镜像 → 启动沙箱容器 → 健康检查；失败自动进入 AI 修复循环。"""
     name = cfg["service_name"]
@@ -394,6 +936,16 @@ def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
         if not os.path.exists(main_file):
             raise RuntimeError("main.py 不存在，无法构建")
         append(f"  - 检出代码: 就绪（artifacts/{name}/，{os.path.getsize(main_file)} 字节）")
+        # 阶段 1.6：自动化测试门禁（生成测试 → 容器内执行 → 失败 AI 修复 → 通过后放行部署）
+        if cfg.get("auto_test", True):
+            append("  - ⚡ 自动化测试门禁已开启：先执行测试，通过后再部署")
+            t_ok, t_info = _run_test_gate(pid, run_id, cfg, append, step_run)
+            if not t_ok:
+                append(f"  - ❌ 自动化测试未通过，停止部署：{t_info[-400:]}")
+                _finish_run(run_id, pid, "failed", "\n".join(log))
+                return
+            if t_info != "skip":
+                append(f"  - 自动化测试门禁通过 ✓（{t_info}）")
         ok, info = _deploy_once(name, project_dir, port, image_tag, container_name, append, step_run, cfg)
         if not ok:
             append(f"  - ❌ {info}")
@@ -488,7 +1040,8 @@ def _create_deploy_pipeline(name: str, code: str, requirement_id: str, username:
     pid = f"pipe_{uuid.uuid4().hex[:12]}"
     port = _find_free_port()
     desc = f"需求 {requirement_id} 自动部署" if requirement_id else f"{name} 沙箱部署"
-    cfg = {"service_name": name, "project_dir": project_dir, "port": port, "requirement_id": requirement_id, "auto_fix": True}
+    cfg = {"service_name": name, "project_dir": project_dir, "port": port, "requirement_id": requirement_id,
+           "auto_fix": True, "auto_test": True}
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
     conn = get_db()
@@ -569,12 +1122,6 @@ def _auto_run_is_stopping(run_id: str) -> bool:
         return bool(row and row["status"] == "stopping")
     finally:
         conn.close()
-
-
-def _extract_code_block(text: str) -> str:
-    """从 LLM 输出中提取代码（去除 markdown 代码围栏）"""
-    m = re.search(r"```[a-zA-Z]*\s*\n(.*?)```", text or "", re.S)
-    return m.group(1).strip() if m else (text or "").strip()
 
 
 def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
