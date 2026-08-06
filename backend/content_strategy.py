@@ -224,24 +224,31 @@ _SENSITIVE_WORDS = {
 
 
 def _scan_text(text: str) -> list[dict]:
-    """扫描文本中的敏感词，返回命中列表 [{word, level, position}]。"""
+    """扫描文本中的敏感词，返回命中列表 [{word, level, position}]。
+
+    中文词（含汉字）直接整词子串匹配——中文没有空格分词，
+    词嵌入任意中文上下文都算命中；纯 ASCII 字母/数字词才做完整词边界检查
+    （避免 "top" 命中 "topics"、"100" 命中 "1000" 这类误伤）。
+    """
     hits = []
     lower = text.lower()
     for level, words in _SENSITIVE_WORDS.items():
         for w in words:
+            wl = w.lower()
             idx = 0
             while True:
-                idx = lower.find(w.lower(), idx)
+                idx = lower.find(wl, idx)
                 if idx == -1:
                     break
-                # 确保是完整词边界（前后不是中文/字母/数字）
-                before_ok = idx == 0 or not (lower[idx - 1].isalnum() or '\u4e00' <= lower[idx - 1] <= '\u9fff')
-                after_ok = (idx + len(w) >= len(lower)) or not (
-                    lower[idx + len(w)].isalnum() or '\u4e00' <= lower[idx + len(w)] <= '\u9fff'
-                )
-                if before_ok and after_ok:
-                    hits.append({"word": w, "level": level,
-                                 "position": idx, "context": text[max(0, idx - 5):idx + len(w) + 5]})
+                # 纯 ASCII 词需完整词边界（前后不能是字母/数字）
+                if wl.isascii() and wl.isalnum():
+                    before_ok = idx == 0 or not lower[idx - 1].isalnum()
+                    after_ok = (idx + len(wl) >= len(lower)) or not lower[idx + len(wl)].isalnum()
+                    if not (before_ok and after_ok):
+                        idx += 1
+                        continue
+                hits.append({"word": w, "level": level,
+                             "position": idx, "context": text[max(0, idx - 5):idx + len(w) + 5]})
                 idx += 1
     return hits
 

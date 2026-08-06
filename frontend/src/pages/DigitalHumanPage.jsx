@@ -30,12 +30,23 @@ export default function DigitalHumanPage() {
   const [sceneId, setSceneId] = useState('product')
   const [speed, setSpeed] = useState(1.0)
   const [generating, setGenerating] = useState(false)
+  // 商业参数：分辨率 / 帧率 / 水印
+  const [resolution, setResolution] = useState('720p')
+  const [fps, setFps] = useState(15)
+  const [watermark, setWatermark] = useState(false)  // 会员可开关；免费用户由后端强制加水印
+  const [genPhase, setGenPhase] = useState('')   // 生成阶段提示文案
+  const [quota, setQuota] = useState(null)       // 今日剩余额度
 
   // 数据
   const [avatars, setAvatars] = useState([])
   const [voices, setVoices] = useState([])
   const [backgrounds, setBackgrounds] = useState([])
   const [records, setRecords] = useState([])
+  const [recordTotal, setRecordTotal] = useState(0)
+  const [recordPage, setRecordPage] = useState(1)
+  const [recordStatus, setRecordStatus] = useState('')   // 状态筛选：''|done|audio_only|failed
+  const [recordQuery, setRecordQuery] = useState('')     // 关键词搜索
+  const [selectedRecords, setSelectedRecords] = useState([])  // 批量删除选中
   const [result, setResult] = useState(null)
 
   // 自定义形象 / 声音（用户上传）
@@ -83,7 +94,24 @@ export default function DigitalHumanPage() {
   const [generatingPortrait, setGeneratingPortrait] = useState(new Set())  // 正在生成的 avatarId
   const [generatingAll, setGeneratingAll] = useState(false)   // 是否在批量生成
 
-  useEffect(() => { loadData(); loadRecords() }, [])
+  useEffect(() => { loadData(); loadRecords(true); loadQuota() }, [])
+
+  // 额度变化时刷新（其他页面的计费操作也会派发该事件）
+  useEffect(() => {
+    const refresh = () => loadQuota()
+    window.addEventListener('quota-changed', refresh)
+    return () => window.removeEventListener('quota-changed', refresh)
+  }, [])
+
+  // 今日剩余额度（/api/auth/quota → get_quota_info 结构）
+  const loadQuota = async () => {
+    try {
+      const res = await api.get('/api/auth/quota')
+      setQuota(res.data)
+    } catch {/* 静默失败 */}
+  }
+
+  const isMember = () => quota?.membership === 'vip' || quota?.membership === 'pro'
 
   const loadData = async () => {
     try {
@@ -129,10 +157,17 @@ export default function DigitalHumanPage() {
     } catch {/* 静默失败，不阻塞 UI */}
   }
 
-  const loadRecords = async () => {
+  // 历史记录分页查询：状态筛选 + 关键词搜索
+  const loadRecords = async (reset = false, status = recordStatus, q = recordQuery) => {
     try {
-      const res = await api.get('/api/digital-human/records')
-      setRecords(res.data || [])
+      const page = reset ? 1 : recordPage
+      const res = await api.get('/api/digital-human/records', {
+        params: { page, page_size: 20, status, q },
+      })
+      const items = res.data?.items || []
+      setRecords(prev => (reset ? items : [...prev, ...items]))
+      setRecordTotal(res.data?.total || 0)
+      setRecordPage(res.data?.page || 1)
     } catch {/* 静默失败，不阻塞 UI */}
   }
 
@@ -278,13 +313,20 @@ export default function DigitalHumanPage() {
   const generate = async () => {
     if (!text.trim()) { toast.error('请输入口播文案'); return }
     setGenerating(true); setResult(null); stopAudio()
+    // 生成阶段提示（同步请求期间轮播文案，缓解等待焦虑）
+    const phases = ['正在合成配音…', '正在渲染数字人动作…', '正在编码高清视频…']
+    let idx = 0
+    setGenPhase(phases[0])
+    const timer = setInterval(() => { idx = (idx + 1) % phases.length; setGenPhase(phases[idx]) }, 4000)
     try {
       const res = await api.post('/api/digital-human/generate', {
         text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
         background_id: bgId, scene_id: sceneId, speed,
+        resolution, fps, watermark,
       })
       setResult(res.data)
-      loadRecords()
+      loadRecords(true)
+      loadQuota()
       // 如果有视频URL，自动预览
       if (res.data.video_url) {
         playPreviewVideo(res.data.video_url)
@@ -306,8 +348,15 @@ export default function DigitalHumanPage() {
         }, 300)
       }
       toast.success(res.data.message || '生成成功')
-    } catch (e) { toast.error(`生成失败：${e.message}`) }
-    finally { setGenerating(false) }
+    } catch (e) {
+      if (e.status === 402) {
+        toast.error('今日生成次数已用完，升级会员解锁更多额度')
+        window.open('/membership', '_blank')
+      } else {
+        toast.error(`生成失败：${e.message}`)
+      }
+    }
+    finally { clearInterval(timer); setGenerating(false); setGenPhase('') }
   }
 
   const playAudio = useCallback(() => {
@@ -384,15 +433,20 @@ export default function DigitalHumanPage() {
   }, [])
 
   // 自动录制：生成 + 播放时同步录制
-  const recordAndPlay = useCallback(async () => {
+  const recordAndPlay = async () => {
     if (!text.trim()) { toast.error('请输入口播文案'); return }
     setGenerating(true); setResult(null); stopAudio(); setVideoBlob(null)
+    const phases = ['正在合成配音…', '正在渲染数字人动作…', '正在编码高清视频…']
+    let idx = 0
+    setGenPhase(phases[0])
+    const timer = setInterval(() => { idx = (idx + 1) % phases.length; setGenPhase(phases[idx]) }, 4000)
     try {
       const res = await api.post('/api/digital-human/generate', {
         text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
         background_id: bgId, scene_id: sceneId, speed,
+        resolution, fps, watermark,
       })
-      setResult(res.data); loadRecords()
+      setResult(res.data); loadRecords(true); loadQuota()
       if (res.data.audio_url) {
         const fullUrl = res.data.audio_url.startsWith('http')
           ? res.data.audio_url : `${API_BASE}${res.data.audio_url}`
@@ -406,9 +460,16 @@ export default function DigitalHumanPage() {
         }, 300)
       }
       toast.success(res.data.message || '生成成功')
-    } catch (e) { toast.error(`生成失败：${e.message}`) }
-    finally { setGenerating(false) }
-  }, [text, avatarId, voiceId, bgId, sceneId, speed, toast, stopAudio, loadRecords])
+    } catch (e) {
+      if (e.status === 402) {
+        toast.error('今日生成次数已用完，升级会员解锁更多额度')
+        window.open('/membership', '_blank')
+      } else {
+        toast.error(`生成失败：${e.message}`)
+      }
+    }
+    finally { clearInterval(timer); setGenerating(false); setGenPhase('') }
+  }
 
   // 音频结束时停止录制
   useEffect(() => {
@@ -421,8 +482,48 @@ export default function DigitalHumanPage() {
   }, [playing, recording])
 
   const deleteRecord = async (id) => {
-    try { await api.delete(`/api/digital-human/records/${id}`); loadRecords(); toast.success('已删除') }
+    try { await api.delete(`/api/digital-human/records/${id}`); loadRecords(true); toast.success('已删除') }
     catch (e) { toast.error(e.message) }
+  }
+
+  // ── 批量删除 ──
+  const toggleRecordSelect = (id) => {
+    setSelectedRecords(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+  const toggleSelectAll = () => {
+    const ids = records.map(r => r.id)
+    setSelectedRecords(prev => (prev.length === records.length && records.length > 0) ? [] : ids)
+  }
+  const batchDelete = async () => {
+    if (selectedRecords.length === 0) return
+    try {
+      const res = await api.post('/api/digital-human/records/batch-delete', { ids: selectedRecords })
+      setSelectedRecords([])
+      loadRecords(true)
+      toast.success(`已批量删除 ${res.data?.deleted || selectedRecords.length} 条记录`)
+    } catch (e) { toast.error(`批量删除失败：${e.message}`) }
+  }
+
+  // ── 重新生成：回填该记录的全部参数后立即生成 ──
+  const reuseRecord = async (r) => {
+    setText(r.text || '')
+    if (r.avatar_id) setAvatarId(r.avatar_id)
+    if (r.voice_id) setVoiceId(r.voice_id)
+    if (r.background_id) setBgId(r.background_id)
+    if (r.scene_id) setSceneId(r.scene_id)
+    if (r.resolution) setResolution(r.resolution)
+    if (r.fps) setFps(r.fps)
+    toast.info('已回填该记录的参数，正在重新生成…')
+    // 等待 state 更新后再生成
+    setTimeout(() => { generate() }, 100)
+  }
+
+  // ── 复制文案到剪贴板 ──
+  const copyText = async (r) => {
+    try {
+      await navigator.clipboard.writeText(r.text || '')
+      toast.success('文案已复制到剪贴板')
+    } catch { toast.error('复制失败，请手动复制') }
   }
 
   const loadArticle = (a) => {
@@ -442,6 +543,29 @@ export default function DigitalHumanPage() {
         icon={UserCircle}
         iconColor="from-violet-500 to-purple-600"
       />
+
+      {/* 商业配额条：今日剩余生成次数 + 会员状态 */}
+      {quota && (
+        <div className={`flex flex-wrap items-center gap-3 px-4 py-2.5 rounded-xl border text-xs ${
+          quota.remaining_today > 5 ? 'bg-white border-gray-200 text-gray-600' : 'bg-amber-50 border-amber-200 text-amber-700'
+        }`}>
+          <span className="font-medium">今日剩余生成次数：
+            <span className={quota.remaining_today > 5 ? 'text-violet-600 font-bold' : 'text-red-500 font-bold'}>{quota.remaining_today}</span>
+            {quota.daily_quota ? ` / ${quota.daily_quota} 次` : ''}
+          </span>
+          {isMember() ? (
+            <span className="flex items-center gap-1 text-emerald-600">
+              <Sparkles className="w-3 h-3" /> {quota.membership === 'vip' ? '至尊版 · 不限量' : '专业版'}会员
+              {quota.membership_days_left != null && `（剩余 ${quota.membership_days_left} 天）`}
+            </span>
+          ) : (
+            <a href="/membership" className="text-violet-600 hover:text-violet-800 font-medium underline underline-offset-2">
+              免费版每日 {quota.daily_quota || 30} 次 · 升级解锁 1080P 无水印
+            </a>
+          )}
+          <span className="ml-auto text-[10px] text-gray-400">每次生成消耗 1 次额度</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左列：配置面板 */}
@@ -726,15 +850,72 @@ export default function DigitalHumanPage() {
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none" />
           </Card>
 
+          {/* 商业参数：分辨率 / 帧率 / 水印 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Film className="w-4 h-4 text-sky-500" /> 视频质量
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">分辨率</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[{ id: '720p', name: '高清 720P' }, { id: '1080p', name: '全高清 1080P', pro: true }].map((r) => (
+                    <button key={r.id} onClick={() => setResolution(r.id)}
+                      disabled={r.pro && !isMember()}
+                      className={`p-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                        resolution === r.id ? 'bg-sky-100 text-sky-700 border border-sky-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                      }`}>
+                      {r.name}{r.pro && !isMember() && ' 🔒'}
+                    </button>
+                  ))}
+                </div>
+                {resolution === '1080p' && <div className="text-[10px] text-sky-500 mt-1">1080P 渲染更精细，生成耗时约为 720P 的 2 倍</div>}
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">帧率</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[12, 15, 24].map((f) => (
+                    <button key={f} onClick={() => setFps(f)}
+                      className={`p-1.5 rounded-lg text-xs font-medium transition-all ${
+                        fps === f ? 'bg-sky-100 text-sky-700 border border-sky-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                      }`}>
+                      {f} fps{f === 24 && <span className="text-[9px] text-sky-400 ml-0.5">流畅</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 border border-gray-100">
+                <div>
+                  <div className="text-xs font-medium text-gray-700">平台水印</div>
+                  <div className="text-[10px] text-gray-400">{isMember() ? '会员可自由开关' : '免费版视频右下角含平台水印'}</div>
+                </div>
+                {isMember() ? (
+                  <button onClick={() => setWatermark(!watermark)}
+                    className={`w-9 h-5 rounded-full transition-colors relative ${watermark ? 'bg-sky-500' : 'bg-gray-300'}`}>
+                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${watermark ? 'left-4.5' : 'left-0.5'}`} />
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-amber-500 font-medium">🔒 升级会员去除</span>
+                )}
+              </div>
+            </div>
+          </Card>
+
           {/* 生成按钮 */}
           <div className="flex gap-2">
             <Button variant="primary" size="lg" icon={Sparkles} loading={generating} onClick={generate} className="flex-1">
-              {generating ? 'AI数字人正在生成…' : '生成数字人视频'}
+              {generating ? (genPhase || 'AI数字人正在生成…') : '生成数字人视频'}
             </Button>
             <Button variant="secondary" size="lg" icon={Video} loading={generating} onClick={recordAndPlay}>
               生成+录制
             </Button>
           </div>
+          {generating && (
+            <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
+              <span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />
+              {genPhase || '正在生成'} · 预计 {Math.max(8, Math.round(text.length / 60))} 秒，请勿关闭页面
+            </div>
+          )}
 
           {/* 预览区 */}
           <Card>
@@ -868,6 +1049,11 @@ export default function DigitalHumanPage() {
               }`}>
                 {result.message}
               </div>
+              {result.sensitive_warning && (
+                <div className="p-2.5 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 text-[11px] mb-3">
+                  ⚠️ {result.sensitive_warning}
+                </div>
+              )}
               <div className="space-y-2 text-xs text-gray-600">
                 <div className="flex justify-between">
                   <span>数字人：</span>
@@ -882,11 +1068,21 @@ export default function DigitalHumanPage() {
                   <span className="font-medium">{result.text_length} 字</span>
                 </div>
                 <div className="flex justify-between">
+                  <span>视频参数：</span>
+                  <span className="font-medium">{result.resolution} · {result.fps}fps{result.watermark ? ' · 含水印' : ' · 无水印'}</span>
+                </div>
+                <div className="flex justify-between">
                   <span>状态：</span>
                   <Badge color={result.status === 'done' ? 'green' : result.status === 'failed' ? 'red' : 'amber'}>
                     {result.status === 'done' ? '已完成' : result.status === 'failed' ? '生成失败' : '仅音频'}
                   </Badge>
                 </div>
+                {result.quota_remaining != null && (
+                  <div className="flex justify-between">
+                    <span>今日剩余：</span>
+                    <span className="font-medium text-violet-600">{result.quota_remaining} 次</span>
+                  </div>
+                )}
               </div>
               {/* 下载/播放按钮 */}
               <div className="flex gap-2 mt-3">
@@ -964,30 +1160,61 @@ export default function DigitalHumanPage() {
 
         {/* 历史记录 */}
           <Card>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{records.length}）
+                <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{recordTotal}）
               </h3>
-              <Button variant="secondary" size="sm" icon={RefreshCw} onClick={loadRecords}>刷新</Button>
+              <div className="flex items-center gap-1.5">
+                {selectedRecords.length > 0 && (
+                  <button onClick={batchDelete}
+                    className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100">
+                    <Trash2 className="w-3 h-3" /> 批量删除（{selectedRecords.length}）
+                  </button>
+                )}
+                <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => loadRecords(true)}>刷新</Button>
+              </div>
+            </div>
+            {/* 筛选 + 搜索 */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              {[{ v: '', n: '全部' }, { v: 'done', n: '成功' }, { v: 'audio_only', n: '仅音频' }, { v: 'failed', n: '失败' }].map((s) => (
+                <button key={s.v} onClick={() => { setRecordStatus(s.v); loadRecords(true, s.v, recordQuery) }}
+                  className={`px-2 py-1 text-[10px] font-medium rounded-lg transition-all ${
+                    recordStatus === s.v ? 'bg-violet-100 text-violet-700 border border-violet-300' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'
+                  }`}>
+                  {s.n}
+                </button>
+              ))}
+              <input
+                value={recordQuery} placeholder="搜索文案/形象/声音…"
+                onChange={(e) => setRecordQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') loadRecords(true, recordStatus, recordQuery) }}
+                className="flex-1 min-w-24 px-2 py-1 text-[10px] border border-gray-200 rounded-lg focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+              />
+              <button onClick={() => loadRecords(true, recordStatus, recordQuery)}
+                className="px-2 py-1 text-[10px] rounded-lg bg-violet-50 border border-violet-200 text-violet-600 hover:bg-violet-100">搜索</button>
             </div>
             {records.length === 0 ? (
               <Empty icon={Film} title="暂无记录" description="生成第一个数字人视频后这里会显示" />
             ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              <>
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                 {records.map((r) => {
                   const av = avatars.find(a => a.id === r.avatar_id)
+                  const checked = selectedRecords.includes(r.id)
                   return (
                     <div key={r.id} className={`p-3 rounded-xl border transition-all ${
                       r.status === 'done' ? 'border-emerald-200 bg-emerald-50/30'
                         : r.status === 'failed' ? 'border-red-200 bg-red-50/30'
                         : 'border-amber-200 bg-amber-50/30'
-                    }`}>
+                    } ${checked ? 'ring-2 ring-violet-400' : ''}`}>
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
+                          <input type="checkbox" checked={checked} onChange={() => toggleRecordSelect(r.id)}
+                            className="accent-violet-600 w-3.5 h-3.5" />
                           <span className="text-lg">{av?.emoji || '👤'}</span>
                           <div>
                             <div className="text-xs font-medium text-gray-800">{av?.name || r.avatar_name}</div>
-                            <div className="text-[10px] text-gray-400">{r.voice_name} · {r.text_length}字</div>
+                            <div className="text-[10px] text-gray-400">{r.voice_name} · {r.text_length}字 · {r.resolution || '720p'}/{r.fps || 15}fps{r.watermark ? ' · 水印' : ''}</div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
@@ -1003,7 +1230,13 @@ export default function DigitalHumanPage() {
                       <p className="text-xs text-gray-500 truncate mt-1">{r.text?.slice(0, 60)}</p>
                       <div className="flex items-center justify-between mt-1.5">
                         <div className="text-[10px] text-gray-400">{r.created_at?.slice(0, 16)?.replace('T', ' ')}</div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          {r.video_url && (
+                            <button onClick={() => playPreviewVideo(r.video_url)}
+                              className="text-[10px] text-blue-500 hover:text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50">
+                              预览
+                            </button>
+                          )}
                           {r.audio_url && (
                             <button onClick={() => {
                               const fullUrl = r.audio_url.startsWith('http')
@@ -1026,17 +1259,21 @@ export default function DigitalHumanPage() {
                             </button>
                           )}
                           {r.video_url && (
-                            <button onClick={() => playPreviewVideo(r.video_url)}
-                              className="text-[10px] text-blue-500 hover:text-blue-700 px-1.5 py-0.5 rounded hover:bg-blue-50">
-                              播放
-                            </button>
-                          )}
-                          {r.video_url && (
                             <button onClick={() => downloadFile(r.video_url, `${r.avatar_name || 'video'}.mp4`)}
                               className="text-[10px] text-emerald-500 hover:text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-50">
                               MP4
                             </button>
                           )}
+                          {r.text && (
+                            <button onClick={() => copyText(r)}
+                              className="text-[10px] text-gray-500 hover:text-gray-700 px-1.5 py-0.5 rounded hover:bg-gray-50">
+                              复制文案
+                            </button>
+                          )}
+                          <button onClick={() => reuseRecord(r)}
+                            className="text-[10px] text-sky-500 hover:text-sky-700 px-1.5 py-0.5 rounded hover:bg-sky-50">
+                            <RefreshCw className="w-3 h-3 inline mr-0.5" />重新生成
+                          </button>
                           {r.video_url && (
                             <button onClick={() => publishVideo(r.video_url, r.text, r.avatar_name)}
                               className="text-[10px] text-rose-500 hover:text-rose-700 px-1.5 py-0.5 rounded hover:bg-rose-50">
@@ -1049,6 +1286,21 @@ export default function DigitalHumanPage() {
                   )
                 })}
               </div>
+              {/* 全选 + 加载更多 */}
+              <div className="flex items-center justify-between mt-2">
+                <label className="flex items-center gap-1.5 text-[10px] text-gray-500 cursor-pointer">
+                  <input type="checkbox" checked={records.length > 0 && selectedRecords.length === records.length}
+                    onChange={toggleSelectAll} className="accent-violet-600 w-3.5 h-3.5" />
+                  全选本页
+                </label>
+                {records.length < recordTotal && (
+                  <button onClick={() => loadRecords(false)}
+                    className="px-3 py-1 text-[10px] font-medium rounded-lg bg-violet-50 border border-violet-200 text-violet-600 hover:bg-violet-100">
+                    加载更多（{records.length}/{recordTotal}）
+                  </button>
+                )}
+              </div>
+              </>
             )}
           </Card>
         </div>

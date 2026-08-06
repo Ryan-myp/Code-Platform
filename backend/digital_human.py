@@ -375,7 +375,8 @@ def _clean_script_text(text: str) -> str:
     字幕与配音必须与用户输入一致，仅做渲染友好的空白规范化。
     """
     import re
-    return re.sub(r"\n{2,}", "\n", text or "").strip()
+    # 连续空行折叠为单空行（\n\n），保留分段结构；单换行保留原样
+    return re.sub(r"\n{2,}", "\n\n", text or "").strip()
 
 
 def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
@@ -852,7 +853,8 @@ def _render_frame(
     return img
 
 
-def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_path: str) -> None:
+def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_path: str,
+                  resolution: str = "720p", fps: int = 15, watermark: bool = False) -> None:
     """真实视频感多帧渲染：动态背景粒子 + 卡拉OK逐字字幕 + 镜头缓慢推近。
 
     相比静态图循环，加入全套时序动画呈现"直播/口播视频"观感：
@@ -860,11 +862,12 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     - 人物：写真浮动呼吸 + 光环脉动 + 脚下平台光斑（直播台感）
     - 字幕：卡拉OK逐字显示，当前字主题色高亮，当前行带字幕底条
     - 镜头：整体缓慢推近（Ken Burns），开头 0.4s 淡入、结尾 0.4s 淡出
+    - 商业水印：watermark=True 时右下角叠加平台半透明水印
     """
     import math
     import shutil
 
-    OUT_W, OUT_H = 1280, 720
+    OUT_W, OUT_H = (1920, 1080) if resolution == "1080p" else (1280, 720)
     # 渲染画布放大 1.10x：按进度裁剪窗口实现镜头推近 + 平移/呼吸（避免边缘露出）
     RENDER_W, RENDER_H = int(OUT_W * 1.10), int(OUT_H * 1.10)
     bg_hex = bg.get("color", "#1a1a2e")
@@ -894,12 +897,11 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         "tag": _load_font(18, FONT_CANDIDATES),
     }
 
-    # 音频时长 → 帧率/帧数（动态效果更丰富，帧率相应提高）
+    # 音频时长 → 帧数（分辨率/帧率由 API 参数控制）
     duration = _audio_duration(audio_path)
     if duration <= 0:
         # 空文件/损坏音频：ffprobe 读不出时长，ffmpeg 合成必然失败，提前拦截给出清晰错误
         raise RuntimeError("配音音频无效或为空，请重新生成")
-    fps = 12 if duration <= 30 else (10 if duration <= 60 else 8)
     total_frames = max(int(duration * fps), 6)
 
     # 写真预加载（避免每帧重复 IO/缩放）
@@ -913,7 +915,7 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     # 文案换行（复用一帧的测量）
     probe = Image.new("RGB", (10, 10), "#000")
     probe_draw = ImageDraw.Draw(probe)
-    right_w = int((1280 - 600 - 50) * 1.10)
+    right_w = int((OUT_W - 600 - 50) * 1.10)
     text_lines = _wrap_text_lines(text, probe_draw, fonts["body"], right_w)
 
     frames_dir = tempfile.mkdtemp(prefix="dh_frames_")
@@ -952,6 +954,19 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
             if fade < 1.0:
                 black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
                 frame = Image.blend(black, frame, fade)
+            # 商业水印：右下角半透明（不随淡入淡出消失，全程可见）
+            if watermark:
+                wm_font = _load_font(int(18 * OUT_W / 1280), FONT_CANDIDATES)
+                wm_text = WATERMARK_TEXT
+                wm_w = wm_font.getbbox(wm_text)[2]
+                wm_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
+                wm_draw = ImageDraw.Draw(wm_layer)
+                wm_x, wm_y = OUT_W - wm_w - int(24 * OUT_W / 1280), OUT_H - int(34 * OUT_H / 720)
+                # 深色描边提高任意背景下的可读性
+                wm_draw.text((wm_x - 1, wm_y - 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+                wm_draw.text((wm_x + 1, wm_y + 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+                wm_draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(255, 255, 255, 170))
+                frame.paste(wm_layer, (0, 0), wm_layer)
             # JPG 帧序列（quality=95 视觉无损，比 PNG 快 10 倍+）
             frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
 
@@ -997,9 +1012,22 @@ def _ensure_tables(conn) -> None:
             audio_url TEXT DEFAULT '',
             video_url TEXT DEFAULT '',
             error TEXT DEFAULT '',
+            resolution TEXT DEFAULT '720p',
+            fps INTEGER DEFAULT 15,
+            watermark INTEGER DEFAULT 0,
             created_at TEXT DEFAULT ''
         )"""
     )
+    # 兼容旧库：补列
+    for col, ddl in [
+        ("resolution", "TEXT DEFAULT '720p'"),
+        ("fps", "INTEGER DEFAULT 15"),
+        ("watermark", "INTEGER DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE digital_human_records ADD COLUMN {col} {ddl}")
+        except Exception:
+            pass  # 已存在
     # 用户自定义形象（上传头像图片）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS digital_human_custom_avatars (
@@ -1232,6 +1260,24 @@ class GenerateRequest(BaseModel):
     background_id: str = Field("tech", description="背景ID")
     scene_id: str = Field("product", description="场景模板ID")
     speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
+    resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
+    fps: int = Field(15, ge=10, le=30, description="帧率")
+    watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+
+
+# 商业水印：免费用户生成视频带平台水印（会员/管理员自动去除）
+WATERMARK_TEXT = "AI 数字人 · 小团智能"
+
+# 数字人硬拦截词：行为违规（营销诱导/诈骗/赌博/违禁），命中直接拒绝生成。
+# 广告法极限词（最/第一/顶级等）仅作提示不拦截——口语叙事中"第一次/最好"
+# 属正常表达，硬拦截会误伤正常文案，故从硬拦截列表剔除。
+_HARD_BLOCK_WORDS = [
+    "点击领取", "免费领取", "立即抢购", "限时抢购", "免费送", "免费领",
+    "加微信", "加QQ", "扫码加", "私信我",
+    "日赚", "月入过万", "躺赚", "暴富", "发财",
+    "包治", "根治", "治愈", "神药", "特效",
+    "赌博", "彩票", "时时彩", "六合彩", "翻墙", "科学上网",
+]
 
 
 # ── API ──────────────────────────────────────────────────────
@@ -1360,6 +1406,29 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     """
     start = datetime.now()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+
+    # 0. 商业配额：生成消耗 1 次今日额度（管理员/VIP 不受限）
+    from common.auth import consume_quota, get_quota_info
+    quota = consume_quota(uid)
+    if not quota.get("allowed"):
+        raise HTTPException(
+            402,
+            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+        )
+    quota_info = get_quota_info(uid)  # 会员等级用于水印策略
+
+    # 0.5 内容安全：硬违规词直接拒绝生成；广告法极限词/中风险词放行但提示
+    try:
+        from content_strategy import _scan_text
+        hits = _scan_text(req.text)
+    except Exception:
+        hits = []
+    lower_text = req.text.lower()
+    hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
+    if hard_hits:
+        raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
+    risk_hits = list(dict.fromkeys(h["word"] for h in hits))  # 去重保序
 
     # 验证形象/声音/背景/场景（内置 + 用户自定义）
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
@@ -1379,6 +1448,11 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     record_id = f"dh_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     _ensure_tables(conn)
+
+    # 水印策略：免费用户强制加水印（商业规则，不可绕过）；会员显式传 True 才加
+    membership = quota_info.get("membership", "free") if isinstance(quota_info, dict) else "free"
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    use_watermark = (membership == "free" and role != "admin") or bool(req.watermark)
 
     # 1. 文案 — 字幕与配音必须与用户输入完全一致：
     # 之前 LLM 优化环节会把原文改写为带 Markdown 标记（#、**、---）的口播脚本，
@@ -1429,6 +1503,9 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
                 bg=bg,
                 audio_path=audio_path,
                 output_path=video_path,
+                resolution=req.resolution,
+                fps=req.fps,
+                watermark=use_watermark,
             )
             video_url = f"/uploads/videos/{video_filename}"
         except Exception as e:
@@ -1441,16 +1518,18 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
         status = "failed"
         error_msg = audio_error or "配音生成失败"
 
-    # 4. 保存记录
+    # 4. 保存记录（含商业参数：分辨率/帧率/水印）
     conn.execute(
         """INSERT INTO digital_human_records
            (id, user_id, avatar_id, avatar_name, voice_id, voice_name,
             background_id, scene_id, text, text_length, status,
-            audio_url, video_url, error, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            audio_url, video_url, error, resolution, fps, watermark, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
         (record_id, user, req.avatar_id, avatar["name"], req.voice_id, voice["name"],
          req.background_id, req.scene_id, optimized_text, len(optimized_text),
-         status, audio_url, video_url, error_msg, datetime.now().isoformat()),
+         status, audio_url, video_url, error_msg,
+         req.resolution, req.fps, 1 if use_watermark else 0,
+         datetime.now().isoformat()),
     )
     conn.commit()
     conn.close()
@@ -1466,6 +1545,14 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
         "voice": {"id": voice["id"], "name": voice["name"]},
         "background": {"id": bg["id"], "name": bg["name"]},
         "text_length": len(optimized_text),
+        "resolution": req.resolution,
+        "fps": req.fps,
+        "watermark": use_watermark,
+        "quota_remaining": quota.get("remaining"),
+        "sensitive_warning": (
+            f"文案含风险词（{', '.join(risk_hits[:6])}），发布到平台时可能限流，建议修改"
+            if risk_hits else ""
+        ),
         "audio_url": audio_url,
         "video_url": video_url,
         "error": error_msg,
@@ -1480,21 +1567,80 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
 
 
 @router.get("/records")
-async def list_records(limit: int = 50, current_user: dict = require_auth()):
-    """历史数字人视频生成记录。"""
+async def list_records(
+    page: int = 1, page_size: int = 20, status: str = "", q: str = "",
+    current_user: dict = require_auth(),
+):
+    """历史记录分页查询：状态筛选（done/audio_only/failed）+ 关键词搜索（文案/形象/声音）。"""
     conn = get_db()
     _ensure_tables(conn)
+    where, args = ["1=1"], []
+    if status:
+        where.append("status=?")
+        args.append(status)
+    if q.strip():
+        kw = f"%{q.strip()}%"
+        where.append("(text LIKE ? OR avatar_name LIKE ? OR voice_name LIKE ?)")
+        args += [kw, kw, kw]
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM digital_human_records WHERE {' AND '.join(where)}", args,
+    ).fetchone()[0]
     rows = conn.execute(
-        "SELECT * FROM digital_human_records ORDER BY created_at DESC LIMIT ?",
-        (limit,),
+        f"SELECT * FROM digital_human_records WHERE {' AND '.join(where)}"
+        f" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        args + [page_size, (page - 1) * page_size],
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return {"total": total, "page": page, "page_size": page_size, "items": [dict(r) for r in rows]}
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str] = Field(..., min_length=1, description="记录ID列表")
+
+
+def _delete_record_files(conn, record_id: str) -> None:
+    """删除记录关联的音频/视频文件（释放磁盘空间）。"""
+    row = conn.execute(
+        "SELECT audio_url, video_url FROM digital_human_records WHERE id=?", (record_id,),
+    ).fetchone()
+    if not row:
+        return
+    for url in (row["audio_url"] or "", row["video_url"] or ""):
+        if not url:
+            continue
+        # /uploads/audio/x.mp3 → backend/uploads/audio/x.mp3
+        rel = url.lstrip("/")
+        p = os.path.join(os.path.dirname(UPLOAD_AUDIO_DIR), rel)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
+@router.post("/records/batch-delete")
+async def batch_delete_records(req: BatchDeleteRequest, current_user: dict = require_auth()):
+    """批量删除记录（同时清理关联的音频/视频文件）。"""
+    conn = get_db()
+    _ensure_tables(conn)
+    deleted = 0
+    for rid in req.ids:
+        _delete_record_files(conn, rid)
+        conn.execute("DELETE FROM digital_human_records WHERE id=?", (rid,))
+        deleted += 1
+    conn.commit()
+    conn.close()
+    return {"success": True, "deleted": deleted}
 
 
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
+    """删除单条记录（同时清理关联的音频/视频文件）。"""
     conn = get_db()
+    _ensure_tables(conn)
+    _delete_record_files(conn, record_id)
     conn.execute("DELETE FROM digital_human_records WHERE id=?", (record_id,))
     conn.commit()
     conn.close()
