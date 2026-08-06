@@ -1239,7 +1239,9 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
             status = "audio_only"
             error_msg = f"视频合成失败（{e}），已生成配音音频"
     else:
-        status = "audio_only"
+        # 配音未生成：明确标记 failed（区别于音频成功但视频失败的 audio_only），
+        # 避免前端误显“配音音频已生成，可预览音频+形象”
+        status = "failed"
         error_msg = audio_error or "配音生成失败"
 
     # 4. 保存记录
@@ -1275,7 +1277,7 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
             if status == "done"
             else "配音音频已生成，视频合成失败（可预览音频+形象）"
             if status == "audio_only"
-            else "生成失败"
+            else f"生成失败：{error_msg or '未知错误'}"
         ),
     }
 

@@ -101,28 +101,46 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
     """单段 TTS 合成，返回 mp3 字节。
 
     优先 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
-    子进程偶发崩溃/空输出时重试 1 次，仍失败回退中转站 /audio/speech（需开通 tts-1 渠道）。
+    子进程偶发崩溃/空输出时带间隔重试，仍失败回退中转站 /audio/speech（需开通 tts-1 渠道）；
+    中转站也不可用时再回试 edge-tts（免费通道网络抖动可能已自愈）。
     pitch 为音调百分比（-20~+20）。
     """
-    for attempt in range(2):
-        try:
-            return _tts_edge(text, voice, speed, pitch)
-        except Exception as e:
-            logger.warning(f"edge-tts 第{attempt + 1}次失败: {e}")
-            if attempt == 0:
-                continue  # 崩溃/空输出偶发，重试一次
-            logger.warning("edge-tts 重试仍失败，回退中转站 API")
+    def _edge_with_retry(rounds: int = 2) -> bytes:
+        """带 1s 间隔的 edge-tts 重试；全部失败抛最后一个异常。"""
+        last = None
+        for attempt in range(rounds):
+            try:
+                return _tts_edge(text, voice, speed, pitch)
+            except Exception as e:
+                last = e
+                logger.warning(f"edge-tts 失败: {e}")
+                if attempt < rounds - 1:
+                    time.sleep(1)  # 网络抖动短暂等待后可自愈
+        raise last
+
+    try:
+        return _edge_with_retry(3)
+    except Exception:
+        logger.warning("edge-tts 全部失败，回退中转站 API")
     if not AGNES_API_KEY:
         raise HTTPException(500, "TTS 通道不可用（edge-tts 与中转站均失败），请稍后重试")
-    resp = requests.post(
-        f"{AGNES_API_BASE}/audio/speech",
-        headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "tts-1", "input": text, "voice": voice, "speed": speed},
-        timeout=90,
-    )
-    if resp.status_code != 200:
+    try:
+        resp = requests.post(
+            f"{AGNES_API_BASE}/audio/speech",
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "tts-1", "input": text, "voice": voice, "speed": speed},
+            timeout=90,
+        )
+        if resp.status_code == 200:
+            return resp.content
         raise HTTPException(500, f"TTS 调用失败: {resp.status_code} {resp.text[:300]}")
-    return resp.content
+    except Exception:
+        # 中转站不可用：免费通道可能已恢复，最后再回试一次
+        logger.warning("中转站 TTS 失败，回试 edge-tts")
+        try:
+            return _edge_with_retry(2)
+        except Exception as e:
+            raise HTTPException(500, f"TTS 通道均不可用: {e}") from e
 
 
 def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:

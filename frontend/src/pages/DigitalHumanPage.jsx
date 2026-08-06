@@ -862,7 +862,9 @@ export default function DigitalHumanPage() {
                 <Check className="w-4 h-4 text-emerald-500" /> 生成结果
               </h3>
               <div className={`p-3 rounded-xl border text-sm mb-3 ${
-                result.status === 'done' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+                result.status === 'done' ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : result.status === 'failed' ? 'bg-red-50 border-red-200 text-red-800'
+                  : 'bg-amber-50 border-amber-200 text-amber-800'
               }`}>
                 {result.message}
               </div>
@@ -881,8 +883,8 @@ export default function DigitalHumanPage() {
                 </div>
                 <div className="flex justify-between">
                   <span>状态：</span>
-                  <Badge color={result.status === 'done' ? 'green' : 'amber'}>
-                    {result.status === 'done' ? '已完成' : '仅音频'}
+                  <Badge color={result.status === 'done' ? 'green' : result.status === 'failed' ? 'red' : 'amber'}>
+                    {result.status === 'done' ? '已完成' : result.status === 'failed' ? '生成失败' : '仅音频'}
                   </Badge>
                 </div>
               </div>
@@ -976,7 +978,9 @@ export default function DigitalHumanPage() {
                   const av = avatars.find(a => a.id === r.avatar_id)
                   return (
                     <div key={r.id} className={`p-3 rounded-xl border transition-all ${
-                      r.status === 'done' ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'
+                      r.status === 'done' ? 'border-emerald-200 bg-emerald-50/30'
+                        : r.status === 'failed' ? 'border-red-200 bg-red-50/30'
+                        : 'border-amber-200 bg-amber-50/30'
                     }`}>
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
@@ -987,8 +991,8 @@ export default function DigitalHumanPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
-                          <Badge color={r.status === 'done' ? 'green' : 'amber'}>
-                            {r.status === 'done' ? '完成' : '仅音频'}
+                          <Badge color={r.status === 'done' ? 'green' : r.status === 'failed' ? 'red' : 'amber'}>
+                            {r.status === 'done' ? '完成' : r.status === 'failed' ? '失败' : '仅音频'}
                           </Badge>
                           <button onClick={() => deleteRecord(r.id)}
                             className="p-1 text-gray-300 hover:text-red-500 rounded">
