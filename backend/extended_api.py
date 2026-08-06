@@ -797,19 +797,28 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:
     return True
 
 
-def _record_test_run(requirement_id, pipeline_id, status, summary, log_text) -> None:
-    """记录一次自动化测试执行结果（需求维度，AI 工作台可见）。记录失败不阻塞主流程。"""
+def _record_test_run(requirement_id, pipeline_id, status, summary, log_text, cases=None) -> None:
+    """记录一次自动化测试执行结果（需求维度，AI 工作台可见）。记录失败不阻塞主流程。
+
+    cases: 逐条用例结果 [{name, path, status, message}]，JSON 序列化入 cases 列。
+    """
     if not requirement_id:
         return
     conn = get_db()
     try:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS test_runs (id TEXT PRIMARY KEY, requirement_id TEXT, pipeline_id TEXT, "
-            "status TEXT, summary TEXT, log TEXT, created_at TEXT)"
+            "status TEXT, summary TEXT, log TEXT, cases TEXT, created_at TEXT)"
         )
+        # 旧库无 cases 列：安全追加（SQLite 不支持 ADD COLUMN IF NOT EXISTS）
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(test_runs)").fetchall()}
+        if "cases" not in cols:
+            conn.execute("ALTER TABLE test_runs ADD COLUMN cases TEXT")
         conn.execute(
-            "INSERT INTO test_runs (id, requirement_id, pipeline_id, status, summary, log, created_at) VALUES (?,?,?,?,?,?,?)",
-            (f"test_{uuid.uuid4().hex[:12]}", requirement_id, pipeline_id, status, summary or "", log_text or "", datetime.now().isoformat()),
+            "INSERT INTO test_runs (id, requirement_id, pipeline_id, status, summary, log, cases, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (f"test_{uuid.uuid4().hex[:12]}", requirement_id, pipeline_id, status, summary or "",
+             log_text or "", json.dumps(cases or [], ensure_ascii=False), datetime.now().isoformat()),
         )
         conn.commit()
     except Exception as e:
@@ -829,6 +838,47 @@ def _parse_test_summary(out: str, lang: str = "python") -> str:
         return m.group(0).strip() if m else (out.splitlines()[-1][:120] if out.strip() else "无输出")
     m = re.search(r"\d+ (?:passed|failed|error)[^\n]{0,60}", out)
     return m.group(0).strip() if m else (out.splitlines()[-1][:120] if out.strip() else "无输出")
+
+
+def _parse_pytest_cases(out: str) -> list:
+    """从 pytest -rA 输出解析逐条用例结果（AI 工作台按 case 展示）。
+
+    返回 [{name, path, status, message}]；status ∈ passed/failed/error/skipped。
+    SKIPPED 行格式特殊（`SKIPPED [1] file:line: 原因`，无 :: 分隔、带计数前缀）；
+    未匹配到 -rA 摘要时退化解析 FAILED 行（失败项兜底，至少可见失败原因）。
+    """
+    out = out or ""
+    cases, seen = [], set()
+    # 优先只扫 short test summary 区（避免正文 traceback 行干扰）；无则全文
+    body = out
+    idx = out.rfind("short test summary info")
+    if idx >= 0:
+        body = out[idx:]
+    # 分隔用 [ \t] 而非 \s：避免 \s 吞换行导致 (.*) 串行抓取下一行
+    for m in re.finditer(r"^(PASSED|FAILED|SKIPPED|ERROR)\s+(?:\[\d+\]\s*)?(\S+)(?:[ \t]*(?::[ \t]*)?(.*))?$",
+                         body, re.M):
+        kind, path = m.group(1), m.group(2)
+        if path in seen:
+            continue
+        seen.add(path)
+        msg = (m.group(3) or "").strip()
+        if msg.startswith("- "):
+            msg = msg[2:].strip()
+        cases.append({
+            "name": path.split("::")[-1].rstrip(":"),
+            "path": path,
+            "status": {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "ERROR": "error"}[kind],
+            "message": msg[:500],
+        })
+    if not cases:
+        for m in re.finditer(r"^FAILED\s+(\S+?)(?:[ \t]*-[ \t]*(.*))?$", out or "", re.M):
+            path = m.group(1)
+            if path in seen:
+                continue
+            seen.add(path)
+            cases.append({"name": path.split("::")[-1].rstrip(":"), "path": path,
+                          "status": "failed", "message": (m.group(2) or "").strip()[:500]})
+    return cases
 
 
 def _extract_failed_functions(project_dir: str, out: str) -> list:
@@ -951,7 +1001,12 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         if not ok:
             return False, f"测试镜像构建失败: {out[-600:]}"
         append(f"  - 容器内执行测试（{lang}）…")
-        cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag] + test_cmd
+        exec_cmd = list(test_cmd)
+        # python/pytest：追加 -rA 输出逐条用例摘要（PASSED/FAILED/SKIPPED 行），供按 case 展示结果与失败原因
+        if lang == "python" and exec_cmd and "pytest" in exec_cmd[0].lower() \
+                and not any("-rA" in c for c in exec_cmd):
+            exec_cmd.insert(1, "-rA")
+        cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag] + exec_cmd
         ok, out = step_run(cmd, timeout=300)
         return ok, out or ""
 
@@ -960,15 +1015,19 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
     for round_no in range(6):
         ok, out = verify()
         last_out = out
+        cases = _parse_pytest_cases(out) if lang == "python" else []
         if ok:
             summary = _parse_test_summary(out, lang)
-            _record_test_run(cfg.get("requirement_id"), pid, "passed", summary, out)
+            _record_test_run(cfg.get("requirement_id"), pid, "passed", summary, out, cases)
             append(f"  - 自动化测试通过 ✓（{summary}）")
             return True, summary
         if _is_infra_error(out):
             append("  - ⚠ 检测到基础设施故障（Docker/Podman 环境问题），AI 修复无法解决，停止测试")
             _record_test_run(cfg.get("requirement_id"), pid, "failed", "基础设施故障", out[-800:])
             return False, out[-400:]
+        # 失败轮次落库：每条 case 的失败原因在 AI 工作台可见（含 AI 修复过程轨迹）
+        _record_test_run(cfg.get("requirement_id"), pid, "failed",
+                         f"第{round_no + 1}轮: {_parse_test_summary(out, lang)}", out, cases)
         if round_no >= 3:
             break
         append(f"  - ⚠ 测试未通过（第 {round_no + 1} 次验证），AI 诊断修复中…")
@@ -1151,7 +1210,8 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(fixed)
         append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
-    _record_test_run(cfg.get("requirement_id"), pid, "failed", "AI 修复轮次用尽", last_out[-1500:])
+    _record_test_run(cfg.get("requirement_id"), pid, "failed", "AI 修复轮次用尽", last_out[-1500:],
+                     _parse_pytest_cases(last_out) if lang == "python" else [])
     return False, "自动化测试多次失败且 AI 修复未解决: " + last_out[-300:]
 
 

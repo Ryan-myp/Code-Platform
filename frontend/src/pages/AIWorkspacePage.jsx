@@ -6,7 +6,7 @@ import {
   FileText, Code2, TestTube2, Send, Loader2, BookOpen, MessageSquare,
   Copy, Sparkles, Bot, User, Edit2, Save, X, FolderGit2, ListTodo,
   Download, Layers, ArrowRight, RefreshCw, ShieldCheck, Rocket, ExternalLink,
-  CheckCircle2, XCircle, GitBranch, Wrench, Undo2,
+  CheckCircle2, XCircle, GitBranch, Wrench, Undo2, SkipForward,
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
@@ -500,25 +500,76 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
           {testLoading ? (
             <div className="py-10 text-center text-gray-400 text-sm">加载中…</div>
           ) : testRuns?.length ? (
-            testRuns.map((r) => (
-              <div key={r.id} className="rounded-xl border border-gray-200 overflow-hidden">
-                <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
-                    {r.status === 'passed'
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                      : <XCircle className="w-3.5 h-3.5 text-red-500" />}
-                    {r.status === 'passed' ? '通过' : '失败'}
-                    <span className="text-gray-400 font-normal">· {r.summary || '—'}</span>
-                  </span>
-                  <span className="text-[10px] text-gray-400">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+            testRuns.map((r) => {
+              const cases = Array.isArray(r.cases) ? r.cases : []
+              const passed = cases.filter((c) => c.status === 'passed').length
+              const failed = cases.filter((c) => c.status === 'failed' || c.status === 'error').length
+              const skipped = cases.filter((c) => c.status === 'skipped').length
+              return (
+                <div key={r.id} className="rounded-xl border border-gray-200 overflow-hidden">
+                  <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                      {r.status === 'passed'
+                        ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        : <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                      {r.status === 'passed' ? '通过' : '失败'}
+                      <span className="text-gray-400 font-normal">· {r.summary || '—'}</span>
+                      {cases.length > 0 && (
+                        <span className="flex items-center gap-1">
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">✓ {passed}</span>
+                          {failed > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">✗ {failed}</span>
+                          )}
+                          {skipped > 0 && (
+                            <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">⊘ {skipped}</span>
+                          )}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-gray-400">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+                  </div>
+                  {cases.length > 0 && (
+                    <div className="border-t border-gray-100 divide-y divide-gray-50 max-h-[30vh] overflow-y-auto">
+                      {cases.map((c, i) => {
+                        const isFail = c.status === 'failed' || c.status === 'error'
+                        return (
+                          <div key={`${c.path || c.name}-${i}`} className="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-50">
+                            {c.status === 'passed' ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
+                            ) : c.status === 'skipped' ? (
+                              <SkipForward className="w-3.5 h-3.5 text-gray-400 mt-0.5 flex-shrink-0" />
+                            ) : (
+                              <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs text-gray-700 font-mono break-all">{c.name || c.path}</div>
+                              {isFail && c.message && (
+                                <div className="text-[11px] text-red-600 mt-0.5 break-all leading-snug">{c.message}</div>
+                              )}
+                            </div>
+                            <span className={`text-[10px] flex-shrink-0 mt-0.5 ${
+                              c.status === 'passed' ? 'text-emerald-600' : c.status === 'skipped' ? 'text-gray-400' : 'text-red-500'
+                            }`}>
+                              {c.status === 'passed' ? '通过' : c.status === 'skipped' ? '跳过' : '失败'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {r.log && (
+                    <details className="border-t border-gray-100">
+                      <summary className="px-3 py-1.5 text-[11px] text-gray-500 cursor-pointer hover:bg-gray-50 select-none">
+                        查看完整执行日志
+                      </summary>
+                      <pre className="bg-gray-900 text-green-400 p-3 text-[11px] font-mono overflow-auto max-h-[28vh] whitespace-pre-wrap">
+                        {r.log}
+                      </pre>
+                    </details>
+                  )}
                 </div>
-                {r.log && (
-                  <pre className="bg-gray-900 text-green-400 p-3 text-[11px] font-mono overflow-auto max-h-[28vh] whitespace-pre-wrap">
-                    {r.log}
-                  </pre>
-                )}
-              </div>
-            ))
+              )
+            })
           ) : (
             <div className="py-10 text-center text-gray-400 text-sm">
               暂无自动化测试记录。部署流水线开启「自动化测试」后，测试门禁与修复结果会记录在这里。

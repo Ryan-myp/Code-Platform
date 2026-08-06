@@ -296,19 +296,34 @@ async def get_requirement(req_id: str):
 
 @router.get("/api/requirements/{req_id}/test-runs")
 async def get_test_runs(req_id: str):
-    """查询需求的自动化测试执行记录（部署流水线测试门禁/修复循环写入）。"""
+    """查询需求的自动化测试执行记录（部署流水线测试门禁/修复循环写入）。
+
+    cases 字段为逐条用例结果 JSON（[{name, path, status, message}]），解析后返回。
+    """
     conn = get_db()
     try:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS test_runs (id TEXT PRIMARY KEY, requirement_id TEXT, pipeline_id TEXT, "
-            "status TEXT, summary TEXT, log TEXT, created_at TEXT)"
+            "status TEXT, summary TEXT, log TEXT, cases TEXT, created_at TEXT)"
         )
+        # 旧库无 cases 列：安全追加（SQLite 不支持 ADD COLUMN IF NOT EXISTS）
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(test_runs)").fetchall()}
+        if "cases" not in cols:
+            conn.execute("ALTER TABLE test_runs ADD COLUMN cases TEXT")
         rows = conn.execute(
-            "SELECT id, requirement_id, pipeline_id, status, summary, log, created_at FROM test_runs "
+            "SELECT id, requirement_id, pipeline_id, status, summary, log, cases, created_at FROM test_runs "
             "WHERE requirement_id=? ORDER BY created_at DESC LIMIT 20",
             (req_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        runs = []
+        for r in rows:
+            item = dict(r)
+            try:
+                item["cases"] = json.loads(item.get("cases") or "[]")
+            except Exception:
+                item["cases"] = []
+            runs.append(item)
+        return runs
     finally:
         conn.close()
 
