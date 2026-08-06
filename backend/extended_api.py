@@ -3,6 +3,7 @@
 
 import json
 import hashlib
+import glob
 import logging
 import os
 import re
@@ -570,6 +571,7 @@ _TEST_PROMPTS = {
         "5. 全部使用同步调用，禁止 async/await 异步测试（容器未安装 pytest-asyncio）\n"
         "6. 测试文件必须自包含（只 import 标准库/httpx/pytest），通过环境变量连接依赖（REDIS_URL/DATABASE_URL 已注入）\n"
         "7. 只输出 ```python 围栏包裹的完整测试代码，不要任何解释文字，代码必须完整不截断\n"
+        "8. 每个测试函数必须写 docstring，首行标注需求用例编号与标题（如 `TC-API-001: 搜索北京`），编号严格取自【需求测试用例】文档；需求用例缺失编号时写中文场景名（如 `搜索北京`）\n"
         "\n推荐测试骨架（可直接使用）：\n"
         "import os, subprocess, time, httpx, pytest\n"
         "@pytest.fixture(scope=\"module\")\n"
@@ -881,6 +883,39 @@ def _parse_pytest_cases(out: str) -> list:
     return cases
 
 
+def _attach_case_meta(cases: list, project_dir: str) -> list:
+    """解析测试文件 docstring 的 TC 编号标注，把每条执行结果对应到生成的用例。
+
+    生成的用例文档（requirement.test_cases）带 TC-xxx 编号；AI 生成的测试函数
+    docstring 首行标注 `TC-API-016: 仅获取实时天气` 与之对应。执行结果据此合并
+    case_id/case_title，实现「生成的 case ↔ 执行结果」一一对应。
+    """
+    if not cases or not project_dir:
+        return cases
+    mapping = {}
+    for tf in glob.glob(os.path.join(project_dir, "test_*.py")):
+        try:
+            with open(tf, encoding="utf-8") as f:
+                code = f.read()
+        except OSError:
+            continue
+        for m in re.finditer(r'def\s+(test_\w+)\s*\([^)]*\)\s*:[^\n]*\n\s*["\']{3}\s*([^\n]*)', code):
+            fn, doc = m.group(1), m.group(2).strip()
+            # 剥掉 docstring 结尾引号（单行 docstring 尾部紧贴 """）
+            doc = re.sub(r"[\"']+$", "", doc).strip()
+            cm = re.match(r"^(TC-[\w-]+)\s*[:：\-—]?\s*(.*)$", doc)
+            if cm:
+                mapping[fn] = {"case_id": cm.group(1), "case_title": cm.group(2).strip()[:120]}
+    if not mapping:
+        return cases
+    for c in cases:
+        meta = mapping.get(c.get("name") or "")
+        if meta:
+            c["case_id"] = meta["case_id"]
+            c["case_title"] = meta["case_title"]
+    return cases
+
+
 def _extract_failed_functions(project_dir: str, out: str) -> list:
     """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。
 
@@ -1015,7 +1050,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
     for round_no in range(6):
         ok, out = verify()
         last_out = out
-        cases = _parse_pytest_cases(out) if lang == "python" else []
+        cases = _attach_case_meta(_parse_pytest_cases(out), project_dir) if lang == "python" else []
         if ok:
             summary = _parse_test_summary(out, lang)
             _record_test_run(cfg.get("requirement_id"), pid, "passed", summary, out, cases)
@@ -1211,7 +1246,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
             f.write(fixed)
         append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
     _record_test_run(cfg.get("requirement_id"), pid, "failed", "AI 修复轮次用尽", last_out[-1500:],
-                     _parse_pytest_cases(last_out) if lang == "python" else [])
+                     _attach_case_meta(_parse_pytest_cases(last_out), project_dir) if lang == "python" else [])
     return False, "自动化测试多次失败且 AI 修复未解决: " + last_out[-300:]
 
 

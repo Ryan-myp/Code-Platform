@@ -542,7 +542,16 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
                               <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="text-xs text-gray-700 font-mono break-all">{c.name || c.path}</div>
+                              {(c.case_id || c.case_title) ? (
+                                <>
+                                  <div className="text-xs text-gray-800 font-medium break-all">
+                                    {[c.case_id, c.case_title].filter(Boolean).join(' ')}
+                                  </div>
+                                  <div className="text-[10px] text-gray-400 font-mono break-all mt-0.5">{c.name || c.path}</div>
+                                </>
+                              ) : (
+                                <div className="text-xs text-gray-700 font-mono break-all">{c.name || c.path}</div>
+                              )}
                               {isFail && c.message && (
                                 <div className="text-[11px] text-red-600 mt-0.5 break-all leading-snug">{c.message}</div>
                               )}

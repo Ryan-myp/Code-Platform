@@ -69,6 +69,62 @@ class TestParsePytestCases:
         assert _parse_pytest_cases("# pass 3\n# fail 1") == []  # node:test 输出不误解析
 
 
+class TestAttachCaseMeta:
+    """测试文件 docstring TC 编号 → 执行结果关联到生成的用例。"""
+
+    def test_docstring_mapping(self, tmp_path):
+        from extended_api import _attach_case_meta
+        (tmp_path / "test_main.py").write_text(
+            "def test_weather_live_only():\n"
+            "    \"\"\"TC-API-016: 仅获取实时天气\"\"\"\n"
+            "    assert 1\n"
+            "def test_search_beijing():\n"
+            "    \"\"\"TC-API-001 搜索北京\"\"\"\n"
+            "    assert 1\n",
+            encoding="utf-8",
+        )
+        cases = [
+            {"name": "test_weather_live_only", "path": "a.py::test_weather_live_only",
+             "status": "failed", "message": "AssertionError: x"},
+            {"name": "test_search_beijing", "path": "a.py::test_search_beijing",
+             "status": "passed", "message": ""},
+        ]
+        out = _attach_case_meta(cases, str(tmp_path))
+        assert out[0]["case_id"] == "TC-API-016"
+        assert out[0]["case_title"] == "仅获取实时天气"
+        assert out[1]["case_id"] == "TC-API-001"
+        assert out[1]["case_title"] == "搜索北京"
+
+    def test_no_docstring_keeps_original(self, tmp_path):
+        from extended_api import _attach_case_meta
+        (tmp_path / "test_main.py").write_text(
+            "def test_plain():\n"
+            "    assert 1\n"
+            "def test_no_tc():\n"
+            "    \"\"\"普通描述无编号\"\"\"\n"
+            "    assert 1\n",
+            encoding="utf-8",
+        )
+        cases = [{"name": "test_plain", "path": "a.py::test_plain",
+                  "status": "passed", "message": ""}]
+        out = _attach_case_meta(cases, str(tmp_path))
+        assert "case_id" not in out[0] and "case_title" not in out[0]
+
+    def test_multiple_files_and_missing_dir(self, tmp_path):
+        from extended_api import _attach_case_meta
+        (tmp_path / "test_main.py").write_text(
+            "def test_a():\n    \"\"\"TC-A-1: 用例A\"\"\"\n", encoding="utf-8")
+        (tmp_path / "test_extra.py").write_text(
+            "def test_b():\n    \"\"\"TC-B-2: 用例B\"\"\"\n", encoding="utf-8")
+        out = _attach_case_meta(
+            [{"name": "test_b", "path": "test_extra.py::test_b", "status": "passed", "message": ""}],
+            str(tmp_path))
+        assert out[0]["case_id"] == "TC-B-2"
+        # 目录不存在/空 cases 安全返回
+        assert _attach_case_meta([{"name": "x"}], "/no/such/dir") == [{"name": "x"}]
+        assert _attach_case_meta([], str(tmp_path)) == []
+
+
 class TestRecordTestRun:
     """test_runs 落库：cases JSON 列 + 旧库 ALTER 兼容。"""
 
