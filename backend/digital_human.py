@@ -598,22 +598,30 @@ def _render_frame(
     sway_t = math.sin(t * 1.15)
     breathe_t = math.sin(t * 1.3)
     glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))
+    # 入场动画：前 0.8s 人物从左侧滑入（ease-out，开局明显动起来）
+    enter_ease = 1 - (1 - min(1.0, t / 0.8)) ** 3
 
-    # ── 4. 左侧人物：写真 + 动态（呼吸缩放/倾斜摇摆/眨眼/嘴型开合）──
+    # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
         p_base, p_mask_base, p_base_w, p_base_h = portrait
-        # 呼吸缩放 + 说话节奏起伏（能量驱动）
-        breath_scale = 1 + 0.018 * breathe_t + 0.012 * talk * math.sin(t * 3.0)
+        # 呼吸缩放（幅度加大）+ 说话节奏起伏（能量驱动）
+        breath_scale = 1 + 0.03 * breathe_t + 0.022 * talk * math.sin(t * 3.2)
         p_w = max(20, int(p_base_w * breath_scale * S))
         p_h = max(20, int(p_base_h * breath_scale * S))
-        # 轻微倾斜摇摆（像真人站立微晃，说话时幅度更大）
-        tilt = sway_t * (0.5 + 1.3 * talk)
-        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR)
-        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR)
-        # 垂直浮动 + 水平摇摆（说话时叠加高频起伏）
-        float_offset = int((breathe_t * 7 + talk * 5 * math.sin(t * 2.8)) * S)
-        sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
-        px, py = int(40 * S) + sway_offset, int(35 * S) + float_offset
+        # 点头倾斜：绕底部中心旋转（像真人说话时身体前倾点头），幅度随能量加大
+        tilt = sway_t * (1.0 + 2.4 * talk) + 1.2 * talk * math.sin(t * 2.6)
+        nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
+        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(
+            tilt, resample=Image.BILINEAR, center=nod_pivot)
+        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(
+            tilt, resample=Image.BILINEAR, center=nod_pivot)
+        # 垂直浮动 + 水平摇摆（幅度加大，说话时叠加高频起伏）
+        float_offset = int((breathe_t * 11 + talk * 8 * math.sin(t * 2.8)) * S)
+        sway_offset = int((sway_t * 9 + talk * 7 * math.cos(t * 2.2)) * S)
+        # 入场滑入：x 从画面外（-p_w）滑到目标位
+        enter_shift = int((1 - enter_ease) * (p_w + int(80 * S)))
+        px = int(40 * S) + sway_offset - enter_shift
+        py = int(35 * S) + float_offset
         # 人物脚下平台光斑（小尺寸 RGBA 图层，像直播台灯光）
         plat_w, plat_h = int(560 * S), int(110 * S)
         plat = Image.new("RGBA", (plat_w, plat_h), (0, 0, 0, 0))
@@ -628,34 +636,38 @@ def _render_frame(
         img.paste(shadow, (px - 5, py - 5), shadow)
         img.paste(p_img, (px, py), p_mask)
 
-        # 眨眼：每 ~3.4s 闭眼一次（0.12s 内渐进闭上再睁开），像真人自然眨眼
-        blink_t = t % 3.4
-        if blink_t < 0.12:
-            close = blink_t / 0.12  # 0→1 渐进闭眼
+        # 眨眼：每 ~2.8s 闭眼一次（0.16s 内渐进闭上再睁开），闭眼线条更明显
+        blink_t = t % 2.8
+        if blink_t < 0.16:
+            close = blink_t / 0.16  # 0→1 渐进闭眼
             eye_y = py + int(p_h * 0.335)
-            eye_alpha = int(120 * close) + 60
+            eye_alpha = int(160 * close) + 80
             for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
                 ew = int(p_w * 0.13)
                 # 闭眼：在眼位画一条深色闭合线（宽度随闭眼进度变窄）
-                eh = max(1, int(p_h * 0.006 * (2 - close)))
+                eh = max(2, int(p_h * 0.008 * (2.2 - close)))
                 draw.rounded_rectangle(
                     [ex, eye_y - eh // 2, ex + ew, eye_y + eh // 2],
-                    radius=2, fill=(60, 40, 45, eye_alpha),
+                    radius=2, fill=(40, 26, 32, min(eye_alpha, 220)),
                 )
 
-        # 嘴型开合：能量驱动（仅 AI 写真半身像；用户上传形象构图不定，跳过避免贴歪）
-        if not avatar.get("is_custom") and talk > 0.04:
-            mouth_open = 0.30 + 0.70 * talk  # 张度随能量
-            mw = max(4, int(p_w * 0.22))
-            mh = max(1, int(p_h * 0.026 * mouth_open))
+        # 嘴型开合：能量驱动（开口更大更明显；AI 写真构图可控，
+        # 自定义形象按长宽比启发式判断是否正面人像再启用）
+        aspect = p_base_w / p_base_h
+        if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and talk > 0.04:
+            mouth_open = 0.35 + 0.65 * talk  # 张度随能量
+            # 快速开合抖动：能量高时叠加高频律动，更像真实说话
+            flutter = 0.7 + 0.3 * math.sin(t * 14.0) if talk > 0.15 else 1.0
+            mw = max(4, int(p_w * 0.24))
+            mh = max(2, int(p_h * 0.030 * mouth_open * flutter))
             mx = px + int(p_w * 0.49)
             my = py + int(p_h * 0.805)
-            mouth_layer = Image.new("RGBA", (mw + 10, mh + 12), (0, 0, 0, 0))
+            mouth_layer = Image.new("RGBA", (mw + 10, mh + 14), (0, 0, 0, 0))
             md = ImageDraw.Draw(mouth_layer)
-            # 上唇线固定 + 下唇随能量开合（椭圆填充，模拟说话口型）
-            md.rounded_rectangle([0, 0, mw, 3], radius=2, fill=(80, 50, 60, 190))
-            md.ellipse([1, 4, mw - 1, 4 + mh], fill=(70, 42, 52, 170))
-            img.paste(mouth_layer, (mx - mw // 2 - 5, my - 5), mouth_layer)
+            # 上唇线固定 + 下唇随能量开合（颜色更深更明显）
+            md.rounded_rectangle([0, 0, mw, 4], radius=2, fill=(60, 32, 42, 215))
+            md.ellipse([1, 5, mw - 1, 5 + mh], fill=(55, 30, 40, 200))
+            img.paste(mouth_layer, (mx - mw // 2 - 5, my - 6), mouth_layer)
 
         # 光环脉动
         glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
@@ -780,11 +792,12 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     - 字幕：卡拉OK逐字显示，当前字主题色高亮，当前行带字幕底条
     - 镜头：整体缓慢推近（Ken Burns），开头 0.4s 淡入、结尾 0.4s 淡出
     """
+    import math
     import shutil
 
     OUT_W, OUT_H = 1280, 720
-    # 渲染画布放大 1.05x，按进度裁剪窗口实现镜头推近（避免边缘露出）
-    RENDER_W, RENDER_H = int(OUT_W * 1.05), int(OUT_H * 1.05)
+    # 渲染画布放大 1.10x：按进度裁剪窗口实现镜头推近 + 平移/呼吸（避免边缘露出）
+    RENDER_W, RENDER_H = int(OUT_W * 1.10), int(OUT_H * 1.10)
     bg_hex = bg.get("color", "#1a1a2e")
     if bg_hex.startswith("linear-gradient"):
         import re
@@ -829,7 +842,7 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     # 文案换行（复用一帧的测量）
     probe = Image.new("RGB", (10, 10), "#000")
     probe_draw = ImageDraw.Draw(probe)
-    right_w = int((1280 - 600 - 50) * 1.05)
+    right_w = int((1280 - 600 - 50) * 1.10)
     text_lines = _wrap_text_lines(text, probe_draw, fonts["body"], right_w)
 
     frames_dir = tempfile.mkdtemp(prefix="dh_frames_")
@@ -844,12 +857,17 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
                 t=t, progress=progress, width=RENDER_W, height=RENDER_H,
                 energy=energy,
             )
-            # 镜头缓慢推近：裁剪窗口随进度缩小，再缩放回输出尺寸
-            zoom = 0.035 * progress
+            # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
+            zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
             win_w = int(RENDER_W / (1 + zoom))
             win_h = int(RENDER_H / (1 + zoom))
-            x0 = (RENDER_W - win_w) // 2
-            y0 = (RENDER_H - win_h) // 2
+            pan_x = int(0.012 * RENDER_W * math.sin(t * 0.18))
+            pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
+            x0 = (RENDER_W - win_w) // 2 + pan_x
+            y0 = (RENDER_H - win_h) // 2 + pan_y
+            # 越界保护：裁剪窗口不允许超出画布
+            x0 = max(0, min(x0, RENDER_W - win_w))
+            y0 = max(0, min(y0, RENDER_H - win_h))
             frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
                 (OUT_W, OUT_H), Image.LANCZOS,
             )
