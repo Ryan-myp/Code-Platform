@@ -10,6 +10,7 @@ import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
   Badge, PageHeader, ConfirmDialog,
 } from '../components/ui'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -120,7 +121,7 @@ export default function VideoFactoryPage() {
   const [frameRate, setFrameRate] = useState(24)
   const [creating, setCreating] = useState(false)
   const [lastResult, setLastResult] = useState(null)
-  const pollingRef = useRef(null)
+  const { submitTask, startPolling, stopPolling } = useAsyncTask()
 
   // 播放器
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -153,8 +154,8 @@ export default function VideoFactoryPage() {
     fetchStats()
     fetchVideos()
     fetchCloudPrompts()
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current) }
-  }, [fetchStats, fetchVideos])
+    return () => { stopPolling() }
+  }, [fetchStats, fetchVideos, stopPolling])
 
   const fetchCloudPrompts = async () => {
     try {
@@ -163,30 +164,20 @@ export default function VideoFactoryPage() {
     } catch { /* 静默：后端无此接口时降级为本地模板 */ }
   }
 
-  const startPolling = (videoId) => {
-    if (pollingRef.current) clearInterval(pollingRef.current)
-    const poll = async () => {
-      try {
-        const res = await api.get(`/api/video-factory/result/${videoId}`)
-        const data = res.data
-        setLastResult((prev) => ({
-          ...prev,
-          ...data,
-          url: data.url ? absUrl(data.url) : prev?.url,
-        }))
-        if (data.status === 'completed') {
-          if (pollingRef.current) clearInterval(pollingRef.current)
-          toast.success('视频生成完成！')
-          fetchVideos()
-        }
-      } catch (e) {
-        if (pollingRef.current) clearInterval(pollingRef.current)
-        setLastResult((prev) => ({ ...prev, status: 'failed', error: e.message }))
-        toast.error(`视频生成失败：${e.message}`)
-      }
-    }
-    poll()
-    pollingRef.current = setInterval(poll, 5000)
+  // 异步任务进度回调（提交与手动刷新共用）
+  const handleTaskUpdate = (t) => {
+    setLastResult((prev) => ({ ...prev, progress: t.progress, stage: t.stage }))
+  }
+  const handleTaskSuccess = (data) => {
+    setLastResult({ ...data, url: data.url ? absUrl(data.url) : null, status: 'completed', created_at: new Date().toLocaleString() })
+    setCreating(false)
+    toast.success('视频生成完成！')
+    fetchVideos()
+  }
+  const handleTaskError = (e) => {
+    setLastResult((prev) => ({ ...prev, status: 'failed', error: e.message }))
+    setCreating(false)
+    toast.error(`视频生成失败：${e.message}`)
   }
 
   const handleCreate = async () => {
@@ -196,31 +187,22 @@ export default function VideoFactoryPage() {
     }
     setCreating(true)
     setLastResult(null)
-    try {
-      const form = new FormData()
-      form.append('prompt', prompt)
-      form.append('width', width)
-      form.append('height', height)
-      form.append('duration', duration)
-      form.append('mode', mode)
-      if (mode === 'i2vid') form.append('image', image)
-      form.append('frame_rate', frameRate)
-      const res = await api.post('/api/video-factory/generate', form, { timeout: 120000 })
-      const data = res.data
-      if (data.video_id) {
-        setLastResult({
-          video_id: data.video_id,
-          status: 'pending',
-          prompt: prompt,
-          created_at: new Date().toLocaleString(),
-        })
-        toast.success('视频任务已创建，正在生成...')
-        startPolling(data.video_id)
-      }
-    } catch (e) {
-      toast.error(`创建任务失败：${e.message}`)
-    } finally {
-      setCreating(false)
+    const form = new FormData()
+    form.append('prompt', prompt)
+    form.append('width', width)
+    form.append('height', height)
+    form.append('duration', duration)
+    form.append('mode', mode)
+    if (mode === 'i2vid') form.append('image', image)
+    form.append('frame_rate', frameRate)
+    const r = await submitTask('/api/video-factory/generate', form, {
+      onUpdate: handleTaskUpdate,
+      onSuccess: handleTaskSuccess,
+      onError: handleTaskError,
+    })
+    if (r.task_id) {
+      setLastResult({ video_id: r.task_id, status: 'processing', prompt, created_at: new Date().toLocaleString() })
+      toast.success('视频任务已提交，后台生成中（可在任务中心查看进度）')
     }
   }
 
@@ -465,6 +447,17 @@ export default function VideoFactoryPage() {
                 {lastResult.status === 'failed' && lastResult.error && (
                   <div className="text-sm text-red-600 mt-1">失败原因：{lastResult.error}</div>
                 )}
+                {lastResult.status !== 'completed' && lastResult.status !== 'failed' && lastResult.progress !== undefined && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <span className="truncate">{lastResult.stage || '视频生成中...'}</span>
+                      <span className="ml-2">{Math.round(lastResult.progress || 0)}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all" style={{ width: `${lastResult.progress || 0}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 {lastResult.status === 'completed' && lastResult.url && (
@@ -473,7 +466,7 @@ export default function VideoFactoryPage() {
                   </Button>
                 )}
                 {lastResult.status !== 'completed' && lastResult.status !== 'failed' && (
-                  <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => startPolling(lastResult.video_id)}>
+                  <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => startPolling(lastResult.video_id, { onUpdate: handleTaskUpdate, onSuccess: handleTaskSuccess, onError: handleTaskError })}>
                     刷新状态
                   </Button>
                 )}

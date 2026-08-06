@@ -10,6 +10,7 @@ import {
   Button, Empty, SkeletonList, ErrorState,
   PageHeader, ConfirmDialog,
 } from '../components/ui'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -150,6 +151,9 @@ export default function MusicFactoryPage() {
 
   // 删除
   const [deleteTarget, setDeleteTarget] = useState(null)
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   const fetchStats = useCallback(async () => {
     try {
@@ -187,26 +191,26 @@ export default function MusicFactoryPage() {
     setLyricsError('')
     setGeneratingLyrics(true)
     setLyrics('')
-    try {
-      const form = new FormData()
-      form.append('theme', theme)
-      form.append('style', style)
-      form.append('language', language)
-      form.append('length', length)
-      const res = await api.post('/api/music-factory/lyrics/generate', form, { timeout: 120000 })
-      const data = res.data
-      if (data.lyrics) {
-        setLyrics(data.lyrics)
-        setSelectedLyrics(data.lyrics)
-        toast.success('歌词生成完成')
-      } else {
-        setLyricsError('生成失败')
-      }
-    } catch (e) {
-      setLyricsError(`生成失败：${e.message}`)
-    } finally {
-      setGeneratingLyrics(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('theme', theme)
+    form.append('style', style)
+    form.append('language', language)
+    form.append('length', length)
+    await submitTask('/api/music-factory/lyrics/generate', form, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        if (data.lyrics) {
+          setLyrics(data.lyrics)
+          setSelectedLyrics(data.lyrics)
+          toast.success('歌词生成完成')
+        } else {
+          setLyricsError('生成失败')
+        }
+        setGeneratingLyrics(false)
+      },
+      onError: (e) => { setGeneratingLyrics(false); setLyricsError(`生成失败：${e.message}`) },
+    })
   }
 
   const generateMusic = async () => {
@@ -240,23 +244,23 @@ export default function MusicFactoryPage() {
     }
     setGeneratingTts(true)
     setTtsResult(null)
-    try {
-      const form = new FormData()
-      form.append('lyrics', ttsText)
-      form.append('voice', ttsVoice)
-      form.append('style', style)
-      const res = await api.post('/api/music-factory/tts/sing', form, { timeout: 120000 })
-      const data = res.data
-      setTtsResult(data)
-      if (data.url) {
-        toast.success('人声合成完成')
-        fetchAudios()
-      }
-    } catch (e) {
-      toast.error(`生成人声失败：${e.message}`)
-    } finally {
-      setGeneratingTts(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('lyrics', ttsText)
+    form.append('voice', ttsVoice)
+    form.append('style', style)
+    await submitTask('/api/music-factory/tts/sing', form, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        setTtsResult(data)
+        if (data.url) {
+          toast.success('人声合成完成')
+          fetchAudios()
+        }
+        setGeneratingTts(false)
+      },
+      onError: (e) => { setGeneratingTts(false); toast.error(`生成人声失败：${e.message}`) },
+    })
   }
 
   const handlePlayAudio = (audio) => {
@@ -460,8 +464,21 @@ export default function MusicFactoryPage() {
           )}
 
           <Button variant="gradient" size="lg" icon={Sparkles} loading={generatingLyrics} disabled={!theme.trim()} onClick={generateLyrics} className="w-full">
-            {generatingLyrics ? '正在创作歌词...' : '生成歌词'}
+            {generatingLyrics ? '生成任务执行中（后台）…' : '生成歌词'}
           </Button>
+          {generatingLyrics && genTask && (
+            <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2 mt-2">
+              <div className="flex items-center gap-2 text-xs text-purple-700">
+                <Sparkles className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 bg-purple-100 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+              </div>
+              <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+            </div>
+          )}
 
           {lyrics && (
             <div className="mt-4 p-4 bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl border border-purple-100">
@@ -601,8 +618,21 @@ export default function MusicFactoryPage() {
 
           <Button variant="gradient" size="lg" icon={Mic} loading={generatingTts}
             disabled={!ttsText.trim()} onClick={generateTts} className="w-full">
-            {generatingTts ? '正在合成...' : '生成人声'}
+            {generatingTts ? '生成任务执行中（后台）…' : '生成人声'}
           </Button>
+          {generatingTts && genTask && (
+            <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2 mt-2">
+              <div className="flex items-center gap-2 text-xs text-purple-700">
+                <Sparkles className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 bg-purple-100 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+              </div>
+              <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+            </div>
+          )}
 
           {ttsResult?.url && (
             <div className="p-4 bg-green-50 border border-green-200 rounded-xl">

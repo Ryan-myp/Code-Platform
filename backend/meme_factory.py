@@ -7,6 +7,7 @@
 - 产物保存到 meme_factory/ 目录并登记 artifacts 表（type=image）
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -14,9 +15,10 @@ import os
 import time
 import zipfile
 from datetime import datetime
+from typing import Callable
 
 import requests
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
@@ -24,6 +26,7 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -271,16 +274,19 @@ def _artifact_meta() -> dict:
     return meta
 
 
-@router.post("/generate")
-async def generate_meme(
-    top_text: str = Form(""),
-    bottom_text: str = Form(""),
-    style: str = Form("yellow"),
-    ai_prompt: str = Form(""),
-):
-    """文字一键生成表情包：经典模板（PIL 绘制）或 AI 文生图 + 叠字。"""
-    top_text = (top_text or "").strip()
-    bottom_text = (bottom_text or "").strip()
+async def _meme_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """文字一键生成表情包（同步/异步任务共用执行体，异步时回报进度）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    top_text = (payload.get("top_text") or "").strip()
+    bottom_text = (payload.get("bottom_text") or "").strip()
+    style = payload.get("style") or "yellow"
+    ai_prompt = payload.get("ai_prompt") or ""
     if not top_text and not bottom_text:
         raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
     if style not in {s["id"] for s in STYLES}:
@@ -288,10 +294,11 @@ async def generate_meme(
 
     # 背景
     if style == "ai":
+        _report(20, "AI 正在绘制表情包背景…")
         full_prompt = ai_prompt.strip() or f"{top_text}，{bottom_text}"
         scene = ("扁平插画风格，干净简洁的现代网络表情包场景，高饱和配色，画面主体居中偏下，"
                  "顶部与底部各预留 20% 高度纯净留白区域用于叠加文字，背景简洁不杂乱")
-        img = _ai_bg(f"{full_prompt}。{scene}")
+        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}")
         # 顶部 + 底部半透明底条，保证大字在任何画面上都可读（商用标准）
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
@@ -307,6 +314,7 @@ async def generate_meme(
         top_fill, top_stroke = _text_color(style)
         bottom_fill, bottom_stroke = _text_color(style)
 
+    _report(70, "正在叠加文字…")
     draw = ImageDraw.Draw(img)
     # 顶部文字
     _draw_meme_text(draw, top_text, MARGIN, TOP_H, fill=top_fill, stroke=top_stroke, font_size=96)
@@ -316,6 +324,7 @@ async def generate_meme(
     filename = f"meme_{int(time.time() * 1000)}.png"
     img.save(os.path.join(MEME_DIR, filename), "PNG")
     art_id = _save_artifact(filename, top_text, bottom_text, style, ai_prompt.strip())
+    _report(100, "表情包已生成")
     return {
         "id": filename,
         "artifact_id": art_id,
@@ -323,6 +332,35 @@ async def generate_meme(
         "style": style,
         "top_text": top_text,
         "bottom_text": bottom_text,
+    }
+
+
+@router.post("/generate")
+async def generate_meme(
+    top_text: str = Form(""),
+    bottom_text: str = Form(""),
+    style: str = Form("yellow"),
+    ai_prompt: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """文字一键生成表情包：经典模板（PIL 绘制）或 AI 文生图 + 叠字（默认异步任务）。"""
+    top_text = (top_text or "").strip()
+    bottom_text = (bottom_text or "").strip()
+    if not top_text and not bottom_text:
+        raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
+    if style not in {s["id"] for s in STYLES}:
+        raise HTTPException(400, f"未知风格: {style}")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"top_text": top_text, "bottom_text": bottom_text, "style": style, "ai_prompt": ai_prompt}
+    if sync:
+        return await _meme_generate_worker(payload)
+    task = create_task("meme_generate", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "表情包生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
 
 
@@ -494,3 +532,11 @@ async def delete_meme(filename: str, current_user: dict = require_auth()):
     except Exception as e:
         logger.debug(f"delete_meme artifact skipped: {e}")
     return {"success": True}
+
+
+async def _meme_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装表情包生成，回报进度。"""
+    return await _meme_generate_worker(payload, progress=update)
+
+
+register_handler("meme_generate", _meme_generate_handler, user_limit=2)

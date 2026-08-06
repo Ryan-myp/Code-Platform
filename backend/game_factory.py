@@ -19,12 +19,14 @@ import uuid
 import zipfile
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.llm import call_llm_async, log_usage
+from task_queue import create_task, register_handler
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -359,12 +361,19 @@ async def list_projects(current_user: dict = require_auth()):
     return result
 
 
-@router.post("/generate")
-async def generate_game(req: GenerateRequest, current_user: dict = require_auth()):
-    """选模板 + 需求 → AI 生成双版本小游戏。"""
+async def _game_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """AI 生成双版本小游戏（同步/异步任务共用执行体，异步时回报进度）。"""
+    req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
         raise HTTPException(400, f"未知模板: {req.template}")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
     user_prompt = f"""游戏名称：{req.name}
 选择模板：{tpl['name'] if tpl else '自定义'}
@@ -375,6 +384,7 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
 {req.requirement}
 
 请生成双版本小游戏 JSON。"""
+    _report(10, "已受理，正在组织生成提示词…")
 
     start = time.time()
     files = None
@@ -384,6 +394,7 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
     result = None
     for _attempt in range(3):
         try:
+            _report(25, f"AI 正在生成双版本代码（第 {_attempt + 1} 次尝试）…")
             result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
             break
         except HTTPException as e:
@@ -400,6 +411,7 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
 
     # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
     for attempt in range(3):
+        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
         try:
             files = _validate_files(_extract_json(result))
             qc = _qc_check(files)
@@ -447,6 +459,7 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
     )
     conn.commit()
     conn.close()
+    _report(85, "项目已保存")
 
     elapsed = round(time.time() - start, 2)
     log_usage("game_generate", len(user_prompt), len(result), elapsed)
@@ -458,6 +471,28 @@ async def generate_game(req: GenerateRequest, current_user: dict = require_auth(
         "file_count": sum(len(v) for v in files.values()),
         "files": files,
         "qc": qc,
+    }
+
+
+@router.post("/generate")
+async def generate_game(
+    req: GenerateRequest,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """选模板 + 需求 → AI 生成双版本小游戏（默认异步任务，立即返回 task_id）。"""
+    tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
+    if req.template != "custom" and not tpl:
+        raise HTTPException(400, f"未知模板: {req.template}")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    if sync:
+        return await _game_generate_worker(req.model_dump())
+    task = create_task("game_generate", req.model_dump(), username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "游戏生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
 
 
@@ -616,9 +651,10 @@ _EVOLVE_SYSTEM = """你是一位资深游戏开发工程师，正在对一个已
 7. 所有状态变量声明时必须初始化，事件回调触发的绘制/更新函数开头必须先判空，严禁运行时错误"""
 
 
-@router.post("/{proj_id}/evolve")
-async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = require_auth()):
-    """AI 二次迭代：基于现有代码 + 新需求，生成升级版双版本代码（覆盖保存，保留历史需求日志）。"""
+async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """AI 二次迭代（同步/异步任务共用执行体）。"""
+    proj_id = payload.get("proj_id", "")
+    req = EvolveRequest(**payload.get("params", payload))
     conn = get_db()
     row = conn.execute("SELECT * FROM game_projects WHERE id=?", (proj_id,)).fetchone()
     if not row:
@@ -628,6 +664,13 @@ async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = req
     if not files:
         conn.close()
         raise HTTPException(400, "项目没有代码文件，无法迭代")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
     # 注入现有代码（截断保护 token 上限）
     web_html = (files.get("web", {}).get("index.html") or "")[:24000]
@@ -648,9 +691,11 @@ async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = req
 {req.requirement}
 
 请基于现有代码生成升级后的双版本小游戏 JSON。"""
+    _report(15, "已受理，正在组织迭代提示词…")
 
     start = time.time()
     try:
+        _report(40, "AI 正在生成升级版代码…")
         result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
     except HTTPException:
         conn.close()
@@ -692,6 +737,7 @@ async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = req
     )
     conn.commit()
     conn.close()
+    _report(85, "升级版代码已保存")
 
     elapsed = round(time.time() - start, 2)
     log_usage("game_evolve", len(user_prompt), len(result), elapsed)
@@ -702,6 +748,35 @@ async def evolve_game(proj_id: str, req: EvolveRequest, current_user: dict = req
         "file_count": sum(len(v) for v in new_files.values()),
         "files": new_files,
         "iterations": len(log),
+    }
+
+
+@router.post("/{proj_id}/evolve")
+async def evolve_game(
+    proj_id: str,
+    req: EvolveRequest,
+    sync: bool = Query(False, description="true=同步执行；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """AI 二次迭代：基于现有代码 + 新需求，生成升级版双版本代码（默认异步任务）。"""
+    # 预检：项目存在性快速失败，避免无效任务入队
+    conn = get_db()
+    row = conn.execute("SELECT id, files FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "游戏项目不存在")
+    if not json.loads(row["files"] or "{}"):
+        raise HTTPException(400, "项目没有代码文件，无法迭代")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"proj_id": proj_id, "params": req.model_dump()}
+    if sync:
+        return await _game_evolve_worker(payload)
+    task = create_task("game_evolve", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "迭代任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
 
 
@@ -777,3 +852,23 @@ def get_db():
     from common.db import get_db as _get_db
 
     return _get_db()
+
+
+# ══════════════════════════════════════════════════════════════
+# 通用异步任务框架接入：生成/迭代为后台任务（默认异步，页面可关闭）
+# ══════════════════════════════════════════════════════════════
+
+async def _game_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：生成双版本小游戏（async 由框架 asyncio.run 执行）。"""
+    update(5, "任务已受理，正在准备生成…")
+    return await _game_generate_worker(payload, progress=update)
+
+
+async def _game_evolve_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：基于现有代码迭代升级。"""
+    update(5, "任务已受理，正在准备迭代…")
+    return await _game_evolve_worker(payload, progress=update)
+
+
+register_handler("game_generate", _game_generate_handler, user_limit=2)
+register_handler("game_evolve", _game_evolve_handler, user_limit=2)

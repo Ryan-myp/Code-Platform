@@ -13,6 +13,8 @@
     ctx = {"username": ..., "user_id": ..., "role": ...}
     处理器内抛 HTTPException(402, "...") 会记录 error_code 供前端识别计费类错误。
 """
+import asyncio
+import inspect
 import json
 import logging
 import os
@@ -200,6 +202,9 @@ def _run_handler(task_id: str) -> None:
     ctx = {"username": row["created_by"] or "", "user_id": row["user_id"] or "", "role": row["role"] or ""}
     try:
         result = fn(task_id, payload, lambda p, s: _update_progress(task_id, p, s), ctx)
+        # async 处理器（内部 await call_llm_async 等）：worker 线程内新建事件循环执行
+        if inspect.iscoroutine(result):
+            result = asyncio.run(result)
         with get_db_context() as conn:
             conn.execute(
                 "UPDATE async_tasks SET status='success', progress=100, result=?, stage='生成完成', finished_at=? WHERE id=?",

@@ -96,7 +96,7 @@ const SCENE_GROUPS = [
     key: 'me', label: '个人中心', desc: '我的资产与权益', icon: Crown,
     color: 'from-amber-500 to-orange-600',
     items: [
-      { label: '任务中心', desc: '待办与任务管理', path: '/tasks', icon: CheckCircle2, keywords: '任务,待办' },
+      { label: '任务中心', desc: 'AI 生成任务实时进度', path: '/tasks', icon: CheckCircle2, keywords: '任务,进度,生成' },
       { label: '记录中心', desc: '全部使用记录', path: '/records', icon: HistoryIcon, keywords: '记录,历史' },
       { label: '通知中心', desc: '消息与提醒', path: '/notifications', icon: Bell, keywords: '通知,消息' },
       { label: '会员中心', desc: '额度与权益', path: '/membership', icon: Crown, keywords: '会员,权益,额度' },
@@ -127,17 +127,23 @@ const ALL_CAPABILITIES = SCENE_GROUPS.flatMap((g) =>
 const WIDGET_META = [
   { type: 'stats', label: '数据概览', desc: '统计卡片：Agent/Workflow/项目/任务等', icon: BarChart3 },
   { type: 'recent', label: '智能流水线', desc: '最近需求进度与部署状态', icon: GitBranch },
-  { type: 'tasks', label: '待办任务', desc: '待办任务与右侧面板', icon: CheckCircle2 },
+  { type: 'tasks', label: '任务中心', desc: 'AI 生成任务进度预览', icon: CheckCircle2 },
   { type: 'quick_actions', label: '快捷操作', desc: '常用功能快捷入口', icon: Zap },
   { type: 'notifications', label: '最新通知', desc: '未读通知预览', icon: Bell },
 ]
 
 const PRIORITY_COLORS = { P0: 'red', P1: 'orange', P2: 'blue', P3: 'gray' }
-const STATUS_CONFIG = {
-  todo: { label: '待办', color: 'gray' },
-  in_progress: { label: '进行中', color: 'blue' },
-  done: { label: '已完成', color: 'green' },
-  cancelled: { label: '已取消', color: 'red' },
+
+// 任务类型 / 状态展示映射（与任务中心页一致）
+const TASK_TYPE_LABEL = {
+  dh_generate: '数字人', game_generate: '小游戏生成', game_evolve: '小游戏迭代',
+  miniapp_generate: '小程序生成', video_generate: '视频生成', music_lyrics: '歌词生成',
+  music_sing: '人声合成', meme_generate: '表情包', image_t2i: '文生图',
+  image_i2i: '图生图', image_template: '模板渲染', image_tryon: '虚拟试衣', voice_generate: 'AI 配音',
+}
+const TASK_STATUS_LABEL = {
+  pending: '排队中', running: '执行中', success: '已完成',
+  failed: '失败', interrupted: '已中断', canceled: '已取消',
 }
 
 // AI 工作台流水线阶段（与 AIWorkspacePage 保持一致）
@@ -217,8 +223,6 @@ export default function HomePage() {
   const [toolStats, setToolStats] = useState([])
   const [drafts, setDrafts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [showTaskModal, setShowTaskModal] = useState(false)
-  const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'P2' })
   const [capKw, setCapKw] = useState('')
 
   // 首页组件配置（null=未加载，默认全显示）
@@ -234,7 +238,7 @@ export default function HomePage() {
       const [statsRes, recentRes, tasksRes, notifsRes, favRes, toolRes, draftRes, widgetsRes] = await Promise.all([
         api.get('/api/home/stats'),
         api.get('/api/home/recent'),
-        api.get('/api/tasks?status=todo'),
+        api.get('/api/tasks', { params: { limit: 8 } }),
         api.get('/api/notifications?unread_only=true&limit=10'),
         api.get('/api/tools/favorites/list').catch(() => ({ data: [] })),
         api.get('/api/tools/stats').catch(() => ({ data: [] })),
@@ -243,7 +247,7 @@ export default function HomePage() {
       ])
       setStats(statsRes.data)
       setRecent(recentRes.data)
-      setTasks(tasksRes.data)
+      setTasks(tasksRes.data?.tasks || [])
       setNotifications(notifsRes.data)
       setFavorites(favRes.data || [])
       setToolStats(toolRes.data || [])
@@ -259,29 +263,6 @@ export default function HomePage() {
   const deleteDraft = async (id) => {
     try { await api.delete(`/api/drafts/${id}`); setDrafts((prev) => prev.filter((d) => d.id !== id)); toast.success('草稿已删除') }
     catch (e) { toast.error(e.message) }
-  }
-
-  const createTask = async () => {
-    if (!newTask.title.trim()) { toast.error('请输入任务标题'); return }
-    try {
-      await api.post('/api/tasks', newTask)
-      toast.success('任务已创建')
-      setShowTaskModal(false)
-      setNewTask({ title: '', description: '', priority: 'P2' })
-      loadData()
-    } catch (e) {
-      toast.error(`创建失败：${e.message}`)
-    }
-  }
-
-  const updateTaskStatus = async (taskId, status) => {
-    try {
-      await api.put(`/api/tasks/${taskId}`, { status })
-      toast.success('状态已更新')
-      loadData()
-    } catch (e) {
-      toast.error(`更新失败：${e.message}`)
-    }
   }
 
   const markNotifRead = async (notifId) => {
@@ -360,7 +341,7 @@ export default function HomePage() {
     { label: 'Agent', value: stats?.agents || 0, icon: Bot, color: 'from-emerald-500 to-teal-600', path: '/agents' },
     { label: 'Workflow', value: stats?.workflows || 0, icon: Layers, color: 'from-blue-500 to-indigo-600', path: '/workflows' },
     { label: '项目', value: stats?.projects || 0, icon: FolderKanban, color: 'from-violet-500 to-purple-600', path: '/projects' },
-    { label: '待办任务', value: stats?.tasks_todo || 0, icon: CheckCircle2, color: 'from-amber-500 to-orange-600', path: '/tasks' },
+    { label: '任务中心', value: tasks.length, icon: CheckCircle2, color: 'from-amber-500 to-orange-600', path: '/tasks' },
     { label: '未读通知', value: stats?.notifications_unread || 0, icon: Bell, color: 'from-pink-500 to-rose-600', path: '/notifications' },
     { label: '成果', value: stats?.artifacts || 0, icon: FileText, color: 'from-cyan-500 to-blue-600', path: '/artifacts' },
   ]
@@ -401,8 +382,8 @@ export default function HomePage() {
             <Button icon={Rocket} onClick={() => navigate('/workspace')} className="!bg-white !text-brand-700 hover:!bg-gray-50 shadow-lg">
               打开 AI 工作台
             </Button>
-            <Button icon={Plus} onClick={() => setShowTaskModal(true)} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
-              新建任务
+            <Button icon={Zap} onClick={() => navigate('/tasks')} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
+              任务中心
             </Button>
             <Button icon={Settings} onClick={openWidgetConfig} className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25">
               首页配置
@@ -684,13 +665,13 @@ export default function HomePage() {
 
       {widgetVisible('tasks') && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 待办任务 */}
+        {/* AI 任务中心预览 */}
         <div className="lg:col-span-2">
           <Card>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-amber-500" />
-                <h2 className="font-semibold text-gray-900">待办任务</h2>
+                <h2 className="font-semibold text-gray-900">AI 任务中心</h2>
                 <Badge color="gray">{tasks.length}</Badge>
               </div>
               <Button variant="ghost" size="sm" onClick={() => navigate('/tasks')}>
@@ -700,32 +681,47 @@ export default function HomePage() {
             {tasks.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
                 <CheckCircle2 className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                <p>暂无待办任务</p>
+                <p>暂无生成任务，去小游戏/图片/配音等工厂提交一个吧</p>
               </div>
             ) : (
               <div className="space-y-2">
-                {tasks.slice(0, 5).map((task) => (
-                  <div key={task.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500"
-                      onChange={() => updateTaskStatus(task.id, 'done')}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 truncate">{task.title}</div>
-                      {task.description && (
-                        <div className="text-xs text-gray-500 truncate">{task.description}</div>
-                      )}
-                    </div>
-                    <Badge color={PRIORITY_COLORS[task.priority]}>{task.priority}</Badge>
-                    {task.due_date && (
-                      <div className="flex items-center gap-1 text-xs text-gray-400">
-                        <Clock className="w-3 h-3" />
-                        {task.due_date}
+                {tasks.slice(0, 5).map((task) => {
+                  const active = task.status === 'pending' || task.status === 'running'
+                  const failed = ['failed', 'interrupted'].includes(task.status)
+                  return (
+                    <div key={task.id} className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900">
+                          {TASK_TYPE_LABEL[task.type] || task.type || '未知任务'}
+                        </span>
+                        <Badge color={failed ? 'red' : active ? 'blue' : task.status === 'success' ? 'green' : 'gray'}>
+                          {TASK_STATUS_LABEL[task.status] || task.status}
+                        </Badge>
+                        <span className="ml-auto text-xs text-gray-400">
+                          {task.created_at?.replace('T', ' ').slice(5, 16)}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <div className="mt-2 flex items-center gap-3">
+                        <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${failed ? 'bg-red-400' : task.status === 'success' ? 'bg-green-500' : 'bg-brand-500'}`}
+                            style={{ width: `${task.progress || 0}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-500">
+                          {active ? `${Math.round(task.progress || 0)}%` : ''}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs">
+                        {failed ? (
+                          <span className="text-red-500 truncate block">{task.error || '执行失败'}</span>
+                        ) : (
+                          <span className="text-gray-500 truncate block">{task.stage || '任务排队中…'}</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </Card>
@@ -924,56 +920,6 @@ export default function HomePage() {
           </div>
         </Card>
       )}
-
-      {/* 新建任务弹窗 */}
-      <Modal
-        open={showTaskModal}
-        onClose={() => setShowTaskModal(false)}
-        title="新建任务"
-        size="md"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setShowTaskModal(false)}>取消</Button>
-            <Button variant="primary" onClick={createTask}>创建</Button>
-          </div>
-        }
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">任务标题 *</label>
-            <input
-              type="text"
-              value={newTask.title}
-              onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-              placeholder="输入任务标题"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">任务描述</label>
-            <textarea
-              value={newTask.description}
-              onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-              placeholder="输入任务描述"
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">优先级</label>
-            <select
-              value={newTask.priority}
-              onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            >
-              <option value="P0">P0 - 紧急</option>
-              <option value="P1">P1 - 高</option>
-              <option value="P2">P2 - 中</option>
-              <option value="P3">P3 - 低</option>
-            </select>
-          </div>
-        </div>
-      </Modal>
 
       {/* 首页组件配置弹窗 */}
       <Modal

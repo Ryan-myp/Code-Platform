@@ -11,22 +11,27 @@
 7. 图片管理（下载、预览、删除）
 """
 
+import asyncio
 import base64
 import io
 import json
 import logging
 import os
+import tempfile
 import time
 from datetime import datetime
 from io import BytesIO
+from typing import Callable
 
 import requests
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from common.artifacts import save_artifact
+from common.auth import require_auth
 from common.config import load_config
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -166,29 +171,58 @@ async def delete_image(filename: str):
     return {"success": True}
 
 
-# ── 文生图 API ────────────────────────────────────────────────
-@router.post("/generate/text-to-image")
-async def text_to_image(
-    prompt: str = Form(...),
-    size: str = Form("1024x1024"),
-    model: str = Form("agnes-image-2.1-flash"),
-    batch_size: int = Form(1),
-    n: int = Form(1),
-    project_id: str = Form(""),
-):
-    """
-    文生图 - 支持批量生成
+# ── 异步任务文件参数辅助 ─────────────────────────────────────
+_TMP_PREFIX = "file://"
 
-    参数:
-    - prompt: 图片描述
-    - size: 尺寸 (1024x1024, 800x600, 1280x720 等)
-    - model: 模型名称
-    - batch_size: 批量生成数量 (1-4)
-    - n: 每批次生成数量
-    - project_id: 关联项目 ID（可选，写入 artifacts 表用于项目空间聚合）
-    """
+
+def _read_file_field(payload: dict, key: str) -> bytes | None:
+    """读取 payload 中的文件字段：sync 模式为 base64，async 模式为 file:// 临时路径。"""
+    val = payload.get(key)
+    if not val:
+        return None
+    if isinstance(val, str) and val.startswith(_TMP_PREFIX):
+        path = val[len(_TMP_PREFIX):]
+        try:
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            # 任务文件一次性使用：读完即删（临时目录），避免残留
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return base64.b64decode(val) if isinstance(val, str) else None
+
+
+async def _write_file_field(content: bytes) -> str:
+    """异步任务模式：文件写入临时目录，payload 存 file:// 路径。"""
+    tmp = tempfile.NamedTemporaryFile(prefix="img_task_", suffix=".png", delete=False)
+    tmp.write(content)
+    tmp.close()
+    return f"{_TMP_PREFIX}{tmp.name}"
+
+
+# ── 文生图 API ────────────────────────────────────────────────
+async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """文生图（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    prompt = payload.get("prompt") or ""
+    size = payload.get("size") or "1024x1024"
+    model = payload.get("model") or "agnes-image-2.1-flash"
+    batch_size = max(1, min(4, int(payload.get("batch_size") or 1)))
+    n = max(1, min(4, int(payload.get("n") or 1)))
+    project_id = payload.get("project_id") or ""
+    if not prompt:
+        raise HTTPException(400, "请输入图片描述")
 
     url = f"{AGNES_API_BASE}/images/generations"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -201,25 +235,24 @@ async def text_to_image(
         size_str = size
 
     results = []
-
-    for _ in range(batch_size):
-        payload = {
+    _report(10, f"开始生成（共 {batch_size} 批）…")
+    for i in range(batch_size):
+        _report(20 + int(i * 60 / batch_size), f"第 {i + 1}/{batch_size} 批生成中…")
+        api_payload = {
             "model": model,
             "prompt": prompt,
             "size": size_str,
-            "n": min(n, 4),  # API 限制最多 4 张
+            "n": n,
         }
-
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=180)
+            resp = await asyncio.to_thread(requests.post, url, headers=headers, json=api_payload, timeout=180)
             resp.raise_for_status()
             data = resp.json()
-
             if "data" in data and len(data["data"]) > 0:
                 for item in data["data"]:
                     image_url = item.get("url")
                     if image_url:
-                        img_resp = requests.get(image_url, timeout=60)
+                        img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
                         img = Image.open(io.BytesIO(img_resp.content))
                         filename = save_image(img)
                         art_id = _save_artifact(filename, project_id, prompt,
@@ -230,15 +263,104 @@ async def text_to_image(
                         )
             else:
                 results.append({"error": f"生成失败：{data}", "prompt": prompt})
-
         except Exception as e:
             logger.error(f"文生图失败：{e}")
             results.append({"error": f"生成失败：{str(e)}", "prompt": prompt})
 
+    _report(100, "生成完成")
     return {"results": results, "total": len(results), "prompt": prompt, "project_id": project_id}
 
 
+@router.post("/generate/text-to-image")
+async def text_to_image(
+    prompt: str = Form(...),
+    size: str = Form("1024x1024"),
+    model: str = Form("agnes-image-2.1-flash"),
+    batch_size: int = Form(1),
+    n: int = Form(1),
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """
+    文生图 - 支持批量生成（默认异步任务，立即返回 task_id）
+
+    参数:
+    - prompt: 图片描述
+    - size: 尺寸 (1024x1024, 800x600, 1280x720 等)
+    - model: 模型名称
+    - batch_size: 批量生成数量 (1-4)
+    - n: 每批次生成数量
+    - project_id: 关联项目 ID（可选，写入 artifacts 表用于项目空间聚合）
+    """
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"prompt": prompt, "size": size, "model": model,
+               "batch_size": batch_size, "n": n, "project_id": project_id}
+    if sync:
+        return await _image_t2i_worker(payload)
+    task = create_task("image_t2i", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "文生图任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+    }
+
+
 # ── 图生图 API ────────────────────────────────────────────────
+async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """图生图（同步/异步任务共用执行体，异步时回报进度）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    prompt = payload.get("prompt") or ""
+    size = payload.get("size") or "1024x1024"
+    strength = float(payload.get("strength") or 0.35)
+    model = payload.get("model") or "agnes-image-2.1-flash"
+    project_id = payload.get("project_id") or ""
+    image_content = _read_file_field(payload, "image")
+    if not image_content:
+        raise HTTPException(400, "请上传参考图片")
+
+    url = f"{AGNES_API_BASE}/images/generations"
+    headers = {"Authorization": f"Bearer {AGNES_API_KEY}"}
+    files = {"image": ("input.png", image_content, "image/png")}
+    data = {"model": model, "prompt": prompt, "size": size, "strength": strength, "n": 1}
+
+    _report(20, "AI 正在基于参考图生成…")
+    try:
+        resp = await asyncio.to_thread(requests.post, url, headers=headers, data=data, files=files, timeout=180)
+        resp.raise_for_status()
+        data = resp.json()
+        if "data" in data and len(data["data"]) > 0:
+            image_url = data["data"][0].get("url")
+            if image_url:
+                img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
+                result_img = Image.open(io.BytesIO(img_resp.content))
+                filename = save_image(result_img)
+                art_id = _save_artifact(filename, project_id, prompt,
+                                        {"size": size, "model": model, "strength": strength})
+                _report(100, "生成完成")
+                return {"id": filename, "artifact_id": art_id,
+                        "url": f"/api/image-factory/images/{filename}", "prompt": prompt,
+                        "project_id": project_id}
+        raise HTTPException(500, f"生成失败: {data}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"图生图失败：{e}")
+        raise HTTPException(500, f"生成失败：{str(e)}") from e
+
+
 @router.post("/generate/image-to-image")
 async def image_to_image(
     prompt: str = Form(...),
@@ -247,42 +369,28 @@ async def image_to_image(
     strength: float = Form(0.35),
     model: str = Form("agnes-image-2.1-flash"),
     project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
 ):
-    """图生图 - 基于输入图片生成新图片"""
+    """图生图 - 基于输入图片生成新图片（默认异步任务；异步时文件暂存临时路径）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
-
     image_content = await image.read()
-
-    url = f"{AGNES_API_BASE}/images/generations"
-    headers = {
-        "Authorization": f"Bearer {AGNES_API_KEY}",
+    if not image_content:
+        raise HTTPException(400, "参考图片为空")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id}
+    if sync:
+        payload["image"] = base64.b64encode(image_content).decode()
+        return await _image_i2i_worker(payload)
+    payload["image"] = await _write_file_field(image_content)
+    task = create_task("image_i2i", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "图生图任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
-
-    files = {"image": ("input.png", image_content, "image/png")}
-    data = {"model": model, "prompt": prompt, "size": size, "strength": strength, "n": 1}
-
-    try:
-        resp = requests.post(url, headers=headers, data=data, files=files, timeout=180)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "data" in data and len(data["data"]) > 0:
-            image_url = data["data"][0].get("url")
-            if image_url:
-                img_resp = requests.get(image_url, timeout=60)
-                result_img = Image.open(io.BytesIO(img_resp.content))
-                filename = save_image(result_img)
-                art_id = _save_artifact(filename, project_id, prompt,
-                                        {"size": size, "model": model, "strength": strength})
-                return {"id": filename, "artifact_id": art_id,
-                        "url": f"/api/image-factory/images/{filename}", "prompt": prompt,
-                        "project_id": project_id}
-
-        return JSONResponse(status_code=500, content={"error": "生成失败", "response": data})
-    except Exception as e:
-        logger.error(f"图生图失败：{e}")
-        raise HTTPException(500, f"生成失败：{str(e)}") from e
 
 
 # ── 编辑 API ──────────────────────────────────────────────────
@@ -590,12 +698,17 @@ async def create_template(req: dict):
     return template
 
 
-@router.post("/template/render")
-async def render_template(req: dict):
-    """渲染模板"""
-    template_id = req.get("template_id")
-    overrides = req.get("overrides", {})
+async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """渲染模板生成图片（同步/异步任务共用执行体）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
+    template_id = payload.get("template_id")
+    overrides = payload.get("overrides") or {}
     template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
     if not os.path.exists(template_path):
         raise HTTPException(404, "模板不存在")
@@ -607,6 +720,7 @@ async def render_template(req: dict):
     height = overrides.get("height", template.get("height", 1920))
     bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
 
+    _report(30, "正在渲染模板…")
     img = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
@@ -633,7 +747,7 @@ async def render_template(req: dict):
             image_url = layer.get("url", "")
             if image_url and image_url.startswith("http"):
                 try:
-                    resp = requests.get(image_url, timeout=30)
+                    resp = await asyncio.to_thread(requests.get, image_url, timeout=30)
                     layer_img = Image.open(io.BytesIO(resp.content))
                     layer_img = layer_img.convert("RGBA")
 
@@ -648,7 +762,27 @@ async def render_template(req: dict):
                     logger.warning(f"Layer image error: {e}")
 
     filename = save_image(img)
+    _report(100, "模板渲染完成")
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+
+
+@router.post("/template/render")
+async def render_template(
+    req: dict,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """渲染模板（默认异步任务，立即返回 task_id）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    if sync:
+        return await _image_template_worker(req)
+    task = create_task("image_template", req, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "模板渲染任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+    }
 
 
 @router.post("/template/upload")
@@ -733,27 +867,26 @@ async def person_segmentation(image: UploadFile = File(...)):
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
-@router.post("/try-on/generate")
-async def virtual_try_on(
-    person_image: UploadFile = File(...),
-    clothing_image: UploadFile = File(...),
-    description: str = Form(""),
-    style: str = Form("casual"),  # casual, formal, sporty, fashion
-    background: str = Form("beach"),  # beach, city, space, studio, etc.
-    project_id: str = Form(""),
-):
-    """
-    虚拟试衣功能
-    - 上传人物照片
-    - 上传衣物照片
-    - AI 生成试穿效果
-    - 可选择背景场景
-    """
-    try:
-        # 读取人物和衣物图像
-        person_content = await person_image.read()
-        clothing_content = await clothing_image.read()
+async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """虚拟试衣（同步/异步任务共用执行体，异步时回报进度）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
+    person_content = _read_file_field(payload, "person_image")
+    clothing_content = _read_file_field(payload, "clothing_image")
+    if not person_content or not clothing_content:
+        raise HTTPException(400, "请上传人物照片与衣物照片")
+    description = payload.get("description") or ""
+    style = payload.get("style") or "casual"
+    background = payload.get("background") or "beach"
+    project_id = payload.get("project_id") or ""
+
+    try:
+        _report(10, "正在识别衣物特征…")
         _img = Image.open(BytesIO(clothing_content))
 
         # 生成描述性提示词
@@ -801,7 +934,8 @@ async def virtual_try_on(
                 ],
                 "max_tokens": 200,
             }
-            analyze_resp = requests.post(
+            analyze_resp = await asyncio.to_thread(
+                requests.post,
                 f"{AGNES_API_BASE}/chat/completions",
                 headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
                 json=analyze_payload,
@@ -815,6 +949,7 @@ async def virtual_try_on(
         except Exception as e:
             logger.warning(f"衣物识别失败，使用用户描述: {e}")
 
+        _report(30, "正在生成试穿效果…")
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
@@ -857,20 +992,16 @@ async def virtual_try_on(
             },
         ]
 
-        response = requests.post(
+        response = await asyncio.to_thread(
+            requests.post,
             f"{AGNES_API_BASE}/images/generations",
-            headers={
-                "Authorization": f"Bearer {AGNES_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "agnes-image-2.1-flash",
                 "messages": [{"role": "user", "content": messages_content}],
                 "size": "1024x1024",
                 "n": 1,
-                "extra_body": {
-                    "response_format": "url"
-                }
+                "extra_body": {"response_format": "url"},
             },
             timeout=120,
         )
@@ -886,7 +1017,7 @@ async def virtual_try_on(
         first_item = data["data"][0]
         image_url = first_item.get("url")
         if image_url:
-            img_resp = requests.get(image_url, timeout=60)
+            img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
             img_resp.raise_for_status()
             result_img = Image.open(BytesIO(img_resp.content))
         elif first_item.get("b64_json"):
@@ -898,6 +1029,7 @@ async def virtual_try_on(
         filename = save_image(result_img)
         art_id = _save_artifact(filename, project_id, prompt,
                                 {"style": style, "background": background, "feature": "try-on"})
+        _report(100, "试穿效果已生成")
         return {
             "id": filename,
             "artifact_id": art_id,
@@ -912,6 +1044,46 @@ async def virtual_try_on(
         raise
     except Exception as e:
         raise HTTPException(500, f"虚拟试衣失败: {str(e)}") from e
+
+
+@router.post("/try-on/generate")
+async def virtual_try_on(
+    person_image: UploadFile = File(...),
+    clothing_image: UploadFile = File(...),
+    description: str = Form(""),
+    style: str = Form("casual"),  # casual, formal, sporty, fashion
+    background: str = Form("beach"),  # beach, city, space, studio, etc.
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """
+    虚拟试衣功能（默认异步任务；异步时图片暂存临时路径）
+    - 上传人物照片
+    - 上传衣物照片
+    - AI 生成试穿效果
+    - 可选择背景场景
+    """
+    person_content = await person_image.read()
+    clothing_content = await clothing_image.read()
+    if not person_content or not clothing_content:
+        raise HTTPException(400, "请上传人物照片与衣物照片")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"description": description, "style": style,
+               "background": background, "project_id": project_id}
+    if sync:
+        payload["person_image"] = base64.b64encode(person_content).decode()
+        payload["clothing_image"] = base64.b64encode(clothing_content).decode()
+        return await _image_tryon_worker(payload)
+    payload["person_image"] = await _write_file_field(person_content)
+    payload["clothing_image"] = await _write_file_field(clothing_content)
+    task = create_task("image_tryon", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "虚拟试衣任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+    }
 
 
 # ── 背景替换 API ──────────────────────────────────────────────
@@ -1212,3 +1384,29 @@ def init_templates():
 
 # 启动时初始化模板
 init_templates()
+
+
+async def _image_t2i_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：文生图。"""
+    return await _image_t2i_worker(payload, progress=update)
+
+
+async def _image_i2i_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：图生图。"""
+    return await _image_i2i_worker(payload, progress=update)
+
+
+async def _image_template_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：模板渲染。"""
+    return await _image_template_worker(payload, progress=update)
+
+
+async def _image_tryon_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：虚拟试衣。"""
+    return await _image_tryon_worker(payload, progress=update)
+
+
+register_handler("image_t2i", _image_t2i_handler, user_limit=2)
+register_handler("image_i2i", _image_i2i_handler, user_limit=2)
+register_handler("image_template", _image_template_handler, user_limit=2)
+register_handler("image_tryon", _image_tryon_handler, user_limit=2)

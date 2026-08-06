@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
+import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Callable
 
 import requests
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from common.artifacts import save_artifact
+from common.auth import require_auth
 from common.config import load_config
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/music-factory", tags=["音乐工厂"])
@@ -76,18 +80,26 @@ async def get_lyrics_examples():
     return {"examples": LYRICS_EXAMPLES}
 
 
-@router.post("/lyrics/generate")
-async def generate_lyrics(
-    theme: str = Form(...),
-    style: str = Form("pop"),
-    language: str = Form("zh"),
-    length: str = Form("medium"),
-    mood: str = Form("happy"),
-    project_id: str = Form(""),
-):
-    """生成歌词"""
+async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """生成歌词（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    theme = payload.get("theme") or ""
+    style = payload.get("style") or "pop"
+    language = payload.get("language") or "zh"
+    length = payload.get("length") or "medium"
+    mood = payload.get("mood") or "happy"
+    project_id = payload.get("project_id") or ""
+    if not theme:
+        raise HTTPException(400, "请输入歌词主题")
 
     style_prompts = {
         "pop": "流行歌曲",
@@ -99,11 +111,7 @@ async def generate_lyrics(
         "folk": "民谣",
         "electronic": "电子音乐",
     }
-    lang_prompts = {
-        "zh": "中文",
-        "en": "英文",
-        "mixed": "中英混合",
-    }
+    lang_prompts = {"zh": "中文", "en": "英文", "mixed": "中英混合"}
     mood_prompts = {
         "happy": "欢快、积极、充满希望",
         "sad": "忧伤、感伤、怀旧",
@@ -134,13 +142,12 @@ async def generate_lyrics(
 
 请只输出歌词，不要解释。"""
 
+    _report(15, "AI 正在创作歌词…")
     try:
-        response = requests.post(
+        response = await asyncio.to_thread(
+            requests.post,
             f"{AGNES_API_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {AGNES_API_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": MODEL_NAME,
                 "messages": [
@@ -152,38 +159,65 @@ async def generate_lyrics(
             },
             timeout=90,
         )
-
         if response.status_code != 200:
             raise HTTPException(500, f"生成歌词失败: {response.text}")
-
         data = response.json()
         lyrics = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        # 保存生成的歌词
-        lyrics_filename = f"{generate_music_id()}.txt"
-        lyrics_path = MUSIC_DIR / lyrics_filename
-        lyrics_path.write_text(lyrics, encoding="utf-8")
-        art_id = _save_artifact(lyrics_filename, project_id, "lyrics", lyrics, 0.0,
-                                {"theme": theme, "style": style, "language": language,
-                                 "length": length, "mood": mood})
-
-        return {
-            "lyrics": lyrics,
-            "lyrics_file": lyrics_filename,
-            "artifact_id": art_id,
-            "theme": theme,
-            "style": style,
-            "language": language,
-            "length": length,
-            "mood": mood,
-            "project_id": project_id,
-        }
-
+        if not lyrics:
+            raise HTTPException(502, "AI 未返回歌词内容，请重试")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"生成歌词异常: {e}")
         raise HTTPException(500, f"生成歌词失败: {str(e)}") from e
+
+    # 保存生成的歌词
+    lyrics_filename = f"{generate_music_id()}.txt"
+    lyrics_path = MUSIC_DIR / lyrics_filename
+    lyrics_path.write_text(lyrics, encoding="utf-8")
+    art_id = _save_artifact(lyrics_filename, project_id, "lyrics", lyrics, 0.0,
+                            {"theme": theme, "style": style, "language": language,
+                             "length": length, "mood": mood})
+    _report(100, "歌词已生成")
+    return {
+        "lyrics": lyrics,
+        "lyrics_file": lyrics_filename,
+        "artifact_id": art_id,
+        "theme": theme,
+        "style": style,
+        "language": language,
+        "length": length,
+        "mood": mood,
+        "project_id": project_id,
+    }
+
+
+@router.post("/lyrics/generate")
+async def generate_lyrics(
+    theme: str = Form(...),
+    style: str = Form("pop"),
+    language: str = Form("zh"),
+    length: str = Form("medium"),
+    mood: str = Form("happy"),
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """生成歌词（默认异步任务，立即返回 task_id）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"theme": theme, "style": style, "language": language,
+               "length": length, "mood": mood, "project_id": project_id}
+    if sync:
+        return await _music_lyrics_worker(payload)
+    task = create_task("music_lyrics", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "歌词生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+    }
 
 
 @router.post("/music/generate")
@@ -210,35 +244,49 @@ async def generate_music(
     return result
 
 
-@router.post("/tts/sing")
-async def generate_vocal(
-    lyrics: str = Form(...),
-    voice: str = Form("female"),
-    style: str = Form("pop"),
-    project_id: str = Form(""),
-):
-    """生成虚拟人声（TTS）"""
+@router.delete("/delete/{filename}")
+async def delete_item(filename: str):
+    """删除文件"""
+    file_path = MUSIC_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(404, "文件不存在")
+    file_path.unlink()
+    return {"success": True}
+
+
+async def _music_sing_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """生成虚拟人声 TTS（同步/异步任务共用执行体，异步时回报进度）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    lyrics = payload.get("lyrics") or ""
+    voice = payload.get("voice") or "female"
+    style = payload.get("style") or "pop"
+    project_id = payload.get("project_id") or ""
+    if not (lyrics or "").strip():
+        raise HTTPException(400, "请输入歌词文本")
+
     voice_mapping = {
         "female": "zh-CN-XiaoxiaoNeural",
         "male": "zh-CN-YunxiNeural",
         "child": "zh-CN-XiaomoNeural",
     }
-
     tts_voice = voice_mapping.get(voice, "zh-CN-XiaoxiaoNeural")
 
+    _report(20, "AI 正在合成人声…")
     try:
-        response = requests.post(
+        response = await asyncio.to_thread(
+            requests.post,
             f"{AGNES_API_BASE}/audio/speech",
-            headers={
-                "Authorization": f"Bearer {AGNES_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "tts-1",
-                "input": lyrics[:500],
-                "voice": tts_voice,
-                "speed": 1.0,
-            },
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "tts-1", "input": lyrics[:500], "voice": tts_voice, "speed": 1.0},
             timeout=60,
         )
 
@@ -248,6 +296,7 @@ async def generate_vocal(
             duration = len(lyrics) / 15
             art_id = _save_artifact(filename, project_id, "audio", lyrics[:500], duration,
                                     {"voice": voice, "style": style, "tts_voice": tts_voice})
+            _report(100, "人声已生成")
             return {
                 "audio_id": filename,
                 "artifact_id": art_id,
@@ -257,20 +306,51 @@ async def generate_vocal(
                 "duration": duration,
                 "project_id": project_id,
             }
-        else:
-            return {
-                "status": "not_supported",
-                "message": "虚拟人声功能需要 TTS API 支持",
-                "lyrics": lyrics[:200],
-                "note": "当前Agnes AI暂不支持TTS，可考虑使用Azure TTS或Google Cloud TTS替代",
-            }
-
+        raise HTTPException(502, "虚拟人声功能需要 TTS API 支持（当前服务商暂未开通）")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"生成人声异常: {e}")
-        return {
-            "status": "error",
-            "message": str(e),
-        }
+        raise HTTPException(500, f"生成人声失败: {str(e)}") from e
+
+
+@router.post("/tts/sing")
+async def generate_vocal(
+    lyrics: str = Form(...),
+    voice: str = Form("female"),
+    style: str = Form("pop"),
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """生成虚拟人声 TTS（默认异步任务，立即返回 task_id）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"lyrics": lyrics, "voice": voice, "style": style, "project_id": project_id}
+    if sync:
+        return await _music_sing_worker(payload)
+    task = create_task("music_sing", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "人声合成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+    }
+
+
+async def _music_lyrics_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装歌词生成，回报进度。"""
+    return await _music_lyrics_worker(payload, progress=update)
+
+
+async def _music_sing_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装人声合成，回报进度。"""
+    return await _music_sing_worker(payload, progress=update)
+
+
+register_handler("music_lyrics", _music_lyrics_handler, user_limit=2)
+register_handler("music_sing", _music_sing_handler, user_limit=2)
 
 
 @router.get("/audios/{filename}")

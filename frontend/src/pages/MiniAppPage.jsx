@@ -8,6 +8,7 @@ import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { wxmlToHtml } from '../lib/wxml-preview'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const TEMPLATES = [
   { id: 'shop', name: '电商购物', icon: '🛍️', color: 'from-pink-500 to-rose-600', description: '商品列表 / 详情 / 购物车 / 结算' },
@@ -62,6 +63,9 @@ export default function MiniAppPage() {
   const [viewMode, setViewMode] = useState('preview') // 'preview' | 'code'
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewPage, setPreviewPage] = useState('')
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   useEffect(() => { loadProjects() }, [])
   useEffect(() => {
@@ -96,20 +100,22 @@ export default function MiniAppPage() {
     if (!name.trim()) { toast.error('请输入项目名称'); return }
     if (requirement.trim().length < 2) { toast.error('请描述你的功能需求'); return }
     setGenerating(true)
-    try {
-      const res = await api.post('/api/miniapp/generate', { name: name.trim(), template, requirement }, { timeout: 120000 })
-      const data = res.data
-      const files = data.files || {}
-      setViewing({ id: data.id, name: data.name, files })
-      setViewMode('preview')
-      buildPreview(files)
-      const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
-      setSelectedFile(wxmlFiles[0] || '')
-      loadProjects()
-      toast.success(`生成成功：${data.file_count} 个文件`)
-    } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally { setGenerating(false) }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    await submitTask('/api/miniapp/generate', { name: name.trim(), template, requirement }, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        const files = data.files || {}
+        setViewing({ id: data.id, name: data.name, files })
+        setViewMode('preview')
+        buildPreview(files)
+        const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
+        setSelectedFile(wxmlFiles[0] || '')
+        loadProjects()
+        setGenerating(false)
+        toast.success(`生成成功：${data.file_count} 个文件`)
+      },
+      onError: (e) => { setGenerating(false); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const openProject = async (p) => {
@@ -211,12 +217,19 @@ export default function MiniAppPage() {
                   rows={6} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
               </div>
               <Button variant="gradient" size="lg" icon={Smartphone} loading={generating} onClick={generate} className="w-full">
-                {generating ? 'AI 生成中（约 1 分钟）…' : '生成小程序项目'}
+                {generating ? '生成任务执行中（后台）…' : '生成小程序项目'}
               </Button>
-              {generating && (
-                <div className="flex items-center gap-2 text-xs text-indigo-500 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  正在编写 app.js / 页面 WXML / WXSS / JS… 请耐心等待
+              {generating && genTask && (
+                <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-indigo-600">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-indigo-500 to-violet-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
                 </div>
               )}
             </div>

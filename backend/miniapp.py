@@ -14,13 +14,15 @@ import time
 import uuid
 import zipfile
 from datetime import datetime
+from typing import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.llm import call_llm_async, log_usage
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -150,12 +152,19 @@ async def list_projects(current_user: dict = require_auth()):
     return [dict(r) for r in rows]
 
 
-@router.post("/generate")
-async def generate_project(req: GenerateRequest, current_user: dict = require_auth()):
-    """选模板 + 需求 → AI 生成完整小程序项目。"""
+async def _miniapp_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """AI 生成完整小程序项目（同步/异步任务共用执行体，异步时回报进度）。"""
+    req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
         raise HTTPException(400, f"未知模板: {req.template}")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
     structure_desc = "\n".join(f"- {s}" for s in (tpl["structure"] if tpl else [
         "根据需求自行设计合理的页面结构（建议 3-5 个页面）",
@@ -169,9 +178,11 @@ async def generate_project(req: GenerateRequest, current_user: dict = require_au
 {req.requirement}
 
 请生成完整小程序项目 JSON。"""
+    _report(10, "已受理，正在组织生成提示词…")
 
     start = time.time()
     try:
+        _report(30, "AI 正在生成小程序代码…")
         result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=12000, temperature=0.4)
     except HTTPException:
         raise
@@ -217,6 +228,7 @@ async def generate_project(req: GenerateRequest, current_user: dict = require_au
     )
     conn.commit()
     conn.close()
+    _report(85, "项目已保存")
 
     elapsed = round(time.time() - start, 2)
     log_usage("miniapp_generate", len(user_prompt), len(result), elapsed)
@@ -226,6 +238,28 @@ async def generate_project(req: GenerateRequest, current_user: dict = require_au
         "template": req.template,
         "file_count": len(files),
         "files": files,
+    }
+
+
+@router.post("/generate")
+async def generate_project(
+    req: GenerateRequest,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """选模板 + 需求 → AI 生成完整小程序项目（默认异步任务，立即返回 task_id）。"""
+    tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
+    if req.template != "custom" and not tpl:
+        raise HTTPException(400, f"未知模板: {req.template}")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    if sync:
+        return await _miniapp_generate_worker(req.model_dump())
+    task = create_task("miniapp_generate", req.model_dump(), username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "小程序生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
 
 
@@ -307,3 +341,11 @@ def get_db():
     from common.db import get_db as _get_db
 
     return _get_db()
+
+
+async def _miniapp_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装生成 worker，回报进度。"""
+    return await _miniapp_generate_worker(payload, progress=update)
+
+
+register_handler("miniapp_generate", _miniapp_generate_handler, user_limit=2)

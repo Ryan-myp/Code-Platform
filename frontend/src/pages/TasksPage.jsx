@@ -1,116 +1,112 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  CheckCircle2, Circle, Clock, AlertCircle, Plus, Filter, Search,
-  Calendar, Tag, User, MoreVertical, Edit2, Trash2, X, ChevronDown
+  CheckCircle2, Circle, Clock, AlertCircle, XCircle, RotateCcw, Ban,
+  Filter, RefreshCw, Zap, FileText, Music, Image, Video, Mic, Gamepad2,
+  Smartphone, PauseCircle
 } from 'lucide-react'
-import { Card, Button, Badge, Modal, Empty } from '../components/ui'
+import { Card, Button, Badge, Empty } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
-const PRIORITY_OPTIONS = [
-  { value: 'P0', label: 'P0 - 紧急', color: 'red' },
-  { value: 'P1', label: 'P1 - 高', color: 'orange' },
-  { value: 'P2', label: 'P2 - 中', color: 'blue' },
-  { value: 'P3', label: 'P3 - 低', color: 'gray' },
-]
+// 任务类型展示映射
+const TYPE_META = {
+  dh_generate: { label: '数字人', icon: Video, color: 'indigo' },
+  game_generate: { label: '小游戏生成', icon: Gamepad2, color: 'fuchsia' },
+  game_evolve: { label: '小游戏迭代', icon: Gamepad2, color: 'fuchsia' },
+  miniapp_generate: { label: '小程序生成', icon: Smartphone, color: 'purple' },
+  video_generate: { label: '视频生成', icon: Video, color: 'red' },
+  music_lyrics: { label: '歌词生成', icon: Music, color: 'rose' },
+  music_sing: { label: '人声合成', icon: Music, color: 'rose' },
+  meme_generate: { label: '表情包', icon: Image, color: 'amber' },
+  image_t2i: { label: '文生图', icon: Image, color: 'blue' },
+  image_i2i: { label: '图生图', icon: Image, color: 'blue' },
+  image_template: { label: '模板渲染', icon: Image, color: 'blue' },
+  image_tryon: { label: '虚拟试衣', icon: Image, color: 'cyan' },
+  voice_generate: { label: 'AI 配音', icon: Mic, color: 'emerald' },
+}
 
-const STATUS_OPTIONS = [
-  { value: 'todo', label: '待办', color: 'gray', icon: Circle },
-  { value: 'in_progress', label: '进行中', color: 'blue', icon: Clock },
-  { value: 'done', label: '已完成', color: 'green', icon: CheckCircle2 },
-  { value: 'cancelled', label: '已取消', color: 'red', icon: X },
-]
+const STATUS_META = {
+  pending: { label: '排队中', color: 'gray', icon: Clock },
+  running: { label: '执行中', color: 'blue', icon: Circle },
+  success: { label: '已完成', color: 'green', icon: CheckCircle2 },
+  failed: { label: '失败', color: 'red', icon: AlertCircle },
+  interrupted: { label: '已中断', color: 'orange', icon: XCircle },
+  canceled: { label: '已取消', color: 'gray', icon: Ban },
+}
+
+const STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, m]) => ({ value, label: m.label }))
 
 export default function TasksPage() {
   const toast = useToast()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState({ status: '', priority: '' })
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [editingTask, setEditingTask] = useState(null)
-  const [formData, setFormData] = useState({
-    title: '', description: '', priority: 'P2', due_date: '', tags: [], assigned_to: ''
-  })
+  const [filter, setFilter] = useState({ type: '', status: '' })
+  const [actionId, setActionId] = useState('')
+  const timerRef = useRef(null)
 
-  useEffect(() => { loadTasks() }, [filter])
+  const loadTasks = useCallback(async () => {
+    try {
+      const params = {}
+      if (filter.type) params.type = filter.type
+      if (filter.status) params.status = filter.status
+      const res = await api.get('/api/tasks', { params })
+      setTasks(res.data.tasks || [])
+    } catch {
+      // 轮询静默失败，避免弹窗轰炸
+    } finally {
+      setLoading(false)
+    }
+  }, [filter])
 
-  const loadTasks = async () => {
+  useEffect(() => { loadTasks() }, [loadTasks])
+
+  // 任务中心自动轮询（3s），进度实时刷新
+  useEffect(() => {
+    timerRef.current = setInterval(loadTasks, 3000)
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [loadTasks])
+
+  const refresh = async () => {
     setLoading(true)
     try {
-      let url = '/api/tasks?'
-      if (filter.status) url += `status=${filter.status}&`
-      if (filter.priority) url += `priority=${filter.priority}&`
-      const res = await api.get(url)
-      setTasks(res.data)
-    } catch {
-      toast.error('加载任务失败')
+      await loadTasks()
+      toast.success('已刷新')
+    } catch (e) {
+      toast.error(`加载失败：${e.message}`)
     } finally {
       setLoading(false)
     }
   }
 
-  const openCreateModal = () => {
-    setEditingTask(null)
-    setFormData({ title: '', description: '', priority: 'P2', due_date: '', tags: [], assigned_to: '' })
-    setShowCreateModal(true)
-  }
-
-  const openEditModal = (task) => {
-    setEditingTask(task)
-    setFormData({
-      title: task.title,
-      description: task.description || '',
-      priority: task.priority,
-      due_date: task.due_date || '',
-      tags: task.tags || [],
-      assigned_to: task.assigned_to || '',
-    })
-    setShowCreateModal(true)
-  }
-
-  const saveTask = async () => {
-    if (!formData.title.trim()) { toast.error('请输入任务标题'); return }
+  const retryTask = async (task) => {
+    setActionId(task.id)
     try {
-      if (editingTask) {
-        await api.put(`/api/tasks/${editingTask.id}`, formData)
-        toast.success('任务已更新')
-      } else {
-        await api.post('/api/tasks', formData)
-        toast.success('任务已创建')
-      }
-      setShowCreateModal(false)
+      await api.post(`/api/tasks/${task.id}/retry`)
+      toast.success('任务已重新提交')
       loadTasks()
     } catch (e) {
-      toast.error(`保存失败：${e.message}`)
+      toast.error(`重试失败：${e.message}`)
+    } finally {
+      setActionId('')
     }
   }
 
-  const updateStatus = async (taskId, status) => {
+  const cancelTask = async (task) => {
+    if (!confirm('确定取消该任务？（仅排队中的任务可取消）')) return
+    setActionId(task.id)
     try {
-      await api.put(`/api/tasks/${taskId}`, { status })
-      toast.success('状态已更新')
+      await api.post(`/api/tasks/${task.id}/cancel`)
+      toast.success('任务已取消')
       loadTasks()
     } catch (e) {
-      toast.error(`更新失败：${e.message}`)
+      toast.error(`取消失败：${e.message}`)
+    } finally {
+      setActionId('')
     }
   }
 
-  const deleteTask = async (taskId) => {
-    if (!confirm('确定删除此任务？')) return
-    try {
-      await api.delete(`/api/tasks/${taskId}`)
-      toast.success('任务已删除')
-      loadTasks()
-    } catch (e) {
-      toast.error(`删除失败：${e.message}`)
-    }
-  }
-
-  const groupedTasks = {
-    todo: tasks.filter(t => t.status === 'todo'),
-    in_progress: tasks.filter(t => t.status === 'in_progress'),
-    done: tasks.filter(t => t.status === 'done'),
-  }
+  const typeMeta = (type) => TYPE_META[type] || { label: type || '未知任务', icon: FileText, color: 'gray' }
+  const statusMeta = (status) => STATUS_META[status] || { label: status || '未知', color: 'gray', icon: Circle }
 
   return (
     <div className="space-y-6">
@@ -118,10 +114,10 @@ export default function TasksPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">任务中心</h1>
-          <p className="text-sm text-gray-500 mt-1">管理所有任务和待办事项</p>
+          <p className="text-sm text-gray-500 mt-1">AI 生成任务实时进度 · 关闭页面也不中断，完成后自动保存产物</p>
         </div>
-        <Button variant="primary" icon={Plus} onClick={openCreateModal}>
-          新建任务
+        <Button variant="ghost" icon={RefreshCw} onClick={refresh}>
+          刷新
         </Button>
       </div>
 
@@ -133,27 +129,30 @@ export default function TasksPage() {
             <span className="text-sm text-gray-600">筛选：</span>
           </div>
           <select
+            value={filter.type}
+            onChange={(e) => setFilter({ ...filter, type: e.target.value })}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
+          >
+            <option value="">全部类型</option>
+            {Object.entries(TYPE_META).map(([value, m]) => (
+              <option key={value} value={value}>{m.label}</option>
+            ))}
+          </select>
+          <select
             value={filter.status}
             onChange={(e) => setFilter({ ...filter, status: e.target.value })}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
           >
             <option value="">全部状态</option>
-            {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
-          <select
-            value={filter.priority}
-            onChange={(e) => setFilter({ ...filter, priority: e.target.value })}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
-          >
-            <option value="">全部优先级</option>
-            {PRIORITY_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-          {(filter.status || filter.priority) && (
-            <Button variant="ghost" size="sm" onClick={() => setFilter({ status: '', priority: '' })}>
+          {(filter.type || filter.status) && (
+            <Button variant="ghost" size="sm" onClick={() => setFilter({ type: '', status: '' })}>
               清除筛选
             </Button>
           )}
-          <div className="ml-auto text-sm text-gray-500">
+          <div className="ml-auto flex items-center gap-2 text-sm text-gray-500">
+            <Zap className="w-4 h-4 text-amber-500" />
             共 {tasks.length} 个任务
           </div>
         </div>
@@ -166,148 +165,109 @@ export default function TasksPage() {
         </div>
       ) : tasks.length === 0 ? (
         <Card>
-          <Empty icon={CheckCircle2} title="暂无任务" description="点击「新建任务」创建第一个任务" />
+          <Empty
+            icon={CheckCircle2}
+            title="暂无任务"
+            description="在小游戏/小程序/视频/图片/配音等工厂提交生成任务后，会在这里实时展示进度"
+          />
         </Card>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {STATUS_OPTIONS.filter(s => s.value !== 'cancelled').map((statusConfig) => {
-            const StatusIcon = statusConfig.icon
-            const statusTasks = groupedTasks[statusConfig.value] || []
+        <div className="space-y-3">
+          {tasks.map((task) => {
+            const TypeIcon = typeMeta(task.type).icon
+            const StatusIcon = statusMeta(task.status).icon
+            const st = statusMeta(task.status)
+            const tm = typeMeta(task.type)
+            const active = task.status === 'pending' || task.status === 'running'
+            const failed = ['failed', 'interrupted'].includes(task.status)
             return (
-              <div key={statusConfig.value} className="space-y-3">
-                <div className="flex items-center gap-2 px-1">
-                  <StatusIcon className={`w-4 h-4 text-${statusConfig.color}-500`} />
-                  <span className="font-medium text-sm text-gray-700">{statusConfig.label}</span>
-                  <Badge color={statusConfig.color}>{statusTasks.length}</Badge>
-                </div>
-                <div className="space-y-2">
-                  {statusTasks.map((task) => (
-                    <Card key={task.id} className="!p-3">
-                      <div className="flex items-start gap-3">
-                        <input
-                          type="checkbox"
-                          checked={task.status === 'done'}
-                          onChange={() => updateStatus(task.id, task.status === 'done' ? 'todo' : 'done')}
-                          className="w-4 h-4 mt-0.5 rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+              <Card key={task.id} className="!p-4">
+                <div className="flex items-start gap-3">
+                  <div className={`p-2.5 rounded-xl bg-${tm.color}-50 text-${tm.color}-600 shrink-0`}>
+                    <TypeIcon className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-gray-900 text-sm">{tm.label}</span>
+                      <Badge color={st.color}>{st.label}</Badge>
+                      <span className="text-xs text-gray-400 font-mono">{task.id}</span>
+                    </div>
+                    {/* 进度条 */}
+                    <div className="mt-2.5 flex items-center gap-3">
+                      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            task.status === 'success' ? 'bg-green-500'
+                              : task.status === 'failed' ? 'bg-red-400'
+                                : 'bg-brand-500'
+                          }`}
+                          style={{ width: `${task.progress || 0}%` }}
                         />
-                        <div className="flex-1 min-w-0">
-                          <div className={`text-sm font-medium ${task.status === 'done' ? 'line-through text-gray-400' : 'text-gray-900'}`}>
-                            {task.title}
-                          </div>
-                          {task.description && (
-                            <div className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</div>
-                          )}
-                          <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <Badge color={PRIORITY_OPTIONS.find(p => p.value === task.priority)?.color}>
-                              {task.priority}
-                            </Badge>
-                            {task.due_date && (
-                              <span className="flex items-center gap-1 text-xs text-gray-400">
-                                <Calendar className="w-3 h-3" />
-                                {task.due_date}
-                              </span>
-                            )}
-                            {task.assigned_to && (
-                              <span className="flex items-center gap-1 text-xs text-gray-400">
-                                <User className="w-3 h-3" />
-                                {task.assigned_to}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openEditModal(task)}
-                            className="p-1 text-gray-400 hover:text-gray-600 rounded"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => deleteTask(task.id)}
-                            className="p-1 text-gray-400 hover:text-red-500 rounded"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
                       </div>
-                    </Card>
-                  ))}
+                      <span className="text-xs text-gray-500 w-10 text-right">
+                        {active ? `${Math.round(task.progress || 0)}%` : task.status === 'success' ? '100%' : '—'}
+                      </span>
+                    </div>
+                    {/* 阶段文案 / 错误 */}
+                    <div className="mt-1.5 text-xs">
+                      {active ? (
+                        <span className="text-gray-500">{task.stage || '任务排队中…'}</span>
+                      ) : failed ? (
+                        <span className="text-red-500 flex items-start gap-1">
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                          <span className="break-all">{task.error || '执行失败'}</span>
+                        </span>
+                      ) : task.status === 'success' ? (
+                        <span className="text-green-600">{task.stage || '生成完成'}</span>
+                      ) : (
+                        <span className="text-gray-400">{task.stage || ''}</span>
+                      )}
+                    </div>
+                    {/* 元信息 + 操作 */}
+                    <div className="mt-2 flex items-center gap-3 flex-wrap">
+                      <span className="text-xs text-gray-400">
+                        {task.created_at ? task.created_at.replace('T', ' ').slice(0, 19) : ''}
+                      </span>
+                      {task.created_by && <span className="text-xs text-gray-400">by {task.created_by}</span>}
+                      {task.retry_count > 0 && (
+                        <span className="text-xs text-gray-400">重试 {task.retry_count} 次</span>
+                      )}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        {failed && (
+                          <button
+                            onClick={() => retryTask(task)}
+                            disabled={actionId === task.id}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            {actionId === task.id ? '重试中…' : '重试'}
+                          </button>
+                        )}
+                        {task.status === 'pending' && (
+                          <button
+                            onClick={() => cancelTask(task)}
+                            disabled={actionId === task.id}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50"
+                          >
+                            <PauseCircle className="w-3.5 h-3.5" />
+                            取消
+                          </button>
+                        )}
+                        {task.status === 'running' && (
+                          <span className="flex items-center gap-1 text-xs text-blue-500">
+                            <StatusIcon className="w-3.5 h-3.5 animate-pulse" />
+                            执行中
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </Card>
             )
           })}
         </div>
       )}
-
-      {/* 创建/编辑弹窗 */}
-      <Modal
-        open={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        title={editingTask ? '编辑任务' : '新建任务'}
-        size="md"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setShowCreateModal(false)}>取消</Button>
-            <Button variant="primary" onClick={saveTask}>
-              {editingTask ? '保存' : '创建'}
-            </Button>
-          </div>
-        }
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">任务标题 *</label>
-            <input
-              type="text"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              placeholder="输入任务标题"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">任务描述</label>
-            <textarea
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="输入任务描述"
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">优先级</label>
-              <select
-                value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-              >
-                {PRIORITY_OPTIONS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">截止日期</label>
-              <input
-                type="date"
-                value={formData.due_date}
-                onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">负责人</label>
-            <input
-              type="text"
-              value={formData.assigned_to}
-              onChange={(e) => setFormData({ ...formData, assigned_to: e.target.value })}
-              placeholder="输入负责人"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }

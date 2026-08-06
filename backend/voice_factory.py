@@ -19,15 +19,17 @@ import tempfile
 import time
 import zipfile
 from datetime import datetime
+from typing import Callable
 
 import requests
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -279,33 +281,32 @@ def _artifact_meta() -> dict:
     return meta
 
 
-@router.post("/generate")
-async def generate_voice(
-    text: str = Form(...),
-    scene: str = Form("shortvideo"),
-    voice: str = Form(""),
-    speed: float = Form(1.0),
-    pitch: int = Form(0),
-    format: str = Form("mp3"),
-    project_id: str = Form(""),
-):
-    """文字转语音：场景预设或自由音色，长文本自动分段 + 商用级母带处理。
-
-    - 母带：响度标准化 -14 LUFS + 淡入淡出（短视频/自媒体平台标准）
-    - 自动生成同名字幕 .srt（分段时间戳对齐，批量下载随包附送）
-    - format: mp3（256k 高音质，默认）/ wav（PCM 无损）
-    - pitch: -20 ~ +20 音调百分比（0 为原声，正为明亮/负为低沉）
-    """
+async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
-    text = (text or "").strip()
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    text = (payload.get("text") or "").strip()
+    scene = payload.get("scene") or "shortvideo"
+    voice = payload.get("voice") or ""
+    speed = float(payload.get("speed") or 1.0)
+    pitch = int(payload.get("pitch") or 0)
+    format = payload.get("format") or "mp3"
+    project_id = payload.get("project_id") or ""
     if not text:
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
         raise HTTPException(400, f"文本过长（{MAX_TEXT_CHARS} 字以内），请分段生成")
     if format not in ("mp3", "wav"):
         raise HTTPException(400, "format 仅支持 mp3 / wav")
-    pitch = max(-20, min(20, int(pitch or 0)))
+    pitch = max(-20, min(20, pitch))
     scene_cfg = next((s for s in SCENES if s["id"] == scene), None)
     if scene and scene != "custom" and not scene_cfg:
         raise HTTPException(400, f"未知场景: {scene}")
@@ -322,6 +323,7 @@ async def generate_voice(
         tmp_dir = tempfile.mkdtemp(prefix="voice_seg_")
         seg_files, seg_durations = [], []
         for i, seg in enumerate(segments):
+            _report(10 + int(i * 70 / len(segments)), f"正在合成第 {i + 1}/{len(segments)} 段…")
             data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch)
             seg_path = os.path.join(tmp_dir, f"seg_{i}.mp3")
             with open(seg_path, "wb") as f:
@@ -330,6 +332,7 @@ async def generate_voice(
             seg_durations.append(_audio_duration(seg_path))
 
         # 拼接 → 母带处理（响度标准化 + 淡入淡出）→ 输出产物
+        _report(85, "正在拼接与母带处理…")
         stem = f"voice_{int(time.time() * 1000)}"
         raw_path = os.path.join(tmp_dir, "merged.mp3")
         if len(seg_files) == 1:
@@ -359,6 +362,7 @@ async def generate_voice(
     from common.llm import log_usage
 
     log_usage("voice_generate", len(text), 0, elapsed)
+    _report(100, "配音已生成")
     return {
         "id": filename,
         "artifact_id": art_id,
@@ -372,6 +376,42 @@ async def generate_voice(
         "duration": duration,
         "segments": len(segments),
         "text": text[:200],
+    }
+
+
+@router.post("/generate")
+async def generate_voice(
+    text: str = Form(...),
+    scene: str = Form("shortvideo"),
+    voice: str = Form(""),
+    speed: float = Form(1.0),
+    pitch: int = Form(0),
+    format: str = Form("mp3"),
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """文字转语音（默认异步任务，立即返回 task_id）。
+
+    - 场景预设或自由音色，长文本自动分段 + 商用级母带处理
+    - 母带：响度标准化 -14 LUFS + 淡入淡出（短视频/自媒体平台标准）
+    - 自动生成同名字幕 .srt（分段时间戳对齐，批量下载随包附送）
+    - format: mp3（256k 高音质，默认）/ wav（PCM 无损）
+    - pitch: -20 ~ +20 音调百分比（0 为原声，正为明亮/负为低沉）
+    """
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"text": text, "scene": scene, "voice": voice, "speed": speed,
+               "pitch": pitch, "format": format, "project_id": project_id}
+    if sync:
+        return await _voice_generate_worker(payload)
+    task = create_task("voice_generate", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"], "status": "pending",
+        "message": "配音任务已提交，后台执行中，可在任务中心查看进度", "task": task,
     }
 
 
@@ -566,3 +606,11 @@ async def delete_voice(filename: str, current_user: dict = require_auth()):
     except Exception as e:
         logger.debug(f"delete_voice artifact skipped: {e}")
     return {"success": True}
+
+
+async def _voice_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装配音生成全流程，回报进度。"""
+    return await _voice_generate_worker(payload, progress=update)
+
+
+register_handler("voice_generate", _voice_generate_handler, user_limit=2)

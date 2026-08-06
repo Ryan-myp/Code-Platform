@@ -8,6 +8,7 @@ import {
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const TEMPLATES = [
   { id: 'snake', name: '贪吃蛇', icon: '🐍', color: 'from-emerald-500 to-green-600', description: '吃食物变长，撞墙/撞自己结束' },
@@ -57,6 +58,9 @@ export default function GameFactoryPage() {
   const [renameName, setRenameName] = useState('')
   const [evolveReq, setEvolveReq] = useState('')
   const [evolving, setEvolving] = useState(false)
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   useEffect(() => { loadProjects() }, [])
   useEffect(() => {
@@ -89,19 +93,21 @@ export default function GameFactoryPage() {
     if (!name.trim()) { toast.error('请输入游戏名称'); return }
     if (requirement.trim().length < 2) { toast.error('请描述你的玩法需求'); return }
     setGenerating(true)
-    try {
-      const res = await api.post('/api/games/generate', { name: name.trim(), template, requirement }, { timeout: 330000 })
-      const data = res.data
-      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions || Object.keys(data.files || {}), qc: data.qc })
-      const firstVer = (data.versions || Object.keys(data.files || {}))[0] || 'web'
-      setVersion(firstVer)
-      const firstFile = Object.keys((data.files || {})[firstVer] || {})[0] || ''
-      setSelectedFile(firstFile)
-      loadProjects()
-      toast.success(`生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件${data.qc?.ok ? ' · 商用 QC 全通过' : ''}`)
-    } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally { setGenerating(false) }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    await submitTask('/api/games/generate', { name: name.trim(), template, requirement }, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions || Object.keys(data.files || {}), qc: data.qc })
+        const firstVer = (data.versions || Object.keys(data.files || {}))[0] || 'web'
+        setVersion(firstVer)
+        const firstFile = Object.keys((data.files || {})[firstVer] || {})[0] || ''
+        setSelectedFile(firstFile)
+        loadProjects()
+        setGenerating(false)
+        toast.success(`生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件${data.qc?.ok ? ' · 商用 QC 全通过' : ''}`)
+      },
+      onError: (e) => { setGenerating(false); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const openProject = async (p) => {
@@ -161,20 +167,22 @@ export default function GameFactoryPage() {
   const evolveGame = async () => {
     if (!viewing || !evolveReq.trim()) { toast.error('请输入迭代需求'); return }
     setEvolving(true)
-    try {
-      const res = await api.post(`/api/games/${viewing.id}/evolve`, { requirement: evolveReq.trim() }, { timeout: 330000 })
-      const data = res.data
-      // 刷新查看内容为最新版本
-      setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions })
-      const firstVer = data.versions[0] || 'web'
-      setVersion(firstVer)
-      setSelectedFile(Object.keys(data.files[firstVer] || {})[0] || '')
-      setEvolveReq('')
-      loadProjects()
-      toast.success(`迭代完成！新版本 ${data.versions.length} 个，共 ${data.file_count} 个文件`)
-    } catch (err) {
-      toast.error(`迭代失败：${err.message}`)
-    } finally { setEvolving(false) }
+    setGenTask({ progress: 0, stage: '迭代任务排队中…', status: 'pending' })
+    await submitTask(`/api/games/${viewing.id}/evolve`, { requirement: evolveReq.trim() }, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        // 刷新查看内容为最新版本
+        setViewing({ id: data.id, name: data.name, files: data.files, versions: data.versions })
+        const firstVer = data.versions[0] || 'web'
+        setVersion(firstVer)
+        setSelectedFile(Object.keys(data.files[firstVer] || {})[0] || '')
+        setEvolveReq('')
+        loadProjects()
+        setEvolving(false)
+        toast.success(`迭代完成！新版本 ${data.versions.length} 个，共 ${data.file_count} 个文件`)
+      },
+      onError: (err) => { setEvolving(false); toast.error(`迭代失败：${err.message}`) },
+    })
   }
 
   const downloadZip = async () => {
@@ -294,12 +302,19 @@ export default function GameFactoryPage() {
                   rows={6} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-fuchsia-500/20 focus:border-fuchsia-500 outline-none" />
               </div>
               <Button variant="primary" size="lg" icon={Gamepad2} loading={generating} onClick={generate} className="w-full bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-700 hover:to-purple-700">
-                {generating ? 'AI 生成双版本中（约 1-2 分钟）…' : '生成小游戏（网页 + 微信版）'}
+                {generating ? '生成任务执行中（后台）…' : '生成小游戏（网页 + 微信版）'}
               </Button>
-              {generating && (
-                <div className="flex items-center gap-2 text-xs text-fuchsia-600 bg-fuchsia-50 border border-fuchsia-100 rounded-lg px-3 py-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  正在编写网页版与微信小游戏版代码，请耐心等待…
+              {generating && genTask && (
+                <div className="rounded-lg bg-fuchsia-50 border border-fuchsia-100 px-3 py-2">
+                  <div className="flex items-center gap-2 text-xs text-fuchsia-600">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-fuchsia-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-fuchsia-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
                 </div>
               )}
             </div>
@@ -502,13 +517,19 @@ export default function GameFactoryPage() {
               className="flex-1 px-3 py-2 border border-violet-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none bg-white" />
             <Button variant="primary" icon={Wand2} loading={evolving} onClick={evolveGame}
               className="bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-700 hover:to-fuchsia-700 flex-shrink-0">
-              {evolving ? '迭代中（约 1-2 分钟）…' : '开始迭代'}
+              {evolving ? '迭代任务执行中（后台）…' : '开始迭代'}
             </Button>
           </div>
-          {evolving && (
-            <div className="flex items-center gap-2 text-xs text-violet-600 mt-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              AI 正在基于现有代码生成升级版双版本代码，请稍候…
+          {evolving && genTask && (
+            <div className="mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-violet-600">
+                <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                <span className="flex-1 truncate">{genTask.stage || '迭代执行中…'}</span>
+                <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-violet-500 to-fuchsia-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+              </div>
             </div>
           )}
         </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Sparkles, Image as ImageIcon, LayoutTemplate, Scissors,
-  Download, Trash2, Eye, Upload, Wand2,
+  Download, Trash2, Eye, Upload, Wand2, Loader2,
   RefreshCw, TrendingUp, LayoutGrid, List as ListIcon,
   UserCircle, Shirt, Camera, Crop, RotateCw, FlipHorizontal, Sliders,
   DownloadCloud, Search, Image, Plus, FileJson2,
@@ -13,6 +13,7 @@ import {
   Modal, Button, Empty, SkeletonGrid, ErrorState,
   PageHeader, ConfirmDialog,
 } from '../components/ui'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -88,6 +89,9 @@ export default function ImageFactoryPage() {
   const [generating, setGenerating] = useState(false)
   const [generatedImages, setGeneratedImages] = useState([])
   const [generationError, setGenerationError] = useState(null)
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   // 模板
   const [selectedTemplate, setSelectedTemplate] = useState('')
@@ -197,30 +201,30 @@ export default function ImageFactoryPage() {
     setGenerating(true)
     setGenerationError(null)
     setGeneratedImages([])
-    try {
-      const form = new FormData()
-      form.append('prompt', prompt)
-      form.append('size', selectedSize)
-      form.append('batch_size', batchSize)
-      form.append('n', 1)
-      const res = await api.post('/api/image-factory/generate/text-to-image', form, { timeout: 200000 })
-      const data = res.data
-      const success = (data.results || []).filter((r) => !r.error)
-      const errors = (data.results || []).filter((r) => r.error)
-      setGeneratedImages(success.map((r) => ({ ...r, url: absUrl(r.url), prompt: r.prompt || prompt })))
-      if (errors.length > 0) {
-        setGenerationError(errors[0].error)
-      } else if (success.length > 0) {
-        toast.success(`成功生成 ${success.length} 张图片`)
-      } else {
-        setGenerationError('生成失败，请检查 API Key 配置')
-      }
-      fetchImages()
-    } catch (e) {
-      setGenerationError(`生成失败：${e.message}`)
-    } finally {
-      setGenerating(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('prompt', prompt)
+    form.append('size', selectedSize)
+    form.append('batch_size', batchSize)
+    form.append('n', 1)
+    await submitTask('/api/image-factory/generate/text-to-image', form, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        const success = (data.results || []).filter((r) => !r.error)
+        const errors = (data.results || []).filter((r) => r.error)
+        setGeneratedImages(success.map((r) => ({ ...r, url: absUrl(r.url), prompt: r.prompt || prompt })))
+        if (errors.length > 0) {
+          setGenerationError(errors[0].error)
+        } else if (success.length > 0) {
+          toast.success(`成功生成 ${success.length} 张图片`)
+        } else {
+          setGenerationError('生成失败，请检查 API Key 配置')
+        }
+        setGenerating(false)
+        fetchImages()
+      },
+      onError: (e) => { setGenerating(false); setGenerationError(`生成失败：${e.message}`) },
+    })
   }
 
   const handleRenderTemplate = async () => {
@@ -229,24 +233,24 @@ export default function ImageFactoryPage() {
       return
     }
     setRendering(true)
-    try {
-      const res = await api.post('/api/image-factory/template/render', {
-        template_id: selectedTemplate,
-        overrides: {},
-      }, { timeout: 120000 })
-      const data = res.data
-      if (data.url) {
-        setGeneratedImages([{ ...data, url: absUrl(data.url), prompt: '模板渲染' }])
-        toast.success('模板渲染完成')
-        fetchImages()
-      } else {
-        toast.error('渲染失败，未返回图片')
-      }
-    } catch (e) {
-      toast.error(`渲染失败：${e.message}`)
-    } finally {
-      setRendering(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    await submitTask('/api/image-factory/template/render', {
+      template_id: selectedTemplate,
+      overrides: {},
+    }, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        if (data.url) {
+          setGeneratedImages([{ ...data, url: absUrl(data.url), prompt: '模板渲染' }])
+          toast.success('模板渲染完成')
+          fetchImages()
+        } else {
+          toast.error('渲染失败，未返回图片')
+        }
+        setRendering(false)
+      },
+      onError: (e) => { setRendering(false); toast.error(`渲染失败：${e.message}`) },
+    })
   }
 
   // ── 图生图 ──
@@ -261,27 +265,27 @@ export default function ImageFactoryPage() {
     if (!img2imgPrompt.trim()) { toast.error('请输入提示词'); return }
     if (!img2imgFile) { toast.error('请先上传参考图'); return }
     setImg2imgBusy(true)
-    try {
-      const form = new FormData()
-      form.append('prompt', img2imgPrompt)
-      form.append('image', img2imgFile)
-      form.append('size', img2imgSize)
-      form.append('strength', img2imgStrength)
-      const res = await api.post('/api/image-factory/generate/image-to-image', form, { timeout: 200000 })
-      const data = res.data
-      if (data.url || data.image_url) {
-        const url = data.url || data.image_url
-        setGeneratedImages([{ ...data, url: absUrl(url), prompt: img2imgPrompt, filename: data.filename || url.split('/').pop() }])
-        toast.success('图生图完成')
-        fetchImages()
-      } else {
-        toast.error('生成失败，请检查 API Key 配置')
-      }
-    } catch (e) {
-      toast.error(`图生图失败：${e.message}`)
-    } finally {
-      setImg2imgBusy(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('prompt', img2imgPrompt)
+    form.append('image', img2imgFile)
+    form.append('size', img2imgSize)
+    form.append('strength', img2imgStrength)
+    await submitTask('/api/image-factory/generate/image-to-image', form, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        if (data.url || data.image_url) {
+          const url = data.url || data.image_url
+          setGeneratedImages([{ ...data, url: absUrl(url), prompt: img2imgPrompt, filename: data.filename || url.split('/').pop() }])
+          toast.success('图生图完成')
+          fetchImages()
+        } else {
+          toast.error('生成失败，请检查 API Key 配置')
+        }
+        setImg2imgBusy(false)
+      },
+      onError: (e) => { setImg2imgBusy(false); toast.error(`图生图失败：${e.message}`) },
+    })
   }
 
   // ── 模板管理 ──
@@ -419,6 +423,7 @@ export default function ImageFactoryPage() {
     }
     setTryOnGenerating(true)
     setTryOnResult(null)
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
     try {
       const [personResp, clothingResp] = await Promise.all([
         fetch(personImage.url),
@@ -432,19 +437,23 @@ export default function ImageFactoryPage() {
       form.append('description', tryOnDescription)
       form.append('style', tryOnStyle)
       form.append('background', tryOnBackground)
-      const res = await api.post('/api/image-factory/try-on/generate', form, { timeout: 200000 })
-      const data = res.data
-      if (data.url) {
-        setTryOnResult({ ...data, url: absUrl(data.url) })
-        toast.success('试穿效果已生成')
-        fetchImages()
-      } else {
-        toast.error('生成失败，请重试')
-      }
+      await submitTask('/api/image-factory/try-on/generate', form, {
+        onUpdate: (t) => setGenTask(t),
+        onSuccess: (data) => {
+          if (data.url) {
+            setTryOnResult({ ...data, url: absUrl(data.url) })
+            toast.success('试穿效果已生成')
+            fetchImages()
+          } else {
+            toast.error('生成失败，请重试')
+          }
+          setTryOnGenerating(false)
+        },
+        onError: (e) => { setTryOnGenerating(false); toast.error(`生成失败：${e.message}`) },
+      })
     } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally {
       setTryOnGenerating(false)
+      toast.error(`生成失败：${e.message}`)
     }
   }
 
@@ -595,8 +604,21 @@ export default function ImageFactoryPage() {
                 onClick={handleGenerate}
                 className="w-full"
               >
-                {generating ? '生成中...' : '生成图片'}
+                {generating ? '生成任务执行中（后台）…' : '生成图片'}
               </Button>
+              {generating && genTask && (
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                </div>
+              )}
 
               <div>
                 <p className="text-xs text-gray-500 mb-2">提示词模板</p>
@@ -750,8 +772,21 @@ export default function ImageFactoryPage() {
                 onClick={handleImg2Img}
                 className="w-full"
               >
-                {img2imgBusy ? '生成中...' : '生成变体'}
+                {img2imgBusy ? '生成任务执行中（后台）…' : '生成变体'}
               </Button>
+              {img2imgBusy && genTask && (
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                </div>
+              )}
             </div>
 
             <div className="lg:col-span-2">
@@ -854,8 +889,21 @@ export default function ImageFactoryPage() {
                 onClick={handleImg2Img}
                 className="w-full"
               >
-                {img2imgBusy ? '生成中...' : '生成变体'}
+                {img2imgBusy ? '生成任务执行中（后台）…' : '生成变体'}
               </Button>
+              {img2imgBusy && genTask && (
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                </div>
+              )}
             </div>
 
             <div className="lg:col-span-2">
@@ -942,8 +990,21 @@ export default function ImageFactoryPage() {
                 onClick={handleRenderTemplate}
                 className="w-full"
               >
-                {rendering ? '渲染中...' : '生成图片'}
+                {rendering ? '渲染任务执行中（后台）…' : '生成图片'}
               </Button>
+              {rendering && genTask && (
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                </div>
+              )}
             </div>
 
             <div className="lg:col-span-2">
@@ -1157,8 +1218,21 @@ export default function ImageFactoryPage() {
 
               <Button variant="gradient" size="lg" icon={Wand2} loading={tryOnGenerating}
                 disabled={!personImage || !clothingImage} onClick={handleTryOn} className="w-full">
-                {tryOnGenerating ? '生成中...' : '生成试穿效果'}
+                {tryOnGenerating ? '生成任务执行中（后台）…' : '生成试穿效果'}
               </Button>
+              {tryOnGenerating && genTask && (
+                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
+                  <div className="flex items-center gap-2 text-xs text-violet-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                </div>
+              )}
             </div>
 
             {/* Result */}

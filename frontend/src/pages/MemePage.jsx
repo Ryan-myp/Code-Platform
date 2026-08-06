@@ -6,6 +6,7 @@ import {
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const STYLES = [
   { id: 'yellow', name: '经典黄底', desc: 'Doge 经典黄', swatch: 'bg-[#FFD84D]', text: '#000000' },
@@ -46,6 +47,9 @@ export default function MemePage() {
   const [renameTitle, setRenameTitle] = useState('')
   const [batchMode, setBatchMode] = useState(false)
   const [batchText, setBatchText] = useState('')
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   useEffect(() => { loadList() }, [])
 
@@ -101,19 +105,22 @@ export default function MemePage() {
   const generate = async () => {
     if (!topText.trim() && !bottomText.trim()) { toast.error('请输入至少一行文字'); return }
     setGenerating(true)
-    try {
-      const fd = new FormData()
-      fd.append('top_text', topText.trim())
-      fd.append('bottom_text', bottomText.trim())
-      fd.append('style', style)
-      fd.append('ai_prompt', aiPrompt.trim())
-      await api.post('/api/meme/generate', fd, { timeout: 180000 })
-      toast.success(style === 'ai' ? 'AI 表情包生成完成' : '表情包已生成')
-      await clearDraft()
-      loadList()
-    } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally { setGenerating(false) }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const fd = new FormData()
+    fd.append('top_text', topText.trim())
+    fd.append('bottom_text', bottomText.trim())
+    fd.append('style', style)
+    fd.append('ai_prompt', aiPrompt.trim())
+    await submitTask('/api/meme/generate', fd, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: async () => {
+        toast.success(style === 'ai' ? 'AI 表情包生成完成' : '表情包已生成')
+        setGenerating(false)
+        await clearDraft()
+        loadList()
+      },
+      onError: (e) => { setGenerating(false); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   // ── 批量生成：每行一组「顶部 / 底部」，一次生成多张 ──
@@ -122,26 +129,30 @@ export default function MemePage() {
     if (lines.length === 0) { toast.error('请输入至少一行文案'); return }
     setGenerating(true)
     let ok = 0
+    let done = 0
+    // 全部任务（提交/完成）后收尾
+    const finish = () => {
+      done++
+      if (done < lines.length) return
+      setGenerating(false)
+      setBatchMode(false)
+      setBatchText('')
+      if (ok > 0) { toast.success(`批量生成完成：${ok}/${lines.length} 张`); loadList() }
+    }
     for (const line of lines) {
       const parts = line.split('/')
       const top = (parts[0] || '').trim()
       const bottom = (parts.slice(1).join('/') || '').trim()
-      try {
-        const fd = new FormData()
-        fd.append('top_text', top)
-        fd.append('bottom_text', bottom)
-        fd.append('style', style)
-        fd.append('ai_prompt', '')
-        await api.post('/api/meme/generate', fd, { timeout: 180000 })
-        ok++
-      } catch (e) {
-        toast.error(`「${line}」生成失败：${e.message}`)
-      }
+      const fd = new FormData()
+      fd.append('top_text', top)
+      fd.append('bottom_text', bottom)
+      fd.append('style', style)
+      fd.append('ai_prompt', '')
+      await submitTask('/api/meme/generate', fd, {
+        onSuccess: () => { ok++; finish() },
+        onError: (e) => { toast.error(`「${line}」生成失败：${e.message}`); finish() },
+      })
     }
-    setGenerating(false)
-    setBatchMode(false)
-    setBatchText('')
-    if (ok > 0) { toast.success(`批量生成完成：${ok}/${lines.length} 张`); loadList() }
   }
 
   const download = (item) => {
@@ -340,8 +351,21 @@ export default function MemePage() {
 
                 <Button variant="primary" size="lg" icon={Sticker} loading={generating} onClick={generate}
                   className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700">
-                  {generating ? (style === 'ai' ? 'AI 生成中（约 1 分钟）…' : '生成中…') : '生成表情包'}
+                  {generating ? '生成任务执行中（后台）…' : '生成表情包'}
                 </Button>
+                {generating && genTask && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs text-amber-700">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                      <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                      <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 bg-amber-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-amber-500 to-orange-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    </div>
+                    <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  </div>
+                )}
                 <Button variant="secondary" size="sm" icon={Copy} onClick={() => { setBatchMode(true); setBatchText('') }} className="w-full justify-center">
                   批量生成模式（一次多张）
                 </Button>

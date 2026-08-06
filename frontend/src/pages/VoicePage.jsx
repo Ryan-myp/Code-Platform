@@ -7,6 +7,7 @@ import {
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const SCENES = [
   { id: 'shortvideo', name: '短视频旁白', desc: '节奏明快，口播/知识解说', icon: Clapperboard, color: 'from-pink-500 to-rose-600' },
@@ -62,6 +63,9 @@ export default function VoicePage() {
   const [selected, setSelected] = useState(new Set())
   const [renaming, setRenaming] = useState(null) // { id, title }
   const [renameTitle, setRenameTitle] = useState('')
+  // 异步任务进度（task_id + 轮询进度）
+  const [genTask, setGenTask] = useState(null)
+  const { submitTask } = useAsyncTask()
 
   useEffect(() => { loadList() }, [])
 
@@ -117,21 +121,24 @@ export default function VoicePage() {
   const generate = async () => {
     if (!text.trim()) { toast.error('请输入要配音的文本'); return }
     setGenerating(true)
-    try {
-      const fd = new FormData()
-      fd.append('text', text.trim())
-      fd.append('scene', scene)
-      fd.append('voice', scene === 'custom' ? voice : '')
-      fd.append('speed', String(speed))
-      fd.append('pitch', String(pitch))
-      fd.append('format', format)
-      const res = await api.post('/api/voice/generate', fd, { timeout: 180000 })
-      toast.success(`配音完成：${fmtDuration(res.data.duration)}${res.data.has_srt ? ' · 已生成 SRT 字幕' : ''}${res.data.segments > 1 ? `（${res.data.segments} 段自动拼接）` : ''}`)
-      await clearDraft()
-      loadList()
-    } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally { setGenerating(false) }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const fd = new FormData()
+    fd.append('text', text.trim())
+    fd.append('scene', scene)
+    fd.append('voice', scene === 'custom' ? voice : '')
+    fd.append('speed', String(speed))
+    fd.append('pitch', String(pitch))
+    fd.append('format', format)
+    await submitTask('/api/voice/generate', fd, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: async (data) => {
+        toast.success(`配音完成：${fmtDuration(data.duration)}${data.has_srt ? ' · 已生成 SRT 字幕' : ''}${data.segments > 1 ? `（${data.segments} 段自动拼接）` : ''}`)
+        setGenerating(false)
+        await clearDraft()
+        loadList()
+      },
+      onError: (e) => { setGenerating(false); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const download = (item) => {
@@ -371,12 +378,19 @@ export default function VoicePage() {
 
             <Button variant="primary" size="lg" icon={Mic2} loading={generating} onClick={generate}
               className="w-full mt-3 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-700 hover:to-rose-700">
-              {generating ? 'AI 配音中…' : `生成配音${sceneCfg ? `（${sceneCfg.name}）` : ''}`}
+              {generating ? '生成任务执行中（后台）…' : `生成配音${sceneCfg ? `（${sceneCfg.name}）` : ''}`}
             </Button>
-            {generating && (
-              <div className="flex items-center gap-2 text-xs text-pink-600 bg-pink-50 border border-pink-100 rounded-lg px-3 py-2 mt-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                正在合成语音{text.length > 900 ? '（长文本分段合成中）' : ''}…
+            {generating && genTask && (
+              <div className="rounded-lg bg-pink-50 border border-pink-100 px-3 py-2 mt-2">
+                <div className="flex items-center gap-2 text-xs text-pink-600">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                  <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                  <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                </div>
+                <div className="mt-1.5 h-1.5 bg-pink-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-pink-500 to-rose-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                </div>
+                <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
               </div>
             )}
           </Card>
