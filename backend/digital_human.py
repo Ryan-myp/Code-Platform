@@ -10,7 +10,9 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 import uuid
+import json
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -1395,9 +1397,8 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     }
 
 
-@router.post("/generate")
-async def generate(req: GenerateRequest, current_user: dict = require_auth()):
-    """数字人口播视频生成 — 文案→配音→视频合成流水线。
+def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> dict:
+    """单条数字人视频生成流水线（供单条接口与批量任务复用）。
 
     流程：
     1. 文案预处理（LLM优化口播文案流畅度）
@@ -1405,8 +1406,6 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     3. 视频合成（数字人形象+配音+背景合成为口播视频）
     """
     start = datetime.now()
-    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
 
     # 0. 商业配额：生成消耗 1 次今日额度（管理员/VIP 不受限）
     from common.auth import consume_quota, get_quota_info
@@ -1451,7 +1450,6 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
 
     # 水印策略：免费用户强制加水印（商业规则，不可绕过）；会员显式传 True 才加
     membership = quota_info.get("membership", "free") if isinstance(quota_info, dict) else "free"
-    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
     use_watermark = (membership == "free" and role != "admin") or bool(req.watermark)
 
     # 1. 文案 — 字幕与配音必须与用户输入完全一致：
@@ -1566,6 +1564,18 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     }
 
 
+@router.post("/generate")
+async def generate(req: GenerateRequest, current_user: dict = require_auth()):
+    """数字人口播视频生成 — 文案→配音→视频合成流水线（单条接口）。
+
+    批量生产请使用 POST /api/digital-human/batch（多文案后台逐条生成）。
+    """
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    return _generate_one(req, user, uid, role)
+
+
 @router.get("/records")
 async def list_records(
     page: int = 1, page_size: int = 20, status: str = "", q: str = "",
@@ -1600,6 +1610,11 @@ class BatchDeleteRequest(BaseModel):
     ids: list[str] = Field(..., min_length=1, description="记录ID列表")
 
 
+def _url_to_path(url: str) -> str:
+    """/uploads/audio/x.mp3 → backend/uploads/audio/x.mp3（统一 URL 到磁盘路径解析）。"""
+    return os.path.join(_BASE_DIR, url.lstrip("/"))
+
+
 def _delete_record_files(conn, record_id: str) -> None:
     """删除记录关联的音频/视频文件（释放磁盘空间）。"""
     row = conn.execute(
@@ -1610,9 +1625,7 @@ def _delete_record_files(conn, record_id: str) -> None:
     for url in (row["audio_url"] or "", row["video_url"] or ""):
         if not url:
             continue
-        # /uploads/audio/x.mp3 → backend/uploads/audio/x.mp3
-        rel = url.lstrip("/")
-        p = os.path.join(os.path.dirname(UPLOAD_AUDIO_DIR), rel)
+        p = _url_to_path(url)
         if os.path.exists(p):
             try:
                 os.remove(p)
@@ -1645,3 +1658,242 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+# ══════════════════════════════════════════════════════════════
+# 批量生产流水线：多条文案 → 后台线程逐条生成 → 进度查询 → ZIP 打包
+# ══════════════════════════════════════════════════════════════
+
+class BatchGenerateRequest(BaseModel):
+    texts: list[str] = Field(..., min_length=1, max_length=50, description="文案列表（1-50 条）")
+    avatar_id: str = Field("business-female", description="数字人形象ID")
+    voice_id: str = Field("zh-CN-XiaoxiaoNeural", description="声音ID")
+    background_id: str = Field("tech", description="背景ID")
+    scene_id: str = Field("product", description="场景模板ID")
+    speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
+    resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
+    fps: int = Field(15, ge=10, le=30, description="帧率")
+    watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+
+
+# 批量任务内存态：batch_id → 任务（批量任务分钟级完成，进程内足够；重启即失效可接受）
+_BATCH_TASKS: dict[str, dict] = {}
+_BATCH_LOCK = threading.Lock()
+
+
+def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
+                  user: str, uid: str, role: str) -> None:
+    """后台批量生成：逐条走完整流水线；违规词/超短文案直接失败（不浪费配额）。"""
+    task = _BATCH_TASKS[batch_id]
+    try:
+        for i, raw_text in enumerate(texts):
+            item = task["items"][i]
+            text = raw_text.strip()
+            if len(text) < 5:
+                item["status"] = "failed"
+                item["error"] = "文案太短（至少 5 字）"
+            elif any(w.lower() in text.lower() for w in _HARD_BLOCK_WORDS):
+                item["status"] = "failed"
+                item["error"] = "文案含违规词，已拦截"
+            else:
+                try:
+                    sub = GenerateRequest(
+                        text=text, avatar_id=req.avatar_id, voice_id=req.voice_id,
+                        background_id=req.background_id, scene_id=req.scene_id,
+                        speed=req.speed, resolution=req.resolution,
+                        fps=req.fps, watermark=req.watermark,
+                    )
+                    res = _generate_one(sub, user, uid, role)
+                    item.update(
+                        status="success",
+                        record_id=res["record_id"],
+                        audio_url=res["audio_url"],
+                        video_url=res["video_url"],
+                        watermark=res["watermark"],
+                        sensitive_warning=res.get("sensitive_warning", ""),
+                    )
+                except HTTPException as e:
+                    item["status"] = "skipped" if e.status_code == 402 else "failed"
+                    item["error"] = str(e.detail)[:120]
+                except Exception as e:
+                    logger.exception("batch item failed %s", batch_id)
+                    item["status"] = "failed"
+                    item["error"] = str(e)[:120]
+            task["done"] += 1
+            task[item["status"]] += 1
+    finally:
+        task["status"] = "done"
+        task["finished_at"] = datetime.now().isoformat()
+
+
+@router.post("/batch")
+async def create_batch(req: BatchGenerateRequest, current_user: dict = require_auth()):
+    """批量生成：多条文案 → 后台线程逐条生产 → 返回 batch_id 供进度轮询。
+
+    配额逐条扣减（每条 1 次）；违规词文案不消耗配额；额度不足的条目标记 skipped。
+    """
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    texts = [t.strip() for t in req.texts if t and t.strip()]
+    if not texts:
+        raise HTTPException(400, "文案列表为空，请输入至少一条文案")
+    if len(texts) > 50:
+        raise HTTPException(400, "单次最多 50 条文案")
+    # 预检配额：今日剩余为 0 直接拒绝（避免空跑任务）
+    from common.auth import get_quota_info
+    qi = get_quota_info(uid) or {}
+    remaining = qi.get("remaining_today")
+    if remaining is not None and remaining <= 0:
+        raise HTTPException(402, "今日生成次数已用完，升级会员获取更多额度")
+    # 形象名校验（zip 打包文件名使用）
+    avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
+    avatar_name = avatar["name"] if avatar else req.avatar_id
+    batch_id = f"dhb_{uuid.uuid4().hex[:10]}"
+    items = [
+        {"index": i, "text_preview": t[:40], "status": "pending", "error": "",
+         "record_id": "", "audio_url": "", "video_url": "",
+         "watermark": False, "sensitive_warning": ""}
+        for i, t in enumerate(texts)
+    ]
+    task = {
+        "id": batch_id, "user": user, "status": "running",
+        "total": len(texts), "done": 0, "success": 0, "failed": 0, "skipped": 0,
+        "avatar_id": req.avatar_id, "avatar_name": avatar_name,
+        "resolution": req.resolution, "fps": req.fps,
+        "created_at": datetime.now().isoformat(), "finished_at": "",
+        "items": items,
+    }
+    with _BATCH_LOCK:
+        _BATCH_TASKS[batch_id] = task
+        # 内存任务上限 100：清理最旧的已完成任务
+        if len(_BATCH_TASKS) > 100:
+            done_ids = [k for k, v in _BATCH_TASKS.items() if v["status"] == "done"]
+            for k in done_ids[: len(_BATCH_TASKS) - 100]:
+                del _BATCH_TASKS[k]
+    threading.Thread(target=_batch_worker, args=(batch_id, texts, req, user, uid, role), daemon=True).start()
+    return {
+        "batch_id": batch_id, "total": len(texts), "status": "running",
+        "avatar_name": avatar_name, "resolution": req.resolution, "fps": req.fps,
+    }
+
+
+@router.get("/batch/{batch_id}")
+async def get_batch(batch_id: str, current_user: dict = require_auth()):
+    """批量任务进度查询（仅创建者可见）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    task = _BATCH_TASKS.get(batch_id)
+    if not task or task["user"] != user:
+        raise HTTPException(404, "批量任务不存在")
+    return task
+
+
+@router.get("/batch/{batch_id}/download")
+async def download_batch(batch_id: str, current_user: dict = require_auth()):
+    """打包下载批量任务的全部成功视频（ZIP，文件名含序号+形象+记录ID）。"""
+    import io
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    task = _BATCH_TASKS.get(batch_id)
+    if not task or task["user"] != user:
+        raise HTTPException(404, "批量任务不存在")
+    if task["status"] != "done":
+        raise HTTPException(400, "任务尚未完成，请稍后再下载")
+    buf = io.BytesIO()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in task["items"]:
+            if item["status"] != "success" or not item.get("video_url"):
+                continue
+            p = _url_to_path(item["video_url"])
+            if os.path.exists(p):
+                zf.write(p, f"{item['index'] + 1:02d}_{task['avatar_name']}_{item['record_id']}.mp4")
+                count += 1
+    if count == 0:
+        raise HTTPException(400, "没有可下载的视频（任务无成功产物）")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="digital-human-batch-{batch_id}.zip"'},
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# 内容生产提效：AI 口播文案助手 + 文案合规预检
+# ══════════════════════════════════════════════════════════════
+
+class ScriptAssistRequest(BaseModel):
+    topic: str = Field(..., min_length=2, max_length=100, description="口播主题")
+    scene_id: str = Field("product", description="场景模板ID（影响文案风格）")
+    platform: str = Field("douyin", max_length=20, description="目标平台 douyin/kuaishou/wechat/bilibili")
+    tone: str = Field("专业", max_length=20, description="文案风格：专业/亲切/活泼/煽情")
+
+
+_SCENE_STYLES = {
+    "product": "产品介绍，突出卖点与使用场景",
+    "course": "课程讲解，结构化输出知识点",
+    "news": "新闻播报，字正腔圆、客观中立",
+    "livestream": "直播带货，强互动、营造紧迫感",
+    "story": "故事讲述，情感丰富、有画面感",
+}
+
+
+@router.post("/script-assist")
+async def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth()):
+    """AI 口播文案助手：按主题/场景/平台生成 3 版口播脚本（LLM 失败自动回退模板）。"""
+    scene_style = _SCENE_STYLES.get(req.scene_id, "产品介绍")
+    platform_labels = {"douyin": "抖音", "kuaishou": "快手", "wechat": "公众号", "bilibili": "B站"}
+    platform_name = platform_labels.get(req.platform, req.platform)
+    system = (
+        "你是资深短视频口播文案专家。根据要求生成3版口播文案，直接输出JSON数组，"
+        "每版是1个字符串对象，120字以内，必须包含：开头钩子、核心内容、结尾引导。"
+        "要求：口语化、无Markdown标记、无违禁词（不能出现点击领取/加微信/日赚等），不要用'最'等广告法极限词。"
+    )
+    user_prompt = (
+        f"主题：{req.topic}；场景：{scene_style}；平台：{platform_name}；风格：{req.tone}。"
+        "请生成3版不同切入角度的口播文案。"
+    )
+    scripts = []
+    ok = False
+    try:
+        raw = call_llm(system, user_prompt, max_tokens=1500, temperature=0.9, timeout=60)
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+        data = json.loads(raw)
+        if isinstance(data, list) and data:
+            scripts = [str(s).strip() for s in data if str(s).strip()][:3]
+            ok = True
+    except Exception:
+        logger.exception("script assist LLM failed")
+    if not scripts:
+        # 回退模板：保证功能在 LLM 不可用时仍可用
+        scripts = [
+            f"大家好，今天和大家聊聊「{req.topic}」。这件事和每个人都有关，看完一定会有收获。",
+            f"你敢信吗？{req.topic}还能这么玩。今天3分钟带你彻底搞明白。",
+            f"最近后台收到很多朋友问{req.topic}，今天就一次说清楚，记得点赞收藏。",
+        ]
+    log_usage("digital_human_script", len(req.topic), sum(len(s) for s in scripts), 0)
+    return {"scripts": scripts, "source": "ai" if ok else "fallback"}
+
+
+class ComplianceCheckRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000, description="待检查文案")
+
+
+@router.post("/compliance-check")
+async def compliance_check(req: ComplianceCheckRequest, current_user: dict = require_auth()):
+    """文案合规预检：硬违规词（红色拦截）+ 广告法极限词/风险词（橙色提示）。"""
+    lower = req.text.lower()
+    hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower]
+    risk_hits = []
+    try:
+        from content_strategy import _scan_text
+        risk_hits = list(dict.fromkeys(h["word"] for h in _scan_text(req.text)))
+    except Exception:
+        pass
+    return {"allowed": not hard_hits, "hard_hits": hard_hits, "risk_hits": risk_hits}

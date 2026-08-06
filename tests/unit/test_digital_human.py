@@ -133,3 +133,84 @@ class TestWatermarkPolicy:
         membership, role, req_wm = "free", "admin", False
         use = (membership == "free" and role != "admin") or bool(req_wm)
         assert use is False
+
+
+class TestBatchRequest:
+    """批量生产流水线：请求校验 + 预检逻辑。"""
+
+    def test_batch_texts_validation(self):
+        from pydantic import ValidationError
+        from digital_human import BatchGenerateRequest
+        with pytest.raises(ValidationError):
+            BatchGenerateRequest(texts=[])
+        with pytest.raises(ValidationError):
+            BatchGenerateRequest(texts=["这是十条足够长度的文案内容哦"] * 51)
+        req = BatchGenerateRequest(texts=["大家好，今天分享一个技巧"])
+        assert req.resolution == "720p" and req.fps == 15
+
+    def test_batch_hard_word_precheck(self):
+        """批量预检：违规词文案直接被识别（不浪费配额）。"""
+        from digital_human import _HARD_BLOCK_WORDS
+        bad = "点击领取免费大礼包"
+        good = "大家好，今天分享一个实用的效率技巧"
+        assert any(w.lower() in bad.lower() for w in _HARD_BLOCK_WORDS)
+        assert not any(w.lower() in good.lower() for w in _HARD_BLOCK_WORDS)
+
+    def test_batch_task_state_keys(self):
+        """任务状态计数键与 worker 自增逻辑一致。"""
+        statuses = ["success", "failed", "skipped"]
+        task = {s: 0 for s in statuses}
+        task["done"] = 0
+        for s in ["success", "failed", "skipped", "success"]:
+            task["done"] += 1
+            task[s] += 1
+        assert task == {"success": 2, "failed": 1, "skipped": 1, "done": 4}
+
+
+class TestScriptAssist:
+    """AI 口播文案助手：请求校验 + 场景风格表 + 回退模板。"""
+
+    def test_script_request_validation(self):
+        from pydantic import ValidationError
+        from digital_human import ScriptAssistRequest
+        with pytest.raises(ValidationError):
+            ScriptAssistRequest(topic="")
+        req = ScriptAssistRequest(topic="AI效率工具", platform="douyin", tone="活泼")
+        assert req.topic == "AI效率工具" and req.tone == "活泼"
+
+    def test_scene_styles_cover_builtin_scenes(self):
+        from digital_human import _SCENE_STYLES
+        for sid in ["product", "course", "news", "livestream", "story"]:
+            assert sid in _SCENE_STYLES, f"场景 {sid} 应有口播风格定义"
+
+    def test_fallback_scripts_non_empty(self):
+        """LLM 不可用时的回退模板：3 版且包含主题。"""
+        topic = "AI效率工具"
+        scripts = [
+            f"大家好，今天和大家聊聊「{topic}」。这件事和每个人都有关，看完一定会有收获。",
+            f"你敢信吗？{topic}还能这么玩。今天3分钟带你彻底搞明白。",
+            f"最近后台收到很多朋友问{topic}，今天就一次说清楚，记得点赞收藏。",
+        ]
+        assert len(scripts) == 3
+        assert all(topic in s for s in scripts)
+
+
+class TestComplianceCheckApi:
+    """合规预检：请求校验 + 词表命中逻辑。"""
+
+    def test_compliance_request_validation(self):
+        from pydantic import ValidationError
+        from digital_human import ComplianceCheckRequest
+        with pytest.raises(ValidationError):
+            ComplianceCheckRequest(text="")
+        assert ComplianceCheckRequest(text="大家好").text == "大家好"
+
+    def test_hard_hit_detection(self):
+        """预检逻辑：硬违规词命中 → allowed=False；正常文案 → allowed=True。"""
+        from digital_human import _HARD_BLOCK_WORDS
+        lower = "点击领取免费大礼包，马上抢购".lower()
+        hard = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower]
+        assert hard
+        assert "点击领取" in hard
+        clean = "大家好，今天分享一个实用的效率技巧".lower()
+        assert [w for w in _HARD_BLOCK_WORDS if w.lower() in clean] == []

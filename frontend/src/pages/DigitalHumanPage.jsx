@@ -4,7 +4,7 @@ import {
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
   Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
   Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle, Camera,
-  Upload, Rocket, X,
+  Upload, Rocket, X, ShieldCheck, Layers,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -36,6 +36,18 @@ export default function DigitalHumanPage() {
   const [watermark, setWatermark] = useState(false)  // 会员可开关；免费用户由后端强制加水印
   const [genPhase, setGenPhase] = useState('')   // 生成阶段提示文案
   const [quota, setQuota] = useState(null)       // 今日剩余额度
+
+  // 批量生产：多条文案后台逐条生成
+  const [batchTexts, setBatchTexts] = useState('')   // 批量文案（每行一条）
+  const [batchTask, setBatchTask] = useState(null)   // 批量任务进度
+  const batchTimerRef = useRef(null)                 // 批量轮询定时器
+
+  // AI 文案助手 + 合规预检
+  const [showScriptModal, setShowScriptModal] = useState(false)
+  const [scriptForm, setScriptForm] = useState({ topic: '', platform: 'douyin', tone: '专业' })
+  const [scriptList, setScriptList] = useState([])
+  const [scriptLoading, setScriptLoading] = useState(false)
+  const [checkResult, setCheckResult] = useState(null)  // 合规预检结果
 
   // 数据
   const [avatars, setAvatars] = useState([])
@@ -481,6 +493,9 @@ export default function DigitalHumanPage() {
     }
   }, [playing, recording])
 
+  // 卸载时停止批量轮询
+  useEffect(() => () => clearInterval(batchTimerRef.current), [])
+
   const deleteRecord = async (id) => {
     try { await api.delete(`/api/digital-human/records/${id}`); loadRecords(true); toast.success('已删除') }
     catch (e) { toast.error(e.message) }
@@ -524,6 +539,82 @@ export default function DigitalHumanPage() {
       await navigator.clipboard.writeText(r.text || '')
       toast.success('文案已复制到剪贴板')
     } catch { toast.error('复制失败，请手动复制') }
+  }
+
+  // ── 批量生产：多条文案后台逐条生成 ──
+  const runBatch = async () => {
+    const texts = batchTexts.split('\n').map(t => t.trim()).filter(Boolean)
+    if (texts.length === 0) { toast.error('请输入至少一条文案（每行一条）'); return }
+    if (texts.length > 50) { toast.error('单次最多 50 条文案'); return }
+    try {
+      const res = await api.post('/api/digital-human/batch', {
+        texts, avatar_id: avatarId, voice_id: voiceId,
+        background_id: bgId, scene_id: sceneId, speed,
+        resolution, fps, watermark,
+      })
+      setBatchTask(res.data)
+      setCheckResult(null)
+      toast.info(`批量任务已启动：${res.data.total} 条文案，后台逐条生成中…`)
+      pollBatch(res.data.batch_id)
+    } catch (e) {
+      if (e.status === 402) {
+        toast.error('今日生成次数已用完，升级会员获取更多额度')
+        window.open('/membership', '_blank')
+      } else { toast.error(`批量生成失败：${e.message}`) }
+    }
+  }
+
+  const pollBatch = (batchId) => {
+    clearInterval(batchTimerRef.current)
+    batchTimerRef.current = setInterval(async () => {
+      try {
+        const res = await api.get(`/api/digital-human/batch/${batchId}`)
+        setBatchTask(res.data)
+        if (res.data.status === 'done') {
+          clearInterval(batchTimerRef.current)
+          loadRecords(true)
+          loadQuota()
+          toast.success(`批量生成完成：成功 ${res.data.success} / 失败 ${res.data.failed}${res.data.skipped > 0 ? ` / 跳过 ${res.data.skipped}` : ''}`)
+        }
+      } catch { clearInterval(batchTimerRef.current) }
+    }, 2500)
+  }
+
+  const downloadBatch = () => {
+    if (!batchTask?.batch_id) return
+    downloadFile(`/api/digital-human/batch/${batchTask.batch_id}/download`, '数字人批量视频.zip')
+  }
+
+  // ── AI 口播文案助手 ──
+  const generateScripts = async () => {
+    if (!scriptForm.topic.trim()) { toast.error('请输入口播主题'); return }
+    setScriptLoading(true)
+    try {
+      const res = await api.post('/api/digital-human/script-assist', { ...scriptForm, scene_id: sceneId })
+      setScriptList(res.data?.scripts || [])
+      if (!res.data?.scripts?.length) toast.error('生成失败，请重试')
+    } catch (e) { toast.error(`生成失败：${e.message}`) }
+    finally { setScriptLoading(false) }
+  }
+
+  const useScript = (s) => {
+    setText(s)
+    setShowScriptModal(false)
+    toast.success('已填入文案框，可继续编辑')
+  }
+
+  // ── 合规预检：生成前检查违禁词/风险词 ──
+  const checkCompliance = async () => {
+    if (!text.trim()) { toast.error('请先输入文案'); return }
+    try {
+      const res = await api.post('/api/digital-human/compliance-check', { text })
+      setCheckResult(res.data)
+      if (res.data.allowed) {
+        toast.success(res.data.risk_hits.length ? '检查通过（含风险词提示，建议修改）' : '文案合规，可以放心生成')
+      } else {
+        toast.error(`含违规词：${res.data.hard_hits.join('、')}，无法生成`)
+      }
+    } catch (e) { toast.error(`检查失败：${e.message}`) }
   }
 
   const loadArticle = (a) => {
@@ -840,14 +931,39 @@ export default function DigitalHumanPage() {
                 <FileText className="w-4 h-4 text-violet-500" /> 口播文案
                 <span className="text-xs font-normal text-gray-400">（{text.length} 字）</span>
               </h3>
-              <Button variant="secondary" size="sm" icon={FileText} onClick={loadArticles}>
-                从素材库加载
-              </Button>
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <Button variant="secondary" size="sm" icon={Wand2}
+                  onClick={() => { setScriptForm({ topic: '', platform: 'douyin', tone: '专业' }); setScriptList([]); setShowScriptModal(true) }}>
+                  AI 写文案
+                </Button>
+                <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={checkCompliance}>
+                  检查文案
+                </Button>
+                <Button variant="secondary" size="sm" icon={FileText} onClick={loadArticles}>
+                  素材库
+                </Button>
+              </div>
             </div>
             <textarea value={text} onChange={(e) => setText(e.target.value)}
               placeholder="输入口播文案，AI 会自动优化为更流畅自然的口播脚本…&#10;&#10;如：大家好，今天给大家介绍一款全新的AI效率工具，它可以在30秒内帮你完成…"
               rows={12}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none" />
+            {/* 合规预检结果：红色=违规词拦截 / 橙色=风险词提示 */}
+            {checkResult && (
+              <div className={`mt-2 px-3 py-2 rounded-lg text-[11px] leading-relaxed border ${
+                checkResult.allowed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'
+              }`}>
+                {!checkResult.allowed && (
+                  <div className="font-medium mb-0.5">🚫 含违规词：{checkResult.hard_hits.join('、')}（无法生成，请修改）</div>
+                )}
+                {checkResult.risk_hits.length > 0 && (
+                  <div className="text-orange-600">⚠️ 风险词提示：{checkResult.risk_hits.slice(0, 10).join('、')}{checkResult.risk_hits.length > 10 ? ` 等${checkResult.risk_hits.length}个` : ''}（发布到平台可能限流）</div>
+                )}
+                {checkResult.allowed && checkResult.risk_hits.length === 0 && (
+                  <div>✓ 文案合规，可以放心生成</div>
+                )}
+              </div>
+            )}
           </Card>
 
           {/* 商业参数：分辨率 / 帧率 / 水印 */}
@@ -899,6 +1015,77 @@ export default function DigitalHumanPage() {
                 )}
               </div>
             </div>
+          </Card>
+
+          {/* 批量生产：多文案后台流水线（口播矩阵产能） */}
+          <Card className="border-dashed border-violet-300">
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-violet-500" /> 批量生产
+              <span className="text-[10px] font-normal text-gray-400">按当前形象/声音/质量设置逐条生成</span>
+            </h3>
+            <textarea value={batchTexts} onChange={(e) => setBatchTexts(e.target.value)}
+              placeholder={'每行一条文案，最多 50 条，后台自动逐条生成…\n如：\n大家好，今天介绍一款AI效率工具\n你知道AI数字人吗？\n创业公司如何做内容营销'}
+              rows={4}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none mb-2" />
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="sm" icon={Layers} loading={batchTask?.status === 'running'} onClick={runBatch} className="flex-1">
+                {batchTask?.status === 'running'
+                  ? `批量生成中（${batchTask.done}/${batchTask.total}）…`
+                  : `批量生成 ${batchTexts.split('\n').filter(t => t.trim()).length} 条视频`}
+              </Button>
+              {batchTask?.status === 'done' && batchTask.success > 0 && (
+                <Button variant="secondary" size="sm" icon={Download} onClick={downloadBatch}>
+                  打包下载 ZIP
+                </Button>
+              )}
+            </div>
+            {/* 批量进度：总进度条 + 逐条状态 */}
+            {batchTask && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span className="flex items-center gap-1.5">
+                    {batchTask.status === 'running' ? (
+                      <><span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />任务进行中 {batchTask.done}/{batchTask.total}</>
+                    ) : '任务已完成'}
+                  </span>
+                  <span>
+                    成功 <span className="text-emerald-600 font-medium">{batchTask.success}</span> · 失败 <span className="text-red-500 font-medium">{batchTask.failed}</span>
+                    {batchTask.skipped > 0 && <> · 跳过 <span className="text-amber-500 font-medium">{batchTask.skipped}</span></>}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-violet-500 to-purple-500 transition-all duration-500"
+                    style={{ width: `${batchTask.total ? (batchTask.done / batchTask.total) * 100 : 0}%` }} />
+                </div>
+                <div className="max-h-44 overflow-y-auto pr-1 space-y-1">
+                  {batchTask.items?.map((it) => (
+                    <div key={it.index} className="flex items-center gap-2 text-[11px] py-0.5">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        it.status === 'success' ? 'bg-emerald-400'
+                          : it.status === 'failed' ? 'bg-red-400'
+                          : it.status === 'skipped' ? 'bg-amber-400'
+                          : 'bg-gray-300 animate-pulse'
+                      }`} />
+                      <span className="text-gray-400 flex-shrink-0 w-4">{it.index + 1}</span>
+                      <span className="text-gray-600 truncate flex-1">{it.text_preview}</span>
+                      {it.status === 'success' && it.video_url && (
+                        <button onClick={() => playPreviewVideo(it.video_url)}
+                          className="text-blue-500 hover:text-blue-700 flex-shrink-0">预览</button>
+                      )}
+                      <span className={`flex-shrink-0 max-w-40 truncate ${
+                        it.status === 'success' ? 'text-emerald-500'
+                          : it.status === 'failed' || it.status === 'skipped' ? 'text-red-400' : 'text-gray-300'
+                      }`}>
+                        {it.status === 'success' ? '✓ 成功'
+                          : it.status === 'failed' ? `✗ ${it.error || '失败'}`
+                          : it.status === 'skipped' ? '额度不足跳过'
+                          : it.status === 'running' ? '生成中…' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* 生成按钮 */}
@@ -1405,6 +1592,50 @@ export default function DigitalHumanPage() {
                   <div className="text-xs text-gray-400 truncate">{(a.result || a.prompt || '').slice(0, 80)}</div>
                 </div>
                 <span className="text-xs text-gray-400 flex-shrink-0">{a.created_at?.slice(0, 10)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* AI 口播文案助手 Modal：主题 → 3 版口播文案 */}
+      <Modal open={showScriptModal} onClose={() => setShowScriptModal(false)} title="AI 口播文案助手" size="md">
+        <p className="text-xs text-gray-400 mb-3">
+          输入主题，AI 按当前场景（{SCENES.find(s => s.id === sceneId)?.name || ''}）生成 3 版不同切入角度的口播文案（自动规避违禁词）
+        </p>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <input value={scriptForm.topic} onChange={(e) => setScriptForm(prev => ({ ...prev, topic: e.target.value }))}
+            placeholder="口播主题，如：AI效率工具推荐" maxLength={100}
+            onKeyDown={(e) => { if (e.key === 'Enter') generateScripts() }}
+            className="col-span-2 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none" />
+          <select value={scriptForm.platform} onChange={(e) => setScriptForm(prev => ({ ...prev, platform: e.target.value }))}
+            className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:border-violet-500 bg-white">
+            <option value="douyin">抖音</option>
+            <option value="kuaishou">快手</option>
+            <option value="wechat">公众号</option>
+            <option value="bilibili">B站</option>
+          </select>
+          <select value={scriptForm.tone} onChange={(e) => setScriptForm(prev => ({ ...prev, tone: e.target.value }))}
+            className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs outline-none focus:border-violet-500 bg-white">
+            <option value="专业">专业</option>
+            <option value="亲切">亲切</option>
+            <option value="活泼">活泼</option>
+            <option value="煽情">煽情</option>
+          </select>
+        </div>
+        <Button variant="primary" size="sm" icon={Wand2} loading={scriptLoading} onClick={generateScripts} className="w-full mb-3">
+          生成 3 版口播文案
+        </Button>
+        {scriptList.length > 0 && (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {scriptList.map((s, i) => (
+              <div key={i} className="p-3 rounded-lg border border-gray-100 hover:border-violet-200 hover:bg-violet-50/30 transition-all">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-medium text-violet-500">版本 {i + 1}</span>
+                  <button onClick={() => useScript(s)}
+                    className="text-[10px] text-violet-600 hover:text-violet-800 font-medium underline">使用此版</button>
+                </div>
+                <p className="text-xs text-gray-600 leading-relaxed">{s}</p>
               </div>
             ))}
           </div>
