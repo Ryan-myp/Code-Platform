@@ -3,7 +3,7 @@ import {
   Activity, Crown, Loader2, RefreshCw, Search, Shield, Sparkles,
   TrendingUp, UserPlus, Users as UsersIcon, Wrench, Eye, BarChart3,
   Check, X, Zap, Banknote, ImageIcon, Layers, UserCog, QrCode, Trash2,
-  Ticket, Plus,
+  Ticket, Plus, Video,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -319,6 +319,17 @@ export default function AdminPage() {
         >
           <Eye className="w-4 h-4" />
           内容可见性
+        </button>
+        <button
+          onClick={() => setActiveSection('dh')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeSection === 'dh'
+              ? 'border-brand-500 text-brand-600'
+              : 'border-transparent text-ink-500 hover:text-ink-800'
+          }`}
+        >
+          <Video className="w-4 h-4" />
+          数字人运营
         </button>
       </div>
 
@@ -1143,6 +1154,9 @@ export default function AdminPage() {
 
       {/* 内容可见性管理 */}
       {activeSection === 'content' && <ContentManager />}
+
+      {/* 数字人运营报表 */}
+      {activeSection === 'dh' && <DigitalHumanStats />}
     </div>
   )
 }
@@ -1316,6 +1330,183 @@ function ContentManager() {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 数字人专项运营报表（v8.0 商业化 P0）
+ * - 总量/成功率/平均耗时/存储占用 核心卡片
+ * - 状态分布 + 分辨率分布 + 近 7 天趋势 + 用户 TOP5
+ * - 批量任务健康度 + 最近失败原因（用于线上故障定位）
+ */
+function DigitalHumanStats() {
+  const toast = useToast()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = await api.get('/api/digital-human/admin/stats')
+      setData(res.data || {})
+    } catch (err) {
+      toast.error(err.message || '加载数字人报表失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (loading && !data) {
+    return (
+      <div className="flex items-center justify-center py-24 text-ink-400">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+        加载数字人运营数据...
+      </div>
+    )
+  }
+
+  const d = data || {}
+  const usage = d.usage || {}
+  const storage = d.storage || {}
+  const batches = d.batches || {}
+  const totals = d.totals || {}
+  const statusDist = d.status_dist || {}
+  const resDist = d.res_dist || {}
+  const trend = d.trend_7d || []
+  const maxTrend = Math.max(1, ...trend.map((t) => t.count))
+  const statusMeta = {
+    done: { label: '成功', cls: 'bg-green-50 text-green-600' },
+    audio_only: { label: '仅音频', cls: 'bg-amber-50 text-amber-600' },
+    failed: { label: '失败', cls: 'bg-red-50 text-red-600' },
+    pending: { label: '生成中', cls: 'bg-blue-50 text-blue-600' },
+  }
+
+  const cards = [
+    { label: '累计生成', value: totals.records ?? 0, sub: `今日 +${totals.today ?? 0}`, color: 'from-brand-500 to-indigo-500' },
+    { label: '生成成功率', value: `${Math.round((usage.success_rate || 0) * 100)}%`, sub: `${usage.success || 0} / ${usage.total || 0} 次成功`, color: 'from-green-500 to-emerald-500' },
+    { label: '平均耗时', value: `${usage.avg_seconds ?? 0}s`, sub: '单条生成（含渲染）', color: 'from-amber-500 to-orange-500' },
+    { label: '存储占用', value: `${storage.total_mb ?? 0}MB`, sub: `音频 ${storage.audio_count || 0} / 视频 ${storage.video_count || 0}`, color: 'from-purple-500 to-fuchsia-500' },
+    { label: '批量任务', value: batches.total ?? 0, sub: `完成 ${batches.done ?? 0} / 中断 ${batches.interrupted ?? 0}`, color: 'from-sky-500 to-cyan-500' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-500">数字人内容工厂 · 生产运营实时指标（成功率/耗时来自 usage_logs）</p>
+        <button
+          onClick={load}
+          className="flex items-center gap-2 px-3 py-2 text-sm rounded-xl border border-ink-200 hover:bg-ink-50 transition-colors"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
+      </div>
+
+      {/* 核心指标卡 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+        {cards.map((card) => (
+          <div key={card.label} className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs text-ink-500">{card.label}</span>
+              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${card.color} flex items-center justify-center`}>
+                <Activity className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-ink-900">{card.value}</p>
+            <p className="text-xs text-ink-400 mt-1">{card.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* 近 7 天趋势 */}
+        <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5 lg:col-span-2">
+          <h3 className="text-sm font-semibold text-ink-900 mb-4">近 7 天生成趋势</h3>
+          <div className="flex items-end gap-3 h-40">
+            {trend.map((t) => (
+              <div key={t.date} className="flex-1 flex flex-col items-center gap-1.5">
+                <span className="text-xs text-ink-600 font-medium">{t.count}</span>
+                <div
+                  className="w-full rounded-t-lg bg-gradient-to-t from-brand-500/70 to-brand-400 transition-all"
+                  style={{ height: `${Math.max(4, Math.round((t.count / maxTrend) * 100))}%` }}
+                />
+                <span className="text-[10px] text-ink-400">{t.date.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 状态 + 分辨率分布 */}
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+            <h3 className="text-sm font-semibold text-ink-900 mb-3">状态分布</h3>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(statusDist).map(([k, v]) => (
+                <span key={k} className={`px-3 py-1.5 rounded-full text-sm ${statusMeta[k]?.cls || 'bg-gray-100 text-gray-600'}`}>
+                  {statusMeta[k]?.label || k} {v}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+            <h3 className="text-sm font-semibold text-ink-900 mb-3">分辨率分布</h3>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(resDist).map(([k, v]) => (
+                <span key={k} className="px-3 py-1.5 rounded-full text-sm bg-indigo-50 text-indigo-600">
+                  {k === '1080p' ? '1080p 高清' : '720p 标清'} × {v}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 用户 TOP5 */}
+        <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+          <h3 className="text-sm font-semibold text-ink-900 mb-3">生成量 TOP5 用户</h3>
+          {d.user_top?.length ? (
+            <div className="space-y-2">
+              {d.user_top.map((u, i) => (
+                <div key={u.user_id} className="flex items-center justify-between py-1.5 border-b border-ink-100 last:border-0">
+                  <div className="flex items-center gap-3">
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      i === 0 ? 'bg-amber-100 text-amber-600' : 'bg-ink-100 text-ink-500'
+                    }`}>{i + 1}</span>
+                    <span className="text-sm text-ink-800 font-medium">{u.user_id || '未知用户'}</span>
+                  </div>
+                  <span className="text-sm text-ink-600">{u.c} 次</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-ink-400 py-4">暂无生成记录</p>
+          )}
+        </div>
+
+        {/* 最近失败原因（线上故障定位） */}
+        <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+          <h3 className="text-sm font-semibold text-ink-900 mb-3">最近失败原因（TOP10）</h3>
+          {d.recent_failures?.length ? (
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {d.recent_failures.map((f, i) => (
+                <div key={i} className="py-1.5 border-b border-ink-100 last:border-0">
+                  <p className="text-xs text-ink-400 truncate">{f.text?.slice(0, 40) || '（无文案）'} · {f.created_at?.slice(0, 16).replace('T', ' ')}</p>
+                  <p className="text-sm text-red-500 truncate">{f.error}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-ink-400 py-4">近期待观察，无失败记录</p>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

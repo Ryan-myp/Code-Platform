@@ -11,16 +11,17 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.db import get_db
+from common.db import get_db, get_db_context
 from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
@@ -1030,6 +1031,53 @@ def _ensure_tables(conn) -> None:
             conn.execute(f"ALTER TABLE digital_human_records ADD COLUMN {col} {ddl}")
         except Exception:
             pass  # 已存在
+    # 批量生产任务（持久化：重启可恢复/查询/重试）
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS digital_human_batches (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            status TEXT DEFAULT 'running',   -- running/done/interrupted
+            total INTEGER DEFAULT 0,
+            success INTEGER DEFAULT 0,
+            failed INTEGER DEFAULT 0,
+            skipped INTEGER DEFAULT 0,
+            avatar_id TEXT DEFAULT '',
+            avatar_name TEXT DEFAULT '',
+            resolution TEXT DEFAULT '720p',
+            fps INTEGER DEFAULT 15,
+            voice_id TEXT DEFAULT '',
+            background_id TEXT DEFAULT '',
+            speed REAL DEFAULT 1.0,
+            created_at TEXT DEFAULT '',
+            finished_at TEXT DEFAULT ''
+        )"""
+    )
+    # 兼容旧库：补列
+    for col, ddl in [
+        ("voice_id", "TEXT DEFAULT ''"),
+        ("background_id", "TEXT DEFAULT ''"),
+        ("speed", "REAL DEFAULT 1.0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE digital_human_batches ADD COLUMN {col} {ddl}")
+        except Exception:
+            pass  # 已存在
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS digital_human_batch_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id TEXT DEFAULT '',
+            idx INTEGER DEFAULT 0,
+            text TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',   -- pending/running/success/failed/skipped
+            error TEXT DEFAULT '',
+            record_id TEXT DEFAULT '',
+            audio_url TEXT DEFAULT '',
+            video_url TEXT DEFAULT '',
+            watermark INTEGER DEFAULT 0,
+            sensitive_warning TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_items_batch ON digital_human_batch_items(batch_id)")
     # 用户自定义形象（上传头像图片）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS digital_human_custom_avatars (
@@ -1488,23 +1536,29 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
             audio_error = str(e)
 
     # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
+    # 渲染为 CPU 密集操作，受全局并发池保护（同批次多任务串行，跨批次限并发数）
     video_url = ""
     status = "done"
     error_msg = ""
     if audio_path and os.path.exists(audio_path):
         try:
-            video_filename = f"{record_id}.mp4"
-            video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
-            _render_video(
-                text=optimized_text[:200],
-                avatar=avatar,
-                bg=bg,
-                audio_path=audio_path,
-                output_path=video_path,
-                resolution=req.resolution,
-                fps=req.fps,
-                watermark=use_watermark,
-            )
+            if not _RENDER_SLOT.acquire(timeout=600):
+                raise RuntimeError("当前视频渲染任务繁忙，请稍后重试")
+            try:
+                video_filename = f"{record_id}.mp4"
+                video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
+                _render_video(
+                    text=optimized_text[:200],
+                    avatar=avatar,
+                    bg=bg,
+                    audio_path=audio_path,
+                    output_path=video_path,
+                    resolution=req.resolution,
+                    fps=req.fps,
+                    watermark=use_watermark,
+                )
+            finally:
+                _RENDER_SLOT.release()
             video_url = f"/uploads/videos/{video_filename}"
         except Exception as e:
             logger.exception("video generation failed %s", record_id)
@@ -1569,11 +1623,24 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     """数字人口播视频生成 — 文案→配音→视频合成流水线（单条接口）。
 
     批量生产请使用 POST /api/digital-human/batch（多文案后台逐条生成）。
+    同一用户同时仅允许 1 条生成（前端按钮已防抖，后端兜底防多标签页并发）。
     """
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    return _generate_one(req, user, uid, role)
+    # 用户级并发限制：同用户同时最多 1 条生成中
+    with _GUARD_LOCK:
+        inflight = _USER_GENERATING.get(uid, 0)
+        if inflight >= 1:
+            raise HTTPException(429, "您有视频正在生成中，请等待当前生成完成")
+        _USER_GENERATING[uid] = inflight + 1
+    try:
+        return _generate_one(req, user, uid, role)
+    finally:
+        with _GUARD_LOCK:
+            _USER_GENERATING[uid] = _USER_GENERATING.get(uid, 1) - 1
+            if _USER_GENERATING[uid] <= 0:
+                _USER_GENERATING.pop(uid, None)
 
 
 @router.get("/records")
@@ -1676,19 +1743,65 @@ class BatchGenerateRequest(BaseModel):
     watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
 
 
-# 批量任务内存态：batch_id → 任务（批量任务分钟级完成，进程内足够；重启即失效可接受）
+# 批量任务缓存：batch_id → 任务（DB 为持久真相，内存仅加速轮询；重启后自动从 DB 恢复）
 _BATCH_TASKS: dict[str, dict] = {}
 _BATCH_LOCK = threading.Lock()
 
+# 全局渲染并发池：视频渲染为 CPU 密集操作，跨用户/批次统一限制并发数
+_RENDER_SLOT = threading.BoundedSemaphore(2)
+# 单条生成用户级并发限制：同用户同时最多 1 条生成中（防多标签页并发）
+_USER_GENERATING: dict[str, int] = {}
+_GUARD_LOCK = threading.Lock()
+
+# 视频保留策略：默认 30 天（0 或负值 = 不自动清理）
+DH_RETENTION_DAYS = int(os.environ.get("DH_RETENTION_DAYS", "30"))
+
+
+def _load_batch_from_db(batch_id: str) -> dict | None:
+    """从数据库恢复批量任务完整结构（重启后轮询/下载/重试兜底）。"""
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        conn.commit()
+        row = conn.execute("SELECT * FROM digital_human_batches WHERE id=?", (batch_id,)).fetchone()
+        if not row:
+            return None
+        items = conn.execute(
+            "SELECT * FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx", (batch_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "id": row["id"], "user": row["user_id"], "status": row["status"],
+        "total": row["total"],
+        "done": row["success"] + row["failed"] + row["skipped"],
+        "success": row["success"], "failed": row["failed"], "skipped": row["skipped"],
+        "avatar_id": row["avatar_id"], "avatar_name": row["avatar_name"],
+        "resolution": row["resolution"], "fps": row["fps"],
+        "voice_id": row["voice_id"], "background_id": row["background_id"],
+        "speed": row["speed"],
+        "created_at": row["created_at"], "finished_at": row["finished_at"],
+        "items": [
+            {"index": r["idx"], "text_preview": r["text"][:40], "status": r["status"],
+             "error": r["error"], "record_id": r["record_id"],
+             "audio_url": r["audio_url"], "video_url": r["video_url"],
+             "watermark": bool(r["watermark"]), "sensitive_warning": r["sensitive_warning"]}
+            for r in items
+        ],
+    }
+
 
 def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
-                  user: str, uid: str, role: str) -> None:
-    """后台批量生成：逐条走完整流水线；违规词/超短文案直接失败（不浪费配额）。"""
+                  user: str, uid: str, role: str, indexes: list[int] | None = None) -> None:
+    """后台批量生成：逐条走完整流水线；违规词/超短文案直接失败（不浪费配额）。
+
+    indexes 非空时表示部分重试（只处理指定下标）；每条结果实时落库，进程重启可从 DB 恢复。
+    """
     task = _BATCH_TASKS[batch_id]
     try:
-        for i, raw_text in enumerate(texts):
+        for i in (indexes if indexes is not None else range(len(texts))):
             item = task["items"][i]
-            text = raw_text.strip()
+            text = texts[i].strip()
             if len(text) < 5:
                 item["status"] = "failed"
                 item["error"] = "文案太短（至少 5 字）"
@@ -1704,14 +1817,19 @@ def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
                         fps=req.fps, watermark=req.watermark,
                     )
                     res = _generate_one(sub, user, uid, role)
-                    item.update(
-                        status="success",
-                        record_id=res["record_id"],
-                        audio_url=res["audio_url"],
-                        video_url=res["video_url"],
-                        watermark=res["watermark"],
-                        sensitive_warning=res.get("sensitive_warning", ""),
-                    )
+                    if res["status"] == "done":
+                        item.update(
+                            status="success",
+                            record_id=res["record_id"],
+                            audio_url=res["audio_url"],
+                            video_url=res["video_url"],
+                            watermark=res["watermark"],
+                            sensitive_warning=res.get("sensitive_warning", ""),
+                        )
+                    else:
+                        # audio_only/failed：未产出视频一律算失败（可重试）
+                        item["status"] = "failed"
+                        item["error"] = (res.get("error") or "生成失败")[:120]
                 except HTTPException as e:
                     item["status"] = "skipped" if e.status_code == 402 else "failed"
                     item["error"] = str(e.detail)[:120]
@@ -1721,9 +1839,53 @@ def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
                     item["error"] = str(e)[:120]
             task["done"] += 1
             task[item["status"]] += 1
-    finally:
-        task["status"] = "done"
-        task["finished_at"] = datetime.now().isoformat()
+            # 逐条落库：重启后可恢复进度/结果
+            with get_db_context() as conn:
+                conn.execute(
+                    """UPDATE digital_human_batch_items
+                       SET status=?, error=?, record_id=?, audio_url=?, video_url=?,
+                           watermark=?, sensitive_warning=?
+                       WHERE batch_id=? AND idx=?""",
+                    (item["status"], item["error"], item.get("record_id", ""),
+                     item.get("audio_url", ""), item.get("video_url", ""),
+                     1 if item.get("watermark") else 0,
+                     item.get("sensitive_warning", ""), batch_id, i),
+                )
+    except Exception:
+        logger.exception("batch worker crashed %s", batch_id)
+        with get_db_context() as conn:
+            conn.execute(
+                "UPDATE digital_human_batches SET status='interrupted', finished_at=? WHERE id=?",
+                (datetime.now().isoformat(), batch_id),
+            )
+        task["status"] = "interrupted"
+        return
+    task["status"] = "done"
+    task["finished_at"] = datetime.now().isoformat()
+    with get_db_context() as conn:
+        conn.execute(
+            """UPDATE digital_human_batches
+               SET status=?, success=?, failed=?, skipped=?, finished_at=?
+               WHERE id=?""",
+            (task["status"], task["success"], task["failed"], task["skipped"],
+             task["finished_at"], batch_id),
+        )
+
+
+def recover_interrupted_batches() -> None:
+    """启动时恢复：上次进程退出时仍在 running 的批量任务标记为 interrupted（可手动重试失败项）。"""
+    try:
+        with get_db_context() as conn:
+            _ensure_tables(conn)
+            now = datetime.now().isoformat()
+            n = conn.execute(
+                "UPDATE digital_human_batches SET status='interrupted', finished_at=? WHERE status='running'",
+                (now,),
+            ).rowcount
+            if n:
+                logger.info("数字人批量任务恢复：%s 个运行中任务标记为已中断", n)
+    except Exception:
+        logger.exception("recover interrupted batches failed")
 
 
 @router.post("/batch")
@@ -1731,6 +1893,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
     """批量生成：多条文案 → 后台线程逐条生产 → 返回 batch_id 供进度轮询。
 
     配额逐条扣减（每条 1 次）；违规词文案不消耗配额；额度不足的条目标记 skipped。
+    任务持久化落库：重启后可查询进度/打包下载/重试失败项。
     """
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
@@ -1756,17 +1919,43 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
          "watermark": False, "sensitive_warning": ""}
         for i, t in enumerate(texts)
     ]
+    # 持久化落库 + 运行中任务数限制（同用户最多 2 个，防止堆积打爆资源）
+    with get_db_context() as conn:
+        _ensure_tables(conn)
+        running_cnt = conn.execute(
+            "SELECT COUNT(*) FROM digital_human_batches WHERE user_id=? AND status='running'",
+            (user,),
+        ).fetchone()[0]
+        if running_cnt >= 2:
+            raise HTTPException(400, "您已有批量任务在运行（最多同时 2 个），请等待完成后再创建")
+        conn.execute(
+            """INSERT INTO digital_human_batches
+               (id, user_id, status, total, success, failed, skipped,
+                avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed,
+                created_at, finished_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (batch_id, user, "running", len(texts), 0, 0, 0,
+             req.avatar_id, avatar_name, req.resolution, req.fps,
+             req.voice_id, req.background_id, req.speed,
+             datetime.now().isoformat(), ""),
+        )
+        for i, t in enumerate(texts):
+            conn.execute(
+                "INSERT INTO digital_human_batch_items (batch_id, idx, text, status) VALUES (?,?,?,?)",
+                (batch_id, i, t, "pending"),
+            )
     task = {
         "id": batch_id, "user": user, "status": "running",
         "total": len(texts), "done": 0, "success": 0, "failed": 0, "skipped": 0,
         "avatar_id": req.avatar_id, "avatar_name": avatar_name,
         "resolution": req.resolution, "fps": req.fps,
+        "voice_id": req.voice_id, "background_id": req.background_id, "speed": req.speed,
         "created_at": datetime.now().isoformat(), "finished_at": "",
         "items": items,
     }
     with _BATCH_LOCK:
         _BATCH_TASKS[batch_id] = task
-        # 内存任务上限 100：清理最旧的已完成任务
+        # 内存任务上限 100：清理最旧的已完成任务（DB 仍有完整记录，可兜底恢复）
         if len(_BATCH_TASKS) > 100:
             done_ids = [k for k, v in _BATCH_TASKS.items() if v["status"] == "done"]
             for k in done_ids[: len(_BATCH_TASKS) - 100]:
@@ -1780,9 +1969,9 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
 
 @router.get("/batch/{batch_id}")
 async def get_batch(batch_id: str, current_user: dict = require_auth()):
-    """批量任务进度查询（仅创建者可见）。"""
+    """批量任务进度查询（仅创建者可见）。内存缓存未命中时从 DB 恢复（重启后仍可查询）。"""
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    task = _BATCH_TASKS.get(batch_id)
+    task = _BATCH_TASKS.get(batch_id) or _load_batch_from_db(batch_id)
     if not task or task["user"] != user:
         raise HTTPException(404, "批量任务不存在")
     return task
@@ -1795,7 +1984,7 @@ async def download_batch(batch_id: str, current_user: dict = require_auth()):
     import zipfile
     from fastapi.responses import StreamingResponse
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    task = _BATCH_TASKS.get(batch_id)
+    task = _BATCH_TASKS.get(batch_id) or _load_batch_from_db(batch_id)
     if not task or task["user"] != user:
         raise HTTPException(404, "批量任务不存在")
     if task["status"] != "done":
@@ -1818,6 +2007,77 @@ async def download_batch(batch_id: str, current_user: dict = require_auth()):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="digital-human-batch-{batch_id}.zip"'},
     )
+
+
+@router.post("/batch/{batch_id}/retry-failed")
+async def retry_batch_failed(batch_id: str, current_user: dict = require_auth()):
+    """重试批量任务的失败项：仅重跑非内容性问题项（违规词/文案太短重试必然再失败，跳过）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    task = _load_batch_from_db(batch_id)
+    if not task or task["user"] != user:
+        raise HTTPException(404, "批量任务不存在")
+    if task["status"] not in ("done", "interrupted"):
+        raise HTTPException(400, "任务仍在运行中，请等待完成后再重试")
+    if task["failed"] == 0:
+        raise HTTPException(400, "没有失败项需要重试")
+    retry_indexes = [
+        item["index"] for item in task["items"]
+        if item["status"] == "failed" and "违规词" not in item["error"]
+        and "文案太短" not in item["error"]
+    ]
+    if not retry_indexes:
+        raise HTTPException(400, "失败项均为内容问题（违规词/文案过短），无需重试")
+    # 完整文案从 DB 读取（text_preview 被截断，重试必须用原文）
+    with get_db_context() as conn:
+        rows = conn.execute(
+            "SELECT idx, text FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx", (batch_id,),
+        ).fetchall()
+    full_texts = [r["text"] for r in rows]
+    req = BatchGenerateRequest(
+        texts=full_texts,
+        avatar_id=task["avatar_id"], voice_id=task["voice_id"],
+        background_id=task["background_id"], scene_id="product",
+        speed=task["speed"], resolution=task["resolution"], fps=task["fps"],
+        watermark=None,
+    )
+    # 重建任务（失败项重置为 pending，其余保持原结果）
+    new_items = [dict(item) for item in task["items"]]
+    for i in retry_indexes:
+        new_items[i].update(status="pending", error="", record_id="", audio_url="",
+                            video_url="", watermark=False, sensitive_warning="")
+    new_task = {
+        "id": batch_id, "user": user, "status": "running",
+        "total": task["total"], "done": task["total"] - len(retry_indexes),
+        "success": task["success"], "failed": task["failed"] - len(retry_indexes),
+        "skipped": task["skipped"],
+        "avatar_id": task["avatar_id"], "avatar_name": task["avatar_name"],
+        "resolution": task["resolution"], "fps": task["fps"],
+        "voice_id": task["voice_id"], "background_id": task["background_id"],
+        "speed": task["speed"],
+        "created_at": task["created_at"], "finished_at": "",
+        "items": new_items,
+    }
+    with _BATCH_LOCK:
+        _BATCH_TASKS[batch_id] = new_task
+    with get_db_context() as conn:
+        conn.execute(
+            "UPDATE digital_human_batches SET status='running', finished_at='' WHERE id=?", (batch_id,),
+        )
+        for i in retry_indexes:
+            conn.execute(
+                """UPDATE digital_human_batch_items SET status='pending', error='',
+                   record_id='', audio_url='', video_url='', watermark=0, sensitive_warning=''
+                   WHERE batch_id=? AND idx=?""",
+                (batch_id, i),
+            )
+    threading.Thread(
+        target=_batch_worker,
+        args=(batch_id, full_texts, req, user, uid, role, retry_indexes),
+        daemon=True,
+    ).start()
+    return {"batch_id": batch_id, "retrying": len(retry_indexes), "status": "running"}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1897,3 +2157,172 @@ async def compliance_check(req: ComplianceCheckRequest, current_user: dict = req
     except Exception:
         pass
     return {"allowed": not hard_hits, "hard_hits": hard_hits, "risk_hits": risk_hits}
+
+
+# ══════════════════════════════════════════════════════════════
+# 生产运营：磁盘治理（保留期清理）+ 存储统计 + 管理员专项报表
+# ══════════════════════════════════════════════════════════════
+
+def _cleanup_expired_records() -> int:
+    """删除超过保留期的历史记录及其文件（DH_RETENTION_DAYS 天，默认 30；<=0 不清理）。"""
+    if DH_RETENTION_DAYS <= 0:
+        return 0
+    cutoff = (datetime.now() - timedelta(days=DH_RETENTION_DAYS)).isoformat()
+    with get_db_context() as conn:
+        _ensure_tables(conn)
+        rows = conn.execute(
+            "SELECT id FROM digital_human_records WHERE created_at < ?", (cutoff,),
+        ).fetchall()
+        for row in rows:
+            _delete_record_files(conn, row["id"])
+            conn.execute("DELETE FROM digital_human_records WHERE id=?", (row["id"],))
+    if rows:
+        logger.info("存储清理：删除 %s 条超过 %s 天的过期记录", len(rows), DH_RETENTION_DAYS)
+    return len(rows)
+
+
+def start_storage_cleaner() -> None:
+    """启动存储清理守护线程：启动时执行一次，之后每 24h 执行（保留 DH_RETENTION_DAYS 天）。"""
+    if DH_RETENTION_DAYS <= 0:
+        logger.info("数字人存储清理已禁用（DH_RETENTION_DAYS=%s）", DH_RETENTION_DAYS)
+        return
+
+    def _loop():
+        while True:
+            try:
+                _cleanup_expired_records()
+            except Exception:
+                logger.exception("storage cleaner failed")
+            time.sleep(24 * 3600)
+
+    threading.Thread(target=_loop, daemon=True, name="dh-storage-cleaner").start()
+    logger.info("数字人存储清理守护线程已启动（保留 %s 天）", DH_RETENTION_DAYS)
+
+
+def _compute_storage_bytes() -> dict:
+    """统计音频/视频目录磁盘占用（MB）。"""
+    total = audio_bytes = video_bytes = 0
+    audio_count = video_count = 0
+    for root, is_audio in ((UPLOAD_AUDIO_DIR, True), (UPLOAD_VIDEO_DIR, False)):
+        try:
+            names = os.listdir(root)
+        except OSError:
+            continue
+        for fn in names:
+            p = os.path.join(root, fn)
+            try:
+                if os.path.isfile(p):
+                    sz = os.path.getsize(p)
+                    total += sz
+                    if is_audio:
+                        audio_bytes += sz; audio_count += 1
+                    else:
+                        video_bytes += sz; video_count += 1
+            except OSError:
+                pass
+    return {
+        "total_mb": round(total / 1048576, 1),
+        "audio_mb": round(audio_bytes / 1048576, 1),
+        "video_mb": round(video_bytes / 1048576, 1),
+        "audio_count": audio_count, "video_count": video_count,
+    }
+
+
+@router.get("/storage")
+async def my_storage(current_user: dict = require_auth()):
+    """我的存储用量：记录数 / 音频视频数 / 磁盘占用 / 保留策略。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT audio_url, video_url FROM digital_human_records WHERE user_id=?", (user,),
+        ).fetchall()
+    finally:
+        conn.close()
+    total = 0
+    audio_count = video_count = 0
+    for row in rows:
+        for url in (row["audio_url"], row["video_url"]):
+            if not url:
+                continue
+            p = _url_to_path(url)
+            try:
+                if os.path.isfile(p):
+                    total += os.path.getsize(p)
+                    if url.endswith(".mp4"):
+                        video_count += 1
+                    else:
+                        audio_count += 1
+            except OSError:
+                pass
+    return {
+        "records": len(rows),
+        "audio_count": audio_count,
+        "video_count": video_count,
+        "size_mb": round(total / 1048576, 1),
+        "retention_days": DH_RETENTION_DAYS,
+    }
+
+
+@router.get("/admin/stats")
+async def admin_dh_stats(current_user: dict = require_auth()):
+    """数字人专项运营报表（管理员）：总量/成功率/耗时/失败原因/用户TOP/趋势/存储/批量任务。"""
+    from admin_api import _check_admin
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        total_records = conn.execute(
+            "SELECT COUNT(*) FROM digital_human_records").fetchone()[0]
+        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        today_records = conn.execute(
+            "SELECT COUNT(*) FROM digital_human_records WHERE created_at LIKE ?",
+            (today_prefix + "%",),
+        ).fetchone()[0]
+        status_dist = {r["status"]: r["c"] for r in conn.execute(
+            "SELECT status, COUNT(*) c FROM digital_human_records GROUP BY status").fetchall()}
+        res_dist = {r["resolution"]: r["c"] for r in conn.execute(
+            "SELECT resolution, COUNT(*) c FROM digital_human_records GROUP BY resolution").fetchall()}
+        user_top = [dict(r) for r in conn.execute(
+            "SELECT user_id, COUNT(*) c FROM digital_human_records GROUP BY user_id ORDER BY c DESC LIMIT 5").fetchall()]
+        trend_7d = []
+        for i in range(6, -1, -1):
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            c = conn.execute(
+                "SELECT COUNT(*) FROM digital_human_records WHERE created_at LIKE ?", (d + "%",),
+            ).fetchone()[0]
+            trend_7d.append({"date": d, "count": c})
+        recent_failures = [dict(r) for r in conn.execute(
+            "SELECT text, error, created_at FROM digital_human_records WHERE status='failed'"
+            " AND error != '' ORDER BY created_at DESC LIMIT 10").fetchall()]
+        usage = conn.execute(
+            "SELECT COUNT(*) c, AVG(response_time) avg_sec, SUM(success) ok"
+            " FROM usage_logs WHERE task_type='digital_human'").fetchone()
+        batch_row = conn.execute(
+            "SELECT COUNT(*) c,"
+            " SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) done_cnt,"
+            " SUM(CASE WHEN status='interrupted' THEN 1 ELSE 0 END) interrupted_cnt"
+            " FROM digital_human_batches").fetchone()
+    finally:
+        conn.close()
+    ok = usage["ok"] or 0
+    usage_cnt = usage["c"] or 0
+    return {
+        "totals": {"records": total_records, "today": today_records},
+        "status_dist": status_dist,
+        "res_dist": res_dist,
+        "user_top": user_top,
+        "trend_7d": trend_7d,
+        "recent_failures": recent_failures,
+        "usage": {
+            "total": usage_cnt,
+            "success": ok,
+            "success_rate": round(ok / usage_cnt, 3) if usage_cnt else 0,
+            "avg_seconds": round(usage["avg_sec"] or 0, 1),
+        },
+        "storage": _compute_storage_bytes(),
+        "batches": {
+            "total": batch_row["c"] or 0,
+            "done": batch_row["done_cnt"] or 0,
+            "interrupted": batch_row["interrupted_cnt"] or 0,
+        },
+    }

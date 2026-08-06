@@ -150,6 +150,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_run_due_schedules())
     # v10.1 定时任务调度器
     start_scheduler()
+    # 数字人：重启恢复中断的批量任务 + 存储保留期清理守护线程
+    from digital_human import recover_interrupted_batches, start_storage_cleaner
+    recover_interrupted_batches()
+    start_storage_cleaner()
     logger.info("Smart R&D Platform v8.0 started")
     yield
     stop_scheduler()

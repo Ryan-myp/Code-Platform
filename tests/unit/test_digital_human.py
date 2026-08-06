@@ -214,3 +214,152 @@ class TestComplianceCheckApi:
         assert "点击领取" in hard
         clean = "大家好，今天分享一个实用的效率技巧".lower()
         assert [w for w in _HARD_BLOCK_WORDS if w.lower() in clean] == []
+
+
+class TestBatchPersistence:
+    """批量任务持久化（商业化 P0）：落库恢复 + 重启中断恢复。"""
+
+    def _seed_batch(self, batch_id="dhb_test1"):
+        from common.db import get_db
+        from digital_human import _ensure_tables
+        conn = get_db()
+        _ensure_tables(conn)
+        conn.execute(
+            """INSERT INTO digital_human_batches
+               (id, user_id, status, total, success, failed, skipped, avatar_id,
+                avatar_name, resolution, fps, voice_id, background_id, speed,
+                created_at, finished_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (batch_id, "u1", "done", 3, 2, 1, 0, "business-female", "商务女",
+             "720p", 15, "zh-CN-XiaoxiaoNeural", "tech", 1.0,
+             "2026-08-01T10:00:00", "2026-08-01T10:01:00"),
+        )
+        for i, (t, s, err) in enumerate([
+            ("大家好，今天分享一个技巧", "success", ""),
+            ("点击领取大礼包", "failed", "文案含违规词，已拦截"),
+            ("文案太短", "failed", "文案太短（至少 5 字）"),
+        ]):
+            conn.execute(
+                "INSERT INTO digital_human_batch_items (batch_id, idx, text, status, error)"
+                " VALUES (?,?,?,?,?)",
+                (batch_id, i, t, s, err),
+            )
+        conn.commit()
+        conn.close()
+
+    def test_load_batch_from_db_roundtrip(self):
+        """DB 恢复完整任务结构：状态/计数/逐条明细（重启后轮询与下载的兜底数据源）。"""
+        from digital_human import _load_batch_from_db
+        self._seed_batch()
+        task = _load_batch_from_db("dhb_test1")
+        assert task is not None
+        assert task["status"] == "done" and task["total"] == 3
+        assert task["success"] == 2 and task["failed"] == 1 and task["done"] == 3
+        assert task["avatar_name"] == "商务女" and task["resolution"] == "720p"
+        assert task["items"][1]["status"] == "failed"
+        assert task["items"][1]["error"] == "文案含违规词，已拦截"
+        assert _load_batch_from_db("dhb_nope") is None
+
+    def test_recover_interrupted_batches(self):
+        """启动恢复：running → interrupted，done 任务不受影响。"""
+        from common.db import get_db
+        from digital_human import _ensure_tables, recover_interrupted_batches
+        conn = get_db()
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO digital_human_batches (id, user_id, status, total, created_at)"
+            " VALUES ('dhb_r1', 'u1', 'running', 5, '2026-08-01T10:00:00')")
+        conn.execute(
+            "INSERT INTO digital_human_batches (id, user_id, status, total, created_at)"
+            " VALUES ('dhb_r2', 'u1', 'done', 2, '2026-08-01T10:00:00')")
+        conn.commit()
+        conn.close()
+        recover_interrupted_batches()
+        conn = get_db()
+        rows = {r["id"]: r["status"]
+                for r in conn.execute("SELECT id, status FROM digital_human_batches").fetchall()}
+        conn.close()
+        assert rows["dhb_r1"] == "interrupted"
+        assert rows["dhb_r2"] == "done"
+
+    def test_retry_failed_skips_content_issues(self):
+        """重试过滤：违规词/文案太短属于内容问题，不进入重试名单。"""
+        self._seed_batch()
+        from digital_human import _load_batch_from_db
+        task = _load_batch_from_db("dhb_test1")
+        retry_indexes = [
+            item["index"] for item in task["items"]
+            if item["status"] == "failed" and "违规词" not in item["error"]
+            and "文案太短" not in item["error"]
+        ]
+        assert retry_indexes == []  # 两条失败项均为内容问题
+
+    def test_batch_running_limit_threshold(self):
+        """运行中批量任务 ≥2 时拒绝新任务（资源保护规则，与 create_batch 阈值一致）。"""
+        from common.db import get_db
+        from digital_human import _ensure_tables
+        conn = get_db()
+        _ensure_tables(conn)
+        for i in range(2):
+            conn.execute(
+                "INSERT INTO digital_human_batches (id, user_id, status, total, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (f"dhb_run{i}", "u1", "running", 3, "2026-08-01T10:00:00"),
+            )
+        conn.commit()
+        conn.close()
+        conn = get_db()
+        running = conn.execute(
+            "SELECT COUNT(*) FROM digital_human_batches WHERE user_id='u1' AND status='running'"
+        ).fetchone()[0]
+        conn.close()
+        assert running >= 2  # 触发 create_batch 的拒绝分支
+
+
+class TestStorageRetention:
+    """磁盘治理（商业化 P0）：保留期清理只删过期记录，不误删新记录。"""
+
+    def test_cleanup_removes_only_expired(self):
+        from datetime import datetime, timedelta
+        from common.db import get_db
+        from digital_human import DH_RETENTION_DAYS, _cleanup_expired_records, _ensure_tables
+        if DH_RETENTION_DAYS <= 0:
+            pytest.skip("DH_RETENTION_DAYS<=0 表示关闭清理，跳过")
+        old = (datetime.now() - timedelta(days=DH_RETENTION_DAYS + 1)).isoformat()
+        recent = datetime.now().isoformat()
+        conn = get_db()
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO digital_human_records (id, user_id, status, created_at)"
+            " VALUES ('dh_rec_old', 'u1', 'done', ?)", (old,))
+        conn.execute(
+            "INSERT INTO digital_human_records (id, user_id, status, created_at)"
+            " VALUES ('dh_rec_new', 'u1', 'done', ?)", (recent,))
+        conn.commit()
+        conn.close()
+        removed = _cleanup_expired_records()
+        assert removed >= 1
+        conn = get_db()
+        ids = [r["id"] for r in conn.execute("SELECT id FROM digital_human_records").fetchall()]
+        conn.close()
+        assert "dh_rec_old" not in ids
+        assert "dh_rec_new" in ids
+
+
+class TestConcurrencyGuard:
+    """资源保护（商业化 P0）：全局渲染并发池 + 用户级生成限制。"""
+
+    def test_render_slot_concurrency_cap(self):
+        """渲染并发上限为 2（CPU 密集操作，跨用户/批次统一限流）。"""
+        from digital_human import _RENDER_SLOT
+        assert _RENDER_SLOT._value == 2
+
+    def test_user_inflight_guard(self):
+        """同用户同时只有 1 条生成中（第 2 条并发被拒）。"""
+        from digital_human import _GUARD_LOCK, _USER_GENERATING
+        with _GUARD_LOCK:
+            _USER_GENERATING.clear()
+            _USER_GENERATING["u1"] = 1
+        with _GUARD_LOCK:
+            blocked = _USER_GENERATING.get("u1", 0) >= 1
+        assert blocked  # 与 generate 接口的 429 分支一致

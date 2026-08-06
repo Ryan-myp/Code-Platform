@@ -36,6 +36,7 @@ export default function DigitalHumanPage() {
   const [watermark, setWatermark] = useState(false)  // 会员可开关；免费用户由后端强制加水印
   const [genPhase, setGenPhase] = useState('')   // 生成阶段提示文案
   const [quota, setQuota] = useState(null)       // 今日剩余额度
+  const [storage, setStorage] = useState(null)    // 我的存储用量（记录数/占用/保留期）
 
   // 批量生产：多条文案后台逐条生成
   const [batchTexts, setBatchTexts] = useState('')   // 批量文案（每行一条）
@@ -106,7 +107,7 @@ export default function DigitalHumanPage() {
   const [generatingPortrait, setGeneratingPortrait] = useState(new Set())  // 正在生成的 avatarId
   const [generatingAll, setGeneratingAll] = useState(false)   // 是否在批量生成
 
-  useEffect(() => { loadData(); loadRecords(true); loadQuota() }, [])
+  useEffect(() => { loadData(); loadRecords(true); loadQuota(); loadStorage() }, [])
 
   // 额度变化时刷新（其他页面的计费操作也会派发该事件）
   useEffect(() => {
@@ -124,6 +125,14 @@ export default function DigitalHumanPage() {
   }
 
   const isMember = () => quota?.membership === 'vip' || quota?.membership === 'pro'
+
+  // 我的存储用量（/api/digital-human/storage → 记录数/文件数/磁盘占用/保留期）
+  const loadStorage = async () => {
+    try {
+      const res = await api.get('/api/digital-human/storage')
+      setStorage(res.data)
+    } catch {/* 静默失败 */}
+  }
 
   const loadData = async () => {
     try {
@@ -570,11 +579,16 @@ export default function DigitalHumanPage() {
       try {
         const res = await api.get(`/api/digital-human/batch/${batchId}`)
         setBatchTask(res.data)
-        if (res.data.status === 'done') {
+        if (res.data.status === 'done' || res.data.status === 'interrupted') {
           clearInterval(batchTimerRef.current)
           loadRecords(true)
           loadQuota()
-          toast.success(`批量生成完成：成功 ${res.data.success} / 失败 ${res.data.failed}${res.data.skipped > 0 ? ` / 跳过 ${res.data.skipped}` : ''}`)
+          loadStorage()
+          if (res.data.status === 'done') {
+            toast.success(`批量生成完成：成功 ${res.data.success} / 失败 ${res.data.failed}${res.data.skipped > 0 ? ` / 跳过 ${res.data.skipped}` : ''}`)
+          } else {
+            toast.error('批量任务已中断（服务重启导致），可点击「重试失败项」继续')
+          }
         }
       } catch { clearInterval(batchTimerRef.current) }
     }, 2500)
@@ -583,6 +597,19 @@ export default function DigitalHumanPage() {
   const downloadBatch = () => {
     if (!batchTask?.batch_id) return
     downloadFile(`/api/digital-human/batch/${batchTask.batch_id}/download`, '数字人批量视频.zip')
+  }
+
+  // ── 重试批量任务失败项（服务中断/偶发失败恢复后使用）──
+  const retryBatchFailed = async () => {
+    if (!batchTask?.batch_id || !batchTask.failed) return
+    try {
+      const res = await api.post(`/api/digital-human/batch/${batchTask.batch_id}/retry-failed`)
+      setBatchTask((prev) => (prev ? { ...prev, status: 'running', finished_at: '' } : res.data))
+      toast.info(`已重新提交 ${res.data.retrying} 条失败项，正在重试…`)
+      pollBatch(res.data.batch_id)
+    } catch (e) {
+      toast.error(`重试失败：${e.message}`)
+    }
   }
 
   // ── AI 口播文案助手 ──
@@ -654,7 +681,9 @@ export default function DigitalHumanPage() {
               免费版每日 {quota.daily_quota || 30} 次 · 升级解锁 1080P 无水印
             </a>
           )}
-          <span className="ml-auto text-[10px] text-gray-400">每次生成消耗 1 次额度</span>
+          <span className="ml-auto text-[10px] text-gray-400">每次生成消耗 1 次额度
+            {storage && ` · 我的存储 ${storage.size_mb}MB / ${storage.records} 条（保留 ${storage.retention_days} 天）`}
+          </span>
         </div>
       )}
 
@@ -1038,6 +1067,11 @@ export default function DigitalHumanPage() {
                   打包下载 ZIP
                 </Button>
               )}
+              {(batchTask?.status === 'done' || batchTask?.status === 'interrupted') && batchTask.failed > 0 && (
+                <Button variant="secondary" size="sm" icon={RefreshCw} onClick={retryBatchFailed}>
+                  重试失败项 ({batchTask.failed})
+                </Button>
+              )}
             </div>
             {/* 批量进度：总进度条 + 逐条状态 */}
             {batchTask && (
@@ -1046,6 +1080,8 @@ export default function DigitalHumanPage() {
                   <span className="flex items-center gap-1.5">
                     {batchTask.status === 'running' ? (
                       <><span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />任务进行中 {batchTask.done}/{batchTask.total}</>
+                    ) : batchTask.status === 'interrupted' ? (
+                      <><span className="w-2 h-2 bg-amber-400 rounded-full" />任务中断（服务重启）· 可重试失败项</>
                     ) : '任务已完成'}
                   </span>
                   <span>
