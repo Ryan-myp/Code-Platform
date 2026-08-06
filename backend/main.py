@@ -157,6 +157,11 @@ async def lifespan(app: FastAPI):
     recover_interrupted_batches()
     start_storage_cleaner()
     # 通用异步任务框架（master-worker）：恢复中断任务 + 启动调度/工作线程
+    # 注入主事件循环：worker 线程通过 realtime 向 WebSocket 任务频道广播进度
+    import asyncio as _asyncio
+    from realtime import set_loop as _realtime_set_loop
+
+    _realtime_set_loop(_asyncio.get_running_loop())
     recover_interrupted_tasks()
     start_workers()
     logger.info("Smart R&D Platform v8.0 started")

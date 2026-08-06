@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   CheckCircle2, Circle, Clock, AlertCircle, XCircle, RotateCcw, Ban,
   Filter, RefreshCw, Zap, FileText, Music, Image, Video, Mic, Gamepad2,
-  Smartphone, PauseCircle
+  Smartphone, PauseCircle, Eye, BarChart3, Trash2
 } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../components/ui'
+import { Card, Button, Badge, Empty, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import { connectWs } from '../lib/ws'
 
 // 任务类型展示映射
 const TYPE_META = {
@@ -35,41 +36,151 @@ const STATUS_META = {
 }
 
 const STATUS_OPTIONS = Object.entries(STATUS_META).map(([value, m]) => ({ value, label: m.label }))
+const PAGE_SIZE = 20
+
+const getUsername = () => {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null')?.username || ''
+  } catch {
+    return ''
+  }
+}
+
+// ── 统计卡 ──────────────────────────────────────────────
+function StatCard({ icon: Icon, label, value, color }) {
+  return (
+    <Card className="!p-4">
+      <div className="flex items-center gap-3">
+        <div className={`p-2.5 rounded-xl ${color}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <div className="text-xl font-bold text-gray-900 leading-tight">{value ?? '—'}</div>
+          <div className="text-xs text-gray-500">{label}</div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+// ── 详情弹窗小组件 ──────────────────────────────────────
+function InfoItem({ label, value }) {
+  return (
+    <div>
+      <div className="text-xs text-gray-400">{label}</div>
+      <div className="font-mono text-xs text-gray-700 truncate">{value || '—'}</div>
+    </div>
+  )
+}
+
+function JsonBlock({ title, json }) {
+  const text = json ? JSON.stringify(json, null, 2) : ''
+  return (
+    <div>
+      <div className="text-xs font-medium text-gray-500 mb-1">{title}</div>
+      <pre className="text-xs bg-gray-50 border border-gray-100 rounded-lg p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all">
+        {text || '（空）'}
+      </pre>
+    </div>
+  )
+}
 
 export default function TasksPage() {
   const toast = useToast()
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [filter, setFilter] = useState({ type: '', status: '' })
   const [actionId, setActionId] = useState('')
+  const [total, setTotal] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [stats, setStats] = useState(null)
+  const [detail, setDetail] = useState(null)
   const timerRef = useRef(null)
+  const offsetRef = useRef(0)
 
-  const loadTasks = useCallback(async () => {
+  useEffect(() => { offsetRef.current = offset }, [offset])
+
+  const buildParams = useCallback((off) => {
+    const params = { limit: PAGE_SIZE, offset: off }
+    if (filter.type) params.type = filter.type
+    if (filter.status) params.status = filter.status
+    return params
+  }, [filter])
+
+  const applyPage = (data, append) => {
+    const list = data.tasks || []
+    setTasks((prev) => (append ? [...prev, ...list] : list))
+    setTotal(data.total || 0)
+    const off = data.offset || 0
+    setOffset(off)
+    setHasMore(off + list.length < (data.total || 0))
+  }
+
+  // 拉第一页（silent=true 时不触发 loading 态，供 WS 事件/兜底轮询静默刷新）
+  const loadFirst = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
-      const params = {}
-      if (filter.type) params.type = filter.type
-      if (filter.status) params.status = filter.status
-      const res = await api.get('/api/tasks', { params })
-      setTasks(res.data.tasks || [])
+      const res = await api.get('/api/tasks', { params: buildParams(0) })
+      applyPage(res.data, false)
     } catch {
-      // 轮询静默失败，避免弹窗轰炸
+      // 静默失败，避免弹窗轰炸
     } finally {
       setLoading(false)
     }
-  }, [filter])
+  }, [buildParams])
 
-  useEffect(() => { loadTasks() }, [loadTasks])
+  // 静默刷新：已翻页时不打断当前浏览
+  const refreshQuiet = useCallback(() => {
+    if (offsetRef.current > 0) return
+    loadFirst(true)
+  }, [loadFirst])
 
-  // 任务中心自动轮询（3s），进度实时刷新
+  // 加载更多（分页）
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return
+    setLoadingMore(true)
+    try {
+      const res = await api.get('/api/tasks', { params: buildParams(offsetRef.current + PAGE_SIZE) })
+      applyPage(res.data, true)
+    } catch {
+      // 静默失败
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [buildParams, loadingMore])
+
+  useEffect(() => { loadFirst() }, [loadFirst])
+
+  // 任务统计卡（后端 30s 缓存，无需高频刷新）
   useEffect(() => {
-    timerRef.current = setInterval(loadTasks, 3000)
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [loadTasks])
+    api.get('/api/tasks/stats').then((res) => setStats(res.data)).catch(() => {})
+  }, [])
+
+  // WS 实时推送：任务列表事件驱动刷新；断线降级为 10s 兜底轮询
+  useEffect(() => {
+    const username = getUsername()
+    if (!username) return
+    const wsOk = { current: false }
+    const unsub = connectWs(`task:user:${username}`, {
+      onOpen: () => { wsOk.current = true },
+      onClose: () => { wsOk.current = false },
+      onMessage: () => { refreshQuiet() },
+    })
+    timerRef.current = setInterval(() => {
+      if (!wsOk.current) refreshQuiet()
+    }, 10000)
+    return () => {
+      unsub()
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [refreshQuiet])
 
   const refresh = async () => {
     setLoading(true)
     try {
-      await loadTasks()
+      await loadFirst(true)
       toast.success('已刷新')
     } catch (e) {
       toast.error(`加载失败：${e.message}`)
@@ -83,7 +194,7 @@ export default function TasksPage() {
     try {
       await api.post(`/api/tasks/${task.id}/retry`)
       toast.success('任务已重新提交')
-      loadTasks()
+      loadFirst(true)
     } catch (e) {
       toast.error(`重试失败：${e.message}`)
     } finally {
@@ -92,16 +203,58 @@ export default function TasksPage() {
   }
 
   const cancelTask = async (task) => {
-    if (!confirm('确定取消该任务？（仅排队中的任务可取消）')) return
+    const msg = task.status === 'running'
+      ? '确定取消该任务？执行中任务将在下次进度检查时中止（已产生的部分外部消耗无法退回）'
+      : '确定取消该任务？（仅排队中的任务可取消）'
+    if (!confirm(msg)) return
     setActionId(task.id)
     try {
       await api.post(`/api/tasks/${task.id}/cancel`)
       toast.success('任务已取消')
-      loadTasks()
+      loadFirst(true)
     } catch (e) {
       toast.error(`取消失败：${e.message}`)
     } finally {
       setActionId('')
+    }
+  }
+
+  const openDetail = async (task) => {
+    setDetail(task)
+    try {
+      const res = await api.get(`/api/tasks/${task.id}`)
+      setDetail(res.data)
+    } catch {
+      // 请求失败时保留列表摘要展示
+    }
+  }
+
+  // 删除任务记录（仅终态展示按钮；不影响已保存的生成产物）
+  const deleteTask = async (task) => {
+    if (!confirm('确定删除该任务记录？删除后不可恢复（不影响已保存的生成产物）')) return
+    setActionId(task.id)
+    try {
+      await api.delete(`/api/tasks/${task.id}`)
+      toast.success('任务已删除')
+      loadFirst(true)
+      api.get('/api/tasks/stats').then((res) => setStats(res.data)).catch(() => {})
+    } catch (e) {
+      toast.error(`删除失败：${e.message}`)
+    } finally {
+      setActionId('')
+    }
+  }
+
+  // 清空终态任务记录（执行中的任务不受影响）
+  const cleanupTasks = async () => {
+    if (!confirm('确定清空所有已完成的终态任务记录（成功/失败/已中断/已取消）？执行中的任务不受影响，删除后不可恢复')) return
+    try {
+      const res = await api.post('/api/tasks/cleanup')
+      toast.success(res.data?.message || '已清理历史任务')
+      loadFirst(true)
+      api.get('/api/tasks/stats').then((r) => setStats(r.data)).catch(() => {})
+    } catch (e) {
+      toast.error(`清理失败：${e.message}`)
     }
   }
 
@@ -120,6 +273,16 @@ export default function TasksPage() {
           刷新
         </Button>
       </div>
+
+      {/* 统计卡 */}
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard icon={FileText} label="累计任务" value={stats.total} color="bg-brand-50 text-brand-600" />
+          <StatCard icon={Zap} label="排队 / 执行中" value={stats.active} color="bg-blue-50 text-blue-600" />
+          <StatCard icon={CheckCircle2} label="今日完成" value={stats.today_finished} color="bg-green-50 text-green-600" />
+          <StatCard icon={BarChart3} label="成功率" value={`${stats.success_rate ?? 0}%`} color="bg-amber-50 text-amber-600" />
+        </div>
+      )}
 
       {/* 过滤器 */}
       <Card>
@@ -153,7 +316,12 @@ export default function TasksPage() {
           )}
           <div className="ml-auto flex items-center gap-2 text-sm text-gray-500">
             <Zap className="w-4 h-4 text-amber-500" />
-            共 {tasks.length} 个任务
+            共 {total} 个任务
+            {total > 0 && (
+              <Button variant="ghost" size="sm" onClick={cleanupTasks}>
+                清空已完成
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -233,6 +401,14 @@ export default function TasksPage() {
                         <span className="text-xs text-gray-400">重试 {task.retry_count} 次</span>
                       )}
                       <div className="ml-auto flex items-center gap-1.5">
+                        <button
+                          onClick={() => openDetail(task)}
+                          title="查看详情"
+                          className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          详情
+                        </button>
                         {failed && (
                           <button
                             onClick={() => retryTask(task)}
@@ -243,14 +419,25 @@ export default function TasksPage() {
                             {actionId === task.id ? '重试中…' : '重试'}
                           </button>
                         )}
-                        {task.status === 'pending' && (
+                        {(task.status === 'pending' || task.status === 'running') && (
                           <button
                             onClick={() => cancelTask(task)}
                             disabled={actionId === task.id}
                             className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50"
                           >
                             <PauseCircle className="w-3.5 h-3.5" />
-                            取消
+                            {actionId === task.id ? '取消中…' : '取消'}
+                          </button>
+                        )}
+                        {!active && (
+                          <button
+                            onClick={() => deleteTask(task)}
+                            disabled={actionId === task.id}
+                            title="删除任务记录（不影响已保存产物）"
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-gray-50 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            删除
                           </button>
                         )}
                         {task.status === 'running' && (
@@ -268,6 +455,42 @@ export default function TasksPage() {
           })}
         </div>
       )}
+
+      {/* 加载更多 */}
+      {hasMore && (
+        <div className="flex justify-center pt-1">
+          <Button variant="ghost" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? '加载中…' : '加载更多'}
+          </Button>
+        </div>
+      )}
+
+      {/* 任务详情 */}
+      <Modal open={!!detail} onClose={() => setDetail(null)} title="任务详情" size="lg">
+        {detail && (
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-2">
+              <InfoItem label="任务 ID" value={detail.id} />
+              <InfoItem label="类型" value={typeMeta(detail.type).label} />
+              <InfoItem label="状态" value={statusMeta(detail.status).label} />
+              <InfoItem label="进度" value={`${Math.round(detail.progress || 0)}%`} />
+              <InfoItem label="创建时间" value={detail.created_at} />
+              <InfoItem label="开始时间" value={detail.started_at} />
+              <InfoItem label="完成时间" value={detail.finished_at} />
+              <InfoItem label="创建者" value={detail.created_by} />
+              <InfoItem label="重试次数" value={String(detail.retry_count ?? 0)} />
+              <InfoItem label="阶段" value={detail.stage} />
+            </div>
+            {detail.error && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2.5 break-all">
+                {detail.error}
+              </div>
+            )}
+            <JsonBlock title="参数 payload" json={detail.payload} />
+            <JsonBlock title="结果 result" json={detail.result} />
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

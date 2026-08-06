@@ -4,8 +4,8 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import requests
 from fastapi import APIRouter, Form, HTTPException, Query
@@ -78,18 +78,8 @@ async def get_stats():
     }
 
 
-async def _video_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """视频生成全流程：创建外部任务 → 轮询 → 下载保存（同步/异步任务共用执行体）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-
-    def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
-
+def _parse_video_params(payload: dict) -> dict:
+    """解析视频生成参数：校验 prompt，按 8n+1 规则计算帧数（最大 441 帧）。"""
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "请输入画面描述")
@@ -100,13 +90,9 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     mode = payload.get("mode") or "ti2vid"
     image = payload.get("image") or ""
     frame_rate = int(payload.get("frame_rate") or 24)
-    project_id = payload.get("project_id") or ""
-
-    # 计算帧数 (8n+1 规则，最大 441 帧)
     num_frames = min(duration * frame_rate, 441)
     if (num_frames - 1) % 8 != 0:
         num_frames = ((num_frames - 1) // 8) * 8 + 1
-
     api_payload = {
         "model": model,
         "prompt": prompt,
@@ -118,8 +104,12 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     }
     if image and mode == "i2vid":
         api_payload["image"] = image
+    return api_payload
 
-    _report(10, "正在创建视频生成任务…")
+
+async def _create_video_task(api_payload: dict, report: Callable) -> str:
+    """创建外部视频渲染任务，返回 video_id。"""
+    report(10, "正在创建视频生成任务…")
     try:
         response = await asyncio.to_thread(
             requests.post,
@@ -135,14 +125,17 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
         video_id = data.get("video_id") or data.get("task_id")
         if not video_id:
             raise HTTPException(500, f"未获取到视频ID: {data}")
+        return video_id
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"创建视频任务异常: {e}")
         raise HTTPException(500, f"创建视频任务失败: {str(e)}") from e
 
-    # 轮询外部任务：间隔 5s，最长约 15 分钟（超时由任务框架标记失败可重试）
-    _report(20, "视频任务已创建，等待云端渲染…")
+
+async def _poll_video_result(video_id: str, report: Callable) -> dict:
+    """轮询外部渲染结果：间隔 5s，最长约 15 分钟（超时由任务框架标记失败可重试）。"""
+    report(20, "视频任务已创建，等待云端渲染…")
     for _ in range(180):
         await asyncio.sleep(5)
         try:
@@ -158,21 +151,37 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
             d = resp.json()
             status = d.get("status", "unknown")
             if status == "completed":
-                break
+                return d
             if status == "failed":
                 raise HTTPException(500, f"视频生成失败: {d.get('error', 'unknown')}")
             ext_progress = float(d.get("progress") or 0)
-            _report(min(90, 20 + int(ext_progress * 70 / 100)), d.get("message") or "云端渲染中…")
+            report(min(90, 20 + int(ext_progress * 70 / 100)), d.get("message") or "云端渲染中…")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"获取视频结果异常: {e}")
             raise HTTPException(500, f"获取视频结果失败: {str(e)}") from e
-    else:
-        raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
+    raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
+
+
+async def _video_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """视频生成全流程：创建外部任务 → 轮询 → 下载保存（同步/异步任务共用执行体）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    api_payload = _parse_video_params(payload)
+    project_id = payload.get("project_id") or ""
+    video_id = await _create_video_task(api_payload, _report)
+    d = await _poll_video_result(video_id, _report)
 
     _report(92, "渲染完成，正在下载视频…")
-    d = resp.json()
     video_url = d.get("output", {}).get("video_url") or d.get("url")
     if not video_url:
         raise HTTPException(500, "视频生成完成但未找到视频URL")
@@ -343,4 +352,5 @@ async def _video_generate_handler(task_id: str, payload: dict, update: Callable,
     return await _video_generate_worker(payload, progress=update)
 
 
-register_handler("video_generate", _video_generate_handler, user_limit=2)
+# 视频生成为外部轮询类长任务：走独立 long 池，避免占用常规池 worker 阻塞轻量生成任务
+register_handler("video_generate", _video_generate_handler, user_limit=2, pool="long")

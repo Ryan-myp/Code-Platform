@@ -15,7 +15,6 @@ from fastapi import HTTPException
 
 from task_queue import (
     _handlers,
-    _run_handler,
     create_task,
     get_task,
     register_handler,
@@ -64,7 +63,7 @@ def test_create_task_for_each_business_type(setup_test_db):
         assert got["created_by"] == "alice"
 
 
-def test_user_limit_exceeded_raises_429(setup_test_db):
+def test_user_limit_exceeded_raises_429(setup_test_db, claim_and_run):
     """user_limit 并发限制：同用户第 2 个活跃任务创建被拒绝。"""
     register_handler("tq_limit", lambda task_id, payload, update, ctx: {"ok": True}, user_limit=1)
     t1 = create_task("tq_limit", {}, username="alice")
@@ -74,12 +73,12 @@ def test_user_limit_exceeded_raises_429(setup_test_db):
     # 不同用户不受限
     create_task("tq_limit", {}, username="bob")
     # 活跃任务完成后可再次创建（alice 第 1 个任务完成）
-    _run_handler(t1["id"])
+    claim_and_run(t1["id"])
     assert get_task(t1["id"])["status"] == "success"
     create_task("tq_limit", {}, username="alice")
 
 
-def test_async_handler_executed_via_asyncio_run(setup_test_db):
+def test_async_handler_executed_via_asyncio_run(setup_test_db, claim_and_run):
     """async 处理器（协程返回）在 worker 内被 asyncio.run 执行，结果正确落库。"""
     async def handler(task_id, payload, update, ctx):
         await asyncio.sleep(0.01)
@@ -87,7 +86,7 @@ def test_async_handler_executed_via_asyncio_run(setup_test_db):
         return {"async_ok": True, "v": payload.get("v")}
     register_handler("tq_async", handler)
     task = create_task("tq_async", {"v": 7}, username="alice")
-    _run_handler(task["id"])
+    claim_and_run(task["id"])
     got = get_task(task["id"])
     assert got["status"] == "success"
     assert got["result"] == {"async_ok": True, "v": 7}
@@ -95,13 +94,13 @@ def test_async_handler_executed_via_asyncio_run(setup_test_db):
     assert got["stage"] == "生成完成"
 
 
-def test_async_handler_failure_records_error(setup_test_db):
+def test_async_handler_failure_records_error(setup_test_db, claim_and_run):
     """async 处理器内抛 HTTPException：error_code 记录、状态 failed。"""
     async def handler(task_id, payload, update, ctx):
         raise HTTPException(402, "余额不足")
     register_handler("tq_async_fail", handler)
     task = create_task("tq_async_fail", {}, username="alice")
-    _run_handler(task["id"])
+    claim_and_run(task["id"])
     got = get_task(task["id"])
     assert got["status"] == "failed"
     assert got["error_code"] == 402

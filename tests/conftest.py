@@ -4,8 +4,9 @@
 import os
 import sys
 import tempfile
-import pytest
 from pathlib import Path
+
+import pytest
 
 # 添加 backend 到路径
 BACKEND_DIR = Path(__file__).parent.parent / "backend"
@@ -47,6 +48,33 @@ def setup_test_db():
 
     if skills_tmp.exists():
         shutil.rmtree(skills_tmp, ignore_errors=True)
+
+
+@pytest.fixture
+def claim_and_run():
+    """模拟 master 抢占（pending→running）后由 worker 执行 handler。
+
+    worker 启动校验 status='running'（防取消竞态），单元测试直接调 _run_handler
+    时任务仍是 pending，必须先模拟抢占再执行。
+    """
+    from datetime import datetime
+
+    def _claim(task_id):
+        from common.db import get_db
+        from task_queue import _run_handler
+
+        conn = get_db()
+        try:
+            conn.execute(
+                "UPDATE async_tasks SET status='running', started_at=? WHERE id=?",
+                (datetime.now().isoformat(), task_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _run_handler(task_id)
+
+    return _claim
 
 
 @pytest.fixture
@@ -157,8 +185,9 @@ def auth_headers(setup_test_db):
     init_db 已 ensure admin/admin123 用户，直接 login 拿 token。
     供集成测试在调用受保护端点时使用：client.post(..., headers=auth_headers)
     """
-    from main import app
     from fastapi.testclient import TestClient
+
+    from main import app
 
     client = TestClient(app)
     resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
