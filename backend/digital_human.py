@@ -261,11 +261,38 @@ def _generate_portrait(avatar_id: str) -> str | None:
 
 
 # ── 视频渲染引擎 ──────────────────────────────────────────────
+def _font_has_cjk(font) -> bool:
+    """豆腐块检测：字体缺中文字形时，渲染“好”为空白或矩形边框（tofu []），
+    真汉字笔画不规则、不会四边满格。用于选择能正确显示中文的字体。"""
+    try:
+        import numpy as np
+        img = Image.new("L", (80, 80), 255)
+        d = ImageDraw.Draw(img)
+        d.text((20, 20), "好", fill=0, font=font)
+        arr = np.array(img)
+        ys, xs = np.where(arr < 128)
+        if len(ys) < 30:
+            return False  # 空白 = 无字形
+        y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
+        region = arr[y0:y1 + 1, x0:x1 + 1]
+        border = np.concatenate([region[0, :], region[-1, :], region[:, 0], region[:, -1]])
+        return (border < 128).mean() <= 0.75  # 豆腐块四边几乎全暗
+    except Exception:
+        return False
+
+
 def _load_font(size: int, candidates: list[str]) -> ImageFont.FreeTypeFont:
-    """尝试从候选列表中加载字体，全部失败则回退 load_default。"""
+    """加载支持中文字形的字体；全部失败回退 load_default。
+
+    必须验证中文字形可用：PingFang.ttc 在部分 macOS 上无法加载（cannot open
+    resource），Helvetica/Arial 等西文字体渲染中文全是豆腐块（[] 方框），
+    缺字校验不通过就继续尝试下一个候选。
+    """
     for path in candidates:
         try:
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(path, size)
+            if _font_has_cjk(font):
+                return font
         except Exception:
             continue
     return ImageFont.load_default()
@@ -764,10 +791,16 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         m = re.search(r"#[0-9a-fA-F]{6}", bg_hex)
         bg_hex = m.group(0) if m else "#667eea"
 
-    # 字体
+    # 字体（优先中文 GB 字体：PingFang.ttc 在部分 macOS 无法加载，
+    # Helvetica 等西文字体渲染中文为豆腐块，故候选按中文字形可用性排序）
     FONT_CANDIDATES = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",       # 中文黑体（简体全覆盖）
+        "/System/Library/Fonts/STHeiti Light.ttc",          # 黑体-简
+        "/System/Library/Fonts/Supplemental/Songti.ttc",    # 宋体
+        "/System/Library/Fonts/PingFang.ttc",               # 部分 macOS 可加载
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux 容器
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",   # Linux 容器
+        "/System/Library/Fonts/Helvetica.ttc",              # 英文兜底
         "/System/Library/Fonts/ArialHB.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
