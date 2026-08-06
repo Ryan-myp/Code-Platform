@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -26,13 +27,22 @@ from task_queue import (
 @pytest.fixture(autouse=True)
 def _clean_handlers():
     """清理测试注册的处理器与进度节流缓存，避免跨测试污染。"""
-    from task_queue import _progress_throttle
+    from task_queue import _MAX_ATTEMPTS, _POOLS, _USER_LIMITS, _progress_throttle
 
     saved = dict(_handlers)
+    saved_limits = dict(_USER_LIMITS)
+    saved_pools = dict(_POOLS)
+    saved_attempts = dict(_MAX_ATTEMPTS)
     _progress_throttle.clear()
     yield
     _handlers.clear()
     _handlers.update(saved)
+    _USER_LIMITS.clear()
+    _USER_LIMITS.update(saved_limits)
+    _POOLS.clear()
+    _POOLS.update(saved_pools)
+    _MAX_ATTEMPTS.clear()
+    _MAX_ATTEMPTS.update(saved_attempts)
     _progress_throttle.clear()
 
 
@@ -55,6 +65,20 @@ def _register_test_handler(**opts):
 
     register_handler("tq_test", handler)
     return handler
+
+
+def _register_retry_handler(max_attempts=3, fail_times=999):
+    """注册一个可配置失败次数的处理器：前 fail_times 次抛错，之后成功。"""
+    calls = {"n": 0}
+
+    def handler(task_id, payload, update, ctx):
+        calls["n"] += 1
+        if calls["n"] <= fail_times:
+            raise RuntimeError("boom")
+        return {"ok": True}
+
+    register_handler("tq_retry", handler, max_attempts=max_attempts)
+    return calls
 
 
 class TestCreateAndRun:
@@ -392,7 +416,7 @@ class TestStatsCache:
         assert "total" in body and "active" in body
 
     def test_stats_cached_within_ttl(self, setup_test_db):
-        """stats 30s TTL 缓存：窗口内不重算，清缓存后恢复实时。"""
+        """stats 缓存：窗口内他人生成任务不影响本人缓存；本人变更主动失效实时更新。"""
         from task_queue import _stats_cache, task_stats_api
 
         _register_test_handler()
@@ -400,12 +424,12 @@ class TestStatsCache:
         _stats_cache.clear()
         first = _run(task_stats_api(current_user={"username": "alice", "role": "user"}))
         assert first["total"] == 1
-        # 缓存窗口内新增任务：统计仍返回缓存旧值
-        create_task("tq_test", {}, username="alice")
+        # 缓存窗口内其他用户新增任务：统计仍返回缓存旧值（用户隔离）
+        create_task("tq_test", {}, username="bob")
         second = _run(task_stats_api(current_user={"username": "alice", "role": "user"}))
         assert second["total"] == 1
-        # 清缓存后重新统计
-        _stats_cache.clear()
+        # 本人新增任务：主动失效缓存，统计实时更新（无需等 TTL）
+        create_task("tq_test", {}, username="alice")
         third = _run(task_stats_api(current_user={"username": "alice", "role": "user"}))
         assert third["total"] == 2
 
@@ -461,3 +485,151 @@ class TestProgressThrottle:
             conn.close()
         with pytest.raises(TaskCanceled):
             _update_progress(task["id"], 41, "阶段A")
+
+
+class TestPriority:
+    def test_priority_persisted_and_returned(self, setup_test_db):
+        """优先级写入任务行并随创建/详情返回，越界钳制到 0-10。"""
+        _register_test_handler()
+        task = create_task("tq_test", {}, username="alice", priority=3)
+        assert task["priority"] == 3
+        assert get_task(task["id"])["priority"] == 3
+        assert create_task("tq_test", {}, username="alice", priority=99)["priority"] == 10
+
+    def test_fetch_pending_orders_by_priority(self, setup_test_db):
+        """master 调度顺序：优先级高者在前，同级按创建时间先来先服务。"""
+        from datetime import datetime
+
+        from task_queue import _fetch_pending
+
+        _register_test_handler()
+        low = create_task("tq_test", {}, username="alice", priority=1)
+        time.sleep(0.01)
+        high = create_task("tq_test", {}, username="alice", priority=5)
+        conn = get_db()
+        try:
+            rows = _fetch_pending(conn, datetime.now().isoformat())
+        finally:
+            conn.close()
+        assert [r["id"] for r in rows] == [high["id"], low["id"]]
+
+    def test_api_accepts_priority(self, setup_test_db, auth_headers):
+        """HTTP 层：POST 创建任务携带 priority 落库（路由通配不拦截）。"""
+        from fastapi.testclient import TestClient
+
+        from main import app
+
+        _register_test_handler()
+        client = TestClient(app)
+        resp = client.post("/api/tasks/tq_test", json={"payload": {"v": 1}, "priority": 7}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert get_task(resp.json()["task_id"])["priority"] == 7
+
+
+class TestAutoRetry:
+    def test_failure_reschedules_with_backoff(self, setup_test_db, claim_and_run):
+        """失败自动重试：任务回到 pending、retry_count+1、带退避时间与提示文案。"""
+        from datetime import datetime
+
+        _register_retry_handler(max_attempts=2, fail_times=999)
+        task = create_task("tq_retry", {}, username="alice")
+        claim_and_run(task["id"])
+        got = get_task(task["id"])
+        assert got["status"] == "pending"
+        assert got["retry_count"] == 1
+        assert got["next_retry_at"] > datetime.now().isoformat()
+        assert "自动重试" in got["stage"]
+
+    def test_retry_succeeds_after_backoff(self, setup_test_db, claim_and_run):
+        """退避到期后 master 重新调度：第二次尝试成功且保留重试计数。"""
+        _register_retry_handler(max_attempts=2, fail_times=1)
+        task = create_task("tq_retry", {}, username="alice")
+        claim_and_run(task["id"])
+        assert get_task(task["id"])["status"] == "pending"
+        # 退避到期：清空 next_retry_at 模拟到点，再次抢占执行
+        conn = get_db()
+        try:
+            conn.execute("UPDATE async_tasks SET next_retry_at='' WHERE id=?", (task["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        claim_and_run(task["id"])
+        got = get_task(task["id"])
+        assert got["status"] == "success"
+        assert got["retry_count"] == 1
+
+    def test_exhausts_max_attempts_marks_failed(self, setup_test_db, claim_and_run):
+        """超过最大尝试次数后标记 failed（retry_count 保留供排查）。"""
+        _register_retry_handler(max_attempts=1, fail_times=999)
+        task = create_task("tq_retry", {}, username="alice")
+        claim_and_run(task["id"])
+        assert get_task(task["id"])["status"] == "pending"  # 第 1 次失败 → 自动重试
+        claim_and_run(task["id"])
+        got = get_task(task["id"])
+        assert got["status"] == "failed"
+        assert got["retry_count"] == 1
+
+    def test_402_not_auto_retried(self, setup_test_db, claim_and_run):
+        """计费错误（402）不自动重试：重试=重复扣费，直接失败。"""
+        _register_test_handler(max_attempts=3, raise_http=402, error="配额不足")
+        task = create_task("tq_test", {}, username="alice")
+        claim_and_run(task["id"])
+        got = get_task(task["id"])
+        assert got["status"] == "failed"
+        assert got["error_code"] == 402
+        assert got["retry_count"] == 0
+
+    def test_manual_retry_clears_backoff(self, setup_test_db, claim_and_run):
+        """手动重试清除退避时间：耗尽自动重试失败后残留的退避不阻塞立即重试。"""
+        _register_retry_handler(max_attempts=1, fail_times=999)
+        task = create_task("tq_retry", {}, username="alice")
+        claim_and_run(task["id"])
+        assert get_task(task["id"])["status"] == "pending"  # 第 1 次失败 → 自动重试
+        claim_and_run(task["id"])
+        got = get_task(task["id"])
+        assert got["status"] == "failed"  # 耗尽次数
+        assert got["next_retry_at"] != ""  # 上次退避时间残留（防御场景）
+        _run(retry_task_api(task["id"], {"username": "alice", "role": "user"}))
+        assert get_task(task["id"])["next_retry_at"] == ""
+        assert get_task(task["id"])["stage"] == "任务已重新提交"
+
+    def test_backoff_grows_exponentially(self):
+        """退避时间随尝试次数指数增长且封顶 10 分钟。"""
+        from task_queue import _next_retry_at
+
+        assert _next_retry_at(1) < _next_retry_at(3) < _next_retry_at(10)
+
+
+class TestConcurrentMigration:
+    def test_concurrent_first_create_no_race(self, setup_test_db):
+        """并发首次建表+迁移不抛 duplicate column（PRAGMA-ALTER 快照竞态容错）。
+
+        数字人并发测试偶发 500 的根因：async_tasks 惰性建表，两个线程首次
+        create_task 同时 PRAGMA+ALTER，快照过期者执行 ALTER 撞 duplicate column。
+        """
+        _register_test_handler()
+        errors = []
+        results = []
+
+        def _call():
+            try:
+                results.append(create_task("tq_test", {}, username="alice"))
+            except Exception as e:  # noqa: BLE001 收集异常供断言
+                errors.append(e)
+
+        threads = [threading.Thread(target=_call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors, errors
+        assert len(results) == 2
+        # 迁移列完整且可用
+        from task_queue import _fetch_pending
+
+        conn = get_db()
+        try:
+            rows = _fetch_pending(conn, "2999-01-01T00:00:00")
+        finally:
+            conn.close()
+        assert len(rows) == 2

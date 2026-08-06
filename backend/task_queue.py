@@ -27,6 +27,7 @@ import logging
 import os
 import queue
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -64,6 +65,8 @@ _handlers: dict[str, Callable] = {}
 _USER_LIMITS: dict[str, int] = {}
 # 任务类型 → worker 池归属（默认常规池；长任务如视频渲染走独立池避免阻塞轻量任务）
 _POOLS: dict[str, str] = {}
+# 任务类型 → 自动重试次数上限（0=不自动重试；创建任务时快照到任务行）
+_MAX_ATTEMPTS: dict[str, int] = {}
 # 常规/长任务两个独立队列，互不争抢 worker
 _task_queues: dict[str, "queue.Queue[str]"] = {"default": queue.Queue(), "long": queue.Queue()}
 _master_running = False
@@ -110,10 +113,22 @@ def _ensure_table(conn) -> None:
     # 复合索引：列表查询（created_by + ORDER BY created_at）与统计（created_by + GROUP BY status）
     conn.execute("CREATE INDEX IF NOT EXISTS idx_async_tasks_user_created ON async_tasks(created_by, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_async_tasks_user_status ON async_tasks(created_by, status)")
-    # 迁移：cancel_requested（执行中任务请求取消标志）
+    # 迁移：cancel_requested（执行中任务请求取消标志）+ priority（优先级插队）+ 自动重试
+    # 并发容错：首次建表时多个线程同时 PRAGMA+ALTER，快照过期会撞 duplicate column，忽略即可
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(async_tasks)").fetchall()}
-    if "cancel_requested" not in cols:
-        conn.execute("ALTER TABLE async_tasks ADD COLUMN cancel_requested INTEGER DEFAULT 0")
+    for col, ddl in (
+        ("cancel_requested", "INTEGER DEFAULT 0"),
+        ("priority", "INTEGER DEFAULT 0"),
+        ("max_attempts", "INTEGER DEFAULT 0"),
+        ("next_retry_at", "TEXT DEFAULT ''"),
+    ):
+        if col in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE async_tasks ADD COLUMN {col} {ddl}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
     conn.commit()
 
 
@@ -122,13 +137,16 @@ def _ensure_table(conn) -> None:
 # ══════════════════════════════════════════════════════════════
 
 
-def register_handler(task_type: str, fn: Callable, user_limit: int = 0, pool: str = "default") -> None:
+def register_handler(
+    task_type: str, fn: Callable, user_limit: int = 0, pool: str = "default", max_attempts: int = 0
+) -> None:
     """注册任务处理器：task_type → fn(task_id, payload, update, ctx) -> result dict。
 
     user_limit>0 时限制同一用户最多 N 个活跃任务（pending/running），
     创建时原子校验（BEGIN IMMEDIATE 串行化），超出抛 429。
     pool="long" 时任务进入长任务池（独立 worker），适合外部轮询类长耗时任务
     （如视频渲染），避免占用常规池 worker 阻塞轻量生成任务。
+    max_attempts>0 时失败自动重试（指数退避，创建任务时快照），计费类错误（402）不重试。
     """
     if task_type in _handlers:
         raise ValueError(f"任务处理器重复注册: {task_type}")
@@ -138,20 +156,35 @@ def register_handler(task_type: str, fn: Callable, user_limit: int = 0, pool: st
     if pool not in ("default", "long"):
         raise ValueError(f"未知 worker 池: {pool}")
     _POOLS[task_type] = pool
-    logger.info("异步任务处理器已注册: %s（用户并发限制 %s，池 %s）", task_type, user_limit or "无", pool)
+    _MAX_ATTEMPTS[task_type] = max(0, int(max_attempts))
+    logger.info(
+        "异步任务处理器已注册: %s（用户并发限制 %s，池 %s，自动重试 %s）",
+        task_type,
+        user_limit or "无",
+        pool,
+        f"{max_attempts} 次" if max_attempts else "关",
+    )
 
 
-def create_task(task_type: str, payload: dict, username: str = "", user_id: str = "", role: str = "") -> dict:
+def create_task(
+    task_type: str,
+    payload: dict,
+    username: str = "",
+    user_id: str = "",
+    role: str = "",
+    priority: int = 0,
+) -> dict:
     """创建任务（立即返回，由 worker 异步执行）。返回任务摘要 dict。
 
-    注册了用户级并发限制的类型：BEGIN IMMEDIATE 串行化「检查活跃数 + 插入」，
-    保证并发提交下不超限（超出抛 429）。
+    priority 0-10（越大越先执行，默认 0）。注册了用户级并发限制的类型：
+    BEGIN IMMEDIATE 串行化「检查活跃数 + 插入」，保证并发提交下不超限（超出抛 429）。
     """
     if task_type not in _handlers:
         raise HTTPException(404, f"未注册的任务类型: {task_type}")
     raw_payload = json.dumps(payload, ensure_ascii=False)
     if len(raw_payload) > 256 * 1024:
         raise HTTPException(400, "任务参数过大（>256KB），请精简参数后重试")
+    priority = max(0, min(10, int(priority or 0)))
     limit = _USER_LIMITS.get(task_type, 0)
     conn = get_db()
     try:
@@ -169,14 +202,33 @@ def create_task(task_type: str, payload: dict, username: str = "", user_id: str 
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         conn.execute(
             """INSERT INTO async_tasks
-               (id, type, status, payload, created_by, user_id, role, created_at)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (task_id, task_type, "pending", raw_payload, username, user_id, role, datetime.now().isoformat()),
+               (id, type, status, payload, created_by, user_id, role, created_at, priority, max_attempts)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                task_id,
+                task_type,
+                "pending",
+                raw_payload,
+                username,
+                user_id,
+                role,
+                datetime.now().isoformat(),
+                priority,
+                _MAX_ATTEMPTS.get(task_type, 0),
+            ),
         )
         conn.commit()
     finally:
         conn.close()
-    return {"id": task_id, "type": task_type, "status": "pending", "progress": 0, "stage": "任务排队中…"}
+    _invalidate_stats(role, username)
+    return {
+        "id": task_id,
+        "type": task_type,
+        "status": "pending",
+        "progress": 0,
+        "stage": "任务排队中…",
+        "priority": priority,
+    }
 
 
 def get_task(task_id: str) -> dict | None:
@@ -287,18 +339,64 @@ def _update_progress(task_id: str, progress: float, stage: str) -> None:
         logger.exception("task progress update failed %s", task_id)
 
 
+# 自动重试退避基数（秒）：第 n 次重试延迟 base * 2^(n-1)，封顶 10 分钟
+AUTO_RETRY_BASE_DELAY = max(1, int(os.environ.get("ASYNC_TASK_RETRY_BASE_DELAY", "5")))
+
+
+def _next_retry_at(attempt: int) -> str:
+    """自动重试的指数退避时间（attempt 为即将执行的尝试次数，1 起）。"""
+    delay = min(AUTO_RETRY_BASE_DELAY * (2 ** (attempt - 1)), 600)
+    return (datetime.now() + timedelta(seconds=delay)).isoformat()
+
+
+# 自动重试豁免码：计费类错误重试=重复扣费，直接失败
+_RETRY_EXEMPT_CODES = (402,)
+
+
+def _should_auto_retry(row, error_code: int) -> bool:
+    """自动重试条件：配置了次数上限、未超限、且非计费错误。"""
+    return (
+        bool(row["max_attempts"]) and row["retry_count"] < row["max_attempts"] and error_code not in _RETRY_EXEMPT_CODES
+    )
+
+
 def _mark_failed(task_id: str, error: str, error_code: int = 0) -> None:
-    """标记失败：仅当任务仍处于 running（防覆盖已取消/已重试的任务）。"""
+    """标记失败：仅当任务仍处于 running（防覆盖已取消/已重试的任务）。
+
+    配置自动重试的任务重置为 pending（retry_count+1、指数退避），
+    master 到点后重新调度；其余任务标记 failed。
+    """
     with get_db_context() as conn:
+        row = conn.execute("SELECT type, retry_count, max_attempts FROM async_tasks WHERE id=?", (task_id,)).fetchone()
+        if not row:
+            return
+        if _should_auto_retry(row, error_code):
+            cur = conn.execute(
+                "UPDATE async_tasks SET status='pending', retry_count=retry_count+1, error=?, error_code=?, "
+                "finished_at='', started_at='', cancel_requested=0, next_retry_at=?, stage=? "
+                "WHERE id=? AND status='running'",
+                (
+                    (error or "任务执行失败")[:500],
+                    error_code,
+                    _next_retry_at(row["retry_count"] + 1),
+                    f"执行失败（第 {row['retry_count'] + 1}/{row['max_attempts']} 次尝试），自动重试排队中",
+                    task_id,
+                ),
+            )
+            if cur.rowcount:
+                task = conn.execute("SELECT * FROM async_tasks WHERE id=?", (task_id,)).fetchone()
+                if task:
+                    _broadcast_task(_row_to_task(task), event="task_retried")
+            return
         cur = conn.execute(
             "UPDATE async_tasks SET status='failed', error=?, error_code=?, finished_at=? "
             "WHERE id=? AND status='running'",
             ((error or "任务执行失败")[:500], error_code, datetime.now().isoformat(), task_id),
         )
         if cur.rowcount:
-            row = conn.execute("SELECT * FROM async_tasks WHERE id=?", (task_id,)).fetchone()
-            if row:
-                _broadcast_task(_row_to_task(row), event="task_failed")
+            task = conn.execute("SELECT * FROM async_tasks WHERE id=?", (task_id,)).fetchone()
+            if task:
+                _broadcast_task(_row_to_task(task), event="task_failed")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -468,6 +566,15 @@ def _watchdog() -> int:
 SCAN_BATCH = min(50, (DEFAULT_WORKERS + LONG_WORKERS) * 8)
 
 
+def _fetch_pending(conn, now_iso: str):
+    """取待调度任务：自动重试任务需等待退避时间；按优先级高→低、先来先服务。"""
+    return conn.execute(
+        "SELECT id, type FROM async_tasks WHERE status='pending' "
+        "AND (next_retry_at='' OR next_retry_at <= ?) ORDER BY priority DESC, created_at LIMIT ?",
+        (now_iso, SCAN_BATCH),
+    ).fetchall()
+
+
 def _master_loop() -> None:
     """master 调度：扫描 pending 任务 → 原子抢占 → 按 worker 池入队；
     周期性执行看门狗与历史清理。"""
@@ -476,10 +583,7 @@ def _master_loop() -> None:
         try:
             conn = get_db()
             try:
-                rows = conn.execute(
-                    "SELECT id, type FROM async_tasks WHERE status='pending' ORDER BY created_at LIMIT ?",
-                    (SCAN_BATCH,),
-                ).fetchall()
+                rows = _fetch_pending(conn, datetime.now().isoformat())
             finally:
                 conn.close()
             claimed = 0
@@ -564,6 +668,7 @@ def stop_workers() -> None:
 
 class CreateTaskRequest(BaseModel):
     payload: dict = Field(default_factory=dict, description="任务参数（任意 JSON，由对应处理器解析）")
+    priority: int = Field(0, ge=0, le=10, description="优先级（0-10，越大越先执行，默认 0）")
 
 
 def _check_owner(row, current_user: dict) -> None:
@@ -592,6 +697,7 @@ async def cleanup_tasks_api(current_user: dict = require_auth()):
             cur = conn.execute(f"DELETE FROM async_tasks WHERE status IN {terminal} AND created_by=?", (user,))
     deleted = cur.rowcount
     _progress_throttle.clear()
+    _invalidate_stats(role, user)
     if deleted:
         logger.info("任务清空：%s 删除 %s 条终态任务", user or role, deleted)
     return {"deleted": deleted, "message": f"已清理 {deleted} 条历史任务"}
@@ -608,7 +714,8 @@ async def create_task_api(
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
     payload = (req.payload if req else {}) or {}
-    task = create_task(task_type, payload, username=user, user_id=uid, role=role)
+    priority = (req.priority if req else 0) or 0
+    task = create_task(task_type, payload, username=user, user_id=uid, role=role, priority=priority)
     return {"task_id": task["id"], "status": "pending", "message": "任务已提交，后台执行中", "task": task}
 
 
@@ -732,6 +839,16 @@ _stats_cache: dict[str, tuple[float, dict]] = {}
 STATS_CACHE_TTL = 30.0
 
 
+def _invalidate_stats(role: str, username: str) -> None:
+    """任务变更后失效对应统计缓存（管理员/用户键分开，不影响他人）。
+
+    直接调用 create_task 时 role 常为空：按普通用户视角失效（API 层必传真实角色）。
+    """
+    if not username:
+        return
+    _stats_cache.pop(f"{role or 'user'}:{username}", None)
+
+
 @router.post("/{task_id}/retry")
 async def retry_task_api(task_id: str, current_user: dict = require_auth()):
     """重试任务：仅终态（failed / interrupted / canceled / success）可重试。
@@ -749,7 +866,8 @@ async def retry_task_api(task_id: str, current_user: dict = require_auth()):
         conn.execute(
             """UPDATE async_tasks
                SET status='pending', progress=0, stage='任务已重新提交', result='', error='',
-                   error_code=0, retry_count=retry_count+1, started_at='', finished_at='', cancel_requested=0
+                   error_code=0, retry_count=retry_count+1, started_at='', finished_at='',
+                   cancel_requested=0, next_retry_at=''
                WHERE id=?""",
             (task_id,),
         )
@@ -757,6 +875,7 @@ async def retry_task_api(task_id: str, current_user: dict = require_auth()):
         conn.commit()
     if row:
         _broadcast_task(_row_to_task(row), event="task_retried")
+    _invalidate_stats(current_user.get("role", ""), current_user.get("username", ""))
     return {"task_id": task_id, "status": "pending", "message": "任务已重新提交，后台执行中"}
 
 
@@ -778,6 +897,7 @@ async def cancel_task_api(task_id: str, current_user: dict = require_auth()):
     if not cur.rowcount:
         raise HTTPException(400, "仅排队中/执行中的任务可取消（已完成的任务无需取消）")
     _broadcast_task(get_task(task_id), event="task_canceled")
+    _invalidate_stats(current_user.get("role", ""), current_user.get("username", ""))
     return {"task_id": task_id, "status": "canceled", "message": "任务已取消"}
 
 
@@ -796,4 +916,5 @@ async def delete_task_api(task_id: str, current_user: dict = require_auth()):
         raise HTTPException(404, "任务不存在")
     _progress_throttle.pop(task_id, None)
     _broadcast_task(task, event="task_deleted")
+    _invalidate_stats(current_user.get("role", ""), current_user.get("username", ""))
     return {"task_id": task_id, "message": "任务已删除"}

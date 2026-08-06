@@ -358,6 +358,7 @@ export default function TasksPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-gray-900 text-sm">{tm.label}</span>
                       <Badge color={st.color}>{st.label}</Badge>
+                      {task.priority > 0 && <Badge color="amber">P{task.priority}</Badge>}
                       <span className="text-xs text-gray-400 font-mono">{task.id}</span>
                     </div>
                     {/* 进度条 */}
@@ -479,6 +480,8 @@ export default function TasksPage() {
               <InfoItem label="完成时间" value={detail.finished_at} />
               <InfoItem label="创建者" value={detail.created_by} />
               <InfoItem label="重试次数" value={String(detail.retry_count ?? 0)} />
+              <InfoItem label="优先级" value={detail.priority > 0 ? `P${detail.priority}` : '普通'} />
+              <InfoItem label="自动重试" value={detail.max_attempts > 0 ? `最多 ${detail.max_attempts} 次（失败自动重试）` : '关闭'} />
               <InfoItem label="阶段" value={detail.stage} />
             </div>
             {detail.error && (
