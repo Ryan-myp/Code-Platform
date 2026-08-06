@@ -381,8 +381,8 @@ def _clean_script_text(text: str) -> str:
 def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
     """解码音频 → 按帧粒度 RMS 能量曲线（0~1，95 分位归一化）。
 
-    用于驱动人物嘴型开合与说话律动：能量高=正在说话（嘴张/身体前倾），
-    能量低=停顿（闭嘴回归）。解码失败返回空列表（调用方回退静态呼吸）。
+    用于驱动人物身体律动（能量高=正在说话），嘴型已升级为字级驱动。
+    解码失败返回空列表（调用方回退静态呼吸）。
     """
     try:
         out = subprocess.run(
@@ -402,6 +402,77 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
         return [min(v / mx, 1.0) for v in curve]
     except Exception:
         return []
+
+
+# 口型形状表：拼音韵母首音 → (开度 0~1, 圆度 0~1)
+# a 大口 / o 圆嘴 / e 半开 / i 扁嘴 / u 嘟嘴 / v(ü) 扁圆 / n 闭口（声母/鼻韵）
+_MOUTH_SHAPES = {
+    "a": (1.0, 0.5),
+    "o": (0.75, 0.95),
+    "e": (0.55, 0.65),
+    "i": (0.45, 0.25),
+    "u": (0.55, 1.0),
+    "v": (0.6, 0.8),
+    "n": (0.2, 0.4),
+}
+
+
+def _build_script_timeline(text: str, duration: float) -> list:
+    """文本 → 逐字口型时间轴 [(char, start, end, open, round)]。
+
+    均匀时间对齐：汉字每字 1 单位时长、标点/空白 0.5 单位（闭嘴停顿），
+    按总时长等比例分配。每字口型由拼音韵母首音分类（a大口/o圆嘴/e半开/
+    i扁嘴/u嘟嘴），让嘴型动作真正对上朗读的每个字。
+    """
+    import re
+    from pypinyin import Style, pinyin
+
+    hanzi = re.compile(r"[\u4e00-\u9fff]")
+    units = []
+    for ch in text:
+        if hanzi.match(ch):
+            units.append((ch, 1.0))
+        else:
+            units.append((ch, 0.5))  # 标点/空白：短停顿
+    total = sum(u[1] for u in units) or 1.0
+    unit_dur = duration / total
+    timeline = []
+    cur = 0.0
+    for ch, w in units:
+        start, end = cur, cur + w * unit_dur
+        if hanzi.match(ch):
+            try:
+                final = pinyin(ch, style=Style.FINALS, errors="default", heteronym=False)[0][0]
+            except Exception:
+                final = ""
+            key = final[0] if final else "n"
+            open_, round_ = _MOUTH_SHAPES.get(key, _MOUTH_SHAPES["e"])
+        else:
+            open_, round_ = 0.0, 0.5  # 标点：闭嘴停顿
+        timeline.append((ch, start, end, open_, round_))
+        cur = end
+    return timeline
+
+
+def _mouth_shape_at(timeline: list, t: float) -> tuple:
+    """当前时刻的字级口型 → (open 0~1, round 0~1)。
+
+    字周期内包络：前 15% 张嘴、中间 70% 维持口型、后 15% 收拢，
+    形成自然说话感（每个字一次完整的开合）。
+    """
+    for ch, start, end, open_, round_ in timeline:
+        if start <= t < end:
+            if open_ <= 0.01:
+                return (0.0, 0.5)
+            prog = (t - start) / max(end - start, 1e-4)
+            if prog < 0.15:
+                env = prog / 0.15
+            elif prog > 0.85:
+                env = (1 - prog) / 0.15
+            else:
+                env = 1.0
+            return (open_ * env, round_)
+    return (0.0, 0.5)
 
 
 # ── 动态特效工具（粒子/光斑/渐变/卡拉OK字幕）─────────────────────
@@ -570,9 +641,9 @@ def _render_frame(
     avatar: dict, bg_hex: str, fonts: dict,
     portrait, text_lines: list,
     t: float, progress: float, width: int, height: int,
-    energy: float = 0.0,
+    energy: float = 0.0, mouth_shape: tuple = (0.0, 0.5),
 ) -> Image.Image:
-    """绘制一帧：动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/嘴型）+ 卡拉OK字幕。"""
+    """绘制一帧：动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
     import math
     S = width / 1280.0  # 渲染缩放系数（Ken Burns 放大画布时保持坐标比例）
 
@@ -651,20 +722,18 @@ def _render_frame(
                     radius=2, fill=(40, 26, 32, min(eye_alpha, 220)),
                 )
 
-        # 嘴型开合：能量驱动（开口更大更明显；AI 写真构图可控，
-        # 自定义形象按长宽比启发式判断是否正面人像再启用）
+        # 字级口型：open 控制开度、round 控制圆度（a 大口 / o 圆嘴 / i 扁嘴 / u 嘟嘴），
+        # 由拼音时间轴驱动，嘴型动作与朗读文字逐字对齐；自定义形象按长宽比启发式启用
+        mouth_open_v, roundness = mouth_shape
         aspect = p_base_w / p_base_h
-        if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and talk > 0.04:
-            mouth_open = 0.35 + 0.65 * talk  # 张度随能量
-            # 快速开合抖动：能量高时叠加高频律动，更像真实说话
-            flutter = 0.7 + 0.3 * math.sin(t * 14.0) if talk > 0.15 else 1.0
-            mw = max(4, int(p_w * 0.24))
-            mh = max(2, int(p_h * 0.030 * mouth_open * flutter))
+        if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and mouth_open_v > 0.05:
+            mw = max(4, int(p_w * (0.20 + 0.08 * roundness)))
+            mh = max(2, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
             mx = px + int(p_w * 0.49)
             my = py + int(p_h * 0.805)
             mouth_layer = Image.new("RGBA", (mw + 10, mh + 14), (0, 0, 0, 0))
             md = ImageDraw.Draw(mouth_layer)
-            # 上唇线固定 + 下唇随能量开合（颜色更深更明显）
+            # 上唇线固定 + 口型椭圆（圆度高的字更圆，扁音更扁长）
             md.rounded_rectangle([0, 0, mw, 4], radius=2, fill=(60, 32, 42, 215))
             md.ellipse([1, 5, mw - 1, 5 + mh], fill=(55, 30, 40, 200))
             img.paste(mouth_layer, (mx - mw // 2 - 5, my - 6), mouth_layer)
@@ -836,8 +905,10 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     # 写真预加载（避免每帧重复 IO/缩放）
     portrait = _build_portrait_src(avatar)
 
-    # 音频能量曲线（按帧粒度，驱动嘴型开合/身体律动；解码失败则回退静态呼吸）
+    # 音频能量曲线（按帧粒度，驱动身体律动；解码失败则回退静态呼吸）
     energy_curve = _audio_energy_curve(audio_path, duration, fps)
+    # 字级口型时间轴（拼音韵母分类，嘴型逐字对齐配音文字）
+    script_timeline = _build_script_timeline(text, duration)
 
     # 文案换行（复用一帧的测量）
     probe = Image.new("RGB", (10, 10), "#000")
@@ -851,11 +922,12 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
             t = f / fps
             progress = min(1.0, t / duration) if duration > 0 else 1.0
             energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
+            mouth_shape = _mouth_shape_at(script_timeline, t)
             frame = _render_frame(
                 avatar=avatar, bg_hex=bg_hex, fonts=fonts,
                 portrait=portrait, text_lines=text_lines,
                 t=t, progress=progress, width=RENDER_W, height=RENDER_H,
-                energy=energy,
+                energy=energy, mouth_shape=mouth_shape,
             )
             # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
             zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
