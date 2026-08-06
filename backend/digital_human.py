@@ -17,7 +17,7 @@ import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -226,41 +226,52 @@ def _generate_portrait(avatar_id: str) -> str | None:
             f"{avatar['gender']}, photorealistic, studio lighting, half-body shot, "
             f"8K quality, clean background"
         )
+    # 真实感统一后缀：正脸/看镜头/闭嘴/皮肤纹理/自然瑕疵（去 AI 脸感）
+    prompt = prompt.rstrip(".") + (
+        ", front-facing, eyes looking directly into camera, mouth closed with neutral "
+        "expression, face centered in upper half of frame, single soft key light, "
+        "realistic skin pore texture, subtle natural skin imperfections, candid "
+        "photography style, shallow depth of field, 8k uhd, hyper-realistic detail"
+    )
 
     from common.config import AGNES_API_BASE, AGNES_API_KEY
     if not AGNES_API_KEY:
         logger.warning("未配置 AGNES_API_KEY，无法生成数字人写真")
         return None
 
-    try:
-        import requests as _req
-        url = f"{AGNES_API_BASE}/images/generations"
-        headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "agnes-image-2.1-flash",
-            "prompt": prompt,
-            "size": "1024x1024",
-            "n": 1,
-        }
-        resp = _req.post(url, headers=headers, json=payload, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
+    # 竖版尺寸（4:5）更贴近半身像构图；API 不支持时降级回方形
+    for size in ("1024x1280", "1024x1024"):
+        try:
+            import requests as _req
+            url = f"{AGNES_API_BASE}/images/generations"
+            headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "agnes-image-2.1-flash",
+                "prompt": prompt,
+                "size": size,
+                "n": 1,
+            }
+            resp = _req.post(url, headers=headers, json=payload, timeout=120)
+            resp.raise_for_status()
+            data = resp.json()
 
-        if "data" in data and len(data["data"]) > 0:
-            image_url = data["data"][0].get("url")
-            if image_url:
-                img_resp = _req.get(image_url, timeout=60)
-                img_resp.raise_for_status()
-                portrait_path = _get_portrait_path(avatar_id)
-                with open(portrait_path, "wb") as f:
-                    f.write(img_resp.content)
-                logger.info(f"数字人写真已生成：{avatar_id} → {portrait_path}")
-                return portrait_path
-        logger.warning(f"写真生成返回异常：{data}")
-        return None
-    except Exception as e:
-        logger.exception(f"生成数字人写真失败 {avatar_id}: {e}")
-        return None
+            if "data" in data and len(data["data"]) > 0:
+                image_url = data["data"][0].get("url")
+                if image_url:
+                    img_resp = _req.get(image_url, timeout=60)
+                    img_resp.raise_for_status()
+                    portrait_path = _get_portrait_path(avatar_id)
+                    with open(portrait_path, "wb") as f:
+                        f.write(img_resp.content)
+                    logger.info(f"数字人写真已生成：{avatar_id} → {portrait_path} ({size})")
+                    return portrait_path
+            logger.warning(f"写真生成返回异常：{data}")
+            return None
+        except Exception as e:
+            # 竖版尺寸不被 API 支持时降级重试方形；网络类错误直接失败
+            logger.warning(f"生成数字人写真 {avatar_id} 失败（{size}）: {e}")
+            continue
+    return None
 
 
 # ── 视频渲染引擎 ──────────────────────────────────────────────
@@ -319,16 +330,24 @@ def _build_portrait_src(avatar: dict):
     """预加载并缩放写真 → (RGBA图, 圆角遮罩, 宽, 高)；无写真返回 None。
 
     自定义形象使用用户上传图片（local_image_path），内置形象用 AI 写真缓存。
+    使用 cover 裁剪（等比缩放后居中裁切、裁窗偏上保留头部），杜绝直接拉伸
+    造成的脸部变形——1:1 生成图被压扁成 0.8 比例是"AI 感"的重要来源。
     """
     portrait_path = avatar.get("local_image_path") or (_get_portrait_path(avatar["id"]) if not avatar.get("is_custom") else "")
     if not portrait_path or not os.path.exists(portrait_path):
         return None
     try:
-        portrait = Image.open(portrait_path).convert("RGBA")
-        target_w, target_h = 520, 650
-        portrait = portrait.resize((target_w, target_h), Image.LANCZOS)
+        portrait = Image.open(portrait_path).convert("RGB")
+        target_w, target_h = 640, 800  # 4:5 半身像（较原 520x650 更高清）
+        scale = max(target_w / portrait.width, target_h / portrait.height)
+        nw, nh = int(round(portrait.width * scale)), int(round(portrait.height * scale))
+        if (nw, nh) != portrait.size:
+            portrait = portrait.resize((nw, nh), Image.LANCZOS)
+        x0 = max(0, (nw - target_w) // 2)
+        y0 = max(0, min(int((nh - target_h) * 0.30), nh - target_h))  # 裁窗偏上：半身像脸部在画面上部
+        portrait = portrait.crop((x0, y0, x0 + target_w, y0 + target_h)).convert("RGBA")
         mask = Image.new("L", (target_w, target_h), 0)
-        ImageDraw.Draw(mask).rounded_rectangle([0, 0, target_w, target_h], radius=40, fill=255)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, target_w, target_h], radius=48, fill=255)
         return portrait, mask, target_w, target_h
     except Exception as e:
         logger.warning(f"写真加载失败，使用占位符: {e}")
@@ -479,6 +498,161 @@ def _mouth_shape_at(timeline: list, t: float) -> tuple:
     return (0.0, 0.5)
 
 
+# ── 逼真化渲染素材：嘴部/眼睑贴图模板 + 摄影棚光影 ─────────────
+_MOUTH_TEMPLATES: dict = {}
+_EYELID_TEMPLATES: dict = {}
+_LIGHT_CACHE: dict = {}
+_BLINK_PATTERN: list = []
+
+
+def _build_blink_pattern(count: int = 260) -> list:
+    """确定性眨眼模式：[(间隔秒, 闭眼过程秒)]，间隔 2.2~4.8s 随机（固定种子可复现）。"""
+    import random
+    rnd = random.Random(20260805)
+    return [(rnd.uniform(2.2, 4.8), rnd.uniform(0.13, 0.20)) for _ in range(count)]
+
+
+def _blink_progress(t: float) -> float:
+    """t 时刻的闭眼进度 0~1（三角波 0→1→0），非闭眼期返回 0。
+
+    替代固定 2.8s 周期的机械眨眼：间隔随机，闭眼过程 0.13~0.2s。
+    """
+    if not _BLINK_PATTERN:
+        _BLINK_PATTERN.extend(_build_blink_pattern())
+    acc = 0.0
+    for gap, dur in _BLINK_PATTERN:
+        if t < acc + gap:
+            return 0.0
+        if t < acc + gap + dur:
+            p = (t - acc - gap) / dur
+            return 1.0 - abs(2.0 * p - 1.0)
+        acc += gap + dur
+    return 0.0
+
+
+def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
+    """嘴部 RGBA 模板（128x96 基模板，按开度 6 档 x 圆度 4 档缓存）。
+
+    真实唇形：下唇饱满渐变（上缘暗→下缘亮）+ 上唇深色 + 唇间缝 + 高光 + 嘴角阴影，
+    边缘高斯羽化融入皮肤；替代原来的"椭圆+直线"贴纸式画法。
+    """
+    key = (open_idx, round_idx)
+    if key not in _MOUTH_TEMPLATES:
+        import numpy as np
+        W, H = 128, 96
+        open_ratio = open_idx / 5.0
+        round_ratio = 0.25 + 0.75 * (round_idx / 3.0)
+        mouth_w = int(36 + 28 * round_ratio)
+        mouth_h = int(5 + 30 * open_ratio)
+        cx, cy = W // 2, H // 2
+        y, x = np.mgrid[0:H, 0:W].astype(np.float32)
+        arr = np.zeros((H, W, 4), dtype=np.float32)
+        # 下唇：宽扁椭圆，垂直渐变（上缘暗 → 下缘亮），体现唇部体积
+        dxx = (x - cx) / mouth_w
+        dyy = (y - (cy + mouth_h * 0.45)) / max(mouth_h * 0.85, 1e-4)
+        lower = (dxx * dxx + dyy * dyy) <= 1.0
+        t = np.clip((y - (cy - mouth_h * 0.4)) / max(mouth_h * 1.6, 1e-4), 0, 1)
+        lip_low = np.empty((H, W, 4), dtype=np.float32)
+        lip_low[..., 0] = (108 + 62 * t) / 255.0
+        lip_low[..., 1] = (56 + 44 * t) / 255.0
+        lip_low[..., 2] = (66 + 46 * t) / 255.0
+        lip_low[..., 3] = 1.0
+        arr[lower] = lip_low[lower]
+        # 上唇：位置偏上的深色椭圆，覆盖下唇上缘形成唇间暗缝
+        dxxu = (x - cx) / (mouth_w * 1.04)
+        dyyu = (y - (cy - mouth_h * 0.62)) / max(mouth_h * 0.60, 1e-4)
+        upper = (dxxu * dxxu + dyyu * dyyu) <= 1.0
+        arr[upper & ~lower, :3] = np.array([86, 44, 56], dtype=np.float32) / 255.0
+        arr[upper & ~lower, 3] = 1.0
+        # 唇间缝：上唇下缘的深色细线
+        seam = (np.abs(y - (cy + mouth_h * 0.05)) < 1.8) & (np.abs(x - cx) <= mouth_w * 0.9)
+        arr[seam, :3] = np.array([44, 24, 30], dtype=np.float32) / 255.0
+        arr[seam, 3] = 1.0
+        # 下唇高光：偏左的小椭圆（模拟单一主光方向）
+        hx = (x - (cx + mouth_w * 0.26)) / max(mouth_w * 0.28, 1e-4)
+        hy = (y - (cy + mouth_h * 0.95)) / max(mouth_h * 0.30, 1e-4)
+        hl = (hx * hx + hy * hy <= 1.0) & lower
+        arr[hl, :3] = arr[hl, :3] * 0.35 + 1.0 * 0.65
+        arr[hl, 3] = np.maximum(arr[hl, 3], 0.80)
+        # 嘴角阴影：两端加深
+        for s in (-1.0, 1.0):
+            ex = (x - (cx + s * mouth_w * 0.95)) / 2.2
+            ey = (y - (cy + mouth_h * 0.15)) / 3.2
+            corner = (ex * ex + ey * ey <= 1.0) & (lower | upper)
+            arr[corner, :3] *= 0.55
+            arr[corner, 3] = np.maximum(arr[corner, 3], 0.85)
+        img = Image.fromarray(np.clip(arr * 255, 0, 255).astype(np.uint8), "RGBA")
+        # 羽化边缘：alpha 通道高斯模糊，让唇贴图融入皮肤而非硬边
+        img.putalpha(img.getchannel("A").filter(ImageFilter.GaussianBlur(2.2)))
+        _MOUTH_TEMPLATES[key] = img
+    return _MOUTH_TEMPLATES[key]
+
+
+def _get_eyelid_template(eye_w: int) -> Image.Image:
+    """上眼睑下压遮罩（暗肤色渐变 + 下缘睫毛线），按宽度缓存。
+
+    用于模拟自然闭眼：上眼睑从上往下覆盖，而非画一道"伤口线"。
+    """
+    key = eye_w
+    if key not in _EYELID_TEMPLATES:
+        import numpy as np
+        w = eye_w
+        h = max(8, int(w * 0.32))
+        y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+        arr = np.zeros((h, w, 4), dtype=np.float32)
+        t = y / max(h - 1, 1)  # 0 顶部 → 1 底部
+        edge = np.clip(1 - (x / max(w - 1, 1) - 0.5) ** 2 * 3.2, 0, 1)  # 两端收窄
+        # 肤色渐变压暗（上眼睑投影），顶部最深、底部贴近睫毛
+        arr[..., 0] = (96 - 34 * t) / 255.0
+        arr[..., 1] = (62 - 22 * t) / 255.0
+        arr[..., 2] = (70 - 26 * t) / 255.0
+        arr[..., 3] = np.clip(0.95 - 0.5 * t, 0, 1) * edge
+        # 下缘睫毛线：2px 深色
+        lash = (y >= h - 2.5) & (np.abs(x - w / 2) <= w * 0.46)
+        arr[lash, :3] = 30 / 255.0
+        arr[lash, 3] = np.maximum(arr[lash, 3], 0.9)
+        img = Image.fromarray(np.clip(arr * 255, 0, 255).astype(np.uint8), "RGBA")
+        img.putalpha(img.getchannel("A").filter(ImageFilter.GaussianBlur(1.6)))
+        _EYELID_TEMPLATES[key] = img
+    return _EYELID_TEMPLATES[key]
+
+
+def _get_studio_lighting(w: int, h: int):
+    """摄影棚光影预计算（numpy，按 (w,h) 缓存）→ (主光spot, 地面反光floor, 暗角vig)。
+
+    主光：聚焦人物站位（画面左 26%、垂直 40%）的径向聚光，营造"灯光打在人身上"的
+    摄影棚关系；地面反光：底部渐亮反射带；暗角：四角压暗，电影镜头感。
+    替代"均匀撒粒子"的 PPT 式背景。
+    """
+    key = (w, h)
+    if key not in _LIGHT_CACHE:
+        import numpy as np
+        y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+        spot_cx, spot_cy = w * 0.26, h * 0.40
+        spot_r = max(w, h) * 0.95
+        d2 = ((x - spot_cx) ** 2 + (y - spot_cy) ** 2) / (spot_r * spot_r)
+        spot = np.exp(-d2 * 3.0)
+        floor = np.clip((y - h * 0.74) / max(h * 0.26, 1), 0, 1) ** 1.4
+        vx = np.clip(np.abs(x - w * 0.5) / max(w * 0.5, 1), 0, 1) ** 2
+        vy = np.clip(np.abs(y - h * 0.5) / max(h * 0.5, 1), 0, 1) ** 2
+        vig = np.clip(vx + vy, 0, 1) ** 1.5
+        _LIGHT_CACHE[key] = (spot, floor, vig)
+    return _LIGHT_CACHE[key]
+
+
+def _apply_studio_lighting(img: Image.Image, t: float) -> Image.Image:
+    """把摄影棚光影叠加到背景帧（人物叠加之前）：主光脉动 + 地面反光 + 暗角。"""
+    import math
+    import numpy as np
+    spot, floor, vig = _get_studio_lighting(img.width, img.height)
+    arr = np.asarray(img).astype(np.float32)
+    light = 1.0 + 0.10 * spot * (0.92 + 0.08 * math.sin(t * 0.9))
+    light = light * (1.0 + 0.05 * floor) * (1.0 - 0.20 * vig)
+    # 只乘 RGB 三通道：RGBA 帧必须保留 alpha（否则半透明图层被算入光影）
+    arr[..., :3] = np.clip(arr[..., :3] * light[..., None], 0, 255)
+    return Image.fromarray(arr.astype(np.uint8), img.mode)
+
+
 # ── 动态特效工具（粒子/光斑/渐变/卡拉OK字幕）─────────────────────
 def _hex_to_rgb(hex_str: str) -> tuple:
     """#rrggbb → (r,g,b)。"""
@@ -535,7 +709,7 @@ def _make_gradient(w: int, h: int, bg_hex: str, breath: float = 0.0) -> Image.Im
     import numpy as np
     base = _get_gradient_base(w, h, bg_hex)
     if breath:
-        base = base * (1 + 0.06 * breath)
+        base = base * (1 + 0.03 * breath)  # 呼吸幅度收敛（0.06→0.03），避免背景闪烁感
     return Image.fromarray(np.clip(base, 0, 255).astype(np.uint8), "RGB")
 
 
@@ -565,8 +739,11 @@ def _get_glow_template(radius: int = 150, scale: float = 1.0):
 
 
 _PARTICLES_CACHE = None
-def _get_particles(count: int = 42) -> list:
-    """确定性粒子系统（固定种子，按时间纯函数式计算，无随机状态）。"""
+def _get_particles(count: int = 24) -> list:
+    """确定性粒子系统（固定种子，按时间纯函数式计算，无随机状态）。
+
+    数量/亮度/速度收敛（42→24、亮度减半、速度变慢），避免"光污染"盖过人物。
+    """
     global _PARTICLES_CACHE
     if _PARTICLES_CACHE is None:
         import random
@@ -575,10 +752,10 @@ def _get_particles(count: int = 42) -> list:
             {
                 "x": rnd.uniform(0.03, 0.97),
                 "y": rnd.uniform(0.0, 1.0),
-                "r": rnd.uniform(1.0, 3.0),
-                "speed": rnd.uniform(14, 34),
+                "r": rnd.uniform(1.0, 2.4),
+                "speed": rnd.uniform(10, 22),
                 "phase": rnd.uniform(0, 6.283),
-                "bright": rnd.uniform(0.22, 0.6),
+                "bright": rnd.uniform(0.15, 0.35),
             }
             for _ in range(count)
         ]
@@ -654,7 +831,11 @@ def _render_frame(
     # ── 1. 动态渐变背景（亮度呼吸，模拟真实灯光变化）──
     breath = 0.5 + 0.5 * math.sin(t * 0.8)
     img = _make_gradient(width, height, bg_hex, breath)
-    draw = ImageDraw.Draw(img)
+    # 半透明 UI 元素（粒子/名片/字幕/底条/进度条）画到独立 RGBA 图层：
+    # ImageDraw 无 alpha 合成能力（RGBA 图上直接覆盖 RGB+写 alpha），
+    # 画到底图会把半透明色覆盖成纯色（曾致底部 bar 纯黑盖住嘴部贴图）
+    ui = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(ui)
 
     # ── 2. 高斯柔光斑（缓慢漂移，营造摄影棚光效）──
     for i, (gx, gy, scale) in enumerate([
@@ -665,8 +846,11 @@ def _render_frame(
         cy = int(height * gy + math.cos(t * 0.25 + i * 1.7) * 30 * S)
         img.paste(layer, (cx - layer.width // 2, cy - layer.height // 2), layer)
 
-    # ── 3. 漂浮粒子（像直播间的氛围光点）──
-    _draw_particles(img, t)
+    # ── 3. 漂浮粒子（像直播间的氛围光点，画在 UI 图层参与 alpha 合成）──
+    _draw_particles(ui, t)
+
+    # ── 3.5 摄影棚光影：主光聚焦人物 + 地面反光 + 暗角（背景上、人物下）──
+    img = _apply_studio_lighting(img, t)
 
     # 说话能量 → 驱动全身律动（能量高=说话中：幅度加大；静音：回归静态呼吸）
     talk = min(1.0, energy * 1.6)
@@ -679,20 +863,20 @@ def _render_frame(
     # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
         p_base, p_mask_base, p_base_w, p_base_h = portrait
-        # 呼吸缩放（幅度加大）+ 说话节奏起伏（能量驱动）
-        breath_scale = 1 + 0.03 * breathe_t + 0.022 * talk * math.sin(t * 3.2)
+        # 呼吸缩放（真人幅度 ~1.2%，收敛气球感）+ 说话节奏起伏
+        breath_scale = 1 + 0.012 * breathe_t + 0.010 * talk * math.sin(t * 3.2)
         p_w = max(20, int(p_base_w * breath_scale * S))
         p_h = max(20, int(p_base_h * breath_scale * S))
-        # 点头倾斜：绕底部中心旋转（像真人说话时身体前倾点头），幅度随能量加大
-        tilt = sway_t * (1.0 + 2.4 * talk) + 1.2 * talk * math.sin(t * 2.6)
+        # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
+        tilt = 0.9 * sway_t * (1.0 + 0.9 * talk) + 0.45 * talk * math.sin(t * 2.9) + 0.22 * math.sin(t * 5.1)
         nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
         p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(
             tilt, resample=Image.BILINEAR, center=nod_pivot)
         p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(
             tilt, resample=Image.BILINEAR, center=nod_pivot)
-        # 垂直浮动 + 水平摇摆（幅度加大，说话时叠加高频起伏）
-        float_offset = int((breathe_t * 11 + talk * 8 * math.sin(t * 2.8)) * S)
-        sway_offset = int((sway_t * 9 + talk * 7 * math.cos(t * 2.2)) * S)
+        # 垂直浮动 + 水平摇摆（幅度收敛，说话时叠加轻微起伏）
+        float_offset = int((breathe_t * 6 + talk * 4 * math.sin(t * 2.8)) * S)
+        sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
         # 入场滑入：x 从画面外（-p_w）滑到目标位
         enter_shift = int((1 - enter_ease) * (p_w + int(80 * S)))
         px = int(40 * S) + sway_offset - enter_shift
@@ -711,36 +895,32 @@ def _render_frame(
         img.paste(shadow, (px - 5, py - 5), shadow)
         img.paste(p_img, (px, py), p_mask)
 
-        # 眨眼：每 ~2.8s 闭眼一次（0.16s 内渐进闭上再睁开），闭眼线条更明显
-        blink_t = t % 2.8
-        if blink_t < 0.16:
-            close = blink_t / 0.16  # 0→1 渐进闭眼
+        # 自然眨眼：随机间隔（2.2~4.8s）+ 上眼睑渐变遮罩下压（替代"画线"）
+        close = _blink_progress(t)
+        if close > 0.03:
+            eye_w = max(6, int(p_w * 0.135))
             eye_y = py + int(p_h * 0.335)
-            eye_alpha = int(160 * close) + 80
+            lid = _get_eyelid_template(eye_w)
+            lid_h = max(2, int(lid.height * min(close * 1.25, 1.0)))
+            lid_use = lid.crop((0, 0, lid.width, lid_h)) if lid_h < lid.height else lid
             for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
-                ew = int(p_w * 0.13)
-                # 闭眼：在眼位画一条深色闭合线（宽度随闭眼进度变窄）
-                eh = max(2, int(p_h * 0.008 * (2.2 - close)))
-                draw.rounded_rectangle(
-                    [ex, eye_y - eh // 2, ex + ew, eye_y + eh // 2],
-                    radius=2, fill=(40, 26, 32, min(eye_alpha, 220)),
-                )
+                img.paste(lid_use, (ex - lid_use.width // 2, eye_y - lid_h), lid_use)
 
-        # 字级口型：open 控制开度、round 控制圆度（a 大口 / o 圆嘴 / i 扁嘴 / u 嘟嘴），
-        # 由拼音时间轴驱动，嘴型动作与朗读文字逐字对齐；自定义形象按长宽比启发式启用
+        # 逼真口型：量化嘴部模板（开度 6 档 x 圆度 4 档），羽化贴图融入皮肤；
+        # open 控制开度、round 控制圆度，仍由拼音时间轴逐字驱动
         mouth_open_v, roundness = mouth_shape
         aspect = p_base_w / p_base_h
         if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and mouth_open_v > 0.05:
-            mw = max(4, int(p_w * (0.20 + 0.08 * roundness)))
-            mh = max(2, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
+            open_idx = min(5, int(round(mouth_open_v * 5)))
+            round_idx = min(3, int(round(roundness * 3)))
+            mw = max(6, int(p_w * (0.20 + 0.08 * roundness)))
+            mh = max(3, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
+            mouth_layer = _get_mouth_template(open_idx, round_idx).resize(
+                (mw, mh), Image.LANCZOS,
+            )
             mx = px + int(p_w * 0.49)
             my = py + int(p_h * 0.805)
-            mouth_layer = Image.new("RGBA", (mw + 10, mh + 14), (0, 0, 0, 0))
-            md = ImageDraw.Draw(mouth_layer)
-            # 上唇线固定 + 口型椭圆（圆度高的字更圆，扁音更扁长）
-            md.rounded_rectangle([0, 0, mw, 4], radius=2, fill=(60, 32, 42, 215))
-            md.ellipse([1, 5, mw - 1, 5 + mh], fill=(55, 30, 40, 200))
-            img.paste(mouth_layer, (mx - mw // 2 - 5, my - 6), mouth_layer)
+            img.paste(mouth_layer, (mx - mw // 2, my - mh // 2), mouth_layer)
 
         # 光环脉动
         glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
@@ -853,7 +1033,7 @@ def _render_frame(
             radius=3, fill=accent,
         )
 
-    return img
+    return Image.alpha_composite(img.convert("RGBA"), ui).convert("RGB")
 
 
 def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_path: str,
@@ -982,6 +1162,10 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
                     "-i", os.path.join(frames_dir, "%04d.jpg"),
                     "-i", audio_path,
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    # 画质滤镜链：轻微锐化（unsharp）+ 对比度/饱和度分级（eq），
+                    # 去除 JPG 帧的软糊感、增强肤质；crf 21 比默认 23 更清晰
+                    "-vf", "unsharp=5:5:0.45:5:5:0.0,eq=contrast=1.05:saturation=1.08",
+                    "-crf", "21",
                     "-c:a", "aac", "-b:a", "128k",
                     "-shortest", "-movflags", "+faststart",
                     output_path,
@@ -2326,3 +2510,24 @@ async def admin_dh_stats(current_user: dict = require_auth()):
             "interrupted": batch_row["interrupted_cnt"] or 0,
         },
     }
+
+
+@router.post("/portraits/regenerate")
+async def regenerate_portraits(current_user: dict = require_auth()):
+    """管理员：按升级后的真实感提示词重新生成全部内置数字人写真。
+
+    逐形象串行调用（避免同时打爆图片 API），返回成功/失败清单。
+    """
+    from admin_api import _check_admin
+    _check_admin(current_user)
+    ok, failed = [], []
+    for avatar in AVATARS:
+        try:
+            if _generate_portrait(avatar["id"]):
+                ok.append(avatar["id"])
+            else:
+                failed.append(avatar["id"])
+        except Exception:
+            logger.exception(f"重新生成写真失败 {avatar['id']}")
+            failed.append(avatar["id"])
+    return {"ok": ok, "failed": failed}

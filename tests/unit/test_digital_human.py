@@ -363,3 +363,166 @@ class TestConcurrencyGuard:
         with _GUARD_LOCK:
             blocked = _USER_GENERATING.get("u1", 0) >= 1
         assert blocked  # 与 generate 接口的 429 分支一致
+
+
+class TestRenderRealism:
+    """逼真化渲染：cover 裁剪防变形 / 嘴部羽化贴图 / 随机眨眼 / 摄影棚光影 / 滤镜链。"""
+
+    # 跨平台字体兜底（触发 load_default），不依赖系统字体文件
+    _FONT_PATHS = ["/nonexistent/font.ttf"]
+
+    @staticmethod
+    def _fake_portrait_path() -> str:
+        """生成带脸部色块的假写真（1024x1024），返回临时路径。"""
+        import tempfile
+        from PIL import Image as PILImage, ImageDraw
+        img = PILImage.new("RGB", (1024, 1024), (180, 140, 130))
+        d = ImageDraw.Draw(img)
+        d.ellipse([350, 200, 680, 560], fill=(200, 160, 150))  # 脸
+        d.ellipse([420, 300, 470, 350], fill=(30, 30, 30))     # 左眼
+        d.ellipse([555, 300, 605, 350], fill=(30, 30, 30))     # 右眼
+        d.ellipse([440, 470, 590, 540], fill=(90, 50, 60))     # 嘴
+        p = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        p.close()
+        img.save(p.name)
+        return p.name
+
+    def test_cover_crop_no_distortion(self):
+        """1:1 与横向图 cover 裁剪后恒为 640x800，杜绝拉伸变形。"""
+        import os
+        from PIL import Image as PILImage
+        from digital_human import _build_portrait_src
+        path = self._fake_portrait_path()
+        try:
+            for w, h in ((1024, 1024), (1600, 900)):
+                PILImage.open(path).resize((w, h)).save(path)
+                avatar = {"id": "x", "is_custom": True, "local_image_path": path}
+                portrait = _build_portrait_src(avatar)
+                assert portrait is not None
+                assert portrait[2] == 640 and portrait[3] == 800
+        finally:
+            os.unlink(path)
+
+    def test_mouth_template_feathered(self):
+        """嘴部模板：边缘羽化（中心不透明、边缘透明），开度越高嘴越高。"""
+        import numpy as np
+        from digital_human import _get_mouth_template
+        small = _get_mouth_template(1, 1)
+        large = _get_mouth_template(5, 1)
+        assert small.size == large.size == (128, 96)
+        a_s = np.array(small.getchannel("A"))
+        a_l = np.array(large.getchannel("A"))
+        assert a_s[48, 64] > 200          # 中心不透明
+        assert a_s[2, 2] == 0             # 边缘完全透明（羽化）
+        rows_s = np.where(a_s.max(axis=1) > 40)[0]
+        rows_l = np.where(a_l.max(axis=1) > 40)[0]
+        assert len(rows_l) > len(rows_s)  # 大开度嘴更高
+        # 颜色标度防回归：上唇暗红调、唇间缝最深、下唇亮于缝（曾出现 0~255 标度溢出为纯白）
+        ys = np.where(a_s.max(axis=1) > 100)[0]
+        y_top, y_bot = ys.min(), ys.max()
+        rgb = np.array(small.convert("RGB"))
+        up = rgb[y_top + 2, 64]                        # 上唇
+        seam_c = rgb[(y_top + y_bot) // 2, 64]         # 唇间缝
+        low = rgb[y_top + (y_bot - y_top) * 3 // 4, 64]  # 下唇
+        assert 60 < up[0] < 160 and up[0] > up[1]      # 上唇红调、非白非黑
+        assert seam_c.sum() < up.sum()                 # 缝比上唇深
+        assert low.sum() > seam_c.sum()                # 下唇亮于缝
+
+    def test_blink_pattern_random_and_deterministic(self):
+        """眨眼：间隔 2.2~4.8s 随机、固定种子可复现、非闭眼期归零。"""
+        from digital_human import _build_blink_pattern, _blink_progress
+        assert _build_blink_pattern() == _build_blink_pattern()  # 可复现
+        gaps = [g for g, _ in _build_blink_pattern()]
+        assert 2.2 <= min(gaps) and max(gaps) <= 4.8
+        peak = next(t for t in (i / 200 for i in range(2400)) if _blink_progress(t) > 0.9)
+        assert _blink_progress(peak - 0.05) < 0.9
+        assert _blink_progress(peak + 0.05) < 0.9  # 三角波：峰两侧回落
+        assert _blink_progress(0.0) == 0.0
+
+    def test_eyelid_template_shape(self):
+        """眼睑遮罩：宽高比例合理、底部睫毛线比顶部深。"""
+        import numpy as np
+        from digital_human import _get_eyelid_template
+        lid = _get_eyelid_template(40)
+        w, h = lid.size
+        assert w == 40 and h >= 8 and h <= w * 0.4
+        a = np.array(lid.getchannel("A"))
+        assert a[0, w // 2] > a[h - 1, w // 2]  # 上眼睑投影顶部更实
+        rgb = np.array(lid.convert("RGB"))
+        assert rgb[h - 1, w // 2].mean() < rgb[0, w // 2].mean()  # 睫毛线颜色更深
+
+    def test_studio_lighting_geometry(self):
+        """摄影棚光影：主光峰值在人物站位、暗角角落>中心、地面反光底部>顶部。"""
+        import numpy as np
+        from digital_human import _get_studio_lighting
+        spot, floor, vig = _get_studio_lighting(320, 180)
+        assert float(spot.max()) > 0.9
+        sy, sx = np.unravel_index(np.argmax(spot), spot.shape)
+        assert abs(sx - 320 * 0.26) < 40 and abs(sy - 180 * 0.40) < 40
+        assert vig[0, 0] > vig[90, 160]     # 暗角角落 > 中心
+        assert floor[170, 160] > floor[10, 160]  # 地面反光底部 > 顶部
+
+    def test_render_frame_mouth_and_lighting_diffs(self):
+        """整帧渲染：不同口型产生嘴部像素差、主光脉动产生背景明暗差。"""
+        import os
+        import numpy as np
+        from digital_human import _build_portrait_src, _load_font, _render_frame
+        path = self._fake_portrait_path()
+        try:
+            avatar = {"id": "x", "is_custom": True, "local_image_path": path,
+                      "name": "测", "style": "测"}
+            portrait = _build_portrait_src(avatar)
+            fonts = {k: _load_font(s, self._FONT_PATHS)
+                     for k, s in (("title", 30), ("body", 18), ("tag", 14))}
+            kw = dict(avatar=avatar, bg_hex="#1a1a2e", fonts=fonts, portrait=portrait,
+                      text_lines=["测试文案"], t=1.0, progress=0.3,
+                      width=640, height=360, energy=0.8)
+            f_open = np.asarray(_render_frame(**kw, mouth_shape=(0.9, 0.5))).astype(int)
+            f_closed = np.asarray(_render_frame(**kw, mouth_shape=(0.1, 0.2))).astype(int)
+            assert np.abs(f_open - f_closed).mean() > 0.05  # 嘴在动
+            kw2 = dict(avatar=avatar, bg_hex="#1a1a2e", fonts=fonts, portrait=None,
+                       text_lines=["测试文案"], progress=0.3,
+                       width=640, height=360, energy=0.0, mouth_shape=(0.0, 0.5))
+            b1 = np.asarray(_render_frame(**kw2, t=1.5)).astype(int)
+            b2 = np.asarray(_render_frame(**kw2, t=2.5)).astype(int)
+            assert np.abs(b1 - b2).mean() > 0.5  # 主光脉动
+            # UI 层防回归：alpha_composite 合成后，右侧名片标题仍可见
+            # 标题 '测' 画在 (300, 30)、约 30x30px → numpy 索引 [y, x]
+            f_ui = np.asarray(_render_frame(**kw, mouth_shape=(0.1, 0.2)))
+            right_zone = f_ui[30:60, 300:400]
+            assert (right_zone > 235).sum() > 10  # 白色标题文字像素（单字笔画核心）
+        finally:
+            os.unlink(path)
+
+    def test_render_video_ffmpeg_filter_chain(self):
+        """编码滤镜链：unsharp 锐化 + eq 色彩分级 + crf 21 进入 ffmpeg 参数。"""
+        import os
+        import subprocess as sp
+        import tempfile
+        from unittest import mock
+        import digital_human as dh
+        tmp = tempfile.mkdtemp()
+        audio = os.path.join(tmp, "t.wav")
+        sp.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
+                "-ar", "22050", audio], capture_output=True, check=True)
+        calls = []
+        real_run = sp.run  # patch 前保存真实引用（patch 会替换全局 subprocess.run）
+
+        def fake_run(cmd, *a, **kw):
+            if cmd and "-framerate" in cmd:
+                calls.append(cmd)
+            return real_run(cmd, *a, **kw)  # 解码/探测保持真实
+
+        with mock.patch.object(dh.subprocess, "run", side_effect=fake_run):
+            dh._render_video(
+                "测试", {"id": "business-female", "name": "x", "style": "y"},
+                {"id": "tech", "type": "gradient", "color": "#667eea"},
+                audio, os.path.join(tmp, "out.mp4"),
+                resolution="720p", fps=8, watermark=False,
+            )
+        assert calls, "编码 ffmpeg 调用缺失"
+        enc = calls[0]
+        vf = enc[enc.index("-vf") + 1]
+        assert "unsharp=5:5:0.45" in vf
+        assert "eq=contrast=1.05" in vf
+        assert enc[enc.index("-crf") + 1] == "21"
