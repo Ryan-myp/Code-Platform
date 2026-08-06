@@ -342,6 +342,41 @@ def _wrap_text_lines(text: str, draw: ImageDraw.ImageDraw, font, max_width: int)
     return lines
 
 
+def _clean_script_text(text: str) -> str:
+    """清洗口播文案：去首尾空白、连续空行折叠为单空行（保留分段结构）。
+
+    字幕与配音必须与用户输入一致，仅做渲染友好的空白规范化。
+    """
+    import re
+    return re.sub(r"\n{2,}", "\n", text or "").strip()
+
+
+def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
+    """解码音频 → 按帧粒度 RMS 能量曲线（0~1，95 分位归一化）。
+
+    用于驱动人物嘴型开合与说话律动：能量高=正在说话（嘴张/身体前倾），
+    能量低=停顿（闭嘴回归）。解码失败返回空列表（调用方回退静态呼吸）。
+    """
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
+            capture_output=True, timeout=30,
+        )
+        import numpy as np
+        raw = np.frombuffer(out.stdout, dtype=np.int16).astype(np.float32) / 32768.0
+        hop = max(int(16000 / fps), 1)
+        curve = []
+        for i in range(0, max(len(raw) - hop, 1), hop):
+            seg = raw[i:i + hop]
+            curve.append(float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0)
+        if not curve:
+            return []
+        mx = max(float(np.percentile(curve, 95)), 1e-4)
+        return [min(v / mx, 1.0) for v in curve]
+    except Exception:
+        return []
+
+
 # ── 动态特效工具（粒子/光斑/渐变/卡拉OK字幕）─────────────────────
 def _hex_to_rgb(hex_str: str) -> tuple:
     """#rrggbb → (r,g,b)。"""
@@ -508,8 +543,9 @@ def _render_frame(
     avatar: dict, bg_hex: str, fonts: dict,
     portrait, text_lines: list,
     t: float, progress: float, width: int, height: int,
+    energy: float = 0.0,
 ) -> Image.Image:
-    """绘制一帧：动态渐变背景 + 粒子光斑 + 写真浮动 + 卡拉OK字幕。"""
+    """绘制一帧：动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/嘴型）+ 卡拉OK字幕。"""
     import math
     S = width / 1280.0  # 渲染缩放系数（Ken Burns 放大画布时保持坐标比例）
 
@@ -530,20 +566,26 @@ def _render_frame(
     # ── 3. 漂浮粒子（像直播间的氛围光点）──
     _draw_particles(img, t)
 
-    # 人物浮动偏移 + 光环脉动（垂直呼吸浮动 + 水平轻微摇摆，像真人站立微动）
-    float_offset = int(math.sin(t * 1.3) * 8 * S)
-    sway_offset = int(math.sin(t * 0.9) * 5 * S)
-    breath_scale = 1 + 0.012 * math.sin(t * 1.1)  # 呼吸缩放
+    # 说话能量 → 驱动全身律动（能量高=说话中：幅度加大；静音：回归静态呼吸）
+    talk = min(1.0, energy * 1.6)
+    sway_t = math.sin(t * 1.15)
+    breathe_t = math.sin(t * 1.3)
     glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))
 
-    # ── 4. 左侧人物：写真/emoji + 底部平台光斑 ──
+    # ── 4. 左侧人物：写真 + 动态（呼吸缩放/倾斜摇摆/眨眼/嘴型开合）──
     if portrait:
         p_base, p_mask_base, p_base_w, p_base_h = portrait
-        # 呼吸缩放：每帧从基准写真重新缩放（轻微放大缩小，像活人呼吸）
+        # 呼吸缩放 + 说话节奏起伏（能量驱动）
+        breath_scale = 1 + 0.018 * breathe_t + 0.012 * talk * math.sin(t * 3.0)
         p_w = max(20, int(p_base_w * breath_scale * S))
         p_h = max(20, int(p_base_h * breath_scale * S))
-        p_img = p_base.resize((p_w, p_h), Image.LANCZOS)
-        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR)
+        # 轻微倾斜摇摆（像真人站立微晃，说话时幅度更大）
+        tilt = sway_t * (0.5 + 1.3 * talk)
+        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR)
+        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR)
+        # 垂直浮动 + 水平摇摆（说话时叠加高频起伏）
+        float_offset = int((breathe_t * 7 + talk * 5 * math.sin(t * 2.8)) * S)
+        sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
         px, py = int(40 * S) + sway_offset, int(35 * S) + float_offset
         # 人物脚下平台光斑（小尺寸 RGBA 图层，像直播台灯光）
         plat_w, plat_h = int(560 * S), int(110 * S)
@@ -558,6 +600,36 @@ def _render_frame(
         )
         img.paste(shadow, (px - 5, py - 5), shadow)
         img.paste(p_img, (px, py), p_mask)
+
+        # 眨眼：每 ~3.4s 闭眼一次（0.12s 内渐进闭上再睁开），像真人自然眨眼
+        blink_t = t % 3.4
+        if blink_t < 0.12:
+            close = blink_t / 0.12  # 0→1 渐进闭眼
+            eye_y = py + int(p_h * 0.335)
+            eye_alpha = int(120 * close) + 60
+            for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
+                ew = int(p_w * 0.13)
+                # 闭眼：在眼位画一条深色闭合线（宽度随闭眼进度变窄）
+                eh = max(1, int(p_h * 0.006 * (2 - close)))
+                draw.rounded_rectangle(
+                    [ex, eye_y - eh // 2, ex + ew, eye_y + eh // 2],
+                    radius=2, fill=(60, 40, 45, eye_alpha),
+                )
+
+        # 嘴型开合：能量驱动（仅 AI 写真半身像；用户上传形象构图不定，跳过避免贴歪）
+        if not avatar.get("is_custom") and talk > 0.04:
+            mouth_open = 0.30 + 0.70 * talk  # 张度随能量
+            mw = max(4, int(p_w * 0.22))
+            mh = max(1, int(p_h * 0.026 * mouth_open))
+            mx = px + int(p_w * 0.49)
+            my = py + int(p_h * 0.805)
+            mouth_layer = Image.new("RGBA", (mw + 10, mh + 12), (0, 0, 0, 0))
+            md = ImageDraw.Draw(mouth_layer)
+            # 上唇线固定 + 下唇随能量开合（椭圆填充，模拟说话口型）
+            md.rounded_rectangle([0, 0, mw, 3], radius=2, fill=(80, 50, 60, 190))
+            md.ellipse([1, 4, mw - 1, 4 + mh], fill=(70, 42, 52, 170))
+            img.paste(mouth_layer, (mx - mw // 2 - 5, my - 5), mouth_layer)
+
         # 光环脉动
         glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow_layer)
@@ -566,6 +638,9 @@ def _render_frame(
         img.paste(glow_layer, (px - 60, py - 55), glow_layer)
     else:
         # fallback：emoji 大头像（有真实人物感）
+        float_offset = int(math.sin(t * 1.3) * 8 * S)
+        sway_offset = int(math.sin(t * 0.9) * 5 * S)
+        breath_scale = 1 + 0.012 * math.sin(t * 1.1)  # 呼吸缩放
         cx = int(300 * S) + sway_offset
         cy = height // 2 + float_offset
         r = max(20, int(170 * S * breath_scale))
@@ -715,6 +790,9 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     # 写真预加载（避免每帧重复 IO/缩放）
     portrait = _build_portrait_src(avatar)
 
+    # 音频能量曲线（按帧粒度，驱动嘴型开合/身体律动；解码失败则回退静态呼吸）
+    energy_curve = _audio_energy_curve(audio_path, duration, fps)
+
     # 文案换行（复用一帧的测量）
     probe = Image.new("RGB", (10, 10), "#000")
     probe_draw = ImageDraw.Draw(probe)
@@ -726,10 +804,12 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         for f in range(total_frames):
             t = f / fps
             progress = min(1.0, t / duration) if duration > 0 else 1.0
+            energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
             frame = _render_frame(
                 avatar=avatar, bg_hex=bg_hex, fonts=fonts,
                 portrait=portrait, text_lines=text_lines,
                 t=t, progress=progress, width=RENDER_W, height=RENDER_H,
+                energy=energy,
             )
             # 镜头缓慢推近：裁剪窗口随进度缩小，再缩放回输出尺寸
             zoom = 0.035 * progress
@@ -1177,16 +1257,10 @@ async def generate(req: GenerateRequest, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
 
-    # 1. 文案优化（LLM让口播更流畅自然）
-    optimized_text = req.text
-    try:
-        SCRIPT_SYSTEM = (
-            f"你是专业口播脚本优化师。将以下文案优化为适合{avatar['style']}风格的数字人口播脚本。"
-            "要求：口语化、自然流畅、保留原意、适合听觉（非阅读）、每句不超过25字。直接输出优化后文案，不要任何说明。"
-        )
-        optimized_text = call_llm(SCRIPT_SYSTEM, req.text, max_tokens=1000, temperature=0.5, timeout=30)
-    except Exception as e:
-        logger.warning("script optimization failed, using original: %s", e)
+    # 1. 文案 — 字幕与配音必须与用户输入完全一致：
+    # 之前 LLM 优化环节会把原文改写为带 Markdown 标记（#、**、---）的口播脚本，
+    # 导致字幕显示“乱码/不是用户输入的内容”，此处直接使用原文（仅清洗换行）。
+    optimized_text = _clean_script_text(req.text)
 
     # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音
     audio_url = ""
