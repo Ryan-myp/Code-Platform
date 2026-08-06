@@ -107,6 +107,8 @@ from scheduler import router as scheduler_router  # noqa: E402
 from scheduler import start_scheduler, stop_scheduler
 from search_api import router as search_api_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
+from task_queue import router as task_queue_router  # noqa: E402
+from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
@@ -154,8 +156,12 @@ async def lifespan(app: FastAPI):
     from digital_human import recover_interrupted_batches, start_storage_cleaner
     recover_interrupted_batches()
     start_storage_cleaner()
+    # 通用异步任务框架（master-worker）：恢复中断任务 + 启动调度/工作线程
+    recover_interrupted_tasks()
+    start_workers()
     logger.info("Smart R&D Platform v8.0 started")
     yield
+    stop_workers()
     stop_scheduler()
     logger.info("Smart R&D Platform v8.0 shutting down")
 
@@ -2409,6 +2415,7 @@ app.include_router(sessions_router)
 app.include_router(collab_engine_router)
 app.include_router(content_strategy_router)
 app.include_router(digital_human_router)
+app.include_router(task_queue_router)
 app.include_router(smart_dashboard_router)
 app.include_router(pdf_tools_router)
 app.include_router(competitor_monitor_router)

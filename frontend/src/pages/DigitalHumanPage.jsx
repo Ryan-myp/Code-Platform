@@ -4,7 +4,8 @@ import {
   Film, Eye, Clock, FileText, RefreshCw, Wand2, Check, Send,
   Image as ImageIcon, Palette, Radio, Volume2, Pause, StopCircle,
   Smile, Shirt, Monitor, Glasses, HardHat, Video, Circle, Camera,
-  Upload, Rocket, X, ShieldCheck, Layers,
+  Upload, Rocket, X, ShieldCheck, Layers, ListChecks,
+  CheckCircle2, XCircle, Loader2, AlertTriangle,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -37,6 +38,12 @@ export default function DigitalHumanPage() {
   const [genPhase, setGenPhase] = useState('')   // 生成阶段提示文案
   const [quota, setQuota] = useState(null)       // 今日剩余额度
   const [storage, setStorage] = useState(null)    // 我的存储用量（记录数/占用/保留期）
+
+  // 异步生成任务：提交后后台执行，页面可关闭（进度/状态/重试）
+  const [currentTask, setCurrentTask] = useState(null)   // 当前生成任务（含进度/阶段）
+  const [taskList, setTaskList] = useState([])           // 我的生成任务列表
+  const taskTimerRef = useRef(null)                      // 任务轮询定时器
+  const recordWhenDoneRef = useRef(false)                // 生成完成后自动开始录制（「生成+录制」按钮）
 
   // 批量生产：多条文案后台逐条生成
   const [batchTexts, setBatchTexts] = useState('')   // 批量文案（每行一条）
@@ -108,6 +115,9 @@ export default function DigitalHumanPage() {
   const [generatingAll, setGeneratingAll] = useState(false)   // 是否在批量生成
 
   useEffect(() => { loadData(); loadRecords(true); loadQuota(); loadStorage() }, [])
+  // 挂载时加载历史生成任务；卸载时停止轮询
+  useEffect(() => { loadTasks() }, [])
+  useEffect(() => () => clearInterval(taskTimerRef.current), [])
 
   // 额度变化时刷新（其他页面的计费操作也会派发该事件）
   useEffect(() => {
@@ -331,45 +341,116 @@ export default function DigitalHumanPage() {
     } catch { toast.error('加载文案失败') }
   }
 
-  const generate = async () => {
+  // ── 异步生成任务：提交 → 后台执行 → 轮询进度/结果（页面可关闭）──
+  const formatTaskTime = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+
+  const loadTasks = async () => {
+    try {
+      const res = await api.get('/api/tasks', { params: { type: 'dh_generate', limit: 8 } })
+      setTaskList(res.data?.tasks || [])
+    } catch {/* 静默失败，不阻塞 UI */}
+  }
+
+  // 任务完成后：展示结果 + 预览音视频 + 刷新记录/额度
+  const handleTaskDone = (result) => {
+    setResult(result || {})
+    loadRecords(true)
+    loadQuota()
+    loadStorage()
+    if (result?.video_url) playPreviewVideo(result.video_url)
+    if (result?.audio_url) {
+      const fullUrl = result.audio_url.startsWith('http')
+        ? result.audio_url
+        : `${API_BASE}${result.audio_url}`
+      setAudioUrl(fullUrl)
+      // 延迟确保 audio 元素挂载后再播放
+      setTimeout(() => {
+        if (audioRef.current) {
+          audioRef.current.play().then(() => {
+            setPlaying(true)
+            setTalking(true)
+          }).catch(() => {})
+        }
+      }, 300)
+    }
+  }
+
+  // 轮询任务列表：一次请求同时刷新当前任务进度与历史列表
+  const pollTasks = (taskId) => {
+    clearInterval(taskTimerRef.current)
+    taskTimerRef.current = setInterval(async () => {
+      try {
+        const res = await api.get('/api/tasks', { params: { type: 'dh_generate', limit: 10 } })
+        const list = res.data?.tasks || []
+        setTaskList(list)
+        const t = list.find((x) => x.id === taskId)
+        if (!t) return
+        setCurrentTask(t)
+        if (t.status === 'success') {
+          clearInterval(taskTimerRef.current)
+          setGenerating(false)
+          handleTaskDone(t.result || {})
+          toast.success(t.result?.message || '数字人视频生成成功')
+          // 「生成+录制」模式：音频就绪后自动开始录制
+          if (recordWhenDoneRef.current) {
+            recordWhenDoneRef.current = false
+            setTimeout(() => {
+              if (audioRef.current && avatarRef.current) {
+                avatarRef.current.startRecording()
+                setRecording(true)
+                audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
+              }
+            }, 300)
+          }
+        } else if (['failed', 'interrupted', 'canceled'].includes(t.status)) {
+          clearInterval(taskTimerRef.current)
+          setGenerating(false)
+          setGenPhase('')
+          if (t.status === 'canceled') {
+            toast.info('任务已取消')
+          } else if (t.error_code === 402) {
+            toast.error('今日生成次数已用完，升级会员解锁更多额度')
+            window.open('/membership', '_blank')
+          } else {
+            toast.error(`生成失败：${t.error || '未知错误'}`)
+          }
+        }
+      } catch {
+        // 网络抖动：保留轮询，下次继续
+      }
+    }, 2000)
+  }
+
+  // 提交生成任务（普通生成 / 生成+录制共用）
+  const submitTask = async (recordAfterDone) => {
     if (!text.trim()) { toast.error('请输入口播文案'); return }
-    setGenerating(true); setResult(null); stopAudio()
-    // 生成阶段提示（同步请求期间轮播文案，缓解等待焦虑）
-    const phases = ['正在合成配音…', '正在渲染数字人动作…', '正在编码高清视频…']
-    let idx = 0
-    setGenPhase(phases[0])
-    const timer = setInterval(() => { idx = (idx + 1) % phases.length; setGenPhase(phases[idx]) }, 4000)
+    setGenerating(true); setResult(null); stopAudio(); setGenPhase('')
+    if (recordAfterDone) setVideoBlob(null)
+    recordWhenDoneRef.current = !!recordAfterDone
     try {
       const res = await api.post('/api/digital-human/generate', {
         text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
         background_id: bgId, scene_id: sceneId, speed,
         resolution, fps, watermark,
       })
-      setResult(res.data)
-      loadRecords(true)
-      loadQuota()
-      // 如果有视频URL，自动预览
-      if (res.data.video_url) {
-        playPreviewVideo(res.data.video_url)
+      if (res.data?.task_id) {
+        // 异步任务模式：立即返回 task_id，后台 worker 执行
+        setCurrentTask({ id: res.data.task_id, status: 'pending', progress: 0, stage: '任务排队中…' })
+        toast.info('生成任务已提交，后台执行中，可关闭页面稍后查看')
+        pollTasks(res.data.task_id)
+      } else {
+        // 兼容同步模式响应（sync=1 或旧后端）
+        handleTaskDone(res.data)
+        setGenerating(false)
+        toast.success(res.data.message || '生成成功')
       }
-      // 如果有音频URL，自动播放
-      if (res.data.audio_url) {
-        const fullUrl = res.data.audio_url.startsWith('http')
-          ? res.data.audio_url
-          : `${API_BASE}${res.data.audio_url}`
-        setAudioUrl(fullUrl)
-        // 延迟确保 audio 元素挂载后再播放
-        setTimeout(() => {
-          if (audioRef.current) {
-            audioRef.current.play().then(() => {
-              setPlaying(true)
-              setTalking(true)
-            }).catch(() => {})
-          }
-        }, 300)
-      }
-      toast.success(res.data.message || '生成成功')
     } catch (e) {
+      setGenerating(false)
       if (e.status === 402) {
         toast.error('今日生成次数已用完，升级会员解锁更多额度')
         window.open('/membership', '_blank')
@@ -377,7 +458,22 @@ export default function DigitalHumanPage() {
         toast.error(`生成失败：${e.message}`)
       }
     }
-    finally { clearInterval(timer); setGenerating(false); setGenPhase('') }
+  }
+
+  const generate = () => submitTask(false)
+  const recordAndPlay = () => submitTask(true)
+
+  // 重试失败/中断的任务：重新排队执行
+  const retryTask = async (t) => {
+    try {
+      await api.post(`/api/tasks/${t.id}/retry`)
+      setGenerating(true)
+      setCurrentTask({ id: t.id, status: 'pending', progress: 0, stage: '任务已重新提交…' })
+      toast.info('任务已重新提交，后台重新执行中')
+      pollTasks(t.id)
+    } catch (e) {
+      toast.error(`重试失败：${e.message}`)
+    }
   }
 
   const playAudio = useCallback(() => {
@@ -452,45 +548,6 @@ export default function DigitalHumanPage() {
       }
     }, 200)
   }, [])
-
-  // 自动录制：生成 + 播放时同步录制
-  const recordAndPlay = async () => {
-    if (!text.trim()) { toast.error('请输入口播文案'); return }
-    setGenerating(true); setResult(null); stopAudio(); setVideoBlob(null)
-    const phases = ['正在合成配音…', '正在渲染数字人动作…', '正在编码高清视频…']
-    let idx = 0
-    setGenPhase(phases[0])
-    const timer = setInterval(() => { idx = (idx + 1) % phases.length; setGenPhase(phases[idx]) }, 4000)
-    try {
-      const res = await api.post('/api/digital-human/generate', {
-        text: text.trim(), avatar_id: avatarId, voice_id: voiceId,
-        background_id: bgId, scene_id: sceneId, speed,
-        resolution, fps, watermark,
-      })
-      setResult(res.data); loadRecords(true); loadQuota()
-      if (res.data.audio_url) {
-        const fullUrl = res.data.audio_url.startsWith('http')
-          ? res.data.audio_url : `${API_BASE}${res.data.audio_url}`
-        setAudioUrl(fullUrl)
-        setTimeout(() => {
-          if (audioRef.current && avatarRef.current) {
-            avatarRef.current.startRecording()
-            setRecording(true)
-            audioRef.current.play().then(() => { setPlaying(true); setTalking(true) }).catch(() => {})
-          }
-        }, 300)
-      }
-      toast.success(res.data.message || '生成成功')
-    } catch (e) {
-      if (e.status === 402) {
-        toast.error('今日生成次数已用完，升级会员解锁更多额度')
-        window.open('/membership', '_blank')
-      } else {
-        toast.error(`生成失败：${e.message}`)
-      }
-    }
-    finally { clearInterval(timer); setGenerating(false); setGenPhase('') }
-  }
 
   // 音频结束时停止录制
   useEffect(() => {
@@ -1127,7 +1184,7 @@ export default function DigitalHumanPage() {
           {/* 生成按钮 */}
           <div className="flex gap-2">
             <Button variant="primary" size="lg" icon={Sparkles} loading={generating} onClick={generate} className="flex-1">
-              {generating ? (genPhase || 'AI数字人正在生成…') : '生成数字人视频'}
+              {generating ? ((currentTask && !['success', 'failed'].includes(currentTask.status) && currentTask.stage) || genPhase || 'AI数字人正在生成…') : '生成数字人视频'}
             </Button>
             <Button variant="secondary" size="lg" icon={Video} loading={generating} onClick={recordAndPlay}>
               生成+录制
@@ -1136,8 +1193,84 @@ export default function DigitalHumanPage() {
           {generating && (
             <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
               <span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />
-              {genPhase || '正在生成'} · 预计 {Math.max(8, Math.round(text.length / 60))} 秒，请勿关闭页面
+              {currentTask?.stage || '任务执行中'} · 后台执行，可关闭页面，完成进度 {Math.round(currentTask?.progress || 0)}%
             </div>
+          )}
+
+          {/* 生成任务面板：异步任务进度/状态/重试，页面无需停留等待 */}
+          {(currentTask || taskList.length > 0) && (
+            <Card className="mt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <ListChecks className="w-4 h-4 text-violet-500" /> 我的生成任务
+                </h3>
+                <span className="text-[10px] text-gray-400">后台执行 · 可离开页面 · 失败可重试</span>
+              </div>
+              {/* 当前活跃任务：进度条 + 阶段文案 */}
+              {currentTask && !['success', 'failed', 'interrupted', 'canceled'].includes(currentTask.status) && (
+                <div className="mb-3 p-3 bg-violet-50/70 rounded-lg">
+                  <div className="flex items-center justify-between text-xs text-gray-600 mb-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />
+                      {currentTask.stage || '任务执行中…'}
+                    </span>
+                    <span className="font-medium text-violet-600">{Math.round(currentTask.progress || 0)}%</span>
+                  </div>
+                  <div className="h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-violet-500 rounded-full transition-all duration-500"
+                      style={{ width: `${currentTask.progress || 0}%` }} />
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1.5">
+                    {currentTask.status === 'pending' ? '任务排队中，即将开始执行…' : '任务在后台执行，可关闭页面稍后回来查看，无需停留等待'}
+                  </p>
+                </div>
+              )}
+              {/* 任务列表：状态 + 结果 + 重试 */}
+              {taskList.length > 0 && (
+                <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                  {taskList.map((t) => (
+                    <div key={t.id} className="flex items-center gap-2 text-xs p-2 rounded-lg bg-gray-50">
+                      {t.status === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      ) : t.status === 'failed' ? (
+                        <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      ) : t.status === 'interrupted' ? (
+                        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                      ) : (
+                        <Loader2 className="w-4 h-4 text-violet-500 shrink-0 animate-spin" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-gray-700 truncate">
+                            {t.status === 'success' ? '视频生成成功'
+                              : t.status === 'failed' ? '生成失败'
+                              : t.status === 'interrupted' ? '任务中断（可重试）'
+                              : t.status === 'canceled' ? '已取消'
+                              : t.stage || '任务执行中…'}
+                          </span>
+                          <span className="text-gray-400 shrink-0">
+                            {t.status === 'pending' && '排队中'}
+                            {t.status === 'running' && `${Math.round(t.progress || 0)}%`}
+                            {['success', 'failed', 'interrupted', 'canceled'].includes(t.status) && formatTaskTime(t.created_at)}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-gray-400 truncate mt-0.5">
+                          {t.status === 'failed' ? (t.error || '未知错误')
+                            : t.status === 'success' ? '已完成 ✓'
+                            : t.status === 'canceled' ? '已取消'
+                            : '任务执行中'}
+                        </div>
+                      </div>
+                      {(t.status === 'failed' || t.status === 'interrupted') && (
+                        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => retryTask(t)} className="shrink-0">
+                          重试
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           )}
 
           {/* 预览区 */}

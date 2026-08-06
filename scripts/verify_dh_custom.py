@@ -102,6 +102,7 @@ def main():
     t0 = time.time()
     r = requests.post(
         f"{BASE}/api/digital-human/generate", headers=headers,
+        params={"sync": "true"},  # 脚本验证同步语义；前端默认异步任务模式
         json={
             "text": "大家好，这是我的自定义数字人形象和声音测试",
             "avatar_id": avatar_id,

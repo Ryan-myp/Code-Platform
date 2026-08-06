@@ -15,14 +15,16 @@ import time
 import uuid
 import json
 from datetime import datetime, timedelta
+from typing import Callable
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
 from common.llm import call_llm, log_usage
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -1629,15 +1631,25 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     }
 
 
-def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> dict:
+def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
+                  progress: Callable[[float, str], None] | None = None) -> dict:
     """单条数字人视频生成流水线（供单条接口与批量任务复用）。
 
     流程：
     1. 文案预处理（LLM优化口播文案流畅度）
     2. TTS配音（调用配音工坊音频生成）
     3. 视频合成（数字人形象+配音+背景合成为口播视频）
+
+    progress: 可选进度回调 (percent 0-100, stage 文案)，异步任务模式实时回报进度。
     """
     start = datetime.now()
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
 
     # 0. 商业配额：生成消耗 1 次今日额度（管理员/VIP 不受限）
     from common.auth import consume_quota, get_quota_info
@@ -1688,6 +1700,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
     # 之前 LLM 优化环节会把原文改写为带 Markdown 标记（#、**、---）的口播脚本，
     # 导致字幕显示“乱码/不是用户输入的内容”，此处直接使用原文（仅清洗换行）。
     optimized_text = _clean_script_text(req.text)
+    _report(15, "文案已就绪，正在合成配音…")
 
     # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音
     audio_url = ""
@@ -1700,6 +1713,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
         else:
             audio_error = "自定义声音文件缺失，请重新上传"
     if not audio_url:
+        _report(20, "正在合成配音…")
         try:
             from voice_factory import _tts_one
             audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
@@ -1721,6 +1735,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
 
     # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
     # 渲染为 CPU 密集操作，受全局并发池保护（同批次多任务串行，跨批次限并发数）
+    _report(55, "配音完成，正在渲染数字人视频…")
     video_url = ""
     status = "done"
     error_msg = ""
@@ -1744,6 +1759,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
             finally:
                 _RENDER_SLOT.release()
             video_url = f"/uploads/videos/{video_filename}"
+            _report(85, "视频渲染完成，正在保存记录…")
         except Exception as e:
             logger.exception("video generation failed %s", record_id)
             status = "audio_only"
@@ -1769,10 +1785,12 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
     )
     conn.commit()
     conn.close()
+    _report(95, "记录已保存")
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("digital_human", len(req.text), len(optimized_text), elapsed,
               success=not error_msg)
+    _report(100, "生成完成")
 
     return {
         "record_id": record_id,
@@ -1802,29 +1820,76 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "") -> 
     }
 
 
-@router.post("/generate")
-async def generate(req: GenerateRequest, current_user: dict = require_auth()):
-    """数字人口播视频生成 — 文案→配音→视频合成流水线（单条接口）。
+def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:
+    """异步提交前快速失败预检：违规词 / 今日额度 / 素材参数（不消耗配额，执行时再扣）。"""
+    try:
+        from content_strategy import _scan_text
+        hits = _scan_text(req.text)
+    except Exception:
+        hits = []
+    lower_text = req.text.lower()
+    hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
+    if hard_hits:
+        raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
+    from common.auth import get_quota_info
+    qi = get_quota_info(uid) or {}
+    remaining = qi.get("remaining_today")
+    if remaining is not None and remaining <= 0:
+        raise HTTPException(402, "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）")
+    avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
+    voice = next((v for v in VOICES if v["id"] == req.voice_id), None)
+    if not avatar and req.avatar_id.startswith("custom_"):
+        avatar = _load_custom_avatars(user).get(req.avatar_id)
+    if not voice and req.voice_id.startswith("custom_"):
+        voice = _load_custom_voices(user).get(req.voice_id)
+    if not avatar:
+        raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
+    if not voice:
+        raise HTTPException(400, f"未知声音: {req.voice_id}")
+    if not next((b for b in BACKGROUNDS if b["id"] == req.background_id), None):
+        raise HTTPException(400, f"未知背景: {req.background_id}")
 
+
+@router.post("/generate")
+async def generate(
+    req: GenerateRequest,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务模式"),
+    current_user: dict = require_auth(),
+):
+    """数字人口播视频生成 — 文案→配音→视频合成流水线。
+
+    默认异步任务模式：立即返回 task_id，后台 worker 执行（GET /api/tasks/{task_id}
+    查进度/结果，GET /api/tasks?type=dh_generate 看任务列表，POST /api/tasks/{id}/retry
+    重试），页面可关闭无需等待；sync=true 时同步执行（兼容旧客户端/脚本）。
     批量生产请使用 POST /api/digital-human/batch（多文案后台逐条生成）。
-    同一用户同时仅允许 1 条生成（前端按钮已防抖，后端兜底防多标签页并发）。
     """
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    # 用户级并发限制：同用户同时最多 1 条生成中
-    with _GUARD_LOCK:
-        inflight = _USER_GENERATING.get(uid, 0)
-        if inflight >= 1:
-            raise HTTPException(429, "您有视频正在生成中，请等待当前生成完成")
-        _USER_GENERATING[uid] = inflight + 1
-    try:
-        return _generate_one(req, user, uid, role)
-    finally:
+    # 快速失败预检：违规词 / 额度 / 素材参数，无效请求不进入任务队列
+    _precheck_generate(req, uid, user)
+    if sync:
+        # 同步模式：保留原用户级并发限制（同用户同时仅 1 条生成中）
         with _GUARD_LOCK:
-            _USER_GENERATING[uid] = _USER_GENERATING.get(uid, 1) - 1
-            if _USER_GENERATING[uid] <= 0:
-                _USER_GENERATING.pop(uid, None)
+            inflight = _USER_GENERATING.get(uid, 0)
+            if inflight >= 1:
+                raise HTTPException(429, "您有视频正在生成中，请等待当前生成完成")
+            _USER_GENERATING[uid] = inflight + 1
+        try:
+            return _generate_one(req, user, uid, role)
+        finally:
+            with _GUARD_LOCK:
+                _USER_GENERATING[uid] = _USER_GENERATING.get(uid, 1) - 1
+                if _USER_GENERATING[uid] <= 0:
+                    _USER_GENERATING.pop(uid, None)
+    # 异步任务模式：同用户并发限制由任务框架原子校验（register_handler user_limit=1）
+    task = create_task("dh_generate", req.model_dump(), username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "生成任务已提交，可关闭页面，完成后在「我的生成任务」查看",
+        "task": task,
+    }
 
 
 @router.get("/records")
@@ -2531,3 +2596,26 @@ async def regenerate_portraits(current_user: dict = require_auth()):
             logger.exception(f"重新生成写真失败 {avatar['id']}")
             failed.append(avatar["id"])
     return {"ok": ok, "failed": failed}
+
+
+# ══════════════════════════════════════════════════════════════
+# 通用异步任务框架接入：单条生成为后台任务（默认异步，页面可关闭）
+# ══════════════════════════════════════════════════════════════
+
+def _dh_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：接收 GenerateRequest 参数，走完整生成流水线并实时回报进度。
+
+    失败/配额不足时抛 HTTPException，由框架捕获记录 error / error_code（402 → 前端引导升级）。
+    """
+    req = GenerateRequest(**payload)
+    update(5, "任务已受理，正在校验参数…")
+    return _generate_one(
+        req,
+        ctx.get("username", ""),
+        ctx.get("user_id", ""),
+        ctx.get("role", ""),
+        progress=update,
+    )
+
+
+register_handler("dh_generate", _dh_generate_handler, user_limit=1)
