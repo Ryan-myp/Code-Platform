@@ -438,6 +438,18 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
 
   const stage = ARTIFACT_FIELDS.find((s) => s.key === atab)
   const content = requirement?.[stage?.field] || ''
+  // 用例执行结果总览：生成用例原文 × 最近一次有逐条结果的执行（旧记录可能无 cases）
+  const latestRun = testRuns?.find((r) => Array.isArray(r.cases) && r.cases.some((c) => c.case_id)) || null
+  const latestByCase = {}
+  ;(latestRun?.cases || []).forEach((c) => { if (c.case_id) latestByCase[c.case_id] = c })
+  const caseRows = (requirement?.test_cases || '')
+    .split('\n').map((l) => l.trim())
+    .filter((l) => l.startsWith('|') && /TC-[\w-]+/.test(l))
+    .map((l) => ({ id: (l.match(/TC-[\w-]+/) || [''])[0], raw: l }))
+  const passedN = caseRows.filter((r) => latestByCase[r.id]?.status === 'passed').length
+  const failedN = caseRows.filter((r) => ['failed', 'error'].includes(latestByCase[r.id]?.status)).length
+  const skippedN = caseRows.filter((r) => latestByCase[r.id]?.status === 'skipped').length
+  const noneN = caseRows.length - passedN - failedN - skippedN
   const stageStatus = requirement?.pipeline_status
     ? (typeof requirement.pipeline_status === 'string'
       ? (() => { try { return JSON.parse(requirement.pipeline_status) } catch { return {} } })()
@@ -497,6 +509,60 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
               <RefreshCw className={`w-3.5 h-3.5 ${testLoading ? 'animate-spin' : ''}`} /> 刷新
             </button>
           </div>
+          {caseRows.length > 0 && (
+            <div className="rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                  <TestTube2 className="w-3.5 h-3.5 text-indigo-500" />
+                  用例执行结果
+                  <span className="text-gray-400 font-normal">· 生成用例 × 最新执行</span>
+                  <span className="flex items-center gap-1">
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">✓ {passedN}</span>
+                    {failedN > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">✗ {failedN}</span>
+                    )}
+                    {skippedN > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">⊘ {skippedN}</span>
+                    )}
+                    {noneN > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 text-[10px] font-semibold">— {noneN}</span>
+                    )}
+                  </span>
+                </span>
+                <span className="text-[10px] text-gray-400">{latestRun?.created_at ? new Date(latestRun.created_at).toLocaleString() : ''}</span>
+              </div>
+              <div className="border-t border-gray-100 divide-y divide-gray-50 max-h-[36vh] overflow-y-auto">
+                {caseRows.map((row, i) => {
+                  const res = latestByCase[row.id]
+                  const st = res?.status || 'none'
+                  const fail = st === 'failed' || st === 'error'
+                  return (
+                    <div key={`${row.id}-${i}`} className="px-3 py-2 flex items-start gap-2 hover:bg-gray-50">
+                      <span className="w-5 flex-shrink-0 mt-0.5">
+                        {st === 'passed' ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          : st === 'skipped' ? <SkipForward className="w-4 h-4 text-gray-400" />
+                          : fail ? <XCircle className="w-4 h-4 text-red-500" />
+                          : <span className="w-3.5 h-3.5 rounded-full border border-gray-300 inline-block mt-0.5" />}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs text-gray-800 font-medium">{row.id}</div>
+                        <div className="text-[11px] text-gray-500 break-all leading-snug mt-0.5">{row.raw}</div>
+                      </div>
+                      <div className="w-[32%] flex-shrink-0 pl-2 border-l border-gray-100">
+                        {fail && res.message ? (
+                          <div className="text-[11px] text-red-600 break-all leading-snug">{res.message}</div>
+                        ) : (
+                          <span className="text-[11px] text-gray-400">
+                            {st === 'passed' ? '✓ 执行通过' : st === 'skipped' ? '⊘ 已跳过' : '— 未执行'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
           {testLoading ? (
             <div className="py-10 text-center text-gray-400 text-sm">加载中…</div>
           ) : testRuns?.length ? (
