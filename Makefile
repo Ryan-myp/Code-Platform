@@ -1,5 +1,5 @@
 # ─── 小团智能平台 Makefile ──────────────────────────────────────
-.PHONY: help install backend frontend dev test lint format clean docker-up docker-down reset-db
+.PHONY: help install backend frontend dev test lint format clean docker-up docker-down reset-db check-env
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -80,7 +80,9 @@ reset-db: ## 重置数据库（⚠️ 删除所有数据）
 	rm -f backend/platform.db data/platform.db platform.db
 	@echo "Database reset complete"
 
-setup-env: ## 创建 .env 文件（从示例复制）
+check-env: ## 部署环境自检（12 项，全部通过才允许部署；加 FIX=1 自动安装缺失项）
+	./scripts/check_environment.sh $(if $(filter 1,$(FIX)),--fix,)
+
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		echo ".env file created. Please edit it with your settings."; \
