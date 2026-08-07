@@ -257,6 +257,12 @@ _QUOTA_PATHS = (
     "/api/music-factory/lyrics/generate",
     "/api/music-factory/music/generate",
     "/api/music-factory/tts/sing",
+    "/api/meme/generate",
+    "/api/doc-qa/ask",
+    "/api/mindmap/generate",
+    "/api/search/web",
+    "/api/forecast/analyze",
+    "/api/video/analyze",
     "/api/auto-run",
 )
 
