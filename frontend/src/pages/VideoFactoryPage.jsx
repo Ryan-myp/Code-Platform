@@ -13,6 +13,7 @@ import {
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatBytes } from '../lib/format'
+import { friendlyError } from '../lib/errors'
 import {
   Modal,
   Button,
@@ -548,7 +549,9 @@ export default function VideoFactoryPage() {
                   </div>
                 )}
                 {lastResult.status === 'failed' && lastResult.error && (
-                  <div className="text-sm text-red-600 mt-1">失败原因：{lastResult.error}</div>
+                  <div className="text-sm text-red-600 mt-1">
+                    失败原因：{friendlyError(lastResult.error)}
+                  </div>
                 )}
                 {lastResult.status !== 'completed' &&
                   lastResult.status !== 'failed' &&

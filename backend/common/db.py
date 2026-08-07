@@ -106,7 +106,8 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY, share_code TEXT UNIQUE NOT NULL,
         user_id TEXT NOT NULL, content_type TEXT DEFAULT 'text',
         title TEXT DEFAULT '', content TEXT DEFAULT '',
-        created_at TEXT, views INTEGER DEFAULT 0
+        created_at TEXT, views INTEGER DEFAULT 0,
+        rewarded INTEGER DEFAULT 0, reward_quota INTEGER DEFAULT 0
     )""",
     # ── 会员订单（商业版：支付闭环） ────────────────────────
     """CREATE TABLE IF NOT EXISTS orders (
@@ -290,11 +291,11 @@ _SCHEMA_STATEMENTS = [
         active INTEGER DEFAULT 1, expires_at TEXT,
         created_at TEXT, created_by TEXT DEFAULT ''
     )""",
-    # 分享页访问埋点（商业版：渠道分析）
+    # 分享页访问埋点（商业版：渠道分析 + 裂变奖励去重键）
     """CREATE TABLE IF NOT EXISTS share_visits (
         id INTEGER PRIMARY KEY AUTOINCREMENT, share_id TEXT NOT NULL,
         source TEXT DEFAULT 'direct', referer TEXT DEFAULT '',
-        visited_at TEXT
+        visited_at TEXT, visitor_key TEXT DEFAULT ''
     )""",
     # 仪表盘组件配置
     """CREATE TABLE IF NOT EXISTS dashboard_widgets (
@@ -594,6 +595,10 @@ def migrate() -> None:
         _add_column_if_missing(conn, "orders", "coupon_code", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "orders", "original_amount", "REAL DEFAULT 0")
         _add_column_if_missing(conn, "users", "share_from", "TEXT DEFAULT ''")
+        # v11.x 分享裂变：访问奖励（去重键 / 已发奖标记 / 已发额度）
+        _add_column_if_missing(conn, "shares", "rewarded", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "shares", "reward_quota", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "share_visits", "visitor_key", "TEXT DEFAULT ''")
         # v9.5：MCP 授权验证 / 知识库连接配置
         _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
         _add_column_if_missing(conn, "mcp_servers", "auth_config", "TEXT DEFAULT '{}'")

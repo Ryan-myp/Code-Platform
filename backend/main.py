@@ -6,6 +6,7 @@ v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -294,9 +295,15 @@ async def quota_middleware(request: Request, call_next):
                     result = consume_quota(user_id)
                     charged = bool(result.get("charged"))  # admin/vip 不扣费，无需退
                     if not result.get("allowed"):
+                        # 402 分层引导：free 用户促升级 / pro 用户提示明日恢复，文案与会员体系对齐
+                        membership = (get_quota_info(user_id) or {}).get("membership") or "free"
+                        if membership == "pro":
+                            detail = "今日专业版 200 次额度已用完，明日 0 点自动恢复；升级至尊版可无限使用"
+                        else:
+                            detail = "今日免费额度已用完（30 次/日）。升级专业版解锁每日 200 次，或邀请好友得额度"
                         return JSONResponse(
                             status_code=402,
-                            content={"detail": "今日免费额度已用完，升级会员可继续使用（剩余 0 次）"},
+                            content={"detail": detail, "membership": membership},
                         )
             except HTTPException:
                 pass  # token 无效由端点鉴权兜底返回 401
@@ -318,17 +325,41 @@ async def health_check():
 # 分享访问埋点
 
 
-def _record_share_visit(share_id: str, source: str, referer: str) -> None:
-    """写入分享访问埋点（渠道分析用）。"""
+def _share_visitor_key(request: Request) -> str:
+    """访问者去重键：已登录用户 u:{uid}（分享者本人不计裂变奖励）；游客 ip:{ip}:{UA哈希}。"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            payload = decode_access_token(auth_header[7:])
+            uid = payload.get("user_id")
+            if uid:
+                return f"u:{uid}"
+        except HTTPException:
+            pass  # token 无效按游客处理
+    ip = request.client.host if request.client else "unknown"
+    ua = request.headers.get("user-agent", "")[:64]
+    return f"ip:{ip}:{hashlib.md5(ua.encode()).hexdigest()[:10]}"
+
+
+def _record_share_visit(share_id: str, source: str, referer: str, visitor_key: str = "") -> bool:
+    """写入分享访问埋点（渠道分析 + 裂变计数）。同访问者重复访问同一分享不重复记录。"""
     from common.db import get_db
 
     conn = get_db()
     try:
+        if visitor_key:
+            dup = conn.execute(
+                "SELECT id FROM share_visits WHERE share_id=? AND visitor_key=? LIMIT 1",
+                (share_id, visitor_key),
+            ).fetchone()
+            if dup:
+                return False
         conn.execute(
-            "INSERT INTO share_visits (share_id, source, referer, visited_at) VALUES (?, ?, ?, ?)",
-            (share_id, source, referer, datetime.now().isoformat()),
+            "INSERT INTO share_visits (share_id, source, referer, visited_at, visitor_key) VALUES (?, ?, ?, ?, ?)",
+            (share_id, source, referer, datetime.now().isoformat(), visitor_key),
         )
         conn.commit()
+        return True
     finally:
         conn.close()
 
@@ -470,9 +501,17 @@ async def create_share_api(req: ShareCreateRequest, current_user: dict = require
     return create_share(current_user.get("user_id"), req.content_type, req.title, req.content)
 
 
+@app.get("/api/shares/my")
+async def my_shares(current_user: dict = require_auth()):
+    """我的分享工作台：访问 / 注册转化 / 裂变奖励进度。"""
+    from common.auth import get_my_share_stats
+
+    return get_my_share_stats(current_user.get("user_id"))
+
+
 @app.get("/api/shares/{share_code}")
 async def get_share_api(share_code: str, request: Request, src: str = ""):
-    """公开访问分享内容（无需登录，浏览量 +1，记录访问埋点）。"""
+    """公开访问分享内容（无需登录，浏览量 +1，记录访问埋点 + 裂变奖励）。"""
     share = get_share(share_code)
     if not share:
         raise HTTPException(404, "分享不存在或已失效")
@@ -488,7 +527,13 @@ async def get_share_api(share_code: str, request: Request, src: str = ""):
                 source = "direct"
         else:
             source = "direct"
-    _record_share_visit(share["id"], source, referer)
+    # 去重键：同访问者只计一次有效访问；分享者本人访问不计奖励
+    visitor_key = _share_visitor_key(request)
+    _record_share_visit(share["id"], source, referer, visitor_key)
+    # 裂变奖励：有效访问达阈值 → 分享者得一次性额度（幂等，见 grant_share_visit_reward）
+    from common.auth import grant_share_visit_reward
+
+    grant_share_visit_reward(share, visitor_key)
     return share
 
 

@@ -231,6 +231,10 @@ MEMBERSHIP_PLANS = {
 # 邀请注册双方各奖励的一次性额度（不随天重置）
 INVITE_REWARD = 5
 
+# 分享裂变奖励：分享被去重有效访问达阈值 → 一次性奖励额度（每分享封顶一次，防刷）
+SHARE_VISIT_THRESHOLD = 10
+SHARE_VISIT_REWARD = 5
+
 
 def _effective_membership(row: dict) -> str:
     """会员到期自动降级为 free（读取视角，不落库）。"""
@@ -512,6 +516,115 @@ def get_share(share_code: str) -> dict | None:
         conn.execute("UPDATE shares SET views=views+1 WHERE id=?", (row["id"],))
         conn.commit()
         return dict(row)
+    finally:
+        conn.close()
+
+
+def _share_owner_if_eligible(share: dict, visitor_key: str) -> str | None:
+    """裂变奖励资格：无效 key 或分享者本人访问 → None（不计）；否则返回分享者 user_id。"""
+    if not visitor_key or not share:
+        return None
+    owner = str(share.get("user_id") or "")
+    if visitor_key.startswith("u:") and visitor_key[2:] == owner:
+        return None  # 分享者本人不计
+    return owner
+
+
+def _apply_share_reward(conn: Any, sid: str, owner: str, own_conn: bool) -> bool:
+    """发放分享奖励（幂等：仅 rewarded=0 时发），返回是否发放。"""
+    cur = conn.execute(
+        "UPDATE shares SET rewarded=1, reward_quota=? WHERE id=? AND rewarded=0",
+        (SHARE_VISIT_REWARD, sid),
+    )
+    if cur.rowcount and owner:
+        conn.execute("UPDATE users SET bonus_quota=bonus_quota+? WHERE id=?", (SHARE_VISIT_REWARD, owner))
+        if own_conn:
+            conn.commit()
+        logger.info("分享裂变奖励: share=%s owner=%s +%d 额度", sid, owner, SHARE_VISIT_REWARD)
+        return True
+    if own_conn:
+        conn.commit()
+    return False
+
+
+def grant_share_visit_reward(share: dict, visitor_key: str, conn: Any | None = None) -> dict:
+    """分享访问奖励（裂变闭环）：有效访问（去重后）达阈值且未发过奖 → 分享者得一次性额度。
+
+    规则：
+    - 分享者本人访问不计（visitor_key 为 u:{uid} 且等于分享者）
+    - 同访问者对同一分享只计一次（main._record_share_visit 插入时已去重）
+    - 每分享最多奖励一次（rewarded 标志幂等，防刷成本可控）
+    conn: 可选连接——调用方持有写事务时传入，与事务同提交。
+    """
+    owner = _share_owner_if_eligible(share, visitor_key)
+    if owner is None:
+        return {"counted": False, "rewarded": False}
+    from common.db import get_db
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db()
+    try:
+        sid = share["id"]
+        row = conn.execute("SELECT rewarded FROM shares WHERE id=?", (sid,)).fetchone()
+        if row and row["rewarded"]:
+            return {"counted": True, "rewarded": False}  # 已发过奖，不再重复
+        valid = conn.execute(
+            """SELECT COUNT(*) AS c FROM share_visits
+               WHERE share_id=? AND visitor_key!='' AND visitor_key <> 'u:'||?""",
+            (sid, owner),
+        ).fetchone()["c"]
+        if valid < SHARE_VISIT_THRESHOLD:
+            return {"counted": True, "rewarded": False}
+        rewarded = _apply_share_reward(conn, sid, owner, own_conn)
+        return {"counted": True, "rewarded": rewarded}
+    except Exception:
+        logger.exception("分享裂变奖励失败: share=%s", share.get("id"))
+        return {"counted": False, "rewarded": False}
+    finally:
+        if own_conn:
+            conn.close()
+
+
+def get_my_share_stats(user_id: str) -> dict:
+    """我的分享工作台：每分享的访问 / 注册转化 / 裂变奖励进度 + 全局汇总。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM shares WHERE user_id=? ORDER BY created_at DESC LIMIT 100", (user_id,)
+        ).fetchall()
+        items = []
+        totals = {"visits": 0, "conversions": 0, "reward_earned": 0}
+        for r in rows:
+            sid = r["id"]
+            visits = conn.execute("SELECT COUNT(*) AS c FROM share_visits WHERE share_id=?", (sid,)).fetchone()["c"]
+            conversions = conn.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE share_from=?", (r["share_code"],)
+            ).fetchone()["c"]
+            reward = r["reward_quota"] or 0
+            totals["visits"] += visits
+            totals["conversions"] += conversions
+            totals["reward_earned"] += reward
+            items.append(
+                {
+                    "id": sid,
+                    "share_code": r["share_code"],
+                    "title": r["title"] or f"{r['content_type']} 分享",
+                    "content_type": r["content_type"],
+                    "views": r["views"],
+                    "visits": visits,
+                    "conversions": conversions,
+                    "rewarded": bool(r["rewarded"]),
+                    "reward_quota": reward,
+                    "created_at": r["created_at"],
+                }
+            )
+        totals["threshold"] = SHARE_VISIT_THRESHOLD
+        totals["reward_per_share"] = SHARE_VISIT_REWARD
+        totals["reward_per_invite"] = INVITE_REWARD
+        return {"shares": items, "totals": totals}
     finally:
         conn.close()
 

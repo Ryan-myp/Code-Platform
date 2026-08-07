@@ -140,6 +140,9 @@ export default function ShareViewPage() {
                   <p className="text-xs text-gray-500 mt-0.5">
                     小团智能平台 · 30+ 效率工具免费体验
                   </p>
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    分享被 10 位好友访问，分享者可得 5 次生成额度；你注册还可领免费额度
+                  </p>
                 </div>
                 <Link
                   to={`/login?share=${shareCode}`}

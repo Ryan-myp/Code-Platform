@@ -1,51 +1,14 @@
-# ─── Backend ─────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-venv/
-ENV/
-.venv/
-
-# ─── Frontend ────────────────────────────────────────────────────
+# ─── Frontend 专属忽略规则 ────────────────────────────────────
 node_modules/
-frontend/node_modules/
 dist/
-frontend/dist/
-.next/
-out/
 
-# ─── Database ────────────────────────────────────────────────────
-*.db
-*.sqlite
-*.sqlite3
-data/
-
-# ─── Environment & Secrets ──────────────────────────────────────
+# ─── 本地环境与密钥 ───────────────────────────────────────────
 .env
 .env.local
 .env.*.local
-*.key
-*.pem
-config/secrets.yml
+*.local
 
-# ─── IDE ─────────────────────────────────────────────────────────
+# ─── IDE / 系统 ────────────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
@@ -53,20 +16,7 @@ config/secrets.yml
 *~
 .DS_Store
 
-# ─── Logs ────────────────────────────────────────────────────────
+# ─── 日志 / 缓存 ───────────────────────────────────────────────
 *.log
 logs/
-/tmp/
-
-# ─── Artifacts (generated docs) ─────────────────────────────────
-backend/artifacts/*.md
-!backend/artifacts/.gitkeep
-
-# ─── CI/CD ──────────────────────────────────────────────────────
-.github/workflows/generated/
-
-# ─── Coverage reports ───────────────────────────────────────────
-.coverage
-coverage.xml
-htmlcov/
-.pytest_cache/
+.tmp/

@@ -43,6 +43,7 @@ import {
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
+import { friendlyError } from '../lib/errors'
 import AnimatedAvatar, {
   EXPRESSION_NAMES,
   OUTFIT_NAMES,
@@ -546,7 +547,7 @@ export default function DigitalHumanPage() {
             // 402 额度耗尽：全局已提示并引导升级（QuotaExhaustedNotifier），此处仅打开会员页
             window.open('/membership', '_blank')
           } else {
-            toast.error(`生成失败：${t.error || '未知错误'}`)
+            toast.error(`生成失败：${friendlyError(t.error)}`)
           }
         }
       } catch {

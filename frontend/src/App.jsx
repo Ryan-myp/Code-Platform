@@ -124,20 +124,19 @@ function ShareRedirect() {
   return null
 }
 
-// 全局 402 额度耗尽引导：api 拦截器派发 quota-exhausted 事件后统一提示升级
-// （页面级 toast 由各页自理；此处兜底未处理 402 的页面，避免用户无感知“死掉”的操作）
+// 全局 402 额度耗尽引导：api 拦截器派发 quota-exhausted 事件（携带后端分层文案：
+// free 促升级 / pro 提示明日恢复）后统一提示，避免各页重复处理；页面级 toast 由各页自理
 function QuotaExhaustedNotifier() {
   const toast = useToast()
   useEffect(() => {
-    const notify = () => {
-      toast.error('今日免费额度已用完，升级会员可继续使用（会员页可查看套餐）', 6000)
+    const notify = (e) => {
+      toast.error(e?.detail?.message || '今日生成额度已用完，可在会员中心查看套餐升级', 6000)
     }
     window.addEventListener('quota-exhausted', notify)
     return () => window.removeEventListener('quota-exhausted', notify)
   }, [toast])
   return null
 }
-
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
