@@ -14,7 +14,12 @@ class SPAHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=DIST_DIR, **kwargs)
 
     def end_headers(self):
-        self.send_header("Cache-Control", "no-cache")
+        # 带 hash 的构建资源内容寻址：永久缓存；HTML 每次验证（no-cache 配合 ETag 304），
+        # 避免浏览器缓存旧 index.html 导致"部署后仍看到旧页面"
+        if self.path.startswith("/assets/"):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        else:
+            self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
     def do_GET(self):
