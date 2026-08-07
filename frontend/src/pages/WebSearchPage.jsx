@@ -3,11 +3,13 @@ import { Search, Globe, ExternalLink, Clock, Sparkles, FileText, Loader2, Zap } 
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 export default function WebSearchPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const [query, setQuery] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [history, setHistory] = useState([])
@@ -21,14 +23,13 @@ export default function WebSearchPage() {
   }
 
   const handleSearch = async () => {
-    if (!query.trim()) return
-    setLoading(true); setResult(null); setError(null)
-    try {
-      const res = await api.post('/api/search/web', { query: query.trim() })
-      setResult(res.data)
-      loadHistory()
-    } catch (e) { setError(e.message); toast.error(`搜索失败：${e.message}`) }
-    setLoading(false)
+    if (!query.trim() || task) return
+    setResult(null); setError(null)
+    await submitTask('/api/search/web', { query: query.trim() }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => { setResult(data); setTask(null); loadHistory() },
+      onError: (e) => { setError(e.message); setTask(null); toast.error(`搜索失败：${e.message}`) },
+    })
   }
 
   return (
@@ -57,13 +58,25 @@ export default function WebSearchPage() {
                 className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 outline-none"
               />
               <button
-                onClick={handleSearch}
-                disabled={loading || !query.trim()}
+                onClick={() => handleSearch()}
+                disabled={!!task || !query.trim()}
                 className="px-4 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 hover:to-blue-700 disabled:opacity-50 transition-all flex items-center gap-1.5"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {task ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               </button>
             </div>
+            {task && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                  <span>{task.stage || 'AI 搜索整合中…'}</span>
+                  <span>{task.progress || 0}%</span>
+                </div>
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-300"
+                    style={{ width: `${task.progress || 0}%` }} />
+                </div>
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap gap-2">
               {['AI最新进展', '2024科技趋势', 'Python最佳实践', '最新经济数据'].map((q) => (
                 <button key={q} onClick={() => { setQuery(q); setTimeout(() => handleSearch, 50) }}
@@ -99,9 +112,13 @@ export default function WebSearchPage() {
 
         {/* 右侧：结果 */}
         <div className="lg:col-span-2 space-y-4">
-          {loading ? (
+          {task ? (
             <Card>
-              <SkeletonList count={4} />
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <Loader2 className="w-5 h-5 text-cyan-500 animate-spin" />
+                <span>{task.stage || 'AI 正在搜索整合…'}</span>
+                <span className="text-gray-400 ml-auto">{task.progress || 0}%</span>
+              </div>
             </Card>
           ) : error ? (
             <ErrorState message={`搜索失败：${error}`} onRetry={handleSearch} />

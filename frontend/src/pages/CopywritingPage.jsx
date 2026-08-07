@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import {
-  PenTool, Play, Copy, Check, Clock, Sparkles, Upload, X,
+  PenTool, Play, Copy, Check, Clock, Sparkles, Upload, X, Download,
   FileText, TrendingUp, Share2, Mail, Megaphone, Package, Newspaper, BookOpen,
   Trash2, Star, Tag,
 } from 'lucide-react'
@@ -9,6 +9,7 @@ import ShareButton from '../components/ShareButton'
 import { Card, Button, Badge, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const TYPES = [
   { value: 'marketing', label: '营销文案', icon: Megaphone, color: 'pink' },
@@ -49,13 +50,14 @@ const TEMPLATES = [
 
 export default function CopywritingPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const [prompt, setPrompt] = useState('')
   const [type, setType] = useState('marketing')
   const [title, setTitle] = useState('')
   const [tone, setTone] = useState('professional')
   const [length, setLength] = useState('medium')
   const [result, setResult] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
   const [copied, setCopied] = useState(false)
   const [showTemplates, setShowTemplates] = useState(true)
@@ -81,18 +83,30 @@ export default function CopywritingPage() {
       ? `${prompt}\n\n---参考材料---\n${fileContent.slice(0, 2000)}`
       : prompt
     if (!finalPrompt.trim()) { toast.error('请输入文案需求'); return }
-    setLoading(true); setResult('')
-    try {
-      const fullPrompt = `${finalPrompt}\n\n要求：语气风格为${TONES.find(t => t.value === tone)?.label}，篇幅控制在${LENGTHS.find(l => l.value === length)?.desc}。`
-      const res = await api.post('/api/copywriting/generate', { type, title, prompt: fullPrompt })
-      setResult(res.data.result); loadHistory(); toast.success('文案生成完成')
-    } catch (e) { toast.error(`生成失败：${e.message}`) }
-    finally { setLoading(false) }
+    setResult('')
+    const fullPrompt = `${finalPrompt}\n\n要求：语气风格为${TONES.find(t => t.value === tone)?.label}，篇幅控制在${LENGTHS.find(l => l.value === length)?.desc}。`
+    await submitTask('/api/copywriting/generate', { type, title, prompt: fullPrompt }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => {
+        setResult(data.result); setTask(null); loadHistory(); toast.success('文案生成完成')
+      },
+      onError: (e) => { setTask(null); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const copyResult = () => {
     navigator.clipboard.writeText(result); setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const downloadResult = () => {
+    const name = (title || 'AI文案').replace(/[\\/:*?"<>|]/g, '_')
+    const blob = new Blob([result], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${name}.md`; a.click()
+    URL.revokeObjectURL(url)
+    toast.success('已下载 Markdown 文件')
   }
 
   const applyTemplate = (tpl) => {
@@ -284,7 +298,19 @@ export default function CopywritingPage() {
                 )}
               </div>
 
-              <Button variant="primary" icon={Play} loading={loading} onClick={generate} className="w-full">生成文案</Button>
+              <Button variant="primary" icon={Play} loading={!!task} onClick={generate} className="w-full">生成文案</Button>
+              {task && (
+                <div className="w-full">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span>{task.stage || '处理中…'}</span>
+                    <span>{task.progress || 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-pink-500 to-rose-500 rounded-full transition-all duration-300"
+                      style={{ width: `${task.progress || 0}%` }} />
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -298,6 +324,7 @@ export default function CopywritingPage() {
               </h3>
               {result && (
                 <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>下载</Button>
                   <ShareButton content={result} title="文案生成结果" contentType="copywriting" />
                   <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                     {copied ? '已复制' : '复制'}

@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react'
 import {
   Languages, Play, Copy, Check, ArrowRightLeft, Clock, Upload, X,
   FileText, Globe, Scale, Stethoscope, BookOpen, Briefcase, Code2,
-  Trash2, Sparkles, FileUp, Star, ListOrdered, BookMarked, Plus,
+  Trash2, Sparkles, FileUp, Star, ListOrdered, BookMarked, Plus, Download,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const LANGS = ['中文', 'English', '日本語', '한국어', 'Français', 'Deutsch', 'Español', 'Русский', 'العربية', 'Português']
 
@@ -38,13 +39,14 @@ const TEMPLATES = [
 
 export default function TranslationPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const [text, setText] = useState('')
   const [sourceLang, setSourceLang] = useState('中文')
   const [targetLang, setTargetLang] = useState('English')
   const [domain, setDomain] = useState('general')
   const [style, setStyle] = useState('free')
   const [result, setResult] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
   const [copied, setCopied] = useState(false)
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -67,23 +69,25 @@ export default function TranslationPage() {
     finally { setHistoryLoading(false) }
   }
 
+  const buildSystemPrompt = () => {
+    const domainMeta = DOMAINS.find(d => d.value === domain)
+    const styleMeta = STYLES.find(s => s.value === style)
+    return `你是专业翻译，将以下内容从${sourceLang}翻译为${targetLang}。\n领域：${domainMeta.label}（${domainMeta.desc}）\n翻译风格：${styleMeta.label}（${styleMeta.desc}）\n要求：保持原文格式，术语准确，表达自然流畅。只返回翻译结果。`
+  }
+
   const translate = async () => {
     const finalText = fileContent || text
     if (!finalText.trim()) { toast.error('请输入翻译内容'); return }
-    setLoading(true); setResult('')
-    const domainMeta = DOMAINS.find(d => d.value === domain)
-    const styleMeta = STYLES.find(s => s.value === style)
-    try {
-      const systemPrompt = `你是专业翻译，将以下内容从${sourceLang}翻译为${targetLang}。
-领域：${domainMeta.label}（${domainMeta.desc}）
-翻译风格：${styleMeta.label}（${styleMeta.desc}）
-要求：保持原文格式，术语准确，表达自然流畅。只返回翻译结果。`
-      const res = await api.post('/api/translation/translate', {
-        source_lang: sourceLang, target_lang: targetLang, text: `${systemPrompt}\n\n${finalText}`
-      })
-      setResult(res.data.result); loadHistory(); toast.success('翻译完成')
-    } catch (e) { toast.error(`翻译失败：${e.message}`) }
-    finally { setLoading(false) }
+    setResult('')
+    await submitTask('/api/translation/translate', {
+      source_lang: sourceLang, target_lang: targetLang, text: `${buildSystemPrompt()}\n\n${finalText}`
+    }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => {
+        setResult(data.result); setTask(null); loadHistory(); toast.success('翻译完成')
+      },
+      onError: (e) => { setTask(null); toast.error(`翻译失败：${e.message}`) },
+    })
   }
 
   const swapLangs = () => {
@@ -92,8 +96,19 @@ export default function TranslationPage() {
   }
 
   const copyResult = () => {
-    navigator.clipboard.writeText(result); setCopied(true)
+    const content = result || batchResults.map((r) => r.translated).join('\n\n---\n\n')
+    navigator.clipboard.writeText(content); setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const downloadResult = () => {
+    const content = result || batchResults.map((r) => `## ${r.original.slice(0, 40)}\n\n${r.translated}`).join('\n\n---\n\n')
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `翻译结果-${sourceLang}到${targetLang}.md`; a.click()
+    URL.revokeObjectURL(url)
+    toast.success('已下载翻译文件')
   }
 
   const applyTemplate = (tpl) => {
@@ -145,18 +160,25 @@ export default function TranslationPage() {
   const batchTranslate = async () => {
     const validTexts = batchTexts.filter(t => t.trim())
     if (validTexts.length === 0) { toast.error('请输入至少一段翻译内容'); return }
-    setLoading(true); setBatchResults([])
-    const domainMeta = DOMAINS.find(d => d.value === domain)
-    const styleMeta = STYLES.find(s => s.value === style)
-    const systemPrompt = `你是专业翻译，将以下内容从${sourceLang}翻译为${targetLang}。\n领域：${domainMeta.label}（${domainMeta.desc}）\n翻译风格：${styleMeta.label}（${styleMeta.desc}）\n要求：保持原文格式，术语准确，表达自然流畅。只返回翻译结果。`
-    try {
-      const results = await Promise.all(validTexts.map(t =>
-        api.post('/api/translation/translate', { source_lang: sourceLang, target_lang: targetLang, text: `${systemPrompt}\n\n${t}` })
-          .then(r => r.data.result).catch(() => '翻译失败')
-      ))
-      setBatchResults(results); toast.success(`批量翻译完成（${results.length}段）`)
-    } catch (e) { toast.error(`批量翻译失败：${e.message}`) }
-    finally { setLoading(false) }
+    setBatchResults([])
+    const outputs = []
+    for (let i = 0; i < validTexts.length; i++) {
+      // 异步任务模式：每段独立任务，串行等待（受后端用户并发限制保护）
+      await new Promise((resolve) => {
+        submitTask('/api/translation/translate', {
+          source_lang: sourceLang, target_lang: targetLang, text: `${buildSystemPrompt()}\n\n${validTexts[i]}`
+        }, {
+          onUpdate: (t) => setTask({ ...t, batchIndex: i + 1, batchTotal: validTexts.length }),
+          onSuccess: (data) => { outputs.push({ original: validTexts[i], translated: data.result }); resolve() },
+          onError: () => { outputs.push({ original: validTexts[i], translated: '' }); resolve() },
+        })
+      })
+    }
+    setTask(null)
+    setBatchResults(outputs)
+    loadHistory()
+    const failed = outputs.filter(o => !o.translated).length
+    toast.success(failed ? `批量翻译完成（${outputs.length - failed}成功/${failed}失败）` : `批量翻译完成（${outputs.length}段）`)
   }
 
   const deleteHistory = async (id, e) => {
@@ -323,14 +345,38 @@ export default function TranslationPage() {
                   <button onClick={addBatchLine} className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 ml-7">
                     <Plus className="w-3 h-3" /> 添加一段
                   </button>
-                  <Button variant="primary" icon={Languages} loading={loading} onClick={batchTranslate} className="w-full">批量翻译（{batchTexts.filter(t=>t.trim()).length}段）</Button>
+                  <Button variant="primary" icon={Languages} loading={!!task} onClick={batchTranslate} className="w-full">批量翻译（{batchTexts.filter(t=>t.trim()).length}段）</Button>
+                  {task?.batchTotal > 1 && (
+                    <div className="w-full">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>第 {task.batchIndex}/{task.batchTotal} 段 · {task.stage || '处理中…'}</span>
+                        <span>{task.progress || 0}%</span>
+                      </div>
+                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
+                          style={{ width: `${task.progress || 0}%` }} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
                   <textarea value={text} onChange={(e) => setText(e.target.value)}
                     placeholder="输入需要翻译的文本..."
                     rows={8} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
-                  <Button variant="primary" icon={Languages} loading={loading} onClick={translate} className="w-full">翻译</Button>
+                  <Button variant="primary" icon={Languages} loading={!!task} onClick={translate} className="w-full">翻译</Button>
+                  {task && !task.batchTotal && (
+                    <div className="w-full">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>{task.stage || '处理中…'}</span>
+                        <span>{task.progress || 0}%</span>
+                      </div>
+                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
+                          style={{ width: `${task.progress || 0}%` }} />
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -346,6 +392,7 @@ export default function TranslationPage() {
               </h3>
               {(result || batchResults.length > 0) && (
                 <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>下载</Button>
                   <ShareButton content={result || batchResults.map((r) => `**${r.original}**\n\n${r.translated}`).join('\n\n---\n\n')} title="翻译结果" contentType="translation" />
                   <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                     {copied ? '已复制' : '复制'}

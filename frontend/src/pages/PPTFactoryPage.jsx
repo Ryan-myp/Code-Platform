@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import {
-  Presentation, Play, Clock, FileText, Copy, Check, Upload, X,
+  Presentation, Play, Clock, FileText, Copy, Check, Upload, X, Download,
   Users, Layers, Palette, Sparkles, Trash2, Briefcase, GraduationCap,
   Rocket, BarChart3, Lightbulb,
 } from 'lucide-react'
@@ -9,6 +9,7 @@ import ShareButton from '../components/ShareButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const PPT_TYPES = [
   { value: 'business', label: '商业计划', icon: Briefcase, color: 'blue' },
@@ -50,6 +51,7 @@ const TEMPLATES = [
 
 export default function PPTFactoryPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const [title, setTitle] = useState('')
   const [outline, setOutline] = useState('')
   const [pptType, setPptType] = useState('business')
@@ -58,7 +60,8 @@ export default function PPTFactoryPage() {
   const [theme, setTheme] = useState('business_blue')
   const [result, setResult] = useState('')
   const [slides, setSlides] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [pptxUrl, setPptxUrl] = useState('')
+  const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
   const [copied, setCopied] = useState(false)
   const [uploadedFile, setUploadedFile] = useState(null)
@@ -77,35 +80,48 @@ export default function PPTFactoryPage() {
 
   const generate = async () => {
     if (!title.trim()) { toast.error('请输入 PPT 主题'); return }
-    setLoading(true); setResult(''); setSlides([])
+    setResult(''); setSlides([]); setPptxUrl('')
     const typeLabel = PPT_TYPES.find(t => t.value === pptType)?.label
     const audienceLabel = AUDIENCES.find(a => a.value === audience)?.label
     const scaleDesc = SCALES.find(s => s.value === scale)?.desc
     const themeLabel = THEMES.find(t => t.value === theme)?.label
-    try {
-      const fullOutline = fileContent
-        ? `${outline}\n\n参考材料:\n${fileContent.slice(0, 1500)}`
-        : outline
-      const res = await api.post('/api/ppt/generate', {
-        title: `${title}（类型:${typeLabel}, 受众:${audienceLabel}, 规模:${scaleDesc}, 风格:${themeLabel}）`,
-        outline: fullOutline,
-      })
-      setResult(res.data.result)
-      try {
-        const jsonMatch = res.data.result.match(/\{[\s\S]*\}/)
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0])
-          if (parsed.slides) setSlides(parsed.slides)
-        }
-      } catch { /* not valid JSON */ }
-      loadHistory(); toast.success('PPT 大纲生成完成')
-    } catch (e) { toast.error(`生成失败：${e.message}`) }
-    finally { setLoading(false) }
+    const fullOutline = fileContent
+      ? `${outline}\n\n参考材料:\n${fileContent.slice(0, 1500)}`
+      : outline
+    await submitTask('/api/ppt/generate', {
+      title: `${title}（类型:${typeLabel}, 受众:${audienceLabel}, 规模:${scaleDesc}, 风格:${themeLabel}）`,
+      outline: fullOutline,
+    }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => {
+        setResult(data.result)
+        setPptxUrl(data.pptx || '')
+        try {
+          const jsonMatch = data.result.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0])
+            if (parsed.slides) setSlides(parsed.slides)
+          }
+        } catch { /* not valid JSON */ }
+        setTask(null); loadHistory(); toast.success('PPT 生成完成')
+      },
+      onError: (e) => { setTask(null); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const copyResult = () => {
     navigator.clipboard.writeText(result); setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const downloadOutline = () => {
+    const name = (title || 'PPT').replace(/[\\/:*?"<>|]/g, '_')
+    const blob = new Blob([result], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${name}-大纲.md`; a.click()
+    URL.revokeObjectURL(url)
+    toast.success('已下载大纲文件')
   }
 
   const applyTemplate = (tpl) => {
@@ -139,6 +155,12 @@ export default function PPTFactoryPage() {
 
   const reuseHistory = (item) => {
     setTitle(item.title); setOutline(item.outline || ''); setResult(item.result)
+    setPptxUrl(item.file_path || '')
+    try {
+      const slidesRaw = item.slides || '[]'
+      const parsed = typeof slidesRaw === 'string' ? JSON.parse(slidesRaw) : slidesRaw
+      setSlides(Array.isArray(parsed) ? parsed : [])
+    } catch { setSlides([]) }
   }
 
   const themeColorMap = {
@@ -297,7 +319,19 @@ export default function PPTFactoryPage() {
                   </label>
                 )}
               </div>
-              <Button variant="primary" icon={Play} loading={loading} onClick={generate} className="w-full">生成 PPT</Button>
+              <Button variant="primary" icon={Play} loading={!!task} onClick={generate} className="w-full">生成 PPT</Button>
+              {task && (
+                <div className="w-full">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span>{task.stage || '处理中…'}</span>
+                    <span>{task.progress || 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full transition-all duration-300"
+                      style={{ width: `${task.progress || 0}%` }} />
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -310,7 +344,14 @@ export default function PPTFactoryPage() {
                 <Presentation className="w-4 h-4 text-orange-500" /> 生成结果
               </h3>
               {result && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {pptxUrl && (
+                    <a href={pptxUrl} download
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-medium hover:bg-orange-600 transition-colors shadow-sm">
+                      <Download className="w-3.5 h-3.5" /> 下载 PPTX
+                    </a>
+                  )}
+                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadOutline}>大纲</Button>
                   <ShareButton content={result} title="PPT 大纲生成结果" contentType="ppt" />
                   <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
                     {copied ? '已复制' : '复制'}

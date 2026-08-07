@@ -7,6 +7,8 @@
 
 import json
 import logging
+import uuid
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -14,7 +16,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -119,69 +122,111 @@ def init_db():
                 depth INTEGER,
                 style TEXT,
                 result TEXT,
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 存量库补 user_id 列（幂等，并发竞态忽略）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(mindmap_records)").fetchall()]
+        if "user_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE mindmap_records ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
 
 
 init_db()
 
 # ── API ──────────────────────────────────────────────────
 
-@router.post("/generate")
-async def generate_mindmap(req: MindMapRequest, current_user: dict = require_auth()):
-    """生成思维导图：输入主题 → AI生成树形结构。"""
-    start = datetime.now()
+# ── 异步任务：思维导图生成（进度/自动重试/并发控制）──
 
-    user_prompt = f"主题：{req.topic}\n展开深度：{req.depth}层\n风格：{req.style}"
+async def _mindmap_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """思维导图 worker：LLM 生成树形结构 → 记录入库（带用户归属）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
 
-    try:
-        raw = call_llm(MINDMAP_SYSTEM, user_prompt, max_tokens=2000, temperature=0.5, timeout=60)
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.error(f"mindmap json parse failed, raw: {raw[:500]}")
-        raise HTTPException(500, "思维导图生成结果格式异常，请重试")
-    except Exception as e:
-        logger.exception("mindmap generate failed")
-        raise HTTPException(500, f"思维导图生成失败：{e}")
+    _report(20, "AI 生成结构")
+    user_prompt = f"主题：{payload.get('topic', '')}\n展开深度：{payload.get('depth', 2)}层\n风格：{payload.get('style', 'classic')}"
+    raw = call_llm(MINDMAP_SYSTEM, user_prompt, max_tokens=2000, temperature=0.5, timeout=60)
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+    result = parse_llm_json(raw)
 
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("mindmap_generate", len(req.topic), len(raw), elapsed)
-
-    # 保存记录
-    rid = f"mm_{int(datetime.now().timestamp()*1000)}"
+    _report(75, "保存记录")
+    rid = f"mm_{uuid.uuid4().hex[:12]}"
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO mindmap_records (id, topic, depth, style, result, created_at) VALUES (?,?,?,?,?,?)",
-            (rid, req.topic, req.depth, req.style, json.dumps(result, ensure_ascii=False), datetime.now().isoformat()),
+            "INSERT INTO mindmap_records (id, topic, depth, style, result, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, payload.get("topic", ""), payload.get("depth", 2), payload.get("style", "classic"), json.dumps(result, ensure_ascii=False), payload.get("user_id", ""), datetime.now().isoformat()),
         )
+    log_usage("mindmap_generate", len(payload.get("topic", "")), len(raw), 0)
+    _report(100, "完成")
+    return {"id": rid, "topic": payload.get("topic", ""), **result}
 
-    return {
-        "id": rid,
-        "topic": req.topic,
-        **result,
+
+async def _mindmap_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装思维导图生成，回报进度。"""
+    return await _mindmap_generate_worker(payload, progress=update)
+
+
+@router.post("/generate")
+async def generate_mindmap(req: MindMapRequest, current_user: dict = require_auth()):
+    """生成思维导图（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
     }
+    task = create_task(
+        "mindmap_generate", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
 
 
 @router.get("/records")
 async def list_records(current_user: dict = require_auth()):
-    """获取历史思维导图记录。"""
+    """获取历史思维导图记录（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, topic, depth, style, created_at FROM mindmap_records ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, topic, depth, style, created_at FROM mindmap_records ORDER BY created_at DESC LIMIT 50"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, topic, depth, style, created_at FROM mindmap_records WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+                (uid,),
+            ).fetchall()
 
     return [{"id": r[0], "topic": r[1], "depth": r[2], "style": r[3], "created_at": r[4]} for r in rows]
 
 
+def _can_access(conn, record_id: str, current_user: dict) -> bool:
+    """记录归属校验：admin 可访问全部；普通用户仅自己的记录。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
+    if role in ("admin", "super_admin"):
+        return True
+    row = conn.execute(
+        "SELECT user_id FROM mindmap_records WHERE id=?", (record_id,)
+    ).fetchone()
+    return bool(row) and str(row[0] or "") == uid
+
+
 @router.get("/records/{record_id}")
 async def get_record(record_id: str, current_user: dict = require_auth()):
-    """获取单条思维导图详情（含完整树结构）。"""
+    """获取单条思维导图详情（含完整树结构，归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT * FROM mindmap_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -201,7 +246,13 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
 
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
-    """删除思维导图记录。"""
+    """删除思维导图记录（归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         conn.execute("DELETE FROM mindmap_records WHERE id=?", (record_id,))
     return {"message": "已删除"}
+
+
+# ── 异步任务处理器注册 ──
+register_handler("mindmap_generate", _mindmap_generate_handler, user_limit=2, max_attempts=1)

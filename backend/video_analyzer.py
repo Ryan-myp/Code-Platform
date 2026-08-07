@@ -6,9 +6,12 @@
 - DELETE /api/video/records/{id}
 """
 
+import asyncio
 import json
 import logging
 import os
+import subprocess
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -16,7 +19,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +105,58 @@ def init_db():
                 description TEXT,
                 analysis TEXT,
                 status TEXT DEFAULT 'pending',
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 存量库补 user_id 列（幂等，并发竞态忽略）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(video_records)").fetchall()]
+        if "user_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE video_records ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
 
 init_db()
 
 # ── API ──────────────────────────────────────────────────
 
+def _probe_video_meta(filepath: str, vid: str) -> tuple:
+    """探测视频时长并提取 3 帧缩略图（前/中/后）。纯同步函数，由线程池执行避免阻塞事件循环。"""
+    duration = None
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", filepath],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            duration = round(float(result.stdout.strip()), 1)
+    except Exception:
+        pass
+
+    frames = []
+    if duration and duration > 1:
+        for idx, ratio in enumerate([0.1, 0.5, 0.9]):
+            seek_time = duration * ratio
+            frame_file = os.path.join(FRAME_DIR, f"{vid}_frame{idx}.jpg")
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-ss", str(seek_time), "-i", filepath,
+                     "-vframes", "1", "-q:v", "2", "-s", "640x360", frame_file],
+                    capture_output=True, timeout=20
+                )
+            except Exception:
+                continue
+            if os.path.exists(frame_file):
+                frames.append({"index": idx, "time": round(seek_time, 1), "url": f"/uploads/video_frames/{vid}_frame{idx}.jpg"})
+    return duration, frames
+
+
 @router.post("/upload")
 async def upload_video(file: UploadFile = File(...), current_user: dict = require_auth()):
-    """上传视频文件，自动提取关键帧缩略图，返回视频ID供后续分析。"""
+    """上传视频文件（仅保存与登记；时长探测/缩略图提取在异步分析任务中执行，避免阻塞事件循环）。"""
     if not file.filename:
         raise HTTPException(400, "未选择文件")
 
@@ -129,107 +174,118 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
 
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO video_records (id, filename, filepath, file_size, status, created_at) VALUES (?,?,?,?,?,?)",
-            (vid, file.filename, save_path, len(content), "uploaded", datetime.now().isoformat()),
+            "INSERT INTO video_records (id, filename, filepath, file_size, status, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
+            (vid, file.filename, save_path, len(content), "uploaded", str(current_user.get("user_id", "")), datetime.now().isoformat()),
         )
-
-    # 尝试获取时长
-    duration = None
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", save_path],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0:
-            duration = round(float(result.stdout.strip()), 1)
-    except Exception:
-        pass
-
-    # 提取关键帧缩略图（3帧：前/中/后）
-    frames = []
-    if duration and duration > 1:
-        try:
-            import subprocess
-            for idx, ratio in enumerate([0.1, 0.5, 0.9]):
-                seek_time = duration * ratio
-                frame_file = os.path.join(FRAME_DIR, f"{vid}_frame{idx}.jpg")
-                subprocess.run(
-                    ["ffmpeg", "-y", "-ss", str(seek_time), "-i", save_path,
-                     "-vframes", "1", "-q:v", "2", "-s", "640x360", frame_file],
-                    capture_output=True, timeout=20
-                )
-                if os.path.exists(frame_file):
-                    frames.append({"index": idx, "time": round(seek_time, 1), "url": f"/uploads/video_frames/{vid}_frame{idx}.jpg"})
-        except Exception:
-            pass
 
     return {
         "video_id": vid,
         "filename": file.filename,
         "file_size": len(content),
-        "duration": duration,
+        "duration": None,
         "format": ext,
-        "frames": frames,
-        "message": f"视频上传成功{'，时长 ' + str(duration) + '秒' if duration else ''}{'，已提取' + str(len(frames)) + '帧缩略图' if frames else ''}",
+        "frames": [],
+        "message": f"视频上传成功，共 {len(content) / 1024:.0f} KB（时长探测将在分析时完成）",
     }
 
 
-@router.post("/analyze")
-async def analyze_video(req: AnalyzeRequest, current_user: dict = require_auth()):
-    """分析视频内容：AI生成摘要、关键场景、字幕等。"""
-    start = datetime.now()
+# ── 异步任务：视频分析（进度/自动重试/并发控制）──
 
+async def _video_analyze_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """视频分析 worker：元数据 → AI 摘要/场景/字幕 → 记录落库。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    video_id = payload.get("video_id", "")
+    description = payload.get("description", "")
+
+    _report(10, "读取视频记录")
     with get_db_context() as conn:
-        row = conn.execute("SELECT * FROM video_records WHERE id=?", (req.video_id,)).fetchone()
+        row = conn.execute("SELECT * FROM video_records WHERE id=?", (video_id,)).fetchone()
         if not row:
             raise HTTPException(404, "视频记录不存在")
-
         filename = row[1]
         file_size = row[3]
+        filepath = row[2]
+
+    # 线程池探测时长 + 提取缩略图（不阻塞事件循环）
+    duration, frames = await asyncio.to_thread(_probe_video_meta, filepath, video_id)
+    _report(20, "解析视频元数据")
 
     # 构建分析提示
     meta = f"文件名：{filename}\n文件大小：{file_size / 1024 / 1024:.1f} MB"
-    if req.description:
-        meta += f"\n用户描述：{req.description}"
+    if duration:
+        meta += f"\n视频时长：{duration} 秒"
+    if description:
+        meta += f"\n用户描述：{description}"
 
+    _report(30, "AI 分析视频内容中")
     try:
         raw = call_llm(VIDEO_ANALYZE_SYSTEM, meta, max_tokens=2000, temperature=0.3, timeout=90)
         raw = raw.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "视频分析结果格式异常")
+        result = parse_llm_json(raw)
     except Exception as e:
         logger.exception("video analyze failed")
-        raise HTTPException(500, f"视频分析失败：{e}")
+        raise HTTPException(500, f"视频分析失败：{e}") from e
 
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("video_analyze", len(req.description), len(raw), elapsed)
+    _report(70, "提炼关键场景")
+    log_usage("video_analyze", len(description), len(raw), 0)
 
+    _report(90, "保存分析结果")
     with get_db_context() as conn:
         conn.execute(
             "UPDATE video_records SET analysis=?, status=? WHERE id=?",
-            (json.dumps(result, ensure_ascii=False), "done", req.video_id),
+            (json.dumps(result, ensure_ascii=False), "done", video_id),
         )
 
+    _report(100, "完成")
     return {
-        "video_id": req.video_id,
+        "video_id": video_id,
         "filename": filename,
         **result,
     }
 
 
+async def _video_analyze_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装视频分析，回报进度。"""
+    return await _video_analyze_worker(payload, progress=update)
+
+
+@router.post("/analyze")
+async def analyze_video(req: AnalyzeRequest, current_user: dict = require_auth()):
+    """分析视频内容（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "video_analyze", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
 @router.get("/records")
 async def list_records(current_user: dict = require_auth()):
-    """获取历史视频分析记录。"""
+    """获取历史视频分析记录（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, file_size, description, status, created_at FROM video_records ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, filename, file_size, description, status, created_at FROM video_records ORDER BY created_at DESC LIMIT 50"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, filename, file_size, description, status, created_at FROM video_records WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+                (uid,),
+            ).fetchall()
 
     return [
         {
@@ -240,10 +296,24 @@ async def list_records(current_user: dict = require_auth()):
     ]
 
 
+def _can_access(conn, record_id: str, current_user: dict) -> bool:
+    """记录归属校验：admin 可访问全部；普通用户仅自己的记录。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
+    if role in ("admin", "super_admin"):
+        return True
+    row = conn.execute(
+        "SELECT user_id FROM video_records WHERE id=?", (record_id,)
+    ).fetchone()
+    return bool(row) and str(row[0] or "") == uid
+
+
 @router.get("/records/{record_id}")
 async def get_record(record_id: str, current_user: dict = require_auth()):
-    """获取单条视频分析详情（含分析结果）。"""
+    """获取单条视频分析详情（含分析结果，归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT * FROM video_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -261,8 +331,10 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
 
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
-    """删除视频分析记录。"""
+    """删除视频分析记录（归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT filepath FROM video_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -273,3 +345,7 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
             pass
         conn.execute("DELETE FROM video_records WHERE id=?", (record_id,))
     return {"message": "已删除"}
+
+
+# ── 异步任务处理器注册（进度/自动重试/并发控制）──
+register_handler("video_analyze", _video_analyze_handler, user_limit=1, max_attempts=1)

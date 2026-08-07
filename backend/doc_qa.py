@@ -9,6 +9,7 @@
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -16,7 +17,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +107,18 @@ def init_db():
                 text_length INTEGER,
                 summary TEXT,
                 status TEXT DEFAULT 'pending',
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 存量库补 user_id 列（幂等，并发竞态忽略）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(doc_qa_records)").fetchall()]
+        if "user_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE doc_qa_records ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
 
 
 init_db()
@@ -193,15 +204,15 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
             if raw.startswith("```"):
                 lines = raw.split("\n")
                 raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-            summary = json.loads(raw)
+            summary = parse_llm_json(raw)
         except Exception as e:
             logger.warning(f"doc summary failed: {e}")
             summary = {"title": file.filename, "type": "文档", "summary": "自动摘要生成失败", "key_points": []}
 
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO doc_qa_records (id, filename, filepath, file_size, text_content, text_length, summary, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (did, file.filename, save_path, len(content), text, len(text), json.dumps(summary, ensure_ascii=False), "ready", datetime.now().isoformat()),
+            "INSERT INTO doc_qa_records (id, filename, filepath, file_size, text_content, text_length, summary, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (did, file.filename, save_path, len(content), text, len(text), json.dumps(summary, ensure_ascii=False), "ready", str(current_user.get("user_id", "")), datetime.now().isoformat()),
         )
 
     return {
@@ -215,67 +226,101 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
     }
 
 
-@router.post("/ask")
-async def ask_document(req: AskRequest, current_user: dict = require_auth()):
-    """基于文档内容智能问答。"""
-    start = datetime.now()
+# ── 异步任务：文档问答（进度/自动重试/并发控制）──
 
+async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """文档问答 worker：RAG 上下文 → LLM 回答。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    _report(10, "定位文档")
+    doc_id = payload.get("doc_id", "")
     with get_db_context() as conn:
-        row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (req.doc_id,)).fetchone()
+        row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (doc_id,)).fetchone()
         if not row:
             raise HTTPException(404, "文档记录不存在")
-
         filename = row[1]
         text = row[4] or ""
 
     if not text or text.startswith("["):
         raise HTTPException(400, "文档文本为空或提取失败，无法问答")
 
-    # 构建 RAG 提示：把文档内容作为上下文
-    context = text[:8000]  # 限制上下文长度
+    _report(35, "构建检索上下文")
+    context = text[:8000]
     system_prompt = DOC_QA_SYSTEM.replace("{context}", context)
-
-    # 构建用户消息
     history_text = ""
-    for h in req.history[-6:]:
+    for h in (payload.get("history") or [])[-6:]:
         role = "用户" if h.get("role") == "user" else "助手"
         history_text += f"{role}：{h.get('content', '')}\n"
-    user_prompt = f"{history_text}用户：{req.question}"
+    user_prompt = f"{history_text}用户：{payload.get('question', '')}"
 
-    try:
-        raw = call_llm(system_prompt, user_prompt, max_tokens=800, temperature=0.4, timeout=60)
-        answer = raw.strip()
-    except Exception as e:
-        logger.exception("doc qa failed")
-        raise HTTPException(500, f"文档问答失败：{e}")
+    _report(50, "AI 回答中")
+    answer = call_llm(system_prompt, user_prompt, max_tokens=800, temperature=0.4, timeout=60).strip()
+    _report(90, "记录用量")
+    log_usage("doc_qa", len(user_prompt), len(answer), 0)
+    _report(100, "完成")
+    return {"doc_id": doc_id, "question": payload.get("question", ""), "answer": answer, "source": filename, "confidence": "基于文档内容"}
 
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("doc_qa", len(user_prompt), len(answer), elapsed)
 
-    return {
-        "doc_id": req.doc_id,
-        "question": req.question,
-        "answer": answer,
-        "source": filename,
-        "confidence": "基于文档内容",
+async def _docqa_ask_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装文档问答，回报进度。"""
+    return await _docqa_ask_worker(payload, progress=update)
+
+
+@router.post("/ask")
+async def ask_document(req: AskRequest, current_user: dict = require_auth()):
+    """基于文档内容智能问答（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
     }
+    task = create_task(
+        "docqa_ask", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
 
 
 @router.get("/records")
 async def list_records(current_user: dict = require_auth()):
-    """获取历史文档记录。"""
+    """获取历史文档记录（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, file_size, text_length, status, created_at FROM doc_qa_records ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, filename, file_size, text_length, status, created_at FROM doc_qa_records ORDER BY created_at DESC LIMIT 50"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, filename, file_size, text_length, status, created_at FROM doc_qa_records WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+                (uid,),
+            ).fetchall()
 
     return [{"id": r[0], "filename": r[1], "file_size": r[2], "text_length": r[3], "status": r[4], "created_at": r[5]} for r in rows]
 
 
+def _can_access(conn, record_id: str, current_user: dict) -> bool:
+    """记录归属校验：admin 可访问全部；普通用户仅自己的记录。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
+    if role in ("admin", "super_admin"):
+        return True
+    row = conn.execute(
+        "SELECT user_id FROM doc_qa_records WHERE id=?", (record_id,)
+    ).fetchone()
+    return bool(row) and str(row[0] or "") == uid
+
+
 @router.get("/records/{record_id}")
 async def get_record(record_id: str, current_user: dict = require_auth()):
-    """获取单个文档详情（含摘要）。"""
+    """获取单个文档详情（含摘要，归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -294,8 +339,10 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
 
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
-    """删除文档记录。"""
+    """删除文档记录（归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT filepath FROM doc_qa_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -305,3 +352,7 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
             pass
         conn.execute("DELETE FROM doc_qa_records WHERE id=?", (record_id,))
     return {"message": "已删除"}
+
+
+# ── 异步任务处理器注册 ──
+register_handler("docqa_ask", _docqa_ask_handler, user_limit=1, max_attempts=1)

@@ -3,6 +3,7 @@ import { Sparkles, Download, Trash2, Clock, RefreshCw, Share2, Maximize2, Minimi
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const PALETTE = ['#667eea', '#4A90D9', '#6B8E23', '#E91E63', '#FF9800', '#9C27B0', '#00BCD4', '#FF5722']
 
@@ -123,9 +124,10 @@ function drawNode(ctx, x, y, text, color, size, textColor = '#fff') {
 
 export default function MindMapPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const [topic, setTopic] = useState('')
   const [depth, setDepth] = useState(3)
-  const [generating, setGenerating] = useState(false)
+  const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
   const [recordsLoading, setRecordsLoading] = useState(true)
@@ -143,14 +145,11 @@ export default function MindMapPage() {
 
   const generate = async () => {
     if (!topic.trim()) { toast.error('请输入主题'); return }
-    setGenerating(true)
-    try {
-      const res = await api.post('/api/mindmap/generate', { topic: topic.trim(), depth, style: 'professional' })
-      setResult(res.data)
-      loadRecords()
-      toast.success('思维导图生成成功')
-    } catch (e) { toast.error(`生成失败：${e.message}`) }
-    setGenerating(false)
+    await submitTask('/api/mindmap/generate', { topic: topic.trim(), depth, style: 'professional' }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('思维导图生成成功') },
+      onError: (e) => { setTask(null); toast.error(`生成失败：${e.message}`) },
+    })
   }
 
   const exportPNG = () => {
@@ -202,9 +201,21 @@ export default function MindMapPage() {
                 </button>
               ))}
             </div>
-            <Button variant="primary" icon={Sparkles} loading={generating} onClick={generate} className="w-full">
-              {generating ? 'AI正在生成思维导图...' : '生成思维导图'}
+            <Button variant="primary" icon={Sparkles} loading={!!task} onClick={generate} className="w-full">
+              {task ? 'AI正在生成思维导图...' : '生成思维导图'}
             </Button>
+            {task && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                  <span>{task.stage || 'AI 生成结构中…'}</span>
+                  <span>{task.progress || 0}%</span>
+                </div>
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-purple-500 to-violet-500 rounded-full transition-all duration-300"
+                    style={{ width: `${task.progress || 0}%` }} />
+                </div>
+              </div>
+            )}
           </Card>
 
           <Card>

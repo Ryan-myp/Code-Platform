@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import statistics
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -18,7 +19,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +118,18 @@ def init_db():
                 columns TEXT,
                 analysis TEXT,
                 status TEXT DEFAULT 'pending',
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 存量库补 user_id 列（幂等，并发竞态忽略）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(forecast_records)").fetchall()]
+        if "user_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE forecast_records ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
 
 
 init_db()
@@ -187,8 +198,8 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
 
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO forecast_records (id, filename, filepath, row_count, columns, status, created_at) VALUES (?,?,?,?,?,?,?)",
-            (did, file.filename, save_path, preview["row_count"], json.dumps(preview["columns"]), "uploaded", datetime.now().isoformat()),
+            "INSERT INTO forecast_records (id, filename, filepath, row_count, columns, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (did, file.filename, save_path, preview["row_count"], json.dumps(preview["columns"]), "uploaded", str(current_user.get("user_id", "")), datetime.now().isoformat()),
         )
 
     return {
@@ -202,16 +213,22 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
     }
 
 
-@router.post("/analyze")
-async def analyze_data(req: AnalyzeRequest, current_user: dict = require_auth()):
-    """分析数据：AI趋势分析 + 统计 + 预测。"""
-    start = datetime.now()
+# ── 异步任务：数据预测（进度/自动重试/并发控制）──
 
+async def _forecast_analyze_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """数据预测 worker：解析数据摘要 → AI 趋势分析+预测 → 记录落库。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    data_id = payload.get("data_id", "")
+    target_column = payload.get("target_column", "")
+
+    _report(10, "读取数据文件")
     with get_db_context() as conn:
-        row = conn.execute("SELECT * FROM forecast_records WHERE id=?", (req.data_id,)).fetchone()
+        row = conn.execute("SELECT * FROM forecast_records WHERE id=?", (data_id,)).fetchone()
         if not row:
             raise HTTPException(404, "数据记录不存在")
-
         filepath = row[2]
         filename = row[1]
 
@@ -226,54 +243,97 @@ async def analyze_data(req: AnalyzeRequest, current_user: dict = require_auth())
     }
 
     user_prompt = json.dumps(data_summary, ensure_ascii=False, indent=2)
-    if req.target_column:
-        user_prompt += f"\n\n重点分析列：{req.target_column}"
+    if target_column:
+        user_prompt += f"\n\n重点分析列：{target_column}"
 
+    _report(30, "AI 统计分析中")
     try:
         raw = call_llm(FORECAST_SYSTEM, user_prompt, max_tokens=3000, temperature=0.3, timeout=90)
         raw = raw.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        logger.error("forecast json parse failed")
-        raise HTTPException(500, "数据预测结果格式异常，请重试")
+        result = parse_llm_json(raw)
     except Exception as e:
         logger.exception("forecast analyze failed")
-        raise HTTPException(500, f"数据预测失败：{e}")
+        raise HTTPException(500, f"数据预测失败：{e}") from e
 
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("data_forecast", len(user_prompt), len(raw), elapsed)
+    _report(70, "生成预测图表")
+    log_usage("data_forecast", len(user_prompt), len(raw), 0)
 
+    _report(90, "保存分析结果")
     with get_db_context() as conn:
         conn.execute(
             "UPDATE forecast_records SET analysis=?, status=? WHERE id=?",
-            (json.dumps(result, ensure_ascii=False), "done", req.data_id),
+            (json.dumps(result, ensure_ascii=False), "done", data_id),
         )
 
+    _report(100, "完成")
     return {
-        "data_id": req.data_id,
+        "data_id": data_id,
         "filename": filename,
         **result,
     }
 
 
+async def _forecast_analyze_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装数据预测，回报进度。"""
+    return await _forecast_analyze_worker(payload, progress=update)
+
+
+@router.post("/analyze")
+async def analyze_data(req: AnalyzeRequest, current_user: dict = require_auth()):
+    """分析数据（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "forecast_analyze", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
 @router.get("/records")
 async def list_records(current_user: dict = require_auth()):
-    """获取历史数据预测记录。"""
+    """获取历史数据预测记录（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, row_count, status, created_at FROM forecast_records ORDER BY created_at DESC LIMIT 50"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, filename, row_count, status, created_at FROM forecast_records ORDER BY created_at DESC LIMIT 50"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, filename, row_count, status, created_at FROM forecast_records WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+                (uid,),
+            ).fetchall()
 
     return [{"id": r[0], "filename": r[1], "row_count": r[2], "status": r[3], "created_at": r[4]} for r in rows]
 
 
+def _can_access(conn, record_id: str, current_user: dict) -> bool:
+    """记录归属校验：admin 可访问全部；普通用户仅自己的记录。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
+    if role in ("admin", "super_admin"):
+        return True
+    row = conn.execute(
+        "SELECT user_id FROM forecast_records WHERE id=?", (record_id,)
+    ).fetchone()
+    return bool(row) and str(row[0] or "") == uid
+
+
 @router.get("/records/{record_id}")
 async def get_record(record_id: str, current_user: dict = require_auth()):
-    """获取单条数据预测详情（含分析结果）。"""
+    """获取单条数据预测详情（含分析结果，归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT * FROM forecast_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -291,8 +351,10 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
 
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
-    """删除数据预测记录。"""
+    """删除数据预测记录（归属校验）。"""
     with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
         row = conn.execute("SELECT filepath FROM forecast_records WHERE id=?", (record_id,)).fetchone()
         if not row:
             raise HTTPException(404, "记录不存在")
@@ -302,3 +364,7 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
             pass
         conn.execute("DELETE FROM forecast_records WHERE id=?", (record_id,))
     return {"message": "已删除"}
+
+
+# ── 异步任务处理器注册（进度/自动重试/并发控制）──
+register_handler("forecast_analyze", _forecast_analyze_handler, user_limit=1, max_attempts=1)

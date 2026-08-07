@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Platform v9.0 Extended API - 研发增强/内容创作/运营分析/办公效率"""
 
-import json
-import hashlib
 import glob
+import hashlib
+import json
 import logging
 import os
 import re
@@ -13,14 +13,17 @@ import threading
 import time
 import traceback
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common.auth import require_auth
-from common.db import get_db
-from common.llm import call_llm
+from common.db import get_db, get_db_context
+from common.llm import call_llm, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -2119,6 +2122,53 @@ async def delete_pipeline(pid: str, current_user: dict = require_auth()):
 # Phase 3: 内容创作增强
 # ══════════════════════════════════════════════════════════════
 
+# ── 商业化基线：历史表用户隔离（幂等迁移，兼容存量库）──
+# 新库由 common/db.py 建表 SQL 直接带 user_id；旧库在 import 时补列。
+# PRAGMA 查询不锁表，ALTER 冲突（并发竞态）时另一进程已加列，忽略即可。
+def _ensure_content_user_columns() -> None:
+    with get_db_context() as conn:
+        for table in ("copywriting_tasks", "translations", "ppt_generations", "excel_operations"):
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if "user_id" not in cols:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT DEFAULT ''")
+                except Exception:
+                    pass
+        # PPT 另需 file_path 列（商业化：PPTX 文件下载）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(ppt_generations)").fetchall()]
+        if "file_path" not in cols:
+            try:
+                conn.execute("ALTER TABLE ppt_generations ADD COLUMN file_path TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
+
+
+def _ensure_content_user_columns_safe() -> None:
+    """兼容表不存在场景（测试库尚未 init_db 时模块级调用）"""
+    try:
+        _ensure_content_user_columns()
+    except Exception:
+        pass
+
+
+_ensure_content_user_columns_safe()
+
+
+# ── PPT 商业化：真实 PPTX 文件输出 ──
+PPTX_DIR = os.path.join(os.path.dirname(__file__), "uploads", "ppt")
+os.makedirs(PPTX_DIR, exist_ok=True)
+
+
+def _user_scope_clause(conn, current_user: dict) -> tuple[str, list]:
+    """历史记录用户隔离：admin 全量；普通用户返回 ' AND user_id=?' 拼接到既有条件后
+    （存量无归属数据不展示）。"""
+    role = current_user.get("role", "")
+    if role in ("admin", "super_admin"):
+        return "", []
+    return " AND user_id=?", [str(current_user.get("user_id", ""))]
+
+
 class CopywritingRequest(BaseModel):
     type: str = "marketing"
     title: str = ""
@@ -2132,40 +2182,39 @@ class TranslationRequest(BaseModel):
     model: str = ""
 
 
-@router.post("/api/copywriting/generate")
-async def generate_copywriting(data: CopywritingRequest, current_user: dict = require_auth()):
-    """AI 文案生成"""
-    try:
-        type_specs = {
-            "marketing": {
-                "role": "资深营销文案专家（8年+4A公司经验）",
-                "focus": ["卖点提炼", "行动号召(CTA)", "情感共鸣", "信任背书"],
-                "format": "标题（3-5个备选）+ 正文（300-500字）+ 标语Slogan + 发布建议"
-            },
-            "social": {
-                "role": "社交媒体内容策划专家",
-                "focus": ["话题性", "互动引导", "平台适配", "时效热点"],
-                "format": "标题 + 正文（150-300字）+ 话题标签# + 配图建议 + 发布时间建议"
-            },
-            "seo": {
-                "role": "SEO内容策略专家",
-                "focus": ["关键词密度", "标题标签优化", "元描述", "内部链接建议"],
-                "format": "SEO标题（含主关键词）+ 元描述（150-160字符）+ 正文（800-1500字）+ 关键词列表 + 结构建议"
-            },
-            "email": {
-                "role": "邮件营销转化率优化专家",
-                "focus": ["打开率优化", "点击率优化", "个性化", "A/B测试建议"],
-                "format": "邮件主题行（3个备选）+ 预览文本 + 正文HTML（含CTA按钮）+ 发送时间建议"
-            },
-            "ad": {
-                "role": "创意广告策略专家",
-                "focus": ["差异化定位", "用户痛点", "场景植入", "记忆点设计"],
-                "format": "广告语（5-8个备选）+ 长文案（200-400字）+ 视觉创意brief + 投放渠道建议"
-            },
-        }
-        spec = type_specs.get(data.type, type_specs["marketing"])
+# ── 文案工厂：专家级文案类型规格（异步任务 worker 复用）──
+_COPYWRITING_SPECS = {
+    "marketing": {
+        "role": "资深营销文案专家（8年+4A公司经验）",
+        "focus": ["卖点提炼", "行动号召(CTA)", "情感共鸣", "信任背书"],
+        "format": "标题（3-5个备选）+ 正文（300-500字）+ 标语Slogan + 发布建议"
+    },
+    "social": {
+        "role": "社交媒体内容策划专家",
+        "focus": ["话题性", "互动引导", "平台适配", "时效热点"],
+        "format": "标题 + 正文（150-300字）+ 话题标签# + 配图建议 + 发布时间建议"
+    },
+    "seo": {
+        "role": "SEO内容策略专家",
+        "focus": ["关键词密度", "标题标签优化", "元描述", "内部链接建议"],
+        "format": "SEO标题（含主关键词）+ 元描述（150-160字符）+ 正文（800-1500字）+ 关键词列表 + 结构建议"
+    },
+    "email": {
+        "role": "邮件营销转化率优化专家",
+        "focus": ["打开率优化", "点击率优化", "个性化", "A/B测试建议"],
+        "format": "邮件主题行（3个备选）+ 预览文本 + 正文HTML（含CTA按钮）+ 发送时间建议"
+    },
+    "ad": {
+        "role": "创意广告策略专家",
+        "focus": ["差异化定位", "用户痛点", "场景植入", "记忆点设计"],
+        "format": "广告语（5-8个备选）+ 长文案（200-400字）+ 视觉创意brief + 投放渠道建议"
+    },
+}
 
-        system_prompt = f"""你是{spec['role']}。
+
+def _build_copywriting_prompt(copy_type: str, user_prompt: str) -> str:
+    spec = _COPYWRITING_SPECS.get(copy_type, _COPYWRITING_SPECS["marketing"])
+    return f"""你是{spec['role']}。
 
 核心能力：
 {chr(10).join(f'- {f}' for f in spec['focus'])}
@@ -2179,27 +2228,59 @@ async def generate_copywriting(data: CopywritingRequest, current_user: dict = re
 3. 每个观点用数据或场景支撑，拒绝泛泛而谈
 4. 结尾始终包含可衡量的下一步行动建议
 5. 如涉及品牌，需注明品牌调性建议（如：年轻活泼/专业稳重/温暖亲切）"""
-        result = call_llm(system_prompt, data.prompt)
 
-        task_id = f"copy_{uuid.uuid4().hex[:12]}"
-        # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
-        from common.db import get_db_context
-        with get_db_context() as conn:
-            conn.execute(
-                "INSERT INTO copywriting_tasks (id, type, title, prompt, result, model) VALUES (?,?,?,?,?,?)",
-                (task_id, data.type, data.title, data.prompt, result, data.model)
-            )
-        return {"ok": True, "id": task_id, "result": result}
-    except Exception as e:
-        raise HTTPException(500, f"文案生成失败: {str(e)}")
+
+async def _copywriting_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """文案生成 worker：LLM 创作 → 记录入库（带用户归属）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    _report(5, "解析需求")
+    system_prompt = _build_copywriting_prompt(payload.get("type", "marketing"), payload.get("prompt", ""))
+    _report(30, "AI 创作中")
+    result = call_llm(system_prompt, payload.get("prompt", ""))
+    _report(85, "保存记录")
+    task_id = f"copy_{uuid.uuid4().hex[:12]}"
+    with get_db_context() as conn:
+        conn.execute(
+            "INSERT INTO copywriting_tasks (id, type, title, prompt, result, model, user_id) VALUES (?,?,?,?,?,?,?)",
+            (task_id, payload.get("type", "marketing"), payload.get("title", ""), payload.get("prompt", ""), result, payload.get("model", ""), payload.get("user_id", ""))
+        )
+    _report(100, "完成")
+    return {"id": task_id, "result": result}
+
+
+async def _copywriting_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装文案生成，回报进度。"""
+    return await _copywriting_worker(payload, progress=update)
+
+
+@router.post("/api/copywriting/generate")
+async def generate_copywriting(data: CopywritingRequest, current_user: dict = require_auth()):
+    """AI 文案生成（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    if not data.prompt.strip():
+        raise HTTPException(400, "文案需求不能为空")
+    payload = {
+        "type": data.type, "title": data.title, "prompt": data.prompt, "model": data.model,
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "copywriting_generate", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
 
 
 @router.get("/api/copywriting/history")
 async def list_copywriting_history(current_user: dict = require_auth()):
     conn = get_db()
     try:
+        where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute("SELECT * FROM copywriting_tasks ORDER BY created_at DESC LIMIT 50").fetchall():
+        for row in conn.execute(f"SELECT * FROM copywriting_tasks WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2210,18 +2291,16 @@ async def list_copywriting_history(current_user: dict = require_auth()):
 async def delete_copywriting(task_id: str, current_user: dict = require_auth()):
     conn = get_db()
     try:
-        conn.execute("DELETE FROM copywriting_tasks WHERE id = ?", (task_id,))
+        where, args = _user_scope_clause(conn, current_user)
+        conn.execute(f"DELETE FROM copywriting_tasks WHERE id=?{where}", [task_id] + args)
         conn.commit()
         return {"ok": True}
     finally:
         conn.close()
 
 
-@router.post("/api/translation/translate")
-async def translate_text(data: TranslationRequest, current_user: dict = require_auth()):
-    """AI 翻译"""
-    try:
-        system_prompt = f"""你是专业翻译，精通{data.source_lang}和{data.target_lang}双语互译。
+def _build_translation_prompt(source_lang: str, target_lang: str) -> str:
+    return f"""你是专业翻译，精通{source_lang}和{target_lang}双语互译。
 
 翻译原则：
 1. 忠实原文：准确传达原文信息，不添加、不删减、不曲解
@@ -2235,27 +2314,58 @@ async def translate_text(data: TranslationRequest, current_user: dict = require_
 - 如果遇到专有名词、品牌名、人名，保持原文不翻译
 - 如果原文有歧义，选择最合理的解释并标注 [注: ...]
 - 技术术语统一使用目标语言行业标准译法"""
-        result = call_llm(system_prompt, data.text)
 
-        trans_id = f"trans_{uuid.uuid4().hex[:12]}"
-        # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
-        from common.db import get_db_context
-        with get_db_context() as conn:
-            conn.execute(
-                "INSERT INTO translations (id, source_lang, target_lang, source_text, result, model) VALUES (?,?,?,?,?,?)",
-                (trans_id, data.source_lang, data.target_lang, data.text, result, data.model)
-            )
-        return {"ok": True, "id": trans_id, "result": result}
-    except Exception as e:
-        raise HTTPException(500, f"翻译失败: {str(e)}")
+
+async def _translation_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """翻译 worker：LLM 翻译 → 记录入库（带用户归属）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    _report(10, "AI 翻译中")
+    system_prompt = _build_translation_prompt(payload.get("source_lang", "中文"), payload.get("target_lang", "English"))
+    result = call_llm(system_prompt, payload.get("text", ""))
+    _report(85, "保存记录")
+    trans_id = f"trans_{uuid.uuid4().hex[:12]}"
+    with get_db_context() as conn:
+        conn.execute(
+            "INSERT INTO translations (id, source_lang, target_lang, source_text, result, model, user_id) VALUES (?,?,?,?,?,?,?)",
+            (trans_id, payload.get("source_lang", "中文"), payload.get("target_lang", "English"), payload.get("text", ""), result, payload.get("model", ""), payload.get("user_id", ""))
+        )
+    _report(100, "完成")
+    return {"id": trans_id, "result": result}
+
+
+async def _translation_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装翻译，回报进度。"""
+    return await _translation_worker(payload, progress=update)
+
+
+@router.post("/api/translation/translate")
+async def translate_text(data: TranslationRequest, current_user: dict = require_auth()):
+    """AI 翻译（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    if not data.text.strip():
+        raise HTTPException(400, "待翻译文本不能为空")
+    payload = {
+        "source_lang": data.source_lang, "target_lang": data.target_lang, "text": data.text, "model": data.model,
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "translation_translate", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
 
 
 @router.get("/api/translation/history")
 async def list_translation_history(current_user: dict = require_auth()):
     conn = get_db()
     try:
+        where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute("SELECT * FROM translations ORDER BY created_at DESC LIMIT 50").fetchall():
+        for row in conn.execute(f"SELECT * FROM translations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2266,7 +2376,8 @@ async def list_translation_history(current_user: dict = require_auth()):
 async def delete_translation(task_id: str, current_user: dict = require_auth()):
     conn = get_db()
     try:
-        conn.execute("DELETE FROM translations WHERE id = ?", (task_id,))
+        where, args = _user_scope_clause(conn, current_user)
+        conn.execute(f"DELETE FROM translations WHERE id=?{where}", [task_id] + args)
         conn.commit()
         return {"ok": True}
     finally:
@@ -2379,12 +2490,8 @@ class ExcelRequest(BaseModel):
     data: dict = {}
 
 
-@router.post("/api/ppt/generate")
-async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_auth()):
-    """AI PPT 大纲生成"""
-    conn = get_db()
-    try:
-        system_prompt = """你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
+# ── PPT 商业化：专家级大纲 prompt（异步任务 worker 复用）──
+_PPT_SYSTEM_PROMPT = """你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
 
 PPT大纲设计原则：
 1. 黄金结构：封面→目录→问题/背景（Why）→方案/产品（What）→执行/数据（How）→案例/成果→下一步行动→感谢页
@@ -2415,31 +2522,244 @@ PPT大纲设计原则：
 
 生成8-12页幻灯片，确保逻辑递进、首尾呼应。"""
 
-        prompt = f"主题：{data.title}"
-        if data.outline:
-            prompt += f"\n大纲：{data.outline}"
 
-        result = call_llm(system_prompt, prompt)
+def _parse_ppt_outline(result: str) -> dict:
+    """LLM 大纲文本 → dict（容错：去代码块包裹/截取首个 JSON/兜底空结构）"""
+    text = (result or "").strip()
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    try:
+        data = parse_llm_json(text)
+    except Exception:
+        return {"meta": {}, "slides": []}
+    if not isinstance(data, dict):
+        return {"meta": {}, "slides": []}
+    data.setdefault("meta", {})
+    if not isinstance(data.get("slides"), list):
+        data["slides"] = []
+    return data
 
-        ppt_id = f"ppt_{uuid.uuid4().hex[:12]}"
+
+def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
+    """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。"""
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    blank = prs.slide_layouts[6]
+    DARK = RGBColor(0x1B, 0x26, 0x3B)
+    ACCENT = RGBColor(0x4F, 0x46, 0xE5)
+    ACCENT_LIGHT = RGBColor(0xEE, 0xF0, 0xFF)
+    GRAY = RGBColor(0x6B, 0x72, 0x80)
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+    FONT = "Microsoft YaHei"
+
+    def _rect(slide, left, top, w, h, color):
+        shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(top), Inches(w), Inches(h))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.line.fill.background()
+        return shape
+
+    def _text(slide, left, top, w, h, text, size, color, bold=False, align=PP_ALIGN.LEFT, first=True):
+        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
+        tf = box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        p.alignment = align
+        run = p.add_run()
+        run.text = text
+        f = run.font
+        f.name = FONT
+        f.size = Pt(size)
+        f.bold = bold
+        f.color.rgb = color
+        return box
+
+    def _bullets(slide, items: list, left, top, w, h, size=18, color=None, gap=10):
+        color = color or RGBColor(0x33, 0x3A, 0x4A)
+        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
+        tf = box.text_frame
+        tf.word_wrap = True
+        for i, item in enumerate(items):
+            p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+            p.space_after = Pt(gap)
+            run = p.add_run()
+            run.text = f"•  {item}"
+            f = run.font
+            f.name = FONT
+            f.size = Pt(size)
+            f.color.rgb = color
+        return box
+
+    def _notes(slide, text: str):
+        if text:
+            slide.notes_slide.notes_text_frame.text = text
+
+    # ── 版式渲染（封面/致谢/目录/案例/数据/内容）──
+    def _render_cover(slide, title_text, subtitle, meta):
+        _rect(slide, 0, 0, 13.333, 7.5, DARK)
+        _rect(slide, 0, 4.7, 13.333, 0.06, ACCENT)
+        _text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, WHITE, bold=True, align=PP_ALIGN.CENTER)
+        if subtitle:
+            _text(slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER, first=False)
+        _text(slide, 1.2, 6.8, 10.9, 0.4, f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}", 12, RGBColor(0x9A, 0xA3, 0xB8), align=PP_ALIGN.CENTER)
+
+    def _render_thanks(slide, title_text, subtitle):
+        _rect(slide, 0, 0, 13.333, 7.5, DARK)
+        _text(slide, 1.2, 3.1, 10.9, 1.0, title_text, 44, WHITE, bold=True, align=PP_ALIGN.CENTER)
+        if subtitle:
+            _text(slide, 1.2, 4.2, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER)
+
+    def _render_toc(slide, title_text, content):
+        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        _rect(slide, 0, 0, 0.25, 7.5, ACCENT)
+        _text(slide, 0.8, 0.6, 8, 0.8, "目录", 30, DARK, bold=True)
+        for j, item in enumerate(content):
+            _text(slide, 1.0, 1.9 + j * 0.95, 10, 0.7, f"{j + 1:02d}    {item}", 20, RGBColor(0x33, 0x3A, 0x4A))
+
+    def _render_case(slide, title_text, content, chart_suggestion):
+        _rect(slide, 0, 0, 13.333, 7.5, ACCENT_LIGHT)
+        _rect(slide, 0, 0, 13.333, 0.18, ACCENT)
+        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+        _bullets(slide, content, 0.8, 1.6, 11.7, 5.0, size=18, gap=12)
+        if chart_suggestion:
+            _text(slide, 0.8, 6.4, 11.7, 0.5, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
+
+    def _render_data(slide, title_text, subtitle, content, chart_suggestion):
+        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        _rect(slide, 0, 0, 13.333, 0.18, ACCENT)
+        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+        if subtitle:
+            _text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
+        _bullets(slide, content, 0.8, 1.95, 11.7, 4.2, size=18, gap=12)
+        if chart_suggestion:
+            _rect(slide, 0.8, 6.15, 11.7, 0.75, ACCENT_LIGHT)
+            _text(slide, 1.05, 6.3, 11.2, 0.45, f"📊 数据可视化：{chart_suggestion}", 14, ACCENT, bold=True)
+
+    def _render_content(slide, title_text, subtitle, content, chart_suggestion):
+        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        _rect(slide, 0, 0, 0.25, 7.5, ACCENT)
+        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+        if subtitle:
+            _text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
+        _bullets(slide, content, 0.8, 1.95, 11.7, 4.6, size=18, gap=12)
+        if chart_suggestion:
+            _text(slide, 0.8, 6.55, 11.7, 0.45, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
+
+    slides = outline.get("slides") or []
+    meta = outline.get("meta") or {}
+
+    for i, s in enumerate(slides):
+        if not isinstance(s, dict):
+            continue
+        stype = s.get("type", "content")
+        title_text = s.get("title") or f"第 {i + 1} 页"
+        subtitle = s.get("subtitle") or ""
+        content = s.get("content") or []
+        if isinstance(content, str):
+            content = [content]
+        slide = prs.slides.add_slide(blank)
+
+        if stype == "cover":
+            _render_cover(slide, title_text, subtitle, meta)
+        elif stype == "thanks":
+            _render_thanks(slide, title_text, subtitle)
+        elif stype == "toc":
+            _render_toc(slide, title_text, content)
+        elif stype == "case":
+            _render_case(slide, title_text, content, s.get("chart_suggestion"))
+        elif stype == "data":
+            _render_data(slide, title_text, subtitle, content, s.get("chart_suggestion"))
+        else:  # content / summary
+            _render_content(slide, title_text, subtitle, content, s.get("chart_suggestion"))
+        _notes(slide, s.get("notes") or "")
+
+    if not slides:
+        slide = prs.slides.add_slide(blank)
+        _rect(slide, 0, 0, 13.333, 7.5, DARK)
+        _text(slide, 1.2, 3.3, 10.9, 0.8, title or "未命名演示", 36, WHITE, bold=True, align=PP_ALIGN.CENTER)
+
+    path = os.path.join(PPTX_DIR, f"ppt_{uuid.uuid4().hex[:12]}.pptx")
+    prs.save(path)
+    return path
+
+
+async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """PPT worker：LLM 大纲 → 解析 → 生成 PPTX 文件 → 记录入库（带用户归属）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    _report(5, "规划大纲")
+    prompt = f"主题：{payload.get('title', '')}"
+    if payload.get("outline"):
+        prompt += f"\n大纲：{payload['outline']}"
+    _report(30, "AI 生成大纲中")
+    result = call_llm(_PPT_SYSTEM_PROMPT, prompt)
+    _report(55, "解析大纲结构")
+    outline_data = _parse_ppt_outline(result)
+    _report(70, "排版 PPTX 文件")
+    pptx_path = _build_pptx_file(payload.get("title", "未命名演示"), outline_data)
+    filename = os.path.basename(pptx_path)
+    _report(90, "保存记录")
+    ppt_id = f"ppt_{uuid.uuid4().hex[:12]}"
+    with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO ppt_generations (id, title, outline, result, model) VALUES (?,?,?,?,?)",
-            (ppt_id, data.title, data.outline, result, data.model)
+            "INSERT INTO ppt_generations (id, title, outline, slides, result, model, user_id, file_path) VALUES (?,?,?,?,?,?,?,?)",
+            (ppt_id, payload.get("title", ""), payload.get("outline", ""), json.dumps(outline_data, ensure_ascii=False), result, payload.get("model", ""), payload.get("user_id", ""), f"/api/ppt/download/{filename}")
         )
-        conn.commit()
-        return {"ok": True, "id": ppt_id, "result": result}
-    except Exception as e:
-        raise HTTPException(500, f"PPT生成失败: {str(e)}")
-    finally:
-        conn.close()
+    _report(100, "完成")
+    return {"id": ppt_id, "result": result, "slides": len(outline_data.get("slides", [])), "pptx": f"/api/ppt/download/{filename}"}
+
+
+async def _ppt_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装 PPT 生成，回报进度。"""
+    return await _ppt_worker(payload, progress=update)
+
+
+@router.post("/api/ppt/generate")
+async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_auth()):
+    """AI PPT 生成（异步任务：大纲 + 真实 PPTX 文件输出 / 进度跟踪 / 自动重试）"""
+    if not data.title.strip():
+        raise HTTPException(400, "PPT 主题不能为空")
+    payload = {
+        "title": data.title, "outline": data.outline, "model": data.model,
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "ppt_generate", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
+@router.get("/api/ppt/download/{filename}")
+async def download_ppt(filename: str, current_user: dict = require_auth()):
+    """下载生成的 PPTX 文件（basename 白名单防目录穿越）"""
+    safe = os.path.basename(filename)
+    path = os.path.join(PPTX_DIR, safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "文件不存在或已过期清理")
+    return FileResponse(path, filename=safe, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
 
 @router.get("/api/ppt/history")
 async def list_ppt_history(current_user: dict = require_auth()):
     conn = get_db()
     try:
+        where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute("SELECT * FROM ppt_generations ORDER BY created_at DESC LIMIT 50").fetchall():
+        for row in conn.execute(f"SELECT * FROM ppt_generations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2527,11 +2847,18 @@ async def excel_operate(data: ExcelRequest, current_user: dict = require_auth())
 async def list_excel_history(current_user: dict = require_auth()):
     conn = get_db()
     try:
+        where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute("SELECT * FROM excel_operations ORDER BY created_at DESC LIMIT 50").fetchall():
+        for row in conn.execute(f"SELECT * FROM excel_operations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
             e = dict(row)
             e["data"] = json.loads(e.get("data", "{}"))
             items.append(e)
         return items
     finally:
         conn.close()
+
+
+# ── 内容创作商业化升级：异步任务处理器注册（进度/自动重试/并发控制）──
+register_handler("copywriting_generate", _copywriting_handler, user_limit=2, max_attempts=1)
+register_handler("translation_translate", _translation_handler, user_limit=2, max_attempts=1)
+register_handler("ppt_generate", _ppt_handler, user_limit=2, max_attempts=1)

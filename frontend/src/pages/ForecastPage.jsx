@@ -3,14 +3,16 @@ import { Upload, BarChart3, TrendingUp, Download, Trash2, Clock, Sparkles, FileT
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 export default function ForecastPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const fileRef = useRef(null)
 
   const [uploading, setUploading] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
+  const [task, setTask] = useState(null)
   const [dataInfo, setDataInfo] = useState(null)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
@@ -37,16 +39,14 @@ export default function ForecastPage() {
   }
 
   const handleAnalyze = async () => {
-    if (!dataInfo?.data_id) return
-    setAnalyzing(true)
-    try {
-      const res = await api.post('/api/forecast/analyze', {
-        data_id: dataInfo.data_id, target_column: targetColumn, forecast_periods: periods,
-      })
-      setResult(res.data); loadRecords()
-      toast.success('预测分析完成')
-    } catch (err) { toast.error(`分析失败：${err.response?.data?.detail || err.message}`) }
-    setAnalyzing(false)
+    if (!dataInfo?.data_id || task) return
+    await submitTask('/api/forecast/analyze', {
+      data_id: dataInfo.data_id, target_column: targetColumn, forecast_periods: periods,
+    }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('预测分析完成') },
+      onError: (err) => { setTask(null); toast.error(`分析失败：${err.message}`) },
+    })
   }
 
   const deleteRecord = async (id) => {
@@ -97,9 +97,21 @@ export default function ForecastPage() {
                   <input type="range" min={1} max={12} value={periods}
                     onChange={(e) => setPeriods(Number(e.target.value))} className="w-full mt-1 accent-emerald-500" />
                 </div>
-                <Button variant="primary" size="sm" icon={Sparkles} loading={analyzing} onClick={handleAnalyze} className="w-full mt-2">
+                <Button variant="primary" size="sm" icon={Sparkles} loading={!!task} onClick={() => handleAnalyze()} className="w-full mt-2">
                   开始预测分析
                 </Button>
+                {task && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>{task.stage || 'AI 分析中…'}</span>
+                      <span>{task.progress || 0}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-300"
+                        style={{ width: `${task.progress || 0}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -154,7 +166,15 @@ export default function ForecastPage() {
 
         {/* 右侧：结果 */}
         <div className="lg:col-span-2 space-y-4">
-          {!result ? (
+          {task ? (
+            <Card className="border-emerald-200">
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <Sparkles className="w-5 h-5 text-emerald-500 animate-pulse" />
+                <span>{task.stage || 'AI 正在分析数据…'}</span>
+                <span className="text-gray-400 ml-auto">{task.progress || 0}%</span>
+              </div>
+            </Card>
+          ) : !result ? (
             <Empty icon={TrendingUp} title="等待分析" description="上传CSV数据后点击「开始预测分析」" />
           ) : (
             <>
@@ -172,8 +192,8 @@ export default function ForecastPage() {
                     <div className="text-xs text-gray-500 mt-1">列数</div>
                   </div>
                   <div className="p-3 bg-amber-50 rounded-lg text-center">
-                    <div className="text-lg font-bold text-amber-600">{result.predictions?.confidence || '-'}</div>
-                    <div className="text-xs text-gray-500 mt-1">置信度</div>
+                    <div className="text-lg font-bold text-amber-600">{result.predictions?.method || '-'}</div>
+                    <div className="text-xs text-gray-500 mt-1">预测方法</div>
                   </div>
                   <div className="p-3 bg-purple-50 rounded-lg text-center">
                     <div className="text-lg font-bold text-purple-600">{result.overview?.data_quality || '-'}</div>
@@ -259,8 +279,10 @@ export default function ForecastPage() {
                     ))}
                   </div>
                   <div className="mt-3 text-sm text-gray-600">
-                    <strong>短期预测：</strong>{result.predictions.short_term}<br />
-                    <strong>中期预测：</strong>{result.predictions.medium_term}
+                    <strong>短期预测：</strong>{typeof result.predictions.short_term === 'string' ? result.predictions.short_term : result.predictions.short_term?.description}
+                    {result.predictions.short_term?.confidence && `（置信度：${result.predictions.short_term.confidence}）`}<br />
+                    <strong>中期预测：</strong>{typeof result.predictions.medium_term === 'string' ? result.predictions.medium_term : result.predictions.medium_term?.description}
+                    {result.predictions.medium_term?.confidence && `（置信度：${result.predictions.medium_term.confidence}）`}
                   </div>
                 </Card>
               )}
@@ -274,12 +296,13 @@ export default function ForecastPage() {
                   <div className="space-y-2">
                     {result.recommendations.map((r, i) => (
                       <div key={i} className={`p-3 rounded-lg text-sm ${
-                        r.priority === '高' ? 'bg-red-50 text-red-800' :
-                        r.priority === '中' ? 'bg-amber-50 text-amber-800' :
+                        (r.level === '紧急' || r.priority === 1) ? 'bg-red-50 text-red-800' :
+                        (r.level === '重要' || r.priority === 2) ? 'bg-amber-50 text-amber-800' :
                         'bg-gray-50 text-gray-700'
                       }`}>
-                        <strong>[{r.priority}]</strong> {r.action}
-                        <div className="text-xs mt-0.5 opacity-70">{r.reason}</div>
+                        <strong>[{r.level || r.priority}]</strong> {r.action}
+                        {r.expected_impact && <div className="text-xs mt-0.5 opacity-70">预期效果：{r.expected_impact}</div>}
+                        {r.timeline && <div className="text-xs mt-0.5 opacity-50">建议时间：{r.timeline}</div>}
                       </div>
                     ))}
                   </div>

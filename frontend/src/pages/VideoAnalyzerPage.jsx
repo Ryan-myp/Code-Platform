@@ -3,13 +3,15 @@ import { Upload, Video, FileText, Download, Trash2, Clock, Play, Film, Eye, Spar
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 export default function VideoAnalyzerPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const fileRef = useRef(null)
 
   const [uploading, setUploading] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
+  const [task, setTask] = useState(null)
   const [videoInfo, setVideoInfo] = useState(null)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
@@ -42,17 +44,12 @@ export default function VideoAnalyzerPage() {
   }
 
   const handleAnalyze = async () => {
-    if (!videoInfo?.video_id) return
-    setAnalyzing(true)
-    try {
-      const res = await api.post('/api/video/analyze', { video_id: videoInfo.video_id, description: '' })
-      setResult(res.data)
-      loadRecords()
-      toast.success('视频分析完成')
-    } catch (err) {
-      toast.error(`分析失败：${err.response?.data?.detail || err.message}`)
-    }
-    setAnalyzing(false)
+    if (!videoInfo?.video_id || task) return
+    await submitTask('/api/video/analyze', { video_id: videoInfo.video_id, description: '' }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('视频分析完成') },
+      onError: (err) => { setTask(null); toast.error(`分析失败：${err.message}`) },
+    })
   }
 
   const deleteRecord = async (id) => {
@@ -96,9 +93,21 @@ export default function VideoAnalyzerPage() {
                   大小：{(videoInfo.file_size / 1024 / 1024).toFixed(1)} MB
                   {videoInfo.duration && ` · 时长：${videoInfo.duration}s`}
                 </div>
-                <Button variant="primary" size="sm" icon={Sparkles} loading={analyzing} onClick={handleAnalyze} className="w-full mt-2">
+                <Button variant="primary" size="sm" icon={Sparkles} loading={!!task} onClick={() => handleAnalyze()} className="w-full mt-2">
                   开始智能分析
                 </Button>
+                {task && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>{task.stage || 'AI 分析中…'}</span>
+                      <span>{task.progress || 0}%</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-red-500 to-pink-500 rounded-full transition-all duration-300"
+                        style={{ width: `${task.progress || 0}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </Card>
@@ -132,7 +141,15 @@ export default function VideoAnalyzerPage() {
 
         {/* 右侧：结果展示 */}
         <div className="lg:col-span-2 space-y-4">
-          {!result ? (
+          {task ? (
+            <Card className="border-red-200">
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                <Sparkles className="w-5 h-5 text-red-500 animate-pulse" />
+                <span>{task.stage || 'AI 正在分析视频…'}</span>
+                <span className="text-gray-400 ml-auto">{task.progress || 0}%</span>
+              </div>
+            </Card>
+          ) : !result ? (
             <Empty icon={Eye} title="等待分析" description="上传视频后点击「开始智能分析」，AI将自动生成详细报告" />
           ) : (
             <>

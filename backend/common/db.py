@@ -345,18 +345,19 @@ _SCHEMA_STATEMENTS = [
     )""",
 
     # ── v9.0: Phase 3 内容创作 ──────────────────────────────
-    # 文案任务
+    # 文案任务（user_id：商业化用户隔离）
     """CREATE TABLE IF NOT EXISTS copywriting_tasks (
         id TEXT PRIMARY KEY, type TEXT NOT NULL DEFAULT 'marketing',
         title TEXT DEFAULT '', prompt TEXT NOT NULL,
         result TEXT DEFAULT '', model TEXT DEFAULT '',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        user_id TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
-    # 翻译记录
+    # 翻译记录（user_id：商业化用户隔离）
     """CREATE TABLE IF NOT EXISTS translations (
         id TEXT PRIMARY KEY, source_lang TEXT NOT NULL, target_lang TEXT NOT NULL,
         source_text TEXT NOT NULL, result TEXT DEFAULT '',
-        model TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        model TEXT DEFAULT '', user_id TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
 
     # ── v9.0: Phase 4 运营分析 ──────────────────────────────
@@ -370,18 +371,19 @@ _SCHEMA_STATEMENTS = [
     )""",
 
     # ── v9.0: 办公效率 ──────────────────────────────────────
-    # PPT 生成记录
+    # PPT 生成记录（user_id：商业化用户隔离）
     """CREATE TABLE IF NOT EXISTS ppt_generations (
         id TEXT PRIMARY KEY, title TEXT NOT NULL, outline TEXT DEFAULT '',
         slides TEXT DEFAULT '[]', result TEXT DEFAULT '',
-        model TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        model TEXT DEFAULT '', user_id TEXT DEFAULT '',
+        file_path TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
     # Excel 操作记录
     """CREATE TABLE IF NOT EXISTS excel_operations (
         id TEXT PRIMARY KEY, operation TEXT NOT NULL DEFAULT 'create',
         title TEXT DEFAULT '', data TEXT DEFAULT '{}',
         result TEXT DEFAULT '', file_path TEXT DEFAULT '',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        user_id TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
     # 效率工具使用记录
     """CREATE TABLE IF NOT EXISTS tool_records (

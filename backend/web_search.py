@@ -8,14 +8,17 @@ import json
 import logging
 import urllib.parse
 import urllib.request
+import uuid
+from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
 from common.llm import call_llm, log_usage
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +88,18 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 query TEXT NOT NULL,
                 results TEXT,
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 存量库补 user_id 列（幂等，并发竞态忽略）
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(search_history)").fetchall()]
+        if "user_id" not in cols:
+            try:
+                conn.execute("ALTER TABLE search_history ADD COLUMN user_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+        conn.commit()
         conn.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
                 id TEXT PRIMARY KEY,
@@ -181,66 +193,56 @@ def _search_fallback(query: str, num: int = 5) -> list[dict]:
 
 # ── API ──────────────────────────────────────────────────
 
-@router.post("/web")
-async def web_search(req: WebSearchRequest, current_user: dict = require_auth()):
-    """AI联网搜索：搜索Web → LLM整合摘要。"""
-    start = datetime.now()
+# ── 异步任务：联网搜索（进度/自动重试/并发控制）──
 
-    # 多源搜索
-    results = _search_ddg(req.query, req.num_results)
+async def _web_search_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """联网搜索 worker：多源搜索 → LLM 整合摘要 → 历史入库（带用户归属）。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    query = payload.get("query", "")
+    num_results = int(payload.get("num_results", 5))
+
+    _report(15, "多源搜索中")
+    results = _search_ddg(query, num_results)
     if len(results) < 2:
-        wiki_results = _search_fallback(req.query, req.num_results)
+        wiki_results = _search_fallback(query, num_results)
         results.extend(wiki_results)
 
     if not results:
         # 纯LLM模式：无搜索结果时由LLM直接回答
-        try:
-            raw = call_llm(
-                "你是一个知识渊博的助手。用户问了一个问题，但搜索引擎没有返回结果。请基于你的知识回答。如果不知道就说不知道。",
-                f"问题：{req.query}",
-                max_tokens=800, temperature=0.3, timeout=30,
-            )
-            elapsed = round((datetime.now() - start).total_seconds(), 2)
-            log_usage("web_search_noresults", len(req.query), len(raw), elapsed)
-            return {
-                "query": req.query,
-                "mode": "llm_only",
-                "summary": raw.strip(),
-                "sources": [],
-                "related": [],
-            }
-        except Exception as e:
-            raise HTTPException(500, f"搜索失败：{e}")
+        _report(40, "AI 整合回答")
+        raw = call_llm(
+            "你是一个知识渊博的助手。用户问了一个问题，但搜索引擎没有返回结果。请基于你的知识回答。如果不知道就说不知道。",
+            f"问题：{query}",
+            max_tokens=800, temperature=0.3, timeout=30,
+        )
+        log_usage("web_search_noresults", len(query), len(raw), 0)
+        _report(100, "完成")
+        return {"query": query, "mode": "llm_only", "summary": raw.strip(), "sources": [], "related": []}
 
-    # 构建搜索上下文
     search_context = ""
     for i, r in enumerate(results):
         search_context += f"\n[来源{i+1}] {r['title']}\n{r['snippet']}\nURL: {r['url']}\n"
 
-    # LLM 整合摘要
+    _report(45, "AI 整合摘要中")
     system_prompt = SEARCH_SUMMARY_SYSTEM.replace("{search_results}", search_context)
+    raw = call_llm(system_prompt, query, max_tokens=1000, temperature=0.3, timeout=60)
+    summary = raw.strip()
+    log_usage("web_search", len(query), len(summary), 0)
 
-    try:
-        raw = call_llm(system_prompt, req.query, max_tokens=1000, temperature=0.3, timeout=60)
-        summary = raw.strip()
-    except Exception as e:
-        logger.exception("web search llm failed")
-        raise HTTPException(500, f"AI摘要生成失败：{e}")
-
-    elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("web_search", len(req.query), len(summary), elapsed)
-
-    # 保存搜索历史
-    sid = f"sch_{int(datetime.now().timestamp()*1000)}"
+    _report(85, "保存搜索历史")
+    sid = f"sch_{uuid.uuid4().hex[:12]}"
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO search_history (id, query, results, created_at) VALUES (?,?,?,?)",
-            (sid, req.query, json.dumps({"summary": summary, "sources": results}, ensure_ascii=False),
-             datetime.now().isoformat()),
+            "INSERT INTO search_history (id, query, results, user_id, created_at) VALUES (?,?,?,?,?)",
+            (sid, query, json.dumps({"summary": summary, "sources": results}, ensure_ascii=False),
+             payload.get("user_id", ""), datetime.now().isoformat()),
         )
-
+    _report(100, "完成")
     return {
-        "query": req.query,
+        "query": query,
         "mode": "web_search",
         "summary": summary,
         "sources": [{"title": r["title"], "url": r["url"], "snippet": r["snippet"][:200]} for r in results],
@@ -248,11 +250,44 @@ async def web_search(req: WebSearchRequest, current_user: dict = require_auth())
     }
 
 
+async def _web_search_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装联网搜索，回报进度。"""
+    return await _web_search_worker(payload, progress=update)
+
+
+@router.post("/web")
+async def web_search(req: WebSearchRequest, current_user: dict = require_auth()):
+    """AI联网搜索（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    task = create_task(
+        "web_search_query", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
 @router.get("/history")
 async def search_history(current_user: dict = require_auth()):
-    """获取搜索历史。"""
+    """获取搜索历史（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, query, created_at FROM search_history ORDER BY created_at DESC LIMIT 30"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, query, created_at FROM search_history ORDER BY created_at DESC LIMIT 30"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, query, created_at FROM search_history WHERE user_id=? ORDER BY created_at DESC LIMIT 30",
+                (uid,),
+            ).fetchall()
     return [{"id": r[0], "query": r[1], "created_at": r[2]} for r in rows]
+
+
+# ── 异步任务处理器注册（进度/自动重试/并发控制）──
+register_handler("web_search_query", _web_search_handler, user_limit=1, max_attempts=1)

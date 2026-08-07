@@ -124,3 +124,45 @@ def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, s
             )
     except Exception as e:
         logger.debug(f"log_usage skipped: {e}")
+
+
+def parse_llm_json(raw: str) -> dict:
+    """解析 LLM 返回的 JSON（多级容错，保证生产可用性）。
+
+    LLM 输出经常带 ```json 围栏、前后说明文字、尾逗号、单引号等，
+    长文本场景下直接 json.loads 失败率高，这里按序降级重试：
+    1. 去代码块围栏 → 2. 提取首个 { 至最后一个 } 片段 → 3. 修复尾逗号 → 4. 修复单引号。
+    全部失败时抛出带原始内容摘要的异常，便于定位。
+    """
+    import json
+    import re
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("LLM 返回内容为空，无法解析 JSON")
+
+    candidates = [text]
+    # 1. 剥离 markdown 代码块围栏
+    fence = re.match(r"^```(?:json)?\s*\n(.*?)\n```\s*$", text, re.S)
+    if fence:
+        candidates.append(fence.group(1).strip())
+    # 2. 提取首个 { 到最后一个 } 的 JSON 片段
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(text[start:end + 1])
+
+    for candidate in candidates:
+        for fix in (
+            lambda s: s,                                     # 原样
+            lambda s: re.sub(r",(\s*[}\]])", r"\1", s),   # 尾逗号
+            lambda s: re.sub(r"'([^']*)'\s*:", r'"\1":', s),  # 单引号 key
+            lambda s: re.sub(r"'([^']*)'", r'"\1"', s),   # 单引号字符串
+        ):
+            try:
+                return json.loads(fix(candidate))
+            except Exception:
+                continue
+
+
+    snippet = text[:120].replace("\n", " ")
+    raise ValueError(f"LLM 返回无法解析为 JSON（内容开头：{snippet}…）")

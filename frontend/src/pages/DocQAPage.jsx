@@ -3,16 +3,18 @@ import { Upload, MessageSquare, Send, Trash2, Clock, FileText, Eye, Bot, User, S
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 export default function DocQAPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const fileRef = useRef(null)
   const chatRef = useRef(null)
 
   const [uploading, setUploading] = useState(false)
   const [docInfo, setDocInfo] = useState(null)
   const [question, setQuestion] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [task, setTask] = useState(null)
   const [messages, setMessages] = useState([])
   const [records, setRecords] = useState([])
 
@@ -43,19 +45,22 @@ export default function DocQAPage() {
 
   const handleAsk = async (presetQuestion) => {
     const q = (presetQuestion || question).trim()
-    if (!q || !docInfo?.doc_id) return
+    if (!q || !docInfo?.doc_id || task) return
     const userMsg = { role: 'user', content: q, time: new Date().toISOString() }
     setMessages((prev) => [...prev, userMsg])
     setQuestion('')
-    setLoading(true)
 
-    try {
-      const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
-      const res = await api.post('/api/doc-qa/ask', { doc_id: docInfo.doc_id, question: q, history })
-      const aiMsg = { role: 'assistant', content: res.data.answer, time: new Date().toISOString(), source: res.data.source }
-      setMessages((prev) => [...prev, aiMsg])
-    } catch (err) { toast.error(`问答失败：${err.response?.data?.detail || err.message}`) }
-    setLoading(false)
+    const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
+    await submitTask('/api/doc-qa/ask', { doc_id: docInfo.doc_id, question: q, history }, {
+      onUpdate: (t) => setTask(t),
+      onSuccess: (data) => {
+        setMessages((prev) => [...prev, {
+          role: 'assistant', content: data.answer, time: new Date().toISOString(), source: data.source,
+        }])
+        setTask(null)
+      },
+      onError: (e) => { setTask(null); toast.error(`问答失败：${e.message}`) },
+    })
 
     // 滚动到底部
     setTimeout(() => chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' }), 100)
@@ -189,7 +194,7 @@ export default function DocQAPage() {
                   </div>
                 ))
               )}
-              {loading && (
+              {task && (
                 <div className="flex gap-3">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center">
                     <Bot className="w-4 h-4 text-white" />
@@ -204,23 +209,37 @@ export default function DocQAPage() {
             </div>
 
             {/* 输入区 */}
-            <div className="border-t pt-3 flex items-center gap-2">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
-                placeholder={docInfo ? '对文档提问，如：核心观点是什么？有哪些风险？...' : '请先上传文档'}
-                disabled={!docInfo}
-                className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none disabled:bg-gray-50"
-              />
-              <button
-                onClick={handleAsk}
-                disabled={!question.trim() || loading || !docInfo}
-                className="p-3 rounded-xl bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
-              >
-                <Send className="w-5 h-5" />
-              </button>
+            <div className="border-t pt-3 space-y-2">
+              {task && (
+                <div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span>{task.stage || 'AI 思考中…'}</span>
+                    <span>{task.progress || 0}%</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 rounded-full transition-all duration-300"
+                      style={{ width: `${task.progress || 0}%` }} />
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
+                  placeholder={docInfo ? '对文档提问，如：核心观点是什么？有哪些风险？...' : '请先上传文档'}
+                  disabled={!docInfo || !!task}
+                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none disabled:bg-gray-50"
+                />
+                <button
+                  onClick={() => handleAsk()}
+                  disabled={!question.trim() || !!task || !docInfo}
+                  className="p-3 rounded-xl bg-indigo-500 text-white hover:bg-indigo-600 disabled:opacity-50 transition-colors"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </div>
             </div>
           </Card>
         </div>
