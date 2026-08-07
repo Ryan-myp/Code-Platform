@@ -95,6 +95,12 @@ jobs:
           pip install -r backend/requirements.txt
           pip install python-jose[cryptography] bcrypt pytest pytest-asyncio httpx
 
+      - name: Environment check (auto-install missing deps)
+        # runner 缺中文字体等系统包，先自动修复（忽略首次失败），再严格复查
+        run: |
+          bash scripts/check_environment.sh --fix || true
+          bash scripts/check_environment.sh
+
       - name: Run integration tests
         run: pytest tests/integration/ -v --tb=short
 
@@ -200,6 +206,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify backend image environment (12 checks)
+        # 镜像内自检 = 验证生产运行环境完整（ffmpeg/node/字体/pip 依赖全部就绪），
+        # 镜像内缺任何一项都视为 Dockerfile 构建缺陷，阻止合并/部署
+        run: |
+          docker run --rm code-platform-backend:latest bash scripts/check_environment.sh
+
   # ─── 部署（可选）────────────────────────────────────────────
   deploy:
     name: Deploy to Production
@@ -218,6 +230,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd /opt/code-platform
+            # 部署前镜像内环境自检：不通过则中止部署（脚本退出码非 0 时 ssh-action 直接失败）
+            docker run --rm code-platform-backend:latest bash scripts/check_environment.sh
             docker-compose pull
             docker-compose up -d
             docker system prune -f

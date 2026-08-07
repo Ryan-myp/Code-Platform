@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    image: code-platform-backend:latest  # 与 CI 构建 tag/部署自检同名，支持 pull 部署
     container_name: code-platform-backend
     ports:
       - "8888:8888"

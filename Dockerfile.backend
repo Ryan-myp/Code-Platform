@@ -47,11 +47,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 复制应用代码
 COPY backend/ ./backend/
 
-# 创建 artifacts 目录
-RUN mkdir -p /app/backend/artifacts
+# 复制部署自检脚本（镜像内可运行：docker run --rm <image> bash scripts/check_environment.sh）
+COPY scripts/ ./scripts/
 
 # 非 root 用户运行
 RUN useradd -m -u 1000 appuser
+
+# 数据目录（数据库/上传/产物）归属 appuser，否则运行时写权限不足
+RUN mkdir -p /app/backend/artifacts /app/backend/uploads /app/backend/logs \
+    && chown -R appuser:appuser /app/backend
 USER appuser
 
 EXPOSE 8888
