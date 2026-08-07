@@ -7,6 +7,7 @@
 - LLM JSON 容错解析（parse_llm_json：带 ```json 围栏的返回）
 - sync=1 兼容旧同步调用
 """
+
 import asyncio
 from unittest.mock import patch
 
@@ -28,6 +29,7 @@ def _init_batch_tables(setup_test_db):
 
 # ── 1. handler 注册 ────────────────────────────────────────
 
+
 def test_batch_handlers_registered(setup_test_db):
     """三大批量任务的异步处理器必须已注册。"""
     missing = {"batch_translate", "batch_doc_summary", "batch_process"} - set(_handlers)
@@ -36,13 +38,16 @@ def test_batch_handlers_registered(setup_test_db):
 
 # ── 2. 批量翻译 ────────────────────────────────────────────
 
+
 def test_batch_translate_async_flow(setup_test_db, claim_and_run):
     """批量翻译：异步任务逐条处理 → 结果 + batch_jobs 落库（带用户归属）。"""
     with patch("batch_api.call_llm", side_effect=["Hello world", "Good morning"]):
         task = create_task(
             "batch_translate",
             {"texts": ["你好世界", "早上好"], "target_lang": "en", "user_id": "u-alice"},
-            username="alice", user_id="u-alice", role="user",
+            username="alice",
+            user_id="u-alice",
+            role="user",
         )
         claim_and_run(task["id"])
         t = get_task(task["id"])
@@ -70,7 +75,9 @@ def test_batch_translate_skips_empty(setup_test_db, claim_and_run):
         task = create_task(
             "batch_translate",
             {"texts": ["有效文本", "   "], "target_lang": "en", "user_id": "u-bob"},
-            username="bob", user_id="u-bob", role="user",
+            username="bob",
+            user_id="u-bob",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -100,7 +107,9 @@ def test_batch_doc_summary_async_flow(setup_test_db, claim_and_run, tmp_path):
         task = create_task(
             "batch_doc_summary",
             {"files": [{"path": str(doc_path), "filename": "report.md", "size": 40}], "user_id": "u-carol"},
-            username="carol", user_id="u-carol", role="user",
+            username="carol",
+            user_id="u-carol",
+            role="user",
         )
         claim_and_run(task["id"])
         t = get_task(task["id"])
@@ -129,11 +138,16 @@ def test_batch_doc_summary_failure_isolated(setup_test_db, claim_and_run, tmp_pa
     with patch("batch_api.call_llm", side_effect=_fake_llm):
         task = create_task(
             "batch_doc_summary",
-            {"files": [
-                {"path": str(bad_path), "filename": "bad.md", "size": 10},
-                {"path": str(good_path), "filename": "good.md", "size": 20},
-            ], "user_id": "u-carol"},
-            username="carol", user_id="u-carol", role="user",
+            {
+                "files": [
+                    {"path": str(bad_path), "filename": "bad.md", "size": 10},
+                    {"path": str(good_path), "filename": "good.md", "size": 20},
+                ],
+                "user_id": "u-carol",
+            },
+            username="carol",
+            user_id="u-carol",
+            role="user",
         )
         claim_and_run(task["id"])
         results = get_task(task["id"])["result"]["results"]
@@ -143,6 +157,7 @@ def test_batch_doc_summary_failure_isolated(setup_test_db, claim_and_run, tmp_pa
 
 # ── 4. 通用批量处理 ────────────────────────────────────────
 
+
 def test_batch_process_async_flow(setup_test_db, claim_and_run, tmp_path):
     """通用处理：按 task 类型执行 + 结果落库。"""
     doc_path = tmp_path / "doc.txt"
@@ -151,8 +166,14 @@ def test_batch_process_async_flow(setup_test_db, claim_and_run, tmp_path):
     with patch("batch_api.call_llm", return_value="AI,内容创作,办公效率"):
         task = create_task(
             "batch_process",
-            {"task": "keywords", "files": [{"path": str(doc_path), "filename": "doc.txt", "size": 30}], "user_id": "u-dana"},
-            username="dana", user_id="u-dana", role="user",
+            {
+                "task": "keywords",
+                "files": [{"path": str(doc_path), "filename": "doc.txt", "size": 30}],
+                "user_id": "u-dana",
+            },
+            username="dana",
+            user_id="u-dana",
+            role="user",
         )
         claim_and_run(task["id"])
         t = get_task(task["id"])
@@ -162,6 +183,7 @@ def test_batch_process_async_flow(setup_test_db, claim_and_run, tmp_path):
 
 
 # ── 5. jobs 列表用户隔离 ───────────────────────────────────
+
 
 def test_batch_jobs_isolation(setup_test_db):
     """处理记录隔离：普通用户仅见自己的，admin 全量。"""
@@ -193,24 +215,36 @@ def test_batch_jobs_isolation(setup_test_db):
 
 # ── 6. POST 端点：异步返回 task_id / sync 兼容 ─────────────
 
+
 def test_batch_post_endpoints_creates_task(setup_test_db):
     """三端点默认返回 task_id（不再同步阻塞）。"""
-    resp = asyncio.run(batch_api.batch_translate(
-        batch_api.BatchTextRequest(texts=["你好"]), current_user=_user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        batch_api.batch_translate(
+            batch_api.BatchTextRequest(texts=["你好"]),
+            current_user=_user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")
 
-    resp = asyncio.run(batch_api.batch_process(
-        files=[], task="summarize", current_user=_user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        batch_api.batch_process(
+            files=[],
+            task="summarize",
+            current_user=_user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is False  # 无文件 → 直接返回错误
 
 
 def test_batch_translate_sync_mode(setup_test_db):
     """sync=1 直接执行，返回完整结果（兼容旧调用）。"""
     with patch("batch_api.call_llm", return_value="Translated"):
-        resp = asyncio.run(batch_api.batch_translate(
-            batch_api.BatchTextRequest(texts=["原文"]), True, _user("u1", "alice"),
-        ))
+        resp = asyncio.run(
+            batch_api.batch_translate(
+                batch_api.BatchTextRequest(texts=["原文"]),
+                True,
+                _user("u1", "alice"),
+            )
+        )
     assert resp["count"] == 1
     assert resp["results"][0]["translated"] == "Translated"

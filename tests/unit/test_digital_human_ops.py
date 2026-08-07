@@ -3,6 +3,7 @@
 使用 mock 替换 TTS 与渲染，验证 worker 全链路逻辑（落库/状态流转/资源保护），
 不依赖外部网络与 ffmpeg。
 """
+
 import threading
 import time
 from unittest.mock import patch
@@ -49,8 +50,10 @@ class TestBatchPipeline:
         raise AssertionError(f"batch {batch_id} 未在 {timeout}s 内完成")
 
     def test_full_pipeline_success_and_blocked_word(self, auth_headers):
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_fake_render):
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_fake_render),
+        ):
             task = self._create(auth_headers, ["大家好，今天分享一个效率技巧", "点击领取免费大礼包"])
             done = self._wait_done(auth_headers, task["batch_id"])
         assert done["status"] == "done"
@@ -61,6 +64,7 @@ class TestBatchPipeline:
         assert items[1]["status"] == "failed" and "违规词" in items[1]["error"]
         # 持久化兜底：清掉内存缓存后仍能从 DB 恢复
         import digital_human
+
         with patch.dict(digital_human._BATCH_TASKS, {}, clear=True):
             resp = client.get(f"/api/digital-human/batch/{task['batch_id']}", headers=auth_headers)
             assert resp.status_code == 200
@@ -68,12 +72,15 @@ class TestBatchPipeline:
 
     def test_running_limit_rejects_third(self, auth_headers):
         """运行中批量任务 ≥2 时第 3 个被拒（资源保护）。"""
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_fake_render), \
-             patch("digital_human._batch_worker") as mock_worker:
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_fake_render),
+            patch("digital_human._batch_worker") as mock_worker,
+        ):
             # 冻结 worker：任务保持 running，便于测限流
             def _freeze(*a, **k):
                 time.sleep(5)
+
             mock_worker.side_effect = _freeze
             self._create(auth_headers, ["大家好，第一条测试文案"])
             self._create(auth_headers, ["大家好，第二条测试文案"])
@@ -81,20 +88,22 @@ class TestBatchPipeline:
 
     def test_retry_failed_retries_only_fixable(self, auth_headers):
         """重试失败项：非内容问题失败可重试并成功，违规词不进入重试。"""
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_fake_render):
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_fake_render),
+        ):
             task = self._create(auth_headers, ["点击领取大礼包", "大家好，第二条测试文案"])
             done = self._wait_done(auth_headers, task["batch_id"])
         assert done["failed"] == 1  # 违规词项
         # 无失败项可重试（内容问题）→ 400
-        resp = client.post(
-            f"/api/digital-human/batch/{task['batch_id']}/retry-failed", headers=auth_headers)
+        resp = client.post(f"/api/digital-human/batch/{task['batch_id']}/retry-failed", headers=auth_headers)
         assert resp.status_code == 400
         assert "内容问题" in resp.json()["detail"]
 
     def test_retry_failed_with_real_failure(self, auth_headers):
         """偶发失败（渲染异常）重试：先失败 → 重试成功。"""
         import digital_human
+
         real_render = digital_human._render_video
 
         def _flaky_render(**kwargs):
@@ -103,15 +112,16 @@ class TestBatchPipeline:
                 raise RuntimeError("模拟渲染进程崩溃")
             real_render(**kwargs)
 
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_flaky_render):
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_flaky_render),
+        ):
             task = self._create(auth_headers, ["大家好，渲染会失败一次再成功"])
             done = self._wait_done(auth_headers, task["batch_id"])
         assert done["status"] == "done"
         assert done["failed"] == 1, done
         # 重试失败项 → running → 成功
-        resp = client.post(
-            f"/api/digital-human/batch/{task['batch_id']}/retry-failed", headers=auth_headers)
+        resp = client.post(f"/api/digital-human/batch/{task['batch_id']}/retry-failed", headers=auth_headers)
         assert resp.status_code == 200, resp.text
         assert resp.json()["retrying"] == 1
         retried = self._wait_done(auth_headers, task["batch_id"])
@@ -120,15 +130,17 @@ class TestBatchPipeline:
 
     def test_batch_access_denied_for_other_user(self, auth_headers):
         """批量任务仅创建者可查（越权 404）。"""
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_fake_render):
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_fake_render),
+        ):
             task = self._create(auth_headers, ["大家好，仅创建者可见"])
             self._wait_done(auth_headers, task["batch_id"])
         # 注册另一个用户
-        client.post("/api/auth/register", json={
-            "username": "bob_ops", "password": "bob123456", "email": "bob@test.com"})
-        login = client.post("/api/auth/login", json={
-            "username": "bob_ops", "password": "bob123456"})
+        client.post(
+            "/api/auth/register", json={"username": "bob_ops", "password": "bob123456", "email": "bob@test.com"}
+        )
+        login = client.post("/api/auth/login", json={"username": "bob_ops", "password": "bob123456"})
         other_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
         resp = client.get(f"/api/digital-human/batch/{task['batch_id']}", headers=other_headers)
         assert resp.status_code == 404
@@ -138,26 +150,40 @@ class TestSingleGenerateConcurrency:
     """单条生成用户级并发限制：同用户同时 2 个请求 → 1 个 200、1 个 429。"""
 
     def test_concurrent_generate_second_rejected(self, auth_headers):
-        with patch("voice_factory._tts_one", side_effect=_quick_tts), \
-             patch("digital_human._render_video", side_effect=_fake_render), \
-             patch("digital_human._generate_one") as mock_gen:
+        with (
+            patch("voice_factory._tts_one", side_effect=_quick_tts),
+            patch("digital_human._render_video", side_effect=_fake_render),
+            patch("digital_human._generate_one") as mock_gen,
+        ):
+
             def _slow(*a, **k):
                 time.sleep(1.5)
-                return {"record_id": "x", "audio_url": "", "video_url": "",
-                        "watermark": False, "sensitive_warning": "",
-                        "status": "done", "error": "", "message": "ok",
-                        "quota_remaining": 99, "text_length": 10}
+                return {
+                    "record_id": "x",
+                    "audio_url": "",
+                    "video_url": "",
+                    "watermark": False,
+                    "sensitive_warning": "",
+                    "status": "done",
+                    "error": "",
+                    "message": "ok",
+                    "quota_remaining": 99,
+                    "text_length": 10,
+                }
+
             mock_gen.side_effect = _slow
             payload = {"text": "大家好，并发测试文案"}
             results = {}
 
             def _call():
-                r = client.post("/api/digital-human/generate", json=payload,
-                                headers=auth_headers)
+                r = client.post("/api/digital-human/generate", json=payload, headers=auth_headers)
                 results[r.status_code] = results.get(r.status_code, 0) + 1
 
             t1 = threading.Thread(target=_call)
             t2 = threading.Thread(target=_call)
-            t1.start(); t2.start(); t1.join(); t2.join()
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
         assert results.get(200) == 1, results
         assert results.get(429) == 1, results

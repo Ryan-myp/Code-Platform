@@ -12,13 +12,31 @@ def test_init_db_creates_tables(test_db_path):
     from common.db import get_db
 
     tables = [
-        "agents", "config", "teams", "workflows", "workflow_runs", "workflow_run_logs",
-        "conversations", "messages", "sessions", "memories",
-        "knowledge_bases", "skills", "skills_files", "mcp_servers", "expert_roles",
+        "agents",
+        "config",
+        "teams",
+        "workflows",
+        "workflow_runs",
+        "workflow_run_logs",
+        "conversations",
+        "messages",
+        "sessions",
+        "memories",
+        "knowledge_bases",
+        "skills",
+        "skills_files",
+        "mcp_servers",
+        "expert_roles",
         "sandbox_projects",
-        "requirements", "projects", "tasks", "artifacts",
-        "comments", "comment_likes",
-        "usage_logs", "prompt_versions", "users",
+        "requirements",
+        "projects",
+        "tasks",
+        "artifacts",
+        "comments",
+        "comment_likes",
+        "usage_logs",
+        "prompt_versions",
+        "users",
     ]
     conn = get_db()
     rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

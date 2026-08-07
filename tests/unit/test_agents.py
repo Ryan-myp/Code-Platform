@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """小团智能平台 — Agent CRUD 测试"""
 
-import sys
 import json
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
@@ -13,6 +13,7 @@ class TestAgentCRUD:
 
     def test_create_agent(self, sample_agent_data):
         from common.db import get_db
+
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -43,6 +44,7 @@ class TestAgentCRUD:
 
     def test_update_agent(self, sample_agent_data):
         from common.db import get_db
+
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -79,6 +81,7 @@ class TestAgentCRUD:
 
     def test_delete_agent_soft_delete(self, sample_agent_data):
         from common.db import get_db
+
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -114,15 +117,44 @@ class TestAgentCRUD:
 
     def test_list_agents(self, sample_agent_data):
         from common.db import get_db
+
         # 插入两个 agent
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (sample_agent_data["id"], sample_agent_data["name"], "", "", "agnes-2.0-flash", 0, 0, "[]", "[]", "[]", "[]", "2024-01-01T00:00:00", 1),
+                (
+                    sample_agent_data["id"],
+                    sample_agent_data["name"],
+                    "",
+                    "",
+                    "agnes-2.0-flash",
+                    0,
+                    0,
+                    "[]",
+                    "[]",
+                    "[]",
+                    "[]",
+                    "2024-01-01T00:00:00",
+                    1,
+                ),
             )
             conn.execute(
                 "INSERT INTO agents (id, name, description, instructions, model, enable_memory, enable_reasoning, tools, knowledge_base_ids, skill_ids, mcp_server_ids, created_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ("agent_test_002", "Agent 2", "", "", "agnes-2.0-flash", 0, 0, "[]", "[]", "[]", "[]", "2024-01-01T00:00:00", 1),
+                (
+                    "agent_test_002",
+                    "Agent 2",
+                    "",
+                    "",
+                    "agnes-2.0-flash",
+                    0,
+                    0,
+                    "[]",
+                    "[]",
+                    "[]",
+                    "[]",
+                    "2024-01-01T00:00:00",
+                    1,
+                ),
             )
         # 查询
         with get_db() as conn:

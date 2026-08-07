@@ -2,10 +2,9 @@
 
 不依赖网络，纯函数级测试。
 """
+
 import sys
 from pathlib import Path
-
-import pytest
 
 BACKEND = str(Path(__file__).resolve().parents[2] / "backend")
 if BACKEND not in sys.path:
@@ -33,6 +32,7 @@ def _perfect_files() -> dict:
 
 def json_dumps(obj) -> str:
     import json
+
     return json.dumps(obj, ensure_ascii=False)
 
 
@@ -41,6 +41,7 @@ class TestCheckWxmlTags:
 
     def test_balanced_tags_pass(self):
         from miniapp import _check_wxml_tags
+
         src = """
 <view class="a">
   <view wx:for="{{items}}" wx:key="id">
@@ -53,11 +54,13 @@ class TestCheckWxmlTags:
 
     def test_self_closing_and_void_pass(self):
         from miniapp import _check_wxml_tags
+
         src = "<view><image src='x.png' /><input value='{{v}}' /></view>"
         assert _check_wxml_tags(src, "p.wxml") is None
 
     def test_unclosed_tag_detected(self):
         from miniapp import _check_wxml_tags
+
         src = "<view><text>内容</view>"
         err = _check_wxml_tags(src, "p.wxml")
         # 栈式检查：先命中 </view> 与未闭合 <text> 不配对（同为有效拦截）
@@ -65,18 +68,21 @@ class TestCheckWxmlTags:
 
     def test_deep_unclosed_reported_as_unclosed(self):
         from miniapp import _check_wxml_tags
+
         src = "<view><text>内容"  # 完全无闭合标签
         err = _check_wxml_tags(src, "p.wxml")
         assert err is not None and "未闭合标签 <text>" in err
 
     def test_mismatched_close_detected(self):
         from miniapp import _check_wxml_tags
+
         src = "<view><block></view></block>"
         err = _check_wxml_tags(src, "p.wxml")
         assert err is not None and "不配对" in err
 
     def test_extra_close_detected(self):
         from miniapp import _check_wxml_tags
+
         src = "</view>"
         err = _check_wxml_tags(src, "p.wxml")
         assert err is not None and "多余闭合标签" in err
@@ -84,6 +90,7 @@ class TestCheckWxmlTags:
     def test_expression_with_gt_not_misreported(self):
         """{{count > 0}} 中的 > 不能触发标签解析误报。"""
         from miniapp import _check_wxml_tags
+
         src = '<view>{{count > 0 ? "大" : "小"}}</view>'
         assert _check_wxml_tags(src, "p.wxml") is None
 
@@ -93,11 +100,13 @@ class TestQcCheck:
 
     def test_perfect_project_passes(self):
         from miniapp import _qc_check
+
         qc = _qc_check(_perfect_files())
         assert qc["ok"] is True, [c for c in qc["checks"] if not c["ok"]]
 
     def test_missing_required_file(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         del files["app.wxss"]
         qc = _qc_check(files)
@@ -106,6 +115,7 @@ class TestQcCheck:
 
     def test_generated_page_not_registered(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         files["pages/index/index.js"] = files["pages/index/index.js"]
         files["app.json"] = json_dumps({"pages": ["pages/about/about"]})  # 注册里少了 index
@@ -115,6 +125,7 @@ class TestQcCheck:
 
     def test_registered_page_missing_quartet(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         del files["pages/about/about.wxml"]  # 注册页缺四件套之一
         qc = _qc_check(files)
@@ -123,6 +134,7 @@ class TestQcCheck:
 
     def test_wxml_error_captured(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         files["pages/index/index.wxml"] = "<view><text>未闭合</view>"
         qc = _qc_check(files)
@@ -131,6 +143,7 @@ class TestQcCheck:
 
     def test_bad_js_syntax_captured(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         files["pages/index/index.js"] = "Page({ data: { count: 0 }"  # 缺右括号
         qc = _qc_check(files)
@@ -139,6 +152,7 @@ class TestQcCheck:
 
     def test_invalid_app_json(self):
         from miniapp import _qc_check
+
         files = _perfect_files()
         files["app.json"] = "{not json"
         qc = _qc_check(files)

@@ -543,7 +543,7 @@ export default function DigitalHumanPage() {
           if (t.status === 'canceled') {
             toast.info('任务已取消')
           } else if (t.error_code === 402) {
-            toast.error('今日生成次数已用完，升级会员解锁更多额度')
+            // 402 额度耗尽：全局已提示并引导升级（QuotaExhaustedNotifier），此处仅打开会员页
             window.open('/membership', '_blank')
           } else {
             toast.error(`生成失败：${t.error || '未知错误'}`)
@@ -598,7 +598,7 @@ export default function DigitalHumanPage() {
     } catch (e) {
       setGenerating(false)
       if (e.status === 402) {
-        toast.error('今日生成次数已用完，升级会员解锁更多额度')
+        // 402 额度耗尽：全局已提示并引导升级，此处仅打开会员页
         window.open('/membership', '_blank')
       } else {
         toast.error(`生成失败：${e.message}`)
@@ -819,7 +819,7 @@ export default function DigitalHumanPage() {
       pollBatch(res.data.batch_id)
     } catch (e) {
       if (e.status === 402) {
-        toast.error('今日生成次数已用完，升级会员获取更多额度')
+        // 402 额度耗尽：全局已提示并引导升级，此处仅打开会员页
         window.open('/membership', '_blank')
       } else {
         toast.error(`批量生成失败：${e.message}`)

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
@@ -33,6 +34,7 @@ def _seed_skill(skill_id="skill_collab_test"):
 # 评论 CRUD
 # ══════════════════════════════════════════════════════════════
 
+
 def test_create_comment(test_db_path):
     """创建评论"""
     from collab_engine import create_comment
@@ -53,7 +55,7 @@ def test_create_comment_empty(test_db_path):
     """空评论内容应拒绝（Pydantic 在模型构造时校验）"""
     from common.models import CommentCreateRequest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CommentCreateRequest(
             content="",
             author_id="user1",
@@ -66,7 +68,7 @@ def test_create_comment_missing_target(test_db_path):
     """缺少 target_type / target_id 应拒绝（Pydantic 在模型构造时校验）"""
     from common.models import CommentCreateRequest
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CommentCreateRequest(
             content="测试评论",
             author_id="user1",
@@ -146,6 +148,7 @@ def test_delete_comment(test_db_path):
 # 点赞
 # ══════════════════════════════════════════════════════════════
 
+
 def test_like_comment(test_db_path):
     """点赞评论"""
     from collab_engine import create_comment, like_comment
@@ -191,6 +194,7 @@ def test_unlike_comment(test_db_path):
 # Skill 文件管理（标准目录结构：SKILL.md + scripts/references/examples/assets）
 # ══════════════════════════════════════════════════════════════
 
+
 def test_write_and_read_skill_file(test_db_path):
     """写入并读取 Skill 文件（自动创建父目录）"""
     from collab_engine import read_skill_file, write_skill_file
@@ -198,10 +202,13 @@ def test_write_and_read_skill_file(test_db_path):
     from skills_store import skill_root
 
     _seed_skill("skill_fs_1")
-    result = run(write_skill_file(
-        "skill_fs_1", "scripts/main.py",
-        SkillFileWriteRequest(content="print('hello')"),
-    ))
+    result = run(
+        write_skill_file(
+            "skill_fs_1",
+            "scripts/main.py",
+            SkillFileWriteRequest(content="print('hello')"),
+        )
+    )
     assert result["path"] == "scripts/main.py"
     # 文件系统断言：真实落盘 + 自动建父目录
     assert (skill_root("skill_fs_1") / "scripts" / "main.py").is_file()
@@ -321,8 +328,7 @@ def test_path_traversal_rejected(test_db_path):
     """路径穿越请求（../、绝对路径、空段）全部拒绝"""
     from fastapi import HTTPException
 
-    from collab_engine import (create_skill_folder, delete_skill_file,
-                               read_skill_file, write_skill_file)
+    from collab_engine import create_skill_folder, delete_skill_file, read_skill_file, write_skill_file
     from common.models import SkillFileWriteRequest
     from skills_store import resolve_path
 

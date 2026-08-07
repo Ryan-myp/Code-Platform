@@ -2116,17 +2116,6 @@ def _generate_one(  # noqa: C901
             except Exception:
                 pass
 
-    # 0. 商业配额：生成消耗 1 次今日额度（管理员/VIP 不受限）
-    from common.auth import consume_quota, get_quota_info
-
-    quota = consume_quota(uid)
-    if not quota.get("allowed"):
-        raise HTTPException(
-            402,
-            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
-        )
-    quota_info = get_quota_info(uid)  # 会员等级用于水印策略
-
     # 0.5 内容安全：硬违规词直接拒绝生成；广告法极限词/中风险词放行但提示
     try:
         from content_strategy import _scan_text
@@ -2154,6 +2143,17 @@ def _generate_one(  # noqa: C901
     bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
     if not bg:
         raise HTTPException(400, f"未知背景: {req.background_id}")
+
+    # 0. 商业配额：参数与内容校验通过后才扣费（失败不消耗额度）
+    from common.auth import consume_quota, get_quota_info
+
+    quota = consume_quota(uid)
+    if not quota.get("allowed"):
+        raise HTTPException(
+            402,
+            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+        )
+    quota_info = get_quota_info(uid)  # 会员等级用于水印策略
 
     record_id = f"dh_{uuid.uuid4().hex[:12]}"
     conn = get_db()
@@ -2592,16 +2592,24 @@ def _batch_worker(
                             sensitive_warning=res.get("sensitive_warning", ""),
                         )
                     else:
-                        # audio_only/failed：未产出视频一律算失败（可重试）
+                        # audio_only/failed：未产出视频一律算失败（可重试），已扣额度退回
                         item["status"] = "failed"
                         item["error"] = (res.get("error") or "生成失败")[:120]
+                        from common.auth import refund_quota
+
+                        refund_quota(uid)
                 except HTTPException as e:
+                    # 402 未扣费标 skipped；400 校验失败发生在扣费前，均不退费
                     item["status"] = "skipped" if e.status_code == 402 else "failed"
                     item["error"] = str(e.detail)[:120]
                 except Exception as e:
+                    # 校验通过后发生意外（已扣费）：退费
                     logger.exception("batch item failed %s", batch_id)
                     item["status"] = "failed"
                     item["error"] = str(e)[:120]
+                    from common.auth import refund_quota
+
+                    refund_quota(uid)
             task["done"] += 1
             task[item["status"]] += 1
             # 逐条落库：重启后可恢复进度/结果

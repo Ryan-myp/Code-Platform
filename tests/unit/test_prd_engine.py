@@ -20,6 +20,7 @@ def run(coro):
 # PRD 生成
 # ══════════════════════════════════════════════════════════════
 
+
 def test_generate_prd(test_db_path):
     """AI 生成 PRD（mock LLM）"""
     from prd_engine import generate_prd
@@ -43,6 +44,7 @@ def test_generate_prd_empty(test_db_path):
 # ══════════════════════════════════════════════════════════════
 # PRD 审查
 # ══════════════════════════════════════════════════════════════
+
 
 def test_review_prd(test_db_path):
     """PRD 审查（biz-delivery 不可用，fallback LLM）"""
@@ -70,6 +72,7 @@ def test_review_prd_empty(test_db_path):
 # 技术方案
 # ══════════════════════════════════════════════════════════════
 
+
 def test_technical_design(test_db_path):
     """技术方案生成（mock LLM）"""
     from prd_engine import technical_design
@@ -93,6 +96,7 @@ def test_technical_design_empty(test_db_path):
 # ══════════════════════════════════════════════════════════════
 # 测试用例
 # ══════════════════════════════════════════════════════════════
+
 
 def test_test_cases(test_db_path):
     """测试用例生成（mock LLM）"""
@@ -129,6 +133,7 @@ def test_test_cases_empty_prd(test_db_path):
 # 代码生成
 # ══════════════════════════════════════════════════════════════
 
+
 def test_generate_code(test_db_path):
     """根据技术方案生成代码（mock LLM）"""
     from prd_engine import generate_code
@@ -163,6 +168,7 @@ def test_generate_code_default_language(test_db_path):
 # ══════════════════════════════════════════════════════════════
 # 代码对话
 # ══════════════════════════════════════════════════════════════
+
 
 def test_code_chat(test_db_path):
     """代码对话 - 追问/修改代码（mock LLM）"""

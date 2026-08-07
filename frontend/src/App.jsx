@@ -15,7 +15,7 @@ import OnboardingTour from './components/OnboardingTour'
 import FloatingAssistant from './components/FloatingAssistant'
 import MobileBottomNav from './components/MobileBottomNav'
 import AccessGuard from './components/AccessGuard'
-import { ToastProvider } from './lib/toast'
+import { ToastProvider, useToast } from './lib/toast'
 
 // 页面级懒加载：首屏仅加载当前页面，其余按需分块（首包从 ~1.8MB 降至 ~300KB）
 const ConfigPage = lazy(() => import('./pages/ConfigPage'))
@@ -124,6 +124,21 @@ function ShareRedirect() {
   return null
 }
 
+// 全局 402 额度耗尽引导：api 拦截器派发 quota-exhausted 事件后统一提示升级
+// （页面级 toast 由各页自理；此处兜底未处理 402 的页面，避免用户无感知“死掉”的操作）
+function QuotaExhaustedNotifier() {
+  const toast = useToast()
+  useEffect(() => {
+    const notify = () => {
+      toast.error('今日免费额度已用完，升级会员可继续使用（会员页可查看套餐）', 6000)
+    }
+    window.addEventListener('quota-exhausted', notify)
+    return () => window.removeEventListener('quota-exhausted', notify)
+  }, [toast])
+  return null
+}
+
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // 同步初始化认证态（避免首帧未登录被 ProtectedRoute 踢到 /login 再跳回 /home）
@@ -175,6 +190,7 @@ export default function App() {
     <Router>
       <ShareRedirect />
       <ToastProvider>
+        <QuotaExhaustedNotifier />
         <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
         <OnboardingTour isAuthenticated={isAuthenticated} />
         <Suspense fallback={<PageFallback />}>

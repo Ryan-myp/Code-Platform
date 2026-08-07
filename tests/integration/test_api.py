@@ -2,7 +2,6 @@
 """小团智能平台 — 集成测试（API 端点）"""
 
 import sys
-import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
@@ -11,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 def test_health_endpoint(test_db_path):
     """测试健康检查端点"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -23,6 +23,7 @@ def test_health_endpoint(test_db_path):
 def test_create_agent_endpoint(test_db_path, auth_headers):
     """测试创建 Agent 端点"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -48,6 +49,7 @@ def test_create_agent_endpoint(test_db_path, auth_headers):
 def test_list_agents_endpoint(test_db_path, auth_headers):
     """测试列出 Agent 端点"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -76,6 +78,7 @@ def test_list_agents_endpoint(test_db_path, auth_headers):
 def test_update_agent_endpoint(test_db_path, auth_headers):
     """测试更新 Agent 端点"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -111,6 +114,7 @@ def test_update_agent_endpoint(test_db_path, auth_headers):
 def test_delete_agent_endpoint(test_db_path, auth_headers):
     """测试删除 Agent 端点（软删除）"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -144,6 +148,7 @@ def test_delete_agent_endpoint(test_db_path, auth_headers):
 def test_knowledge_base_crud(test_db_path, auth_headers):
     """测试知识库 CRUD"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -172,6 +177,7 @@ def test_knowledge_base_crud(test_db_path, auth_headers):
 def test_skill_crud(test_db_path, auth_headers):
     """测试 Skill CRUD"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -202,6 +208,7 @@ def test_skill_zip_import_export(test_db_path, auth_headers):
     import zipfile
 
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -263,6 +270,7 @@ def test_skill_zip_import_export(test_db_path, auth_headers):
 def test_skill_file_crud_and_path_traversal(test_db_path, auth_headers):
     """Skill 文件接口 CRUD + 路径穿越拒绝"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -284,9 +292,7 @@ def test_skill_file_crud_and_path_traversal(test_db_path, auth_headers):
         assert put_resp.status_code == 200
 
         # 读取
-        get_resp = client.get(
-            f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
-        )
+        get_resp = client.get(f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers)
         assert get_resp.status_code == 200
         assert get_resp.json()["content"] == "print('run')"
 
@@ -295,20 +301,24 @@ def test_skill_file_crud_and_path_traversal(test_db_path, auth_headers):
             f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
         )
         assert del_resp.status_code == 200
-        get_resp2 = client.get(
-            f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers
-        )
+        get_resp2 = client.get(f"/api/skills/{skill_id}/file", params={"path": "scripts/run.py"}, headers=auth_headers)
         assert get_resp2.status_code == 404
 
         # 路径穿越 → 400
         for bad in ("../../etc/passwd", "..", "/etc/passwd"):
-            assert client.get(
-                f"/api/skills/{skill_id}/file", params={"path": bad}, headers=auth_headers
-            ).status_code == 400
-            assert client.put(
-                f"/api/skills/{skill_id}/file", params={"path": bad},
-                json={"content": "x"}, headers=auth_headers,
-            ).status_code == 400
+            assert (
+                client.get(f"/api/skills/{skill_id}/file", params={"path": bad}, headers=auth_headers).status_code
+                == 400
+            )
+            assert (
+                client.put(
+                    f"/api/skills/{skill_id}/file",
+                    params={"path": bad},
+                    json={"content": "x"},
+                    headers=auth_headers,
+                ).status_code
+                == 400
+            )
     finally:
         client.delete(f"/api/skills/{skill_id}", headers=auth_headers)
 
@@ -316,6 +326,7 @@ def test_skill_file_crud_and_path_traversal(test_db_path, auth_headers):
 def test_config_get_endpoint(test_db_path):
     """测试获取配置端点（公开）"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -330,6 +341,7 @@ def test_config_get_endpoint(test_db_path):
 def test_config_update_endpoint(test_db_path, auth_headers):
     """测试更新配置端点"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -346,6 +358,7 @@ def test_config_update_endpoint(test_db_path, auth_headers):
 def test_mcp_server_crud(test_db_path, auth_headers):
     """测试 MCP Server CRUD"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -373,6 +386,7 @@ def test_mcp_server_crud(test_db_path, auth_headers):
 def test_usage_stats_endpoint(test_db_path):
     """测试使用统计端点（公开）"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -389,22 +403,28 @@ def test_usage_stats_endpoint(test_db_path):
 # v8.0 新增集成测试
 # ══════════════════════════════════════════════════════════════
 
+
 def test_workflow_crud_and_run(test_db_path, auth_headers):
     """工作流 CRUD + 执行"""
+
     from fastapi.testclient import TestClient
+
     from main import app
-    from unittest.mock import patch
 
     client = TestClient(app)
 
     # 1. 创建工作流（含 delay 节点）
     nodes = [{"id": "n1", "type": "delay", "config": {"seconds": 0.01}, "name": "delay1"}]
-    create_resp = client.post("/api/workflows", json={
-        "name": "集成测试工作流",
-        "description": "用于测试",
-        "steps": nodes,
-        "connections": [],
-    }, headers=auth_headers)
+    create_resp = client.post(
+        "/api/workflows",
+        json={
+            "name": "集成测试工作流",
+            "description": "用于测试",
+            "steps": nodes,
+            "connections": [],
+        },
+        headers=auth_headers,
+    )
     assert create_resp.status_code == 200
     wf_id = create_resp.json()["id"]
 
@@ -435,9 +455,11 @@ def test_workflow_crud_and_run(test_db_path, auth_headers):
 
 def test_prd_pipeline(test_db_path, auth_headers):
     """PRD 流水线：生成 → 审查 → 技术方案（mock LLM）"""
-    from fastapi.testclient import TestClient
-    from main import app
     from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from main import app
 
     client = TestClient(app)
 
@@ -460,25 +482,35 @@ def test_prd_pipeline(test_db_path, auth_headers):
 
 def test_prd_test_cases_and_code(test_db_path, auth_headers):
     """PRD 测试用例 + 代码生成（mock LLM）"""
-    from fastapi.testclient import TestClient
-    from main import app
     from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from main import app
 
     client = TestClient(app)
 
     with patch("prd_engine.call_llm", return_value="| 编号 | 步骤 | 预期结果 |"):
-        tc_resp = client.post("/api/prd/test-cases", json={
-            "prd_text": "# PRD\n用户注册",
-            "tech_design": "# 技术方案\nREST API",
-        }, headers=auth_headers)
+        tc_resp = client.post(
+            "/api/prd/test-cases",
+            json={
+                "prd_text": "# PRD\n用户注册",
+                "tech_design": "# 技术方案\nREST API",
+            },
+            headers=auth_headers,
+        )
     assert tc_resp.status_code == 200
     assert "编号" in tc_resp.json()["result"]
 
     with patch("prd_engine.call_llm", return_value="```python\nprint('hello')\n```"):
-        code_resp = client.post("/api/prd/generate-code", json={
-            "tech_design": "# 技术方案\nREST API",
-            "language": "python",
-        }, headers=auth_headers)
+        code_resp = client.post(
+            "/api/prd/generate-code",
+            json={
+                "tech_design": "# 技术方案\nREST API",
+                "language": "python",
+            },
+            headers=auth_headers,
+        )
     assert code_resp.status_code == 200
     assert code_resp.json()["language"] == "python"
 
@@ -486,33 +518,46 @@ def test_prd_test_cases_and_code(test_db_path, auth_headers):
 def test_comments_crud_and_like(test_db_path, auth_headers):
     """评论 CRUD + 点赞"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
 
     # 1. 创建评论
-    create_resp = client.post("/api/comments", json={
-        "content": "集成测试评论",
-        "author_id": "user_int_test",
-        "target_type": "requirement",
-        "target_id": "req_int_test",
-    }, headers=auth_headers)
+    create_resp = client.post(
+        "/api/comments",
+        json={
+            "content": "集成测试评论",
+            "author_id": "user_int_test",
+            "target_type": "requirement",
+            "target_id": "req_int_test",
+        },
+        headers=auth_headers,
+    )
     assert create_resp.status_code == 200
     comment_id = create_resp.json()["id"]
 
     # 2. 列出评论
-    list_resp = client.get("/api/comments", params={
-        "target_type": "requirement",
-        "target_id": "req_int_test",
-    }, headers=auth_headers)
+    list_resp = client.get(
+        "/api/comments",
+        params={
+            "target_type": "requirement",
+            "target_id": "req_int_test",
+        },
+        headers=auth_headers,
+    )
     assert list_resp.status_code == 200
     assert any(c["id"] == comment_id for c in list_resp.json())
 
     # 3. 获取评论线程
-    thread_resp = client.get("/api/comments/thread", params={
-        "target_type": "requirement",
-        "target_id": "req_int_test",
-    }, headers=auth_headers)
+    thread_resp = client.get(
+        "/api/comments/thread",
+        params={
+            "target_type": "requirement",
+            "target_id": "req_int_test",
+        },
+        headers=auth_headers,
+    )
     assert thread_resp.status_code == 200
     assert len(thread_resp.json()) >= 1
 
@@ -532,18 +577,24 @@ def test_comments_crud_and_like(test_db_path, auth_headers):
     assert del_resp.status_code == 200
 
     # 7. 验证删除
-    list_resp2 = client.get("/api/comments", params={
-        "target_type": "requirement",
-        "target_id": "req_int_test",
-    }, headers=auth_headers)
+    list_resp2 = client.get(
+        "/api/comments",
+        params={
+            "target_type": "requirement",
+            "target_id": "req_int_test",
+        },
+        headers=auth_headers,
+    )
     assert all(c["id"] != comment_id for c in list_resp2.json())
 
 
 def test_sandbox_project_crud(test_db_path, auth_headers):
     """沙箱项目 CRUD（mock process_manager）"""
+    from unittest.mock import MagicMock, patch
+
     from fastapi.testclient import TestClient
+
     from main import app
-    from unittest.mock import patch, MagicMock
 
     client = TestClient(app)
 
@@ -555,12 +606,16 @@ def test_sandbox_project_crud(test_db_path, auth_headers):
 
     with patch.dict("sys.modules", {"sandbox": MagicMock(process_manager=mock_pm)}):
         # 1. 创建沙箱项目
-        create_resp = client.post("/api/sandbox/projects", json={
-            "name": "测试沙箱",
-            "image": "python:3.11-slim",
-            "ports": ["8888:8888"],
-            "command": "python main.py",
-        }, headers=auth_headers)
+        create_resp = client.post(
+            "/api/sandbox/projects",
+            json={
+                "name": "测试沙箱",
+                "image": "python:3.11-slim",
+                "ports": ["8888:8888"],
+                "command": "python main.py",
+            },
+            headers=auth_headers,
+        )
         assert create_resp.status_code == 200
         project_id = create_resp.json()["id"]
 
@@ -585,17 +640,22 @@ def test_sandbox_project_crud(test_db_path, auth_headers):
 def test_team_workflow_and_conversation(test_db_path, auth_headers):
     """Team 管理 + 对话创建 + 插件列表"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
 
     # 1. 创建 Team
-    team_resp = client.post("/api/teams", json={
-        "name": "集成测试Team",
-        "description": "用于测试",
-        "members": [],
-        "instructions": "团队指令",
-    }, headers=auth_headers)
+    team_resp = client.post(
+        "/api/teams",
+        json={
+            "name": "集成测试Team",
+            "description": "用于测试",
+            "members": [],
+            "instructions": "团队指令",
+        },
+        headers=auth_headers,
+    )
     assert team_resp.status_code == 200
     team_id = team_resp.json()["id"]
 
@@ -616,24 +676,33 @@ def test_team_workflow_and_conversation(test_db_path, auth_headers):
 def test_artifacts_crud(test_db_path, auth_headers):
     """成果仓库 CRUD"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
 
     # 1. 创建项目
-    proj_resp = client.post("/api/projects", json={
-        "name": "成果测试项目",
-        "description": "用于测试",
-    }, headers=auth_headers)
+    proj_resp = client.post(
+        "/api/projects",
+        json={
+            "name": "成果测试项目",
+            "description": "用于测试",
+        },
+        headers=auth_headers,
+    )
     assert proj_resp.status_code == 200
     proj_id = proj_resp.json()["id"]
 
     # 2. 创建成果
-    art_resp = client.post("/api/artifacts", json={
-        "project_id": proj_id,
-        "type": "doc",
-        "content": {"title": "测试成果", "body": "内容"},
-    }, headers=auth_headers)
+    art_resp = client.post(
+        "/api/artifacts",
+        json={
+            "project_id": proj_id,
+            "type": "doc",
+            "content": {"title": "测试成果", "body": "内容"},
+        },
+        headers=auth_headers,
+    )
     assert art_resp.status_code == 200
     art_id = art_resp.json()["id"]
 

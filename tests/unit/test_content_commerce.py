@@ -6,6 +6,7 @@
 - PPT 商业化：大纲 JSON 容错解析 → 真实 PPTX 文件生成（可读回/页数匹配）→ 下载端点
 - 存量库迁移：老表缺 user_id/file_path 列时自动补列
 """
+
 import asyncio
 import json
 import os
@@ -34,7 +35,9 @@ def test_copywriting_async_flow(setup_test_db, claim_and_run):
         task = create_task(
             "copywriting_generate",
             {"type": "marketing", "title": "新品上市", "prompt": "写个文案", "user_id": "u-alice"},
-            username="alice", user_id="u-alice", role="user",
+            username="alice",
+            user_id="u-alice",
+            role="user",
         )
         assert task["status"] == "pending"
         claim_and_run(task["id"])
@@ -54,6 +57,7 @@ def test_copywriting_async_flow(setup_test_db, claim_and_run):
 
 def test_copywriting_post_endpoint_creates_task(setup_test_db):
     """POST 接口直接返回 task_id（不再同步阻塞返回 result）。"""
+
     async def _call():
         return await extended_api.generate_copywriting(
             extended_api.CopywritingRequest(type="marketing", title="t", prompt="需求"),
@@ -66,10 +70,12 @@ def test_copywriting_post_endpoint_creates_task(setup_test_db):
     assert resp["status"] == "pending"
     # 空 prompt 校验
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(extended_api.generate_copywriting(
-            extended_api.CopywritingRequest(type="marketing", prompt="  "),
-            _user("u1", "alice"),
-        ))
+        asyncio.run(
+            extended_api.generate_copywriting(
+                extended_api.CopywritingRequest(type="marketing", prompt="  "),
+                _user("u1", "alice"),
+            )
+        )
     assert exc.value.status_code == 400
 
 
@@ -79,7 +85,9 @@ def test_translation_async_flow(setup_test_db, claim_and_run):
         task = create_task(
             "translation_translate",
             {"source_lang": "中文", "target_lang": "English", "text": "你好世界", "user_id": "u-bob"},
-            username="bob", user_id="u-bob", role="user",
+            username="bob",
+            user_id="u-bob",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -96,15 +104,30 @@ def test_translation_async_flow(setup_test_db, claim_and_run):
         conn.close()
 
 
-_PPT_OUTLINE = json.dumps({
-    "meta": {"storyline": "从问题到方案", "visual_theme": "商务蓝", "estimated_duration": "10"},
-    "slides": [
-        {"type": "cover", "title": "AI 商业化之路", "subtitle": "2026 年度汇报", "content": [], "notes": "开场问好"},
-        {"type": "toc", "title": "目录", "content": ["背景", "方案", "数据"], "notes": ""},
-        {"type": "content", "title": "核心结论", "content": ["要点一", "要点二"], "chart_suggestion": "柱状图", "notes": "强调数据"},
-        {"type": "thanks", "title": "谢谢", "subtitle": "Q&A", "content": [], "notes": ""},
-    ],
-}, ensure_ascii=False)
+_PPT_OUTLINE = json.dumps(
+    {
+        "meta": {"storyline": "从问题到方案", "visual_theme": "商务蓝", "estimated_duration": "10"},
+        "slides": [
+            {
+                "type": "cover",
+                "title": "AI 商业化之路",
+                "subtitle": "2026 年度汇报",
+                "content": [],
+                "notes": "开场问好",
+            },
+            {"type": "toc", "title": "目录", "content": ["背景", "方案", "数据"], "notes": ""},
+            {
+                "type": "content",
+                "title": "核心结论",
+                "content": ["要点一", "要点二"],
+                "chart_suggestion": "柱状图",
+                "notes": "强调数据",
+            },
+            {"type": "thanks", "title": "谢谢", "subtitle": "Q&A", "content": [], "notes": ""},
+        ],
+    },
+    ensure_ascii=False,
+)
 
 
 def test_ppt_async_flow_with_pptx_file(setup_test_db, claim_and_run, monkeypatch, tmp_path):
@@ -114,7 +137,9 @@ def test_ppt_async_flow_with_pptx_file(setup_test_db, claim_and_run, monkeypatch
         task = create_task(
             "ppt_generate",
             {"title": "AI 商业化之路", "outline": "参考大纲", "user_id": "u-carl"},
-            username="carl", user_id="u-carl", role="user",
+            username="carl",
+            user_id="u-carl",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -151,18 +176,21 @@ def test_ppt_async_flow_with_pptx_file(setup_test_db, claim_and_run, monkeypatch
     assert "presentationml.presentation" in resp.media_type
 
 
-@pytest.mark.parametrize("raw,expect_slides", [
-    # 正常 JSON
-    ('{"meta":{},"slides":[{"title":"a"}]}', 1),
-    # ```json 代码块包裹
-    ('```json\n{"meta":{},"slides":[{"title":"a"},{"title":"b"}]}\n```', 2),
-    # 前后杂音文本
-    ('好的，以下是生成结果：\n{"meta":{},"slides":[]}\n以上供参考', 0),
-    # 完全非 JSON（LLM 跑飞）
-    ("抱歉，我无法生成。", 0),
-    # 空字符串
-    ("", 0),
-])
+@pytest.mark.parametrize(
+    "raw,expect_slides",
+    [
+        # 正常 JSON
+        ('{"meta":{},"slides":[{"title":"a"}]}', 1),
+        # ```json 代码块包裹
+        ('```json\n{"meta":{},"slides":[{"title":"a"},{"title":"b"}]}\n```', 2),
+        # 前后杂音文本
+        ('好的，以下是生成结果：\n{"meta":{},"slides":[]}\n以上供参考', 0),
+        # 完全非 JSON（LLM 跑飞）
+        ("抱歉，我无法生成。", 0),
+        # 空字符串
+        ("", 0),
+    ],
+)
 def test_ppt_outline_parse_tolerant(raw, expect_slides):
     """大纲解析必须容错：代码块包裹/杂音文本/非 JSON 均不抛异常。"""
     data = extended_api._parse_ppt_outline(raw)
@@ -174,14 +202,20 @@ def test_history_isolation_and_delete_scope(setup_test_db, claim_and_run):
     """历史接口用户隔离：普通用户仅见自己的记录；admin 全量；删除归属校验。"""
     with patch("extended_api.call_llm", return_value="A 的文案"):
         ta = create_task(
-            "copywriting_generate", {"type": "marketing", "title": "a", "prompt": "p", "user_id": "u-a"},
-            username="alice", user_id="u-a", role="user",
+            "copywriting_generate",
+            {"type": "marketing", "title": "a", "prompt": "p", "user_id": "u-a"},
+            username="alice",
+            user_id="u-a",
+            role="user",
         )
         claim_and_run(ta["id"])
     with patch("extended_api.call_llm", return_value="B 的文案"):
         tb = create_task(
-            "copywriting_generate", {"type": "marketing", "title": "b", "prompt": "p", "user_id": "u-b"},
-            username="bob", user_id="u-b", role="user",
+            "copywriting_generate",
+            {"type": "marketing", "title": "b", "prompt": "p", "user_id": "u-b"},
+            username="bob",
+            user_id="u-b",
+            role="user",
         )
         claim_and_run(tb["id"])
 
@@ -242,12 +276,16 @@ def test_copywriting_user_limit(setup_test_db):
 
     for _ in range(2):
         create_task(
-            "copywriting_generate", {"type": "marketing", "title": "x", "prompt": "p", "user_id": "u-l"},
-            username="lim", user_id="u-l",
+            "copywriting_generate",
+            {"type": "marketing", "title": "x", "prompt": "p", "user_id": "u-l"},
+            username="lim",
+            user_id="u-l",
         )
     with pytest.raises(HTTPException) as exc:
         create_task(
-            "copywriting_generate", {"type": "marketing", "title": "x", "prompt": "p", "user_id": "u-l"},
-            username="lim", user_id="u-l",
+            "copywriting_generate",
+            {"type": "marketing", "title": "x", "prompt": "p", "user_id": "u-l"},
+            username="lim",
+            user_id="u-l",
         )
     assert exc.value.status_code == 429

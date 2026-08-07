@@ -2,6 +2,7 @@
 
 不依赖网络，纯函数级测试。
 """
+
 import sys
 from pathlib import Path
 
@@ -32,7 +33,7 @@ GOOD_HTML = """<!DOCTYPE html>
 
 WX_FILES = {
     "game.js": "const canvas = wx.createCanvas();\nconst ctx = canvas.getContext('2d');\n"
-               "function startGame() {}\nfunction gameOver() {}\nwx.setStorageSync('best', 0);",
+    "function startGame() {}\nfunction gameOver() {}\nwx.setStorageSync('best', 0);",
     "game.json": '{"deviceOrientation": "portrait", "showStatusBar": false}',
     "project.config.json": '{"appid": "touristappid", "compileType": "game"}',
 }
@@ -47,22 +48,26 @@ class TestCheckHtmlPairs:
 
     def test_balanced_html_passes(self):
         from game_factory import _check_html_pairs
+
         assert _check_html_pairs(GOOD_HTML) is None
 
     def test_unbalanced_script_detected(self):
         from game_factory import _check_html_pairs
+
         html = GOOD_HTML.replace("</script>", "")
         err = _check_html_pairs(html)
         assert err is not None and "script" in err and "不配对" in err
 
     def test_missing_canvas_detected(self):
         from game_factory import _check_html_pairs
+
         html = GOOD_HTML.replace('<canvas id="game" width="480" height="640"></canvas>', "<div id='game'></div>")
         err = _check_html_pairs(html)
         assert err is not None and "<canvas>" in err
 
     def test_missing_inline_script_detected(self):
         from game_factory import _check_html_pairs
+
         html = GOOD_HTML.replace("<script>", "<script src='x.js'>").replace("</script>", "")
         err = _check_html_pairs(html)
         assert err is not None and "<script>" in err
@@ -73,11 +78,13 @@ class TestQcCheck:
 
     def test_perfect_project_passes(self):
         from game_factory import _qc_check
+
         qc = _qc_check(_perfect_files())
         assert qc["ok"] is True, [c for c in qc["checks"] if not c["ok"]]
 
     def test_missing_web_index(self):
         from game_factory import _qc_check
+
         files = _perfect_files()
         files["web"] = {}
         qc = _qc_check(files)
@@ -86,6 +93,7 @@ class TestQcCheck:
 
     def test_wx_missing_game_config(self):
         from game_factory import _qc_check
+
         files = _perfect_files()
         del files["wx"]["game.json"]
         qc = _qc_check(files)
@@ -94,6 +102,7 @@ class TestQcCheck:
 
     def test_html_structure_error(self):
         from game_factory import _qc_check
+
         files = _perfect_files()
         files["web"]["index.html"] = GOOD_HTML.replace("</script>", "")  # script 不配对
         qc = _qc_check(files)
@@ -103,6 +112,7 @@ class TestQcCheck:
     def test_feature_missing_detected(self):
         """去掉开始界面关键词后，要素门禁拦截。"""
         from game_factory import _qc_check
+
         files = _perfect_files()
         html = GOOD_HTML.replace("function startGame() { score = 0;", "function initGame() { score = 0;")
         html = html.replace("开始游戏", "")
@@ -115,5 +125,6 @@ class TestQcCheck:
     def test_wx_only_project_passes(self):
         """只生成 web 版（无 wx）时不应报 wx 文件缺失。"""
         from game_factory import _qc_check
+
         qc = _qc_check({"web": {"index.html": GOOD_HTML}})
         assert qc["ok"] is True

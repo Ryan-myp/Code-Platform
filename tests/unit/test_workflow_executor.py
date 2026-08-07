@@ -21,6 +21,7 @@ def run(coro):
 # 占位符替换 _substitute
 # ══════════════════════════════════════════════════════════════
 
+
 def test_substitute_simple():
     """简单占位符替换"""
     from workflows.executor import _substitute
@@ -74,6 +75,7 @@ def test_substitute_in_text():
 # ══════════════════════════════════════════════════════════════
 # AST 安全求值 _safe_eval
 # ══════════════════════════════════════════════════════════════
+
 
 def test_safe_eval_arithmetic():
     """算术表达式"""
@@ -148,6 +150,7 @@ def test_safe_eval_name_error():
 # SSRF 防护
 # ══════════════════════════════════════════════════════════════
 
+
 def test_is_safe_url_public():
     """公网 URL 安全"""
     from workflows.executor import _is_safe_url
@@ -188,6 +191,7 @@ def test_is_safe_url_invalid_scheme():
 # 节点执行
 # ══════════════════════════════════════════════════════════════
 
+
 def test_execute_delay_node(test_db_path):
     """Delay 节点"""
     from workflows.executor import WorkflowExecutor
@@ -204,10 +208,12 @@ def test_execute_condition_node(test_db_path):
 
     executor = WorkflowExecutor()
     results = {"node1": {"status": "success"}}
-    result = run(executor.execute_condition_node(
-        {"expression": "results['node1']['status'] == 'success'"},
-        results,
-    ))
+    result = run(
+        executor.execute_condition_node(
+            {"expression": "results['node1']['status'] == 'success'"},
+            results,
+        )
+    )
     assert result["status"] == "evaluated"
     assert result["result"] is True
 
@@ -287,6 +293,7 @@ def test_execute_http_node_no_url(test_db_path):
 # DAG 构建
 # ══════════════════════════════════════════════════════════════
 
+
 def test_build_dag_simple():
     """简单 DAG 构建"""
     from workflows.executor import WorkflowExecutor
@@ -336,6 +343,7 @@ def test_build_dag_parallel():
 # ══════════════════════════════════════════════════════════════
 # 工作流执行
 # ══════════════════════════════════════════════════════════════
+
 
 def test_execute_workflow_simple(test_db_path):
     """执行简单工作流（单节点 delay）"""

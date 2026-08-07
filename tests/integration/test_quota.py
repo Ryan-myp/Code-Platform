@@ -6,6 +6,7 @@
 - 配额耗尽返回 402（免费版默认 30 次/日）
 - admin 不受配额限制（不扣费）
 """
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -50,6 +51,7 @@ def _set_used_today(username: str, used: int) -> None:
 def test_async_generators_deduct_quota(test_db_path):
     """表情包/思维导图异步提交端点：普通用户每次调用扣 1 次当日额度。"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -69,6 +71,7 @@ def test_async_generators_deduct_quota(test_db_path):
 def test_quota_exhausted_returns_402(test_db_path):
     """额度耗尽（30/30）后再次调用生成端点 → 402 且不创建任务。"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -98,6 +101,7 @@ def test_quota_exhausted_returns_402(test_db_path):
 def test_admin_not_deducted(test_db_path, auth_headers):
     """admin 调用生成端点不扣费（管理员不限额度）。"""
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
@@ -46,6 +47,7 @@ def _seed_team(team_id="team_test", members=None, instructions="团队指令"):
 # ══════════════════════════════════════════════════════════════
 # 对话 CRUD
 # ══════════════════════════════════════════════════════════════
+
 
 def test_create_conversation(test_db_path):
     """创建对话"""
@@ -111,6 +113,7 @@ def test_add_conversation_message_empty(test_db_path):
 # Agent 运行（mock LLM）
 # ══════════════════════════════════════════════════════════════
 
+
 def test_run_agent(test_db_path):
     """运行 Agent（mock LLM 返回）"""
     from chat_engine import run_agent
@@ -129,8 +132,9 @@ def test_run_agent_no_message(test_db_path):
     from chat_engine import run_agent
 
     _seed_agent("agent_run_2")
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException) as exc:
         run(run_agent("agent_run_2", {"message": ""}))
+    assert exc.value.status_code == 400
 
 
 def test_run_agent_not_found(test_db_path):
@@ -145,6 +149,7 @@ def test_run_agent_not_found(test_db_path):
 # ══════════════════════════════════════════════════════════════
 # Team 运行（mock LLM）
 # ══════════════════════════════════════════════════════════════
+
 
 def test_run_team(test_db_path):
     """运行 Team（mock LLM）"""

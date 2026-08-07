@@ -9,8 +9,9 @@
 """
 
 import sys
-import pytest
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 
@@ -18,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 class TestPluginInterface:
     def test_plugin_interface_default_attributes(self):
         from plugin_registry import PluginInterface
+
         # PluginInterface 是普通基类，可实例化；子类需覆盖 name/category/version
         assert PluginInterface.name == ""
         assert PluginInterface.category == ""
@@ -25,6 +27,7 @@ class TestPluginInterface:
 
     def test_plugin_interface_execute_raises_not_implemented(self):
         from plugin_registry import PluginInterface
+
         with pytest.raises(NotImplementedError):
             PluginInterface().execute({})
 
@@ -33,12 +36,13 @@ class TestPluginRegistry:
     def test_registry_independent_instances(self):
         """PluginRegistry 是普通类，每次实例化得到独立实例（非单例）"""
         from plugin_registry import PluginRegistry
+
         r1 = PluginRegistry()
         r2 = PluginRegistry()
         assert r1 is not r2
 
     def test_register_and_list_all(self):
-        from plugin_registry import PluginRegistry, PluginInterface
+        from plugin_registry import PluginInterface, PluginRegistry
 
         class TestPlugin(PluginInterface):
             name = "test-plugin"
@@ -59,7 +63,7 @@ class TestPluginRegistry:
         assert target["enabled"] is True
 
     def test_register_requires_name(self):
-        from plugin_registry import PluginRegistry, PluginInterface
+        from plugin_registry import PluginInterface, PluginRegistry
 
         class AnonymousPlugin(PluginInterface):
             name = ""  # 空 name
@@ -72,7 +76,7 @@ class TestPluginRegistry:
             registry.register(AnonymousPlugin())
 
     def test_execute_plugin(self):
-        from plugin_registry import PluginRegistry, PluginInterface
+        from plugin_registry import PluginInterface, PluginRegistry
 
         class EchoPlugin(PluginInterface):
             name = "echo"
@@ -90,12 +94,13 @@ class TestPluginRegistry:
 
     def test_execute_nonexistent_plugin_raises_key_error(self):
         from plugin_registry import PluginRegistry
+
         registry = PluginRegistry()
         with pytest.raises(KeyError):
             registry.execute("nonexistent", {})
 
     def test_health_check_returns_all_plugins(self):
-        from plugin_registry import PluginRegistry, PluginInterface
+        from plugin_registry import PluginInterface, PluginRegistry
 
         class HealthPlugin(PluginInterface):
             name = "health-test"
@@ -113,7 +118,7 @@ class TestPluginRegistry:
         assert all(h["status"] == "ok" for h in hc)
 
     def test_unregister(self):
-        from plugin_registry import PluginRegistry, PluginInterface
+        from plugin_registry import PluginInterface, PluginRegistry
 
         class UnregPlugin(PluginInterface):
             name = "unreg-test"
@@ -137,6 +142,7 @@ class TestPluginRegistry:
         没有 biz-delivery 引擎时静默跳过，registry 仍可用。
         """
         from plugin_registry import registry
+
         # 至少能调用 list_all 与 health_check
         assert isinstance(registry.list_all(), list)
         assert isinstance(registry.health_check(), list)

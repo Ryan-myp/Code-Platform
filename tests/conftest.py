@@ -32,6 +32,7 @@ def setup_test_db():
     skills_tmp = Path(db_path).parent / f"{Path(db_path).stem}_skills"
     config_mod.SKILLS_DIR = skills_tmp
     from main import init_db
+
     init_db()
     yield db_path
     # Cleanup

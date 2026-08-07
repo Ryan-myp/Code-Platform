@@ -6,6 +6,7 @@
 - 历史接口用户隔离：普通用户仅见自己的记录，admin 全量；删除/详情归属校验
 - 上传接口带用户归属
 """
+
 import asyncio
 import csv
 import json
@@ -38,13 +39,17 @@ def _init_workshop_tables(setup_test_db):
 
 # ── 1. handler 注册 ────────────────────────────────────────
 
+
 def test_ai_workshop_handlers_registered(setup_test_db):
     """五大工坊的异步任务处理器必须已注册。"""
-    missing = {"docqa_ask", "mindmap_generate", "web_search_query", "forecast_analyze", "video_analyze"} - set(_handlers)
+    missing = {"docqa_ask", "mindmap_generate", "web_search_query", "forecast_analyze", "video_analyze"} - set(
+        _handlers
+    )
     assert not missing, f"未注册的任务类型: {missing}"
 
 
 # ── 2. 文档问答 ────────────────────────────────────────────
+
 
 def _seed_doc(conn, did: str, user_id: str, text: str = "产品说明书内容") -> None:
     conn.execute(
@@ -68,7 +73,9 @@ def test_docqa_async_flow(setup_test_db, claim_and_run):
         task = create_task(
             "docqa_ask",
             {"doc_id": "doc-alice", "question": "支持远程升级吗？", "user_id": "u-alice"},
-            username="alice", user_id="u-alice", role="user",
+            username="alice",
+            user_id="u-alice",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -117,13 +124,20 @@ def test_docqa_records_isolation(setup_test_db):
 
 # ── 3. 思维导图 ────────────────────────────────────────────
 
-_MINDMAP_JSON = json.dumps({
-    "title": "AI 商业化",
-    "description": "概述",
-    "root": {"name": "AI 商业化", "color": "#667eea", "children": [
-        {"name": "产品", "color": "#4A90D9", "children": [{"name": "订阅制", "children": []}]},
-    ]},
-}, ensure_ascii=False)
+_MINDMAP_JSON = json.dumps(
+    {
+        "title": "AI 商业化",
+        "description": "概述",
+        "root": {
+            "name": "AI 商业化",
+            "color": "#667eea",
+            "children": [
+                {"name": "产品", "color": "#4A90D9", "children": [{"name": "订阅制", "children": []}]},
+            ],
+        },
+    },
+    ensure_ascii=False,
+)
 
 
 def test_mindmap_async_flow(setup_test_db, claim_and_run):
@@ -132,7 +146,9 @@ def test_mindmap_async_flow(setup_test_db, claim_and_run):
         task = create_task(
             "mindmap_generate",
             {"topic": "AI 商业化", "depth": 3, "style": "business", "user_id": "u-dana"},
-            username="dana", user_id="u-dana", role="user",
+            username="dana",
+            user_id="u-dana",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -157,7 +173,9 @@ def test_mindmap_records_isolation(setup_test_db, claim_and_run):
             task = create_task(
                 "mindmap_generate",
                 {"topic": f"主题{uid}", "depth": 2, "style": "professional", "user_id": uid},
-                username=name, user_id=uid, role="user",
+                username=name,
+                user_id=uid,
+                role="user",
             )
             claim_and_run(task["id"])
 
@@ -184,18 +202,33 @@ def test_mindmap_records_isolation(setup_test_db, claim_and_run):
 
 # ── 4. 联网搜索 ────────────────────────────────────────────
 
+
 def test_web_search_async_flow(setup_test_db, claim_and_run):
     """联网搜索：多源结果 → AI 摘要 → 历史入库（带用户归属）。"""
     fake_results = [
-        {"title": "AI 行业报告", "snippet": "2026 年 AI 市场规模达万亿", "url": "https://a.example", "source": "DuckDuckGo"},
-        {"title": "AI 商业化案例", "snippet": "头部企业商业化路径分析", "url": "https://b.example", "source": "DuckDuckGo"},
+        {
+            "title": "AI 行业报告",
+            "snippet": "2026 年 AI 市场规模达万亿",
+            "url": "https://a.example",
+            "source": "DuckDuckGo",
+        },
+        {
+            "title": "AI 商业化案例",
+            "snippet": "头部企业商业化路径分析",
+            "url": "https://b.example",
+            "source": "DuckDuckGo",
+        },
     ]
-    with patch("web_search._search_ddg", return_value=fake_results), \
-         patch("web_search.call_llm", return_value="2026 年 AI 市场持续增长，头部企业加速商业化。"):
+    with (
+        patch("web_search._search_ddg", return_value=fake_results),
+        patch("web_search.call_llm", return_value="2026 年 AI 市场持续增长，头部企业加速商业化。"),
+    ):
         task = create_task(
             "web_search_query",
             {"query": "AI 商业化趋势", "num_results": 5, "user_id": "u-eve"},
-            username="eve", user_id="u-eve", role="user",
+            username="eve",
+            user_id="u-eve",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -222,6 +255,7 @@ def test_web_search_async_flow(setup_test_db, claim_and_run):
 
 # ── 5. 数据预测 ────────────────────────────────────────────
 
+
 def _seed_forecast(conn, did: str, user_id: str, csv_path: str) -> None:
     conn.execute(
         "INSERT INTO forecast_records (id, filename, filepath, row_count, columns, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -229,14 +263,43 @@ def _seed_forecast(conn, did: str, user_id: str, csv_path: str) -> None:
     )
 
 
-_FORECAST_JSON = json.dumps({
-    "overview": {"record_count": 3, "columns": ["month", "sales"], "data_quality": "A", "summary": "销售额逐月上升"},
-    "statistics": {"columns": []},
-    "trend_analysis": {"overall_trend": "上升", "seasonal_patterns": "", "anomalies": [], "correlations": [], "key_findings": ["销售额上升"]},
-    "predictions": {"method": "趋势外推", "short_term": {"description": "下季度 +10%", "confidence": "中"}, "medium_term": {}, "forecast_values": [], "risks": []},
-    "recommendations": [{"priority": 1, "level": "重要", "action": "加大投放", "expected_impact": "营收 +15%", "timeline": "Q3"}],
-    "charts": {"labels": ["1月", "2月", "3月"], "actual": [100, 120, 115], "forecast": [], "trend_line": [], "upper_bound": [], "lower_bound": []},
-}, ensure_ascii=False)
+_FORECAST_JSON = json.dumps(
+    {
+        "overview": {
+            "record_count": 3,
+            "columns": ["month", "sales"],
+            "data_quality": "A",
+            "summary": "销售额逐月上升",
+        },
+        "statistics": {"columns": []},
+        "trend_analysis": {
+            "overall_trend": "上升",
+            "seasonal_patterns": "",
+            "anomalies": [],
+            "correlations": [],
+            "key_findings": ["销售额上升"],
+        },
+        "predictions": {
+            "method": "趋势外推",
+            "short_term": {"description": "下季度 +10%", "confidence": "中"},
+            "medium_term": {},
+            "forecast_values": [],
+            "risks": [],
+        },
+        "recommendations": [
+            {"priority": 1, "level": "重要", "action": "加大投放", "expected_impact": "营收 +15%", "timeline": "Q3"}
+        ],
+        "charts": {
+            "labels": ["1月", "2月", "3月"],
+            "actual": [100, 120, 115],
+            "forecast": [],
+            "trend_line": [],
+            "upper_bound": [],
+            "lower_bound": [],
+        },
+    },
+    ensure_ascii=False,
+)
 
 
 def test_forecast_async_flow(setup_test_db, claim_and_run, tmp_path):
@@ -262,7 +325,9 @@ def test_forecast_async_flow(setup_test_db, claim_and_run, tmp_path):
         task = create_task(
             "forecast_analyze",
             {"data_id": "data-1", "target_column": "sales", "forecast_periods": 3, "user_id": "u-frank"},
-            username="frank", user_id="u-frank", role="user",
+            username="frank",
+            user_id="u-frank",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -293,6 +358,7 @@ def test_forecast_async_flow(setup_test_db, claim_and_run, tmp_path):
 
 # ── 6. 视频理解 ────────────────────────────────────────────
 
+
 def _seed_video(conn, vid: str, user_id: str) -> None:
     conn.execute(
         "INSERT INTO video_records (id, filename, filepath, file_size, description, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -300,18 +366,23 @@ def _seed_video(conn, vid: str, user_id: str) -> None:
     )
 
 
-_VIDEO_JSON = json.dumps({
-    "title": "产品演示视频",
-    "summary": "展示核心功能",
-    "detailed_summary": "开头展示痛点，中间演示功能，结尾 CTA",
-    "key_scenes": [{"timestamp": "00:05", "description": "痛点引入", "importance": "高", "why_important": "决定留存"}],
-    "topics": ["效率工具", "AI"],
-    "tone": "轻松",
-    "target_audience": "职场人群",
-    "highlights": ["真实场景演示"],
-    "subtitles_text": "大家好，今天演示……",
-    "recommendations": ["前 3 秒加钩子"],
-}, ensure_ascii=False)
+_VIDEO_JSON = json.dumps(
+    {
+        "title": "产品演示视频",
+        "summary": "展示核心功能",
+        "detailed_summary": "开头展示痛点，中间演示功能，结尾 CTA",
+        "key_scenes": [
+            {"timestamp": "00:05", "description": "痛点引入", "importance": "高", "why_important": "决定留存"}
+        ],
+        "topics": ["效率工具", "AI"],
+        "tone": "轻松",
+        "target_audience": "职场人群",
+        "highlights": ["真实场景演示"],
+        "subtitles_text": "大家好，今天演示……",
+        "recommendations": ["前 3 秒加钩子"],
+    },
+    ensure_ascii=False,
+)
 
 
 def test_video_async_flow(setup_test_db, claim_and_run):
@@ -329,7 +400,9 @@ def test_video_async_flow(setup_test_db, claim_and_run):
         task = create_task(
             "video_analyze",
             {"video_id": "vid-1", "description": "产品演示", "user_id": "u-gina"},
-            username="gina", user_id="u-gina", role="user",
+            username="gina",
+            user_id="u-gina",
+            role="user",
         )
         claim_and_run(task["id"])
         assert get_task(task["id"])["status"] == "success"
@@ -362,29 +435,45 @@ def test_video_async_flow(setup_test_db, claim_and_run):
 
 # ── 7. POST 端点返回 task_id ───────────────────────────────
 
+
 def test_workshop_post_endpoints_creates_task(setup_test_db):
     """五模块 POST 接口直接返回 task_id（不再同步阻塞）。"""
-    resp = asyncio.run(doc_qa.ask_document(
-        doc_qa.AskRequest(doc_id="doc-x", question="问"), _user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        doc_qa.ask_document(
+            doc_qa.AskRequest(doc_id="doc-x", question="问"),
+            _user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")
 
-    resp = asyncio.run(mindmap.generate_mindmap(
-        mindmap.MindMapRequest(topic="主题"), _user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        mindmap.generate_mindmap(
+            mindmap.MindMapRequest(topic="主题"),
+            _user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")
 
-    resp = asyncio.run(web_search.web_search(
-        web_search.WebSearchRequest(query="查询"), _user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        web_search.web_search(
+            web_search.WebSearchRequest(query="查询"),
+            _user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")
 
-    resp = asyncio.run(data_forecast.analyze_data(
-        data_forecast.AnalyzeRequest(data_id="data-x"), _user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        data_forecast.analyze_data(
+            data_forecast.AnalyzeRequest(data_id="data-x"),
+            _user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")
 
-    resp = asyncio.run(video_analyzer.analyze_video(
-        video_analyzer.AnalyzeRequest(video_id="vid-x"), _user("u1", "alice"),
-    ))
+    resp = asyncio.run(
+        video_analyzer.analyze_video(
+            video_analyzer.AnalyzeRequest(video_id="vid-x"),
+            _user("u1", "alice"),
+        )
+    )
     assert resp["ok"] is True and resp["task_id"].startswith("task_")

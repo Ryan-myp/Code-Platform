@@ -350,26 +350,30 @@ def change_password(user_id: str, old_password: str, new_password: str) -> None:
 
 
 def consume_quota(user_id: str) -> dict:
-    """额度扣减：返回 {allowed, remaining}。跨天自动重置。"""
+    """额度扣减：返回 {allowed, remaining, charged}。跨天自动重置。
+
+    charged 表示本次是否实际扣减（admin/vip 不限量，不扣减）。
+    失败退费依赖该标记：未真实扣费的任务/请求不应触发退费。
+    """
     if not user_id:
-        return {"allowed": True, "remaining": 9999}
+        return {"allowed": True, "remaining": 9999, "charged": False}
     row = _load_user(user_id)
     if not row:
-        return {"allowed": True, "remaining": 9999}
+        return {"allowed": True, "remaining": 9999, "charged": False}
     # 管理员不受额度限制
     if row.get("role") == "admin":
-        return {"allowed": True, "remaining": 9999}
+        return {"allowed": True, "remaining": 9999, "charged": False}
     today = _today()
     membership = _effective_membership(row)
     daily_quota = row.get("daily_quota") or MEMBERSHIP_QUOTA.get(membership, 30)
     # 会员无限制
     if membership == "vip":
-        return {"allowed": True, "remaining": 9999}
+        return {"allowed": True, "remaining": 9999, "charged": False}
     bonus = row.get("bonus_quota") or 0
     available = daily_quota + bonus
     used = 0 if row.get("last_quota_date") != today else (row.get("used_today") or 0)
     if used >= available:
-        return {"allowed": False, "remaining": 0, "daily_quota": daily_quota}
+        return {"allowed": False, "remaining": 0, "daily_quota": daily_quota, "charged": False}
     from common.db import get_db
 
     conn = get_db()
@@ -379,9 +383,64 @@ def consume_quota(user_id: str) -> dict:
             (used + 1, today, user_id),
         )
         conn.commit()
-        return {"allowed": True, "remaining": max(0, available - used - 1), "daily_quota": daily_quota}
+        return {
+            "allowed": True,
+            "remaining": max(0, available - used - 1),
+            "daily_quota": daily_quota,
+            "charged": True,
+        }
     finally:
         conn.close()
+
+
+def _refund_eligible(row: Any) -> bool:
+    """退费资格：仅真实计费用户（非 admin/vip）且当日确有扣费。"""
+    if row.get("role") == "admin":
+        return False
+    if _effective_membership(row) == "vip":
+        return False
+    if row.get("last_quota_date") != _today():
+        return False  # 跨天后当日计数已重置，无费可退
+    return (row.get("used_today") or 0) > 0
+
+
+def refund_quota(user_id: str, conn: Any | None = None) -> bool:
+    """失败退费：回退 1 次当日额度（商业公平：失败不扣费）。
+
+    与扣费同规则：admin/vip 不限量无需退；跨天后当日计数已重置，无费可退；
+    used_today 下限 0 防负数。返回是否实际退费（供调用方记录/去重）。
+
+    conn: 可选连接——调用方已持有写事务（如任务失败标记）时传入同一连接，
+    保证退费与状态更新同事务原子提交，避免跨连接 SQLite 写锁竞争。
+    """
+    if not user_id:
+        return False
+    row = _load_user(user_id)
+    if not row or not _refund_eligible(row):
+        return False
+    used = row.get("used_today") or 0
+    own_conn = conn is None
+    if own_conn:
+        from common.db import get_db
+
+        conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET used_today=?, "
+            "total_usage=CASE WHEN total_usage>0 THEN total_usage-1 ELSE 0 END "
+            "WHERE id=? AND used_today>0",
+            (used - 1, user_id),
+        )
+        if own_conn:
+            conn.commit()
+        logger.info("额度退费: user=%s（%d -> %d）", user_id, used, used - 1)
+        return True
+    except Exception:
+        logger.exception("额度退费失败: user=%s", user_id)
+        return False
+    finally:
+        if own_conn:
+            conn.close()
 
 
 def get_quota_info(user_id: str) -> dict:

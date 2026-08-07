@@ -2,6 +2,7 @@
 
 不依赖网络与 AI 服务，仅覆盖纯函数与图像处理（PIL 可用即可）。
 """
+
 import base64
 import io
 import sys
@@ -29,19 +30,22 @@ class TestNewStyles:
 
     def test_style_ids_present(self):
         from meme_factory import STYLES
+
         ids = {s["id"] for s in STYLES}
         assert {"neon", "paper", "sticker", "upload", "ai"} <= ids
 
     def test_ai_styles_table(self):
         from meme_factory import AI_STYLES
+
         assert {"flat", "3d", "pixel", "ink", "neon"} <= set(AI_STYLES)
         for v in AI_STYLES.values():
             assert len(v) > 5  # 每档都带画面风格描述
 
     def test_text_color(self):
         from meme_factory import _text_color
-        assert _text_color("neon") == ("#FFFFFF", "#22D3EE")     # 白字青描边
-        assert _text_color("paper") == ("#111111", "#D6CFC0")    # 报纸铅字
+
+        assert _text_color("neon") == ("#FFFFFF", "#22D3EE")  # 白字青描边
+        assert _text_color("paper") == ("#111111", "#D6CFC0")  # 报纸铅字
         assert _text_color("sticker") == ("#000000", "#FFFFFF")  # 贴纸黑字白边
         assert len(_text_color("red")) == 2 and len(_text_color("gradient")) == 2
 
@@ -51,12 +55,14 @@ class TestUploadBg:
 
     def test_resize_and_center(self):
         from meme_factory import _upload_bg
+
         img = _upload_bg(_tiny_png_b64())
         assert img.size == (1080, 1080)
         assert img.mode == "RGB"
 
     def test_landscape_keeps_aspect(self):
         from meme_factory import _upload_bg
+
         img = _upload_bg(_tiny_png_b64((0, 0, 255)))
         assert img.size == (1080, 1080)
         # 角落应是黑边填充（64x32 横图居中后上下留黑）
@@ -64,12 +70,14 @@ class TestUploadBg:
 
     def test_invalid_base64_rejected(self):
         from meme_factory import _upload_bg
+
         with pytest.raises(HTTPException) as e:
             _upload_bg("not-base64!!!")
         assert e.value.status_code == 400
 
     def test_oversize_rejected(self):
         from meme_factory import _upload_bg
+
         # 真实 >8MB 二进制数据编码的 base64，命中大小检查
         big = base64.b64encode(b"x" * (9 * 1024 * 1024)).decode()
         with pytest.raises(HTTPException) as e:
@@ -83,13 +91,15 @@ class TestDecoration:
 
     def test_empty_decoration_noop(self):
         from meme_factory import _draw_decoration
+
         img = Image.new("RGB", (1080, 1080), "#FFFFFF")
-        _draw_decoration(img, "")      # 空输入不抛
-        _draw_decoration(img, None)    # None 不抛
-        _draw_decoration(img, "   ")   # 空白不抛
+        _draw_decoration(img, "")  # 空输入不抛
+        _draw_decoration(img, None)  # None 不抛
+        _draw_decoration(img, "   ")  # 空白不抛
 
     def test_draw_with_font_or_skip(self):
         from meme_factory import _draw_decoration, _load_emoji_font
+
         img = Image.new("RGB", (1080, 1080), "#FFFFFF")
         if _load_emoji_font(96) is not None:
             _draw_decoration(img, "😂 哈哈 😍")  # 有字体则至少不抛异常
@@ -103,6 +113,7 @@ class TestOverlayTextBars:
 
     def test_bars_added_when_text(self):
         from meme_factory import _overlay_text_bars
+
         img = Image.new("RGB", (1080, 1080), "#FFFFFF")
         out = _overlay_text_bars(img, "顶部", "底部")
         assert out.size == (1080, 1080)
@@ -115,6 +126,7 @@ class TestOverlayTextBars:
 
     def test_no_bars_without_text(self):
         from meme_factory import _overlay_text_bars
+
         img = Image.new("RGB", (1080, 1080), (10, 20, 30))
         out = _overlay_text_bars(img, "", "")
         assert out.getpixel((540, 60)) == (10, 20, 30)

@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from common.auth import require_auth
+from common.auth import consume_quota, refund_quota, require_auth
 from common.db import get_db, get_db_context
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ def _ensure_table(conn) -> None:
         ("priority", "INTEGER DEFAULT 0"),
         ("max_attempts", "INTEGER DEFAULT 0"),
         ("next_retry_at", "TEXT DEFAULT ''"),
+        ("quota_refunded", "INTEGER DEFAULT 0"),
     ):
         if col in cols:
             continue
@@ -389,11 +390,17 @@ def _mark_failed(task_id: str, error: str, error_code: int = 0) -> None:
                     _broadcast_task(_row_to_task(task), event="task_retried")
             return
         cur = conn.execute(
-            "UPDATE async_tasks SET status='failed', error=?, error_code=?, finished_at=? "
+            "UPDATE async_tasks SET status='failed', error=?, error_code=?, finished_at=?, quota_refunded=1 "
             "WHERE id=? AND status='running'",
             ((error or "任务执行失败")[:500], error_code, datetime.now().isoformat(), task_id),
         )
         if cur.rowcount:
+            # 失败退费（商业公平）：仅非计费错误（402 未真实扣费）；quota_refunded
+            # 与状态转换同事务原子置位，保证同一任务至多退费一次（幂等）
+            if error_code != 402:
+                task = conn.execute("SELECT user_id FROM async_tasks WHERE id=?", (task_id,)).fetchone()
+                if task and task["user_id"] and refund_quota(task["user_id"], conn=conn):
+                    logger.info("任务失败退费: %s（错误码 %s）", task_id, error_code)
             task = conn.execute("SELECT * FROM async_tasks WHERE id=?", (task_id,)).fetchone()
             if task:
                 _broadcast_task(_row_to_task(task), event="task_failed")
@@ -537,7 +544,7 @@ def _watchdog() -> int:
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, created_by FROM async_tasks WHERE status='running' AND started_at < ?",
+            "SELECT id, user_id FROM async_tasks WHERE status='running' AND started_at < ?",
             (cutoff,),
         ).fetchall()
     finally:
@@ -545,7 +552,7 @@ def _watchdog() -> int:
     for r in rows:
         with get_db_context() as conn:
             cur = conn.execute(
-                "UPDATE async_tasks SET status='failed', error=?, error_code=0, finished_at=? "
+                "UPDATE async_tasks SET status='failed', error=?, error_code=0, finished_at=?, quota_refunded=1 "
                 "WHERE id=? AND status='running'",
                 (
                     f"任务执行超时（>{TASK_TIMEOUT_SECONDS // 60} 分钟），已自动终止，可点击重试",
@@ -554,6 +561,9 @@ def _watchdog() -> int:
                 ),
             )
             if cur.rowcount:
+                # 看门狗超时失败：用户无责的服务端异常，同样退费（quota_refunded 幂等）
+                if r["user_id"] and refund_quota(r["user_id"], conn=conn):
+                    logger.info("看门狗超时退费: %s", r["id"])
                 row = conn.execute("SELECT * FROM async_tasks WHERE id=?", (r["id"],)).fetchone()
                 if row:
                     _broadcast_task(_row_to_task(row), event="task_failed")
@@ -862,12 +872,19 @@ async def retry_task_api(task_id: str, current_user: dict = require_auth()):
     _check_owner(task, current_user)
     if task["status"] in ("pending", "running"):
         raise HTTPException(400, "任务正在排队/执行中，无法重试，请等待完成")
+    # 重试计费：failed/success 重试 = 新一次执行（失败已退费 / 成功是新增需求），重新扣费；
+    # interrupted/canceled 重试 = 续跑（提交时已扣且未退费），不重复扣费；402 拒绝重试
+    if task["status"] in ("failed", "success"):
+        uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+        quota = consume_quota(uid)
+        if not quota.get("allowed"):
+            raise HTTPException(402, "今日免费额度已用完，升级会员可继续使用（剩余 0 次）")
     with get_db_context() as conn:
         conn.execute(
             """UPDATE async_tasks
                SET status='pending', progress=0, stage='任务已重新提交', result='', error='',
                    error_code=0, retry_count=retry_count+1, started_at='', finished_at='',
-                   cancel_requested=0, next_retry_at=''
+                   cancel_requested=0, next_retry_at='', quota_refunded=0
                WHERE id=?""",
             (task_id,),
         )

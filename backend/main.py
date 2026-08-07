@@ -276,8 +276,14 @@ _QUOTA_SUFFIXES = ("/run", "/execute")
 
 @app.middleware("http")
 async def quota_middleware(request: Request, call_next):
-    """AI 生成端点统一扣减额度，额度不足返回 402。"""
+    """AI 生成端点统一扣减额度，额度不足返回 402；失败响应（>=400）自动退费。
+
+    商业公平：提交即扣费（防并发薅额度），但请求失败（参数错误/服务故障）
+    不消耗用户额度——响应失败时回退本次扣减。异步任务的失败由任务队列
+    在任务终态时退费（见 task_queue._mark_failed），两条路径互不重复。
+    """
     path = request.url.path
+    charged = False
     if request.method == "POST" and (path.startswith(_QUOTA_PATHS) or path.endswith(_QUOTA_SUFFIXES)):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
@@ -286,6 +292,7 @@ async def quota_middleware(request: Request, call_next):
                 user_id = payload.get("user_id")
                 if user_id:
                     result = consume_quota(user_id)
+                    charged = bool(result.get("charged"))  # admin/vip 不扣费，无需退
                     if not result.get("allowed"):
                         return JSONResponse(
                             status_code=402,
@@ -293,7 +300,13 @@ async def quota_middleware(request: Request, call_next):
                         )
             except HTTPException:
                 pass  # token 无效由端点鉴权兜底返回 401
-    return await call_next(request)
+    response = await call_next(request)
+    if charged and response.status_code >= 400:
+        from common.auth import refund_quota
+
+        if refund_quota(payload["user_id"]):
+            logger.info("中间件退费: %s %s -> %s", request.method, path, response.status_code)
+    return response
 
 
 # ── 健康检查 ──────────────────────────────────────────────────

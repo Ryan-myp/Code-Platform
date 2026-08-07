@@ -7,6 +7,7 @@
 - 图片工厂文件字段：sync base64 / async file:// 临时路径 往返一致且用完即删
 - 用户级并发限制（register_handler user_limit）：超出抛 429
 """
+
 import asyncio
 import os
 
@@ -22,12 +23,17 @@ from task_queue import (
 
 # 预期注册的业务任务类型（各 factory 模块顶层注册）
 EXPECTED_TASK_TYPES = {
-    "game_generate", "game_evolve",
+    "game_generate",
+    "game_evolve",
     "miniapp_generate",
     "video_generate",
-    "music_lyrics", "music_sing",
+    "music_lyrics",
+    "music_sing",
     "meme_generate",
-    "image_t2i", "image_i2i", "image_template", "image_tryon",
+    "image_t2i",
+    "image_i2i",
+    "image_template",
+    "image_tryon",
     "voice_generate",
     "dh_generate",
 }
@@ -38,8 +44,14 @@ def _import_business_modules():
     import importlib
 
     for mod in (
-        "game_factory", "miniapp", "video_factory", "music_factory",
-        "meme_factory", "image_factory", "voice_factory", "digital_human",
+        "game_factory",
+        "miniapp",
+        "video_factory",
+        "music_factory",
+        "meme_factory",
+        "image_factory",
+        "voice_factory",
+        "digital_human",
     ):
         importlib.import_module(mod)
 
@@ -80,10 +92,12 @@ def test_user_limit_exceeded_raises_429(setup_test_db, claim_and_run):
 
 def test_async_handler_executed_via_asyncio_run(setup_test_db, claim_and_run):
     """async 处理器（协程返回）在 worker 内被 asyncio.run 执行，结果正确落库。"""
+
     async def handler(task_id, payload, update, ctx):
         await asyncio.sleep(0.01)
         update(50, "异步阶段")
         return {"async_ok": True, "v": payload.get("v")}
+
     register_handler("tq_async", handler)
     task = create_task("tq_async", {"v": 7}, username="alice")
     claim_and_run(task["id"])
@@ -96,8 +110,10 @@ def test_async_handler_executed_via_asyncio_run(setup_test_db, claim_and_run):
 
 def test_async_handler_failure_records_error(setup_test_db, claim_and_run):
     """async 处理器内抛 HTTPException：error_code 记录、状态 failed。"""
+
     async def handler(task_id, payload, update, ctx):
         raise HTTPException(402, "余额不足")
+
     register_handler("tq_async_fail", handler)
     task = create_task("tq_async_fail", {}, username="alice")
     claim_and_run(task["id"])
@@ -110,16 +126,18 @@ def test_async_handler_failure_records_error(setup_test_db, claim_and_run):
 def test_image_file_field_tmp_roundtrip(setup_test_db):
     """图片工厂文件字段：async 模式写 file:// 临时路径，worker 读取后即删。"""
     from image_factory import _read_file_field, _write_file_field
+
     content = b"\x89PNG\r\n\x1a\n" + os.urandom(128)
     tmp_ref = asyncio.run(_write_file_field(content))
     assert tmp_ref.startswith("file://")
-    path = tmp_ref[len("file://"):]
+    path = tmp_ref[len("file://") :]
     assert os.path.exists(path)
     # 读取后临时文件被删除
     assert _read_file_field({"image": tmp_ref}, "image") == content
     assert not os.path.exists(path)
     # base64（sync 模式）读取
     import base64
+
     assert _read_file_field({"image": base64.b64encode(content).decode()}, "image") == content
     # 缺失字段返回 None
     assert _read_file_field({"image": ""}, "image") is None
