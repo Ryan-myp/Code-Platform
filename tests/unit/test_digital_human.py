@@ -403,6 +403,50 @@ class TestRenderRealism:
         finally:
             os.unlink(path)
 
+    def test_normalize_portrait_anchors_head(self):
+        """构图归一化：任意源尺寸 → 800x1000；脸部中心锚定画布中线/上部（消除忽远忽近）。"""
+        import os
+        import numpy as np
+        from PIL import Image as PILImage
+        from digital_human import _normalize_portrait_image, _skin_region_metrics
+        path = self._fake_portrait_path()
+        try:
+            for w, h in ((1024, 1024), (1600, 900), (900, 1600)):
+                img = PILImage.open(path).resize((w, h))
+                norm = _normalize_portrait_image(img)
+                assert norm.size == (800, 1000)
+                met = _skin_region_metrics(norm)
+                assert met is not None, f"肤色检测应命中假写真 ({w}x{h})"
+                # 头部中心：水平居中（±8%）、垂直上部（0.15~0.45）
+                assert abs(met["cx"] / 800 - 0.5) < 0.08, f"cx={met['cx']}"
+                assert 0.15 <= met["cy"] / 1000 <= 0.45, f"cy={met['cy']}"
+        finally:
+            os.unlink(path)
+
+    def test_skin_metrics_none_on_flat_image(self):
+        """纯色/卡通图无肤色 → 返回 None（fallback 路径不误检）。"""
+        from PIL import Image as PILImage
+        from digital_human import _skin_region_metrics
+        flat = PILImage.new("RGB", (400, 400), (200, 200, 220))  # 冷色背景
+        assert _skin_region_metrics(flat) is None
+        gray = PILImage.new("RGB", (400, 400), (128, 128, 128))
+        assert _skin_region_metrics(gray) is None
+
+    def test_build_portrait_src_returns_face_meta(self):
+        """_build_portrait_src 返回 5 元组且含头部几何（渲染层动态定位依赖）。"""
+        import os
+        from digital_human import _build_portrait_src
+        path = self._fake_portrait_path()
+        try:
+            avatar = {"id": "x", "is_custom": True, "local_image_path": path}
+            portrait = _build_portrait_src(avatar)
+            assert portrait is not None and len(portrait) == 5
+            face_meta = portrait[4]
+            assert face_meta is not None
+            assert face_meta["cy"] > 0 and face_meta["head_w"] > 0
+        finally:
+            os.unlink(path)
+
     def test_mouth_template_feathered(self):
         """嘴部模板：边缘羽化（中心不透明、边缘透明），开度越高嘴越高。"""
         import numpy as np

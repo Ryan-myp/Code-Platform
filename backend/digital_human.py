@@ -15,6 +15,7 @@ import time
 import uuid
 import json
 from datetime import datetime, timedelta
+from io import BytesIO
 from typing import Callable
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
@@ -206,6 +207,88 @@ def _get_portrait_path(avatar_id: str) -> str:
     return os.path.join(PORTRAIT_DIR, f"{avatar_id}.jpg")
 
 
+# 归一化后的写真统一尺寸（4:5 竖版半身像）
+PORTRAIT_NORM_SIZE = (800, 1000)
+
+
+def _skin_region_metrics(img: Image.Image) -> dict | None:
+    """肤色检测估计人物头部位置（无肤色返回 None，卡通/二次元形象走 fallback）。
+
+    返回：头部中心 (cx, cy)、头部宽度 head_w。
+    - HSV 色相区间过滤（橙黄肤色 vs 米黄背景：肤色更饱和、更偏红）
+    - 头部搜索区限图像上部 70%；head_w 超全宽 72% 视为误检回退
+    """
+    import numpy as np
+
+    a = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+    R, G, B = a[..., 0], a[..., 1], a[..., 2]
+    mx, mn = np.maximum(np.maximum(R, G), B), np.minimum(np.minimum(R, G), B)
+    diff = mx - mn
+    is_skin = (
+        (diff > 0.04) & (diff < 0.55)                     # 饱和度适中
+        & (mx > 0.45) & (mx < 0.98)                       # 亮度区间（排除纯白/纯黑）
+        & (R >= G) & (G >= B * 0.72) & (G <= B * 1.45)    # 橙黄主导 R>G>B
+        & (R - B > 0.06) & (np.abs(R - G) > 0.03)         # 色相偏红黄
+    )
+    if int(is_skin.sum()) < 300:
+        return None
+    # 头部搜索区：上部 70% 的肤色行分布
+    rows = is_skin[: int(img.height * 0.70)].sum(axis=1)
+    ys = np.where(rows > rows.max() * 0.18)[0]
+    if len(ys) == 0:
+        return None
+    top, bot = int(ys.min()), int(ys.max())
+    # 头部核心区 = 肤色区上部 45%（脸，排除脖子/肩膀/手）
+    sub2 = is_skin[top : top + int((bot - top) * 0.45) + 1]
+    cols = sub2.sum(axis=0)
+    if int(cols.sum()) < 200:
+        return None
+    # 列分布能量宽度：取包含 70% 肤色能量的最窄区间（抗手/肩稀疏肤色干扰）
+    total = float(cols.sum())
+    ccenter = int(np.argmax(cols))
+    lo = hi = ccenter
+    acc = float(cols[ccenter])
+    while lo > 0 and acc < total * 0.70:
+        lo -= 1
+        acc += float(cols[lo])
+    while hi < len(cols) - 1 and acc < total * 0.70:
+        hi += 1
+        acc += float(cols[hi])
+    head_w = int((hi - lo + 1) * 0.95)
+    if head_w > img.width * 0.72:  # 头部不可能占全宽：背景误检，回退
+        return None
+    cy = int(top + (bot - top) * 0.28)  # 头部中心（头区中上部）
+    cx = int((cols * np.arange(img.width)).sum() / total)
+    return {"cx": cx, "cy": cy, "head_w": head_w}
+
+
+def _normalize_portrait_image(img: Image.Image) -> Image.Image:
+    """构图归一化：头部水平居中 + 垂直位置一致（消除"人物忽远忽近/忽左忽右"）。
+
+    cover 等比缩放下人物占比是几何不变量（人物占比恒等于源图占比），
+    占比统一依赖写真 prompt 的数字构图锚定；此处保证：
+    - 水平：裁窗锚定头部中心 → 脸不偏不切（原固定居中裁窗在人物偏位时会切脸）
+    - 垂直：头部尽量锚定到画布 25% 高度（方形源图头部上方空间不足时贴顶）
+    肤色检测失败（卡通/二次元）时回退 30% 偏上 cover 裁窗。
+    """
+    W, H = PORTRAIT_NORM_SIZE
+    k0 = max(W / img.width, H / img.height)  # cover 缩放（占比不变量）
+    nw, nh = int(round(img.width * k0)), int(round(img.height * k0))
+    scaled = img.resize((nw, nh), Image.LANCZOS) if (nw, nh) != img.size else img
+    met = _skin_region_metrics(img)
+    if not met:
+        x0 = (nw - W) // 2
+        y0 = max(0, min(int((nh - H) * 0.30), nh - H))
+        return scaled.crop((x0, y0, x0 + W, y0 + H))
+    # 水平：头部中心锚定画布中线（消除左右漂移/切脸）
+    x0 = int(met["cx"] * k0 - W * 0.5)
+    x0 = max(0, min(x0, nw - W))
+    # 垂直：头部中心尽量锚定到画布 25% 高度（空间不足则贴顶）
+    y0 = int(met["cy"] * k0 - H * 0.25)
+    y0 = max(0, min(y0, nh - H))
+    return scaled.crop((x0, y0, x0 + W, y0 + H))
+
+
 def _get_portrait_url(avatar_id: str) -> str:
     """返回写真图片的访问 URL。"""
     return f"/api/image-factory/avatars/{avatar_id}.jpg"
@@ -228,12 +311,15 @@ def _generate_portrait(avatar_id: str) -> str | None:
             f"{avatar['gender']}, photorealistic, studio lighting, half-body shot, "
             f"8K quality, clean background"
         )
-    # 真实感统一后缀：正脸/看镜头/闭嘴/皮肤纹理/自然瑕疵（去 AI 脸感）
+    # 真实感统一后缀：微笑表情 + 数字构图锚定（消除随机构图漂移）+ 皮肤纹理去 AI 脸感
     prompt = prompt.rstrip(".") + (
-        ", front-facing, eyes looking directly into camera, mouth closed with neutral "
-        "expression, face centered in upper half of frame, single soft key light, "
-        "realistic skin pore texture, subtle natural skin imperfections, candid "
-        "photography style, shallow depth of field, 8k uhd, hyper-realistic detail"
+        ", front-facing, eyes looking directly into camera, gentle warm smile with "
+        "lips closed, slightly squinted happy eyes, soft natural rosy cheeks, "
+        "waist-up half body portrait, head occupies 30 percent of frame height, "
+        "chin at 55 percent of frame height, generous headroom above head, face "
+        "perfectly centered horizontally, single soft key light, realistic skin "
+        "pore texture, subtle natural skin imperfections, candid photography "
+        "style, shallow depth of field, 8k uhd, hyper-realistic detail"
     )
 
     from common.config import AGNES_API_BASE, AGNES_API_KEY
@@ -263,8 +349,14 @@ def _generate_portrait(avatar_id: str) -> str | None:
                     img_resp = _req.get(image_url, timeout=60)
                     img_resp.raise_for_status()
                     portrait_path = _get_portrait_path(avatar_id)
-                    with open(portrait_path, "wb") as f:
-                        f.write(img_resp.content)
+                    # 构图归一化后存盘：统一头部位置/占比，保证视频人物大小一致
+                    try:
+                        normalized = _normalize_portrait_image(Image.open(BytesIO(img_resp.content)))
+                        normalized.save(portrait_path, "JPEG", quality=92)
+                    except Exception as e:
+                        logger.warning(f"写真构图归一化失败，保存原图: {e}")
+                        with open(portrait_path, "wb") as f:
+                            f.write(img_resp.content)
                     logger.info(f"数字人写真已生成：{avatar_id} → {portrait_path} ({size})")
                     return portrait_path
             logger.warning(f"写真生成返回异常：{data}")
@@ -329,18 +421,22 @@ def _audio_duration(path: str) -> float:
 
 
 def _build_portrait_src(avatar: dict):
-    """预加载并缩放写真 → (RGBA图, 圆角遮罩, 宽, 高)；无写真返回 None。
+    """预加载并缩放写真 → (RGBA图, 圆角遮罩, 宽, 高, face_meta)；无写真返回 None。
 
     自定义形象使用用户上传图片（local_image_path），内置形象用 AI 写真缓存。
     使用 cover 裁剪（等比缩放后居中裁切、裁窗偏上保留头部），杜绝直接拉伸
     造成的脸部变形——1:1 生成图被压扁成 0.8 比例是"AI 感"的重要来源。
+    face_meta = 头部中心/宽度（画布坐标）或 None：渲染层据此动态定位眼/嘴/颊彩。
     """
     portrait_path = avatar.get("local_image_path") or (_get_portrait_path(avatar["id"]) if not avatar.get("is_custom") else "")
     if not portrait_path or not os.path.exists(portrait_path):
         return None
     try:
         portrait = Image.open(portrait_path).convert("RGB")
-        target_w, target_h = 800, 1000  # 4:5 半身像：构图占比 62.5%（较 640x800 更饱满）
+        # 构图归一化：无论源图是 AI 方形写真还是用户上传任意比例，
+        # 统一把人物头部锚定到画布上部 1/3、头部占比一致（消除"人物忽远忽近"）
+        portrait = _normalize_portrait_image(portrait)
+        target_w, target_h = PORTRAIT_NORM_SIZE  # 归一化后即 800x1000，cover 缩放恒等
         # 注意：target 即画布构图基准（人物占宽 = target_w/1280），不能随意增大撑满画面；
         # 800x1000 相比 640x800 保留更多源写真信息（竖版 1024 源 → 78% vs 62.5%），1080p 下更清晰
         scale = max(target_w / portrait.width, target_h / portrait.height)
@@ -352,7 +448,15 @@ def _build_portrait_src(avatar: dict):
         portrait = portrait.crop((x0, y0, x0 + target_w, y0 + target_h)).convert("RGBA")
         mask = Image.new("L", (target_w, target_h), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, target_w, target_h], radius=48, fill=255)
-        return portrait, mask, target_w, target_h
+        # 头部几何（画布坐标）传给渲染层做眼/嘴/颊彩动态定位
+        face_meta = None
+        try:
+            met = _skin_region_metrics(portrait)
+            if met:
+                face_meta = {"cy": met["cy"], "head_w": met["head_w"]}
+        except Exception:
+            pass
+        return portrait, mask, target_w, target_h, face_meta
     except Exception as e:
         logger.warning(f"写真加载失败，使用占位符: {e}")
         return None
@@ -921,7 +1025,20 @@ def _render_frame(
 
     # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
-        p_base, p_mask_base, p_base_w, p_base_h = portrait
+        p_base, p_mask_base, p_base_w, p_base_h, face_meta = portrait
+        # 头部几何（归一化画布 800x1000 坐标）→ 眼/嘴/颊彩动态定位，
+        # 适配不同写真构图差异（固定比例在构图漂移时会贴错位）
+        bx = p_base_w / 800.0
+        by = p_base_h / 1000.0
+        if face_meta:
+            cy_c = face_meta["cy"]
+            head_h_c = face_meta["head_w"] * 1.30  # 头高估计（检测带宽含肩，按唇色实测校准）
+            eye_y_c = cy_c - 12            # 眼 ≈ 肤色区上界（眉骨附近）
+            mouth_y_c = cy_c + head_h_c * 0.15   # 唇：实测校准（唇-头中心差 ≈ 0.15 x 头高）
+            cheek_y_c = cy_c + head_h_c * 0.08   # 颊：眼唇之间
+            cheek_dx_c = face_meta["head_w"] * 0.32
+        else:
+            eye_y_c, mouth_y_c, cheek_y_c, cheek_dx_c = 240, 340, 290, 140
         # 呼吸缩放（真人幅度 ~1.2%，收敛气球感）+ 说话节奏起伏
         breath_scale = 1 + 0.012 * breathe_t + 0.010 * talk * math.sin(t * 3.2)
         p_w = max(20, int(p_base_w * breath_scale * S))
@@ -958,15 +1075,30 @@ def _render_frame(
         close = _blink_progress(t)
         if close > 0.03:
             eye_w = max(6, int(p_w * 0.135))
-            eye_y = py + int(p_h * 0.335)
+            eye_y = py + int(eye_y_c * by * breath_scale)
             lid = _get_eyelid_template(eye_w)
             lid_h = max(2, int(lid.height * min(close * 1.25, 1.0)))
             lid_use = lid.crop((0, 0, lid.width, lid_h)) if lid_h < lid.height else lid
             for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
                 img.paste(lid_use, (ex - lid_use.width // 2, eye_y - lid_h), lid_use)
 
+        # 颊彩表情层：柔和粉彩脸颊（说话时随能量微亮），提升生气感
+        cheek_alpha = int(22 + 14 * talk)
+        cheek_w = max(8, int(p_w * 0.17))
+        cheek_h = max(4, int(cheek_w * 0.55))
+        cheek_y = py + int(cheek_y_c * by * breath_scale)
+        cheek = Image.new("RGBA", (cheek_w * 2 + 4, cheek_h * 2 + 4), (0, 0, 0, 0))
+        cd = ImageDraw.Draw(cheek)
+        for s in (-1.0, 1.0):
+            cex = cheek_w + 2 + int(s * cheek_dx_c * bx * breath_scale)
+            cd.ellipse([cex - cheek_w, 2, cex + cheek_w, 2 + cheek_h * 2],
+                       fill=(240, 120, 130, cheek_alpha))
+        cheek = cheek.filter(ImageFilter.GaussianBlur(cheek_w * 0.55))
+        img.paste(cheek, (px + int(p_w * 0.5) - cheek.width // 2, cheek_y - cheek.height // 2), cheek)
+
         # 逼真口型：量化嘴部模板（开度 6 档 x 圆度 4 档），羽化贴图融入皮肤；
-        # open 控制开度、round 控制圆度，仍由拼音时间轴逐字驱动
+        # open 控制开度、round 控制圆度，仍由拼音时间轴逐字驱动；
+        # 位置由头部几何动态定位（原固定 0.805 在构图漂移时贴到颈部/胸口）
         mouth_open_v, roundness = mouth_shape
         aspect = p_base_w / p_base_h
         if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and mouth_open_v > 0.05:
@@ -978,7 +1110,7 @@ def _render_frame(
                 (mw, mh), Image.LANCZOS,
             )
             mx = px + int(p_w * 0.49)
-            my = py + int(p_h * 0.805)
+            my = py + int(mouth_y_c * by * breath_scale)
             img.paste(mouth_layer, (mx - mw // 2, my - mh // 2), mouth_layer)
 
         # 光环脉动
