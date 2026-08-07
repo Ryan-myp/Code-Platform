@@ -554,6 +554,20 @@ class TestRenderRealism:
         dh._VIDEO_ENCODER_CACHE = None
         with mock.patch.object(dh.subprocess, "run", return_value=fake_out):
             assert dh._pick_video_encoder() == "libx264"
+        # Linux + NVIDIA GPU（ffmpeg 含 nvenc 且存在 nvidia-smi）→ 硬件编码
+        fake_out.stdout = (
+            " V....D h264_nvenc             NVIDIA NVENC H.264 encoder (codec h264)\n"
+            " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC\n"
+        )
+        dh._VIDEO_ENCODER_CACHE = None
+        with mock.patch.object(dh.shutil, "which", return_value="/usr/bin/nvidia-smi"):
+            with mock.patch.object(dh.subprocess, "run", return_value=fake_out):
+                assert dh._pick_video_encoder() == "h264_nvenc"
+        # ffmpeg 支持 nvenc 但无 GPU 工具（未透传设备）→ 回退 libx264
+        dh._VIDEO_ENCODER_CACHE = None
+        with mock.patch.object(dh.shutil, "which", return_value=None):
+            with mock.patch.object(dh.subprocess, "run", return_value=fake_out):
+                assert dh._pick_video_encoder() == "libx264"
         dh._VIDEO_ENCODER_CACHE = None  # 还原，避免影响其他测试
 
     def test_render_video_ffmpeg_filter_chain(self):

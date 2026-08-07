@@ -8,6 +8,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -424,8 +425,11 @@ def _audio_duration(path: str) -> float:
 _VIDEO_ENCODER_CACHE: str | None = None
 
 def _pick_video_encoder() -> str:
-    """选择视频编码器：优先 Apple VideoToolbox 硬件编码（M 系列芯片媒体引擎），
-    检测不到则回退 libx264 CPU 编码（Linux 容器等环境）。结果进程级缓存。"""
+    """选择视频编码器，按平台/设备可用性自动探测：
+    - macOS:   h264_videotoolbox（Apple 媒体引擎硬件编码）
+    - Linux:   h264_nvenc（NVIDIA GPU，需 nvidia-smi；容器透传 GPU 后生效）
+    - 兜底:    libx264 CPU 编码（无 GPU 的容器/CI 等环境）
+    结果进程级缓存，避免每次生成视频都探测一次。"""
     global _VIDEO_ENCODER_CACHE
     if _VIDEO_ENCODER_CACHE is None:
         enc = "libx264"
@@ -434,8 +438,11 @@ def _pick_video_encoder() -> str:
                 ["ffmpeg", "-hide_banner", "-encoders"],
                 capture_output=True, text=True, timeout=15,
             )
-            if any("h264_videotoolbox" in line for line in out.stdout.splitlines()):
+            lines = out.stdout.splitlines()
+            if any("h264_videotoolbox" in line for line in lines):
                 enc = "h264_videotoolbox"
+            elif any("h264_nvenc" in line for line in lines) and shutil.which("nvidia-smi"):
+                enc = "h264_nvenc"
         except Exception:
             pass
         _VIDEO_ENCODER_CACHE = enc
@@ -1279,8 +1286,8 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         "/System/Library/Fonts/STHeiti Light.ttc",          # 黑体-简
         "/System/Library/Fonts/Supplemental/Songti.ttc",    # 宋体
         "/System/Library/Fonts/PingFang.ttc",               # 部分 macOS 可加载
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux 容器
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",   # Linux 容器
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",   # Linux 容器：文泉驿（简体字型，优先于 Noto JP 变体）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux 容器：Noto CJK
         "/System/Library/Fonts/Helvetica.ttc",              # 英文兜底
         "/System/Library/Fonts/ArialHB.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -1381,10 +1388,10 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         try:
             enc = _pick_video_encoder()
             # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
-            # 去除 JPG 帧软糊感；libx264 用 crf 18，videotoolbox 不支持 qscale
-            # （ffmpeg 8.x 报错）改用目标码率模式保清晰
+            # 去除 JPG 帧软糊感；硬件编码器（videotoolbox/nvenc）不支持 qscale
+            # （ffmpeg 8.x 报错）改用目标码率模式，libx264 用 crf 18
             quality_args = (["-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M"]
-                            if enc == "h264_videotoolbox" else ["-crf", "18"])
+                            if enc != "libx264" else ["-crf", "18"])
             subprocess.run(
                 [
                     "ffmpeg", "-y",
