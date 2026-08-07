@@ -3,6 +3,7 @@ import { Upload, FileText, Languages, Zap, Clock, Download, Trash2, Loader2, Fil
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import useAsyncTask from '../hooks/useAsyncTask'
 
 const TASK_TYPES = [
   { key: 'summarize', label: '批量摘要', icon: FileText, desc: '多个文档一键生成摘要' },
@@ -14,11 +15,12 @@ const TASK_TYPES = [
 
 export default function BatchProcessPage() {
   const toast = useToast()
+  const { submitTask } = useAsyncTask()
   const fileRef = useRef(null)
 
   const [files, setFiles] = useState([])
   const [task, setTask] = useState('summarize')
-  const [loading, setLoading] = useState(false)
+  const [currentTask, setCurrentTask] = useState(null)
   const [results, setResults] = useState(null)
   const [jobs, setJobs] = useState([])
 
@@ -35,18 +37,21 @@ export default function BatchProcessPage() {
 
   const handleProcess = async () => {
     if (files.length === 0) { toast.error('请先选择文件'); return }
-    setLoading(true); setResults(null)
-    try {
-      const form = new FormData()
-      files.forEach((f) => form.append('files', f))
-      const endpoint = task === 'doc_summary' ? '/api/batch/doc-summary' : '/api/batch/process'
-      if (task !== 'doc_summary') form.append('task', task)
-      const res = await api.post(endpoint, form)
-      setResults(res.data)
-      loadJobs()
-      toast.success(`批量处理完成：${res.data.file_count} 个文件`)
-    } catch (e) { toast.error(`处理失败：${e.message}`) }
-    setLoading(false)
+    setResults(null)
+    const form = new FormData()
+    files.forEach((f) => form.append('files', f))
+    const endpoint = task === 'doc_summary' ? '/api/batch/doc-summary' : '/api/batch/process'
+    if (task !== 'doc_summary') form.append('task', task)
+    await submitTask(endpoint, form, {
+      onUpdate: (t) => setCurrentTask(t),
+      onSuccess: (data) => {
+        setCurrentTask(null)
+        setResults(data)
+        loadJobs()
+        toast.success(`批量处理完成：${data.file_count ?? data.count ?? 0} 个文件`)
+      },
+      onError: (e) => { setCurrentTask(null); toast.error(`处理失败：${e.message}`) },
+    })
   }
 
   const handleBatchTranslate = async () => {
@@ -55,13 +60,17 @@ export default function BatchProcessPage() {
     const texts = text.split('\n').filter(Boolean)
     if (texts.length === 0) return
 
-    setLoading(true); setResults(null)
-    try {
-      const res = await api.post('/api/batch/translate', { texts, target_lang: 'en' })
-      setResults({ ...res.data, source: 'text' })
-      toast.success(`翻译完成：${res.data.count} 条`)
-    } catch (e) { toast.error(`翻译失败：${e.message}`) }
-    setLoading(false)
+    setResults(null)
+    await submitTask('/api/batch/translate', { texts, target_lang: 'en' }, {
+      onUpdate: (t) => setCurrentTask(t),
+      onSuccess: (data) => {
+        setCurrentTask(null)
+        setResults({ ...data, source: 'text' })
+        loadJobs()
+        toast.success(`翻译完成：${data.count ?? 0} 条`)
+      },
+      onError: (e) => { setCurrentTask(null); toast.error(`翻译失败：${e.message}`) },
+    })
   }
 
 
@@ -121,9 +130,21 @@ export default function BatchProcessPage() {
                 </button>
               ))}
             </div>
-            <Button variant="primary" icon={Sparkles} loading={loading} onClick={handleProcess} className="w-full mt-4">
+            <Button variant="primary" icon={Sparkles} loading={!!currentTask} onClick={handleProcess} className="w-full mt-4">
               开始批量处理
             </Button>
+            {currentTask && (
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                  <span>{currentTask.stage || '任务处理中…'}</span>
+                  <span>{currentTask.progress || 0}%</span>
+                </div>
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 rounded-full transition-all duration-300"
+                    style={{ width: `${currentTask.progress || 0}%` }} />
+                </div>
+              </div>
+            )}
             <div className="mt-2 pt-2 border-t border-gray-100">
               <button onClick={handleBatchTranslate}
                 className="w-full text-center py-2 text-xs text-gray-500 hover:text-teal-600 transition-colors flex items-center justify-center gap-1">
@@ -171,7 +192,7 @@ export default function BatchProcessPage() {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-800 flex items-center gap-2">
                         <FileText className="w-3.5 h-3.5 text-gray-400" />
-                        {r.filename || r.index !== undefined ? `#${r.index + 1}` : `项目${i + 1}`}
+                        {r.filename ? r.filename : (r.index !== undefined ? `#${r.index + 1}` : `项目${i + 1}`)}
                       </span>
                       {r.error ? (
                         <Badge color="red">失败</Badge>

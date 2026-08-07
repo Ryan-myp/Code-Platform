@@ -1,21 +1,25 @@
-"""批量处理引擎 — 多文件一次性处理。
+"""批量处理引擎 — 多文件一次性处理（异步任务：进度跟踪 / 失败自动重试 / 并发控制）。
 
 - POST /api/batch/translate   批量翻译
 - POST /api/batch/doc-summary 批量文档摘要
 - POST /api/batch/process     通用批量处理（文件→LLM）
+- GET  /api/batch/jobs        处理记录（用户隔离）
 """
 
 import json
 import logging
 import os
+import uuid
+from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.db import _add_column_if_missing, get_db_context
+from common.llm import call_llm, log_usage, parse_llm_json
+from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +104,12 @@ def init_db():
                 file_count INTEGER,
                 results TEXT,
                 status TEXT DEFAULT 'running',
+                user_id TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             )
         """)
+        # 历史表补 user_id（幂等迁移，并发安全）
+        _add_column_if_missing(conn, "batch_jobs", "user_id", "TEXT")
 
 
 init_db()
@@ -143,102 +150,198 @@ def extract_text(filepath: str, filename: str) -> str:
 # ── API ──────────────────────────────────────────────────
 
 @router.post("/translate")
-async def batch_translate(req: BatchTextRequest, current_user: dict = require_auth()):
-    """批量翻译文本。"""
+async def batch_translate(req: BatchTextRequest, sync: bool = Query(False),
+                        current_user: dict = require_auth()):
+    """批量翻译文本（异步任务：逐条处理 + 进度上报；sync=1 直接执行兼容旧调用）。"""
+    payload = {
+        **req.model_dump(),
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    if sync is True:
+        return await _batch_translate_worker(payload)
+    task = create_task(
+        "batch_translate", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
+@router.post("/doc-summary")
+async def batch_doc_summary(files: list[UploadFile] = File(...), sync: bool = Query(False),
+                            current_user: dict = require_auth()):
+    """批量文档上传并生成摘要（异步任务；文件落盘后由 worker 逐份处理）。"""
+    saved = []
+    for file in files:
+        if not file.filename:
+            continue
+        content = await file.read()
+        fid = f"{uuid.uuid4().hex[:10]}_{file.filename}"
+        tmp_path = os.path.join(UPLOAD_DIR, fid)
+        with open(tmp_path, "wb") as f:
+            f.write(content)
+        saved.append({"path": tmp_path, "filename": file.filename, "size": len(content)})
+
+    if not saved:
+        return {"ok": False, "error": "未收到有效文件"}
+
+    payload = {
+        "files": saved,
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    if sync is True:
+        return await _batch_doc_summary_worker(payload)
+    task = create_task(
+        "batch_doc_summary", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
+@router.post("/process")
+async def batch_process(files: list[UploadFile] = File(...), task: str = Form("summarize"),
+                        sync: bool = Query(False), current_user: dict = require_auth()):
+    """通用批量处理（异步任务）：上传多个文件 → 统一LLM处理。task: summarize/translate/keywords/sentiment"""
+    saved = []
+    for file in files:
+        if not file.filename:
+            continue
+        content = await file.read()
+        fid = f"{uuid.uuid4().hex[:10]}_{file.filename}"
+        tmp_path = os.path.join(UPLOAD_DIR, fid)
+        with open(tmp_path, "wb") as f:
+            f.write(content)
+        saved.append({"path": tmp_path, "filename": file.filename, "size": len(content)})
+
+    if not saved:
+        return {"ok": False, "error": "未收到有效文件"}
+
+    payload = {
+        "task": task,
+        "files": saved,
+        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+    }
+    if sync is True:
+        return await _batch_process_worker(payload)
+    task_obj = create_task(
+        "batch_process", payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task_obj["id"], "status": task_obj["status"]}
+
+
+# ── 异步任务：批量处理 worker（逐条/逐文件处理 + 进度上报）──
+
+async def _batch_translate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """批量翻译 worker：逐条调用 LLM，按条上报进度。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    texts = payload.get("texts", [])
+    target_lang = payload.get("target_lang", "en")
+    source_lang = payload.get("source_lang", "auto")
+    user_id = payload.get("user_id", "")
     start = datetime.now()
     results = []
+    total = len(texts)
 
-    for i, text in enumerate(req.texts):
+    for i, text in enumerate(texts):
+        _report(round((i / total) * 90, 1) if total else 10, f"翻译第 {i + 1}/{total} 条")
         if not text.strip():
             results.append({"index": i, "original": text, "translated": "", "error": "文本为空"})
             continue
         try:
-            user_prompt = f"将以下{req.source_lang}文本翻译为{req.target_lang}：\n\n{text[:2000]}"
+            user_prompt = f"将以下{source_lang}文本翻译为{target_lang}：\n\n{text[:2000]}"
             raw = call_llm(BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30)
             results.append({"index": i, "original": text[:200], "translated": raw.strip()})
         except Exception as e:
             results.append({"index": i, "original": text[:200], "translated": "", "error": str(e)})
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
-    total_chars = sum(len(t) for t in req.texts)
+    total_chars = sum(len(t) for t in texts)
     log_usage("batch_translate", total_chars, len(json.dumps(results)), elapsed)
 
-    return {
+    result = {
         "task": "translate",
-        "count": len(req.texts),
+        "count": total,
         "success": sum(1 for r in results if not r.get("error")),
         "results": results,
     }
+    _save_job(f"batch_{uuid.uuid4().hex[:8]}", "translate", total, result, user_id)
+    _report(100, "完成")
+    return result
 
 
-@router.post("/doc-summary")
-async def batch_doc_summary(files: list[UploadFile] = File(...), current_user: dict = require_auth()):
-    """批量文档上传并生成摘要。"""
+async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """批量文档摘要 worker：逐文件提取文本 + LLM 摘要（容错解析），按文件上报进度。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    files = payload.get("files", [])
+    user_id = payload.get("user_id", "")
     start = datetime.now()
     results = []
-    bid = f"batch_{int(datetime.now().timestamp()*1000)}"
+    total = len(files)
 
-    for file in files:
-        if not file.filename:
-            continue
+    for i, file in enumerate(files):
+        _report(round((i / total) * 90, 1) if total else 10, f"摘要第 {i + 1}/{total} 份文档")
         try:
-            content = await file.read()
-            ext = os.path.splitext(file.filename)[1].lower()
-            tmp_path = os.path.join(UPLOAD_DIR, f"{bid}_{file.filename}")
-            with open(tmp_path, "wb") as f:
-                f.write(content)
-
-            text = extract_text(tmp_path, file.filename)
+            text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(BATCH_SUMMARY_SYSTEM, f"文档：{file.filename}\n\n内容：{text[:5000]}",
+                raw = call_llm(BATCH_SUMMARY_SYSTEM, f"文档：{file['filename']}\n\n内容：{text[:5000]}",
                                max_tokens=500, temperature=0.3, timeout=45)
-                raw = raw.strip()
-                if raw.startswith("```"):
-                    lines = raw.split("\n")
-                    raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                summary_data = json.loads(raw)
+                summary_data = parse_llm_json(raw.strip())
             else:
-                summary_data = {"title": file.filename, "summary": text or "提取失败", "key_points": []}
+                summary_data = {"title": file["filename"], "summary": text or "提取失败", "key_points": []}
 
             results.append({
-                "filename": file.filename,
-                "size": len(content),
-                "title": summary_data.get("title", file.filename),
+                "filename": file["filename"],
+                "size": file.get("size", 0),
+                "title": summary_data.get("title", file["filename"]),
                 "summary": summary_data.get("summary", ""),
                 "key_points": summary_data.get("key_points", []),
             })
-
+        except Exception as e:
+            results.append({"filename": file["filename"], "title": file["filename"], "summary": "", "key_points": [], "error": str(e)})
+        finally:
             try:
-                os.remove(tmp_path)
+                os.remove(file["path"])
             except OSError:
                 pass
-        except Exception as e:
-            results.append({"filename": file.filename, "title": file.filename, "summary": "", "key_points": [], "error": str(e)})
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("batch_doc_summary", len(files), len(json.dumps(results)), elapsed)
 
-    with get_db_context() as conn:
-        conn.execute(
-            "INSERT INTO batch_jobs (id, task_type, file_count, results, status, created_at) VALUES (?,?,?,?,?,?)",
-            (bid, "doc_summary", len(files), json.dumps(results, ensure_ascii=False), "done", datetime.now().isoformat()),
-        )
-
-    return {
-        "job_id": bid,
+    result = {
+        "job_id": f"batch_{uuid.uuid4().hex[:8]}",
         "task": "doc_summary",
-        "file_count": len(files),
+        "file_count": total,
         "results": results,
     }
+    _save_job(result["job_id"], "doc_summary", total, result, user_id)
+    _report(100, "完成")
+    return result
 
 
-@router.post("/process")
-async def batch_process(files: list[UploadFile] = File(...), task: str = Form("summarize"),
-                        current_user: dict = require_auth()):
-    """通用批量处理：上传多个文件 → 统一LLM处理。task: summarize/translate/keywords/sentiment"""
+async def _batch_process_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """通用批量处理 worker：逐文件提取文本 + 统一 LLM 处理，按文件上报进度。"""
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    files = payload.get("files", [])
+    user_id = payload.get("user_id", "")
+    task = payload.get("task", "summarize")
     start = datetime.now()
     results = []
-    bid = f"batch_{int(datetime.now().timestamp()*1000)}"
+    total = len(files)
 
     task_prompts = {
         "summarize": "请用中文摘要以下文档（100字以内）：",
@@ -246,50 +349,88 @@ async def batch_process(files: list[UploadFile] = File(...), task: str = Form("s
         "sentiment": "请分析以下文本的情感倾向，只输出：正面/负面/中性，并附一句话原因。",
         "translate_en": "将以下文本翻译为英文，只输出译文：",
     }
-
     task_prompt = task_prompts.get(task, task_prompts["summarize"])
 
-    for file in files:
-        if not file.filename:
-            continue
+    for i, file in enumerate(files):
+        _report(round((i / total) * 90, 1) if total else 10, f"处理第 {i + 1}/{total} 个文件")
         try:
-            content = await file.read()
-            tmp_path = os.path.join(UPLOAD_DIR, f"{bid}_{file.filename}")
-            with open(tmp_path, "wb") as f:
-                f.write(content)
-
-            text = extract_text(tmp_path, file.filename)
+            text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(task_prompt, f"文件：{file.filename}\n\n{text[:4000]}",
+                raw = call_llm(task_prompt, f"文件：{file['filename']}\n\n{text[:4000]}",
                                max_tokens=400, temperature=0.3, timeout=30)
                 result_text = raw.strip()
             else:
                 result_text = text or "处理失败"
 
-            results.append({"filename": file.filename, "result": result_text})
+            results.append({"filename": file["filename"], "result": result_text})
+        except Exception as e:
+            results.append({"filename": file["filename"], "result": "", "error": str(e)})
+        finally:
             try:
-                os.remove(tmp_path)
+                os.remove(file["path"])
             except OSError:
                 pass
-        except Exception as e:
-            results.append({"filename": file.filename, "result": "", "error": str(e)})
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("batch_process", len(files), len(json.dumps(results)), elapsed)
 
-    return {
-        "job_id": bid,
+    result = {
+        "job_id": f"batch_{uuid.uuid4().hex[:8]}",
         "task": task,
-        "file_count": len(files),
+        "file_count": total,
         "results": results,
     }
+    _save_job(result["job_id"], task, total, result, user_id)
+    _report(100, "完成")
+    return result
+
+
+def _save_job(job_id: str, task_type: str, file_count: int, result: dict, user_id: str) -> None:
+    """写入 batch_jobs 记录（任务完成后调用，含用户归属）。"""
+    try:
+        with get_db_context() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO batch_jobs (id, task_type, file_count, results, status, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                (job_id, task_type, file_count, json.dumps(result, ensure_ascii=False), "done", user_id, datetime.now().isoformat()),
+            )
+    except Exception as e:
+        logger.warning("save batch_jobs failed: %s", e)
+
+
+async def _batch_translate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装批量翻译，回报进度。"""
+    return await _batch_translate_worker(payload, progress=update)
+
+
+async def _batch_doc_summary_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装批量文档摘要，回报进度。"""
+    return await _batch_doc_summary_worker(payload, progress=update)
+
+
+async def _batch_process_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装通用批量处理，回报进度。"""
+    return await _batch_process_worker(payload, progress=update)
+
+
+# ── 异步任务处理器注册（进度/自动重试/并发控制）──
+register_handler("batch_translate", _batch_translate_handler, user_limit=1, max_attempts=1)
+register_handler("batch_doc_summary", _batch_doc_summary_handler, user_limit=1, max_attempts=1)
+register_handler("batch_process", _batch_process_handler, user_limit=1, max_attempts=1)
 
 
 @router.get("/jobs")
 async def list_jobs(current_user: dict = require_auth()):
-    """获取批量任务历史。"""
+    """获取批量任务历史（用户隔离：admin 全量，普通用户仅自己的）。"""
+    role = current_user.get("role", "")
+    uid = str(current_user.get("user_id", ""))
     with get_db_context() as conn:
-        rows = conn.execute(
-            "SELECT id, task_type, file_count, status, created_at FROM batch_jobs ORDER BY created_at DESC LIMIT 20"
-        ).fetchall()
+        if role in ("admin", "super_admin"):
+            rows = conn.execute(
+                "SELECT id, task_type, file_count, status, created_at FROM batch_jobs ORDER BY created_at DESC LIMIT 20"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, task_type, file_count, status, created_at FROM batch_jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
+                (uid,),
+            ).fetchall()
     return [{"id": r[0], "task_type": r[1], "file_count": r[2], "status": r[3], "created_at": r[4]} for r in rows]
