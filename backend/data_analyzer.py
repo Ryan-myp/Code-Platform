@@ -120,12 +120,8 @@ async def data_analyzer_upload(file: UploadFile = File(...), current_user: dict 
     return {"csv": text, "filename": file.filename or "data.csv", **info}
 
 
-@router.post("/api/data-analyzer/analyze")
-async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
-    """AI 数据分析：自然语言提问 → LLM 生成 pandas 代码 → 沙箱执行 → 结论+图表。
-
-    请求体：{question: str, data: CSV文本, filename?: str}
-    """
+def _validate_analyze_request(req: dict) -> tuple[str, str, dict]:
+    """校验分析请求，返回 (question, data, csv_info)。非法时抛 400。"""
     question = (req.get("question") or "").strip()
     data = (req.get("data") or "").strip()
     if not question:
@@ -136,12 +132,21 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
         raise HTTPException(400, "问题过长（上限 2000 字）")
     if len(data) > MAX_DATA_CHARS:
         raise HTTPException(400, "数据过大（上限 1.5MB）")
-
     info = _csv_info(data)
     if not info["columns"]:
         raise HTTPException(400, "数据不是有效的 CSV（缺少表头？）")
     if info["rows"] < 1:
         raise HTTPException(400, "数据缺少数据行（至少需要表头 + 一行数据）")
+    return question, data, info
+
+
+@router.post("/api/data-analyzer/analyze")
+async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
+    """AI 数据分析：自然语言提问 → LLM 生成 pandas 代码 → 沙箱执行 → 结论+图表。
+
+    请求体：{question: str, data: CSV文本, filename?: str}
+    """
+    question, data, info = _validate_analyze_request(req)
 
     # ── LLM 生成分析代码 ──
     user_prompt = (

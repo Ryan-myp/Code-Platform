@@ -44,6 +44,10 @@ const PAGE_PATH_TO_ID = {
   '/usage-analytics': 'usage-analytics',
   '/scheduler': 'scheduler',
   '/growth': 'growth',
+  '/strategy': 'strategy',
+  '/monitor': 'monitor',
+  '/favorites': 'favorites',
+  '/data-analyzer': 'data-analyzer',
 }
 
 export default function useAccess() {

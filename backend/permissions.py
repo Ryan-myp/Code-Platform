@@ -55,6 +55,10 @@ PAGES = [
     {"id": "usage-analytics", "path": "/usage-analytics", "label": "用量分析"},
     {"id": "scheduler", "path": "/scheduler", "label": "定时任务"},
     {"id": "growth", "path": "/growth", "label": "增长工坊"},
+    {"id": "strategy", "path": "/strategy", "label": "内容策略"},
+    {"id": "monitor", "path": "/monitor", "label": "竞品监控"},
+    {"id": "favorites", "path": "/favorites", "label": "收藏中心"},
+    {"id": "data-analyzer", "path": "/data-analyzer", "label": "数据分析沙箱"},
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊
