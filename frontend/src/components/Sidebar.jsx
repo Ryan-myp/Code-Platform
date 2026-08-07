@@ -191,6 +191,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       items: [
         { path: '/tool-hub', label: '全部工具', icon: Wrench },
         { path: '/excel', label: 'Excel 助手', icon: Table2, pageId: 'excel' },
+        { path: '/data-analyzer', label: '数据分析沙箱', icon: BarChart3, pageId: 'data-analyzer' },
         { path: '/stock', label: '股票分析', icon: Landmark, pageId: 'stock' },
         { path: '/pdf-tools', label: 'PDF工具集', icon: FileSearch, pageId: 'pdf-tools' },
         { path: '/batch-process', label: '批量处理', icon: Files, pageId: 'batch-process' },

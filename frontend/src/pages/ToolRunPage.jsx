@@ -7,6 +7,7 @@ import MarkdownRenderer from '../components/MarkdownRenderer'
 import useQuota from '../hooks/useQuota'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
+import { TOOL_EXAMPLES } from '../lib/toolExamples'
 import {
   ArrowLeft,
   Play,
@@ -92,7 +93,17 @@ export default function ToolRunPage() {
   const [selectedTemplate, setSelectedTemplate] = useState(null)
   const [uploadedFile, setUploadedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
+  const [showExamples, setShowExamples] = useState(false)
   const fileInputRef = React.useRef(null)
+
+  const examples = TOOL_EXAMPLES[toolId] || []
+
+  const applyExample = (example) => {
+    setInput(example.input)
+    setParams((prev) => ({ ...prev, ...(example.params || {}) }))
+    setShowExamples(false)
+    toast.success(`已填入示例「${example.label}」，直接点开始生成即可体验`)
+  }
 
   useEffect(() => {
     loadTool()
@@ -412,7 +423,37 @@ export default function ToolRunPage() {
             {/* 输入区 */}
             <Card className="!p-0 overflow-hidden h-full flex flex-col">
               <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">输入内容</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-700">输入内容</span>
+                  {examples.length > 0 && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowExamples(!showExamples)}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs text-brand-600 bg-brand-50 hover:bg-brand-100 rounded-full transition-colors"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        试试示例
+                        <ChevronDown
+                          className={`w-3 h-3 transition-transform ${showExamples ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {showExamples && (
+                        <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20">
+                          {examples.map((example, i) => (
+                            <button
+                              key={i}
+                              onClick={() => applyExample(example)}
+                              className="w-full text-left px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                            >
+                              <Sparkles className="w-3 h-3 text-brand-500 shrink-0" />
+                              {example.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <span className="text-xs text-gray-400">{input.length} 字</span>
               </div>
               <textarea

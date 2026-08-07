@@ -599,6 +599,7 @@ export default function HomePage() {
   const [favorites, setFavorites] = useState([])
   const [toolStats, setToolStats] = useState([])
   const [drafts, setDrafts] = useState([])
+  const [showcase, setShowcase] = useState([]) // 真实用户成果案例墙
   const [loading, setLoading] = useState(true)
   const [capKw, setCapKw] = useState('')
 
@@ -614,17 +615,27 @@ export default function HomePage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [statsRes, recentRes, tasksRes, notifsRes, favRes, toolRes, draftRes, widgetsRes] =
-        await Promise.all([
-          api.get('/api/home/stats'),
-          api.get('/api/home/recent'),
-          api.get('/api/tasks', { params: { limit: 8 } }),
-          api.get('/api/notifications?unread_only=true&limit=10'),
-          api.get('/api/tools/favorites/list').catch(() => ({ data: [] })),
-          api.get('/api/tools/stats').catch(() => ({ data: [] })),
-          api.get('/api/drafts').catch(() => ({ data: [] })),
-          api.get('/api/home/widgets').catch(() => ({ data: null })),
-        ])
+      const [
+        statsRes,
+        recentRes,
+        tasksRes,
+        notifsRes,
+        favRes,
+        toolRes,
+        draftRes,
+        widgetsRes,
+        showcaseRes,
+      ] = await Promise.all([
+        api.get('/api/home/stats'),
+        api.get('/api/home/recent'),
+        api.get('/api/tasks', { params: { limit: 8 } }),
+        api.get('/api/notifications?unread_only=true&limit=10'),
+        api.get('/api/tools/favorites/list').catch(() => ({ data: [] })),
+        api.get('/api/tools/stats').catch(() => ({ data: [] })),
+        api.get('/api/drafts').catch(() => ({ data: [] })),
+        api.get('/api/home/widgets').catch(() => ({ data: null })),
+        api.get('/api/showcase').catch(() => ({ data: { items: [] } })),
+      ])
       setStats(statsRes.data)
       setRecent(recentRes.data)
       setTasks(tasksRes.data?.tasks || [])
@@ -633,6 +644,7 @@ export default function HomePage() {
       setToolStats(toolRes.data || [])
       setDrafts(draftRes.data || [])
       if (widgetsRes?.data) setWidgets(widgetsRes.data)
+      setShowcase(showcaseRes?.data?.items || [])
     } catch {
       toast.error('加载数据失败')
     } finally {
@@ -848,7 +860,75 @@ export default function HomePage() {
             </Button>
           </div>
         </div>
+        {/* 能力数据条：让新用户 3 秒感知平台规模 */}
+        <div className="flex items-center gap-6 mt-4 pt-4 border-t border-white/20 relative z-10 flex-wrap">
+          {[
+            { num: '54+', label: '效率工具' },
+            { num: '4', label: 'AI 工坊' },
+            { num: String(showcase.length || 0), label: '精选成果' },
+            { num: '5', label: '大模型路由' },
+          ].map((it) => (
+            <div key={it.label} className="flex items-baseline gap-1.5">
+              <span className="text-lg font-bold text-white">{it.num}</span>
+              <span className="text-xs text-white/70">{it.label}</span>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* 真实成果案例墙：用户主动分享的成果（点击跳分享页，形成传播闭环） */}
+      {showcase.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft overflow-hidden">
+          <div className="flex items-center justify-between px-5 pt-4 pb-3">
+            <div className="flex items-center gap-2">
+              <GalleryVerticalEnd className="w-5 h-5 text-brand-500" />
+              <h2 className="font-semibold text-gray-900">真实成果案例</h2>
+              <span className="text-xs text-gray-400">平台用户分享的生成结果 · 点击围观</span>
+            </div>
+            <button
+              onClick={() => navigate('/tools')}
+              className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium"
+            >
+              去创作自己的作品
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex gap-3 px-5 pb-5 overflow-x-auto pb-4 scrollbar-thin">
+            {showcase.map((s) => (
+              <a
+                key={s.share_code}
+                href={`/share/${s.share_code}`}
+                target="_blank"
+                rel="noreferrer"
+                className="group w-64 flex-shrink-0 rounded-xl border border-gray-200 hover:border-brand-300 hover:shadow-md transition-all overflow-hidden"
+              >
+                <div className="px-4 py-3 bg-gradient-to-br from-gray-50 to-brand-50/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="px-1.5 py-0.5 rounded-md bg-brand-100 text-brand-700 text-[10px] font-medium">
+                      {s.content_type}
+                    </span>
+                    <span className="flex items-center gap-1 text-[10px] text-gray-400">
+                      <Activity className="w-3 h-3" />
+                      {s.views} 浏览
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm font-medium text-gray-800 truncate">
+                    {s.title || '分享成果'}
+                  </p>
+                </div>
+                <div className="px-4 py-3">
+                  <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
+                    {s.preview || '（无预览内容）'}
+                  </p>
+                  <p className="mt-2 text-[10px] text-gray-300 group-hover:text-brand-500 transition-colors">
+                    {s.created_at?.slice(0, 10)} · 点击查看完整内容 →
+                  </p>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 全场景能力地图：说出你想做的事，快速找到对应能力 */}
       <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-soft">

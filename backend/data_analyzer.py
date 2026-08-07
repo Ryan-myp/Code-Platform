@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""AI 数据分析沙箱 — 上传表格 → 自然语言提问 → LLM 生成 pandas 代码 → 受限执行 → 图表+结论。
+
+安全模型与 /api/sandbox/execute 一致（common/sandbox_check.py）：
+- LLM 生成的代码经过静态扫描（危险 token 黑名单 + import 白名单）
+- 子进程受限执行（CPU/文件大小/fd 限制 + 超时 + 隔离工作目录）
+- 代码只能读取沙箱内预置的 data.csv；图表由执行器自动收集，禁止代码内 open/网络
+"""
+
+import csv
+import io
+import re
+from datetime import datetime
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+
+from common.auth import require_auth
+from common.llm import call_llm_async, log_usage
+from common.sandbox_check import MAX_CODE_LEN, check_sandbox_code, run_sandbox_python
+
+router = APIRouter(tags=["AI 数据分析"])
+
+# 数据文本上限：超过则截断（前端同步限制）
+MAX_DATA_CHARS = 1_500_000
+# 上传文件原始大小上限
+MAX_FILE_BYTES = 8 * 1024 * 1024
+# 转 CSV 时的最大行数
+MAX_CSV_ROWS = 5000
+# 预览给 LLM 的行数
+PREVIEW_ROWS = 30
+
+_CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+
+_ANALYZER_SYSTEM_PROMPT = """你是资深数据分析师与 Python 工程师。用户会上传一个 CSV 表格（UTF-8，可能含中文表头）并提出数据分析问题。
+请生成一段可直接执行的 Python 代码来回答用户的问题，代码必须遵守以下约束：
+
+1. 数据读取：用 pandas 读取当前目录下的 data.csv：df = pd.read_csv('data.csv')。不要用 open() 读取任何文件。
+2. 允许使用的库：pandas、numpy、matplotlib、json、math、statistics、collections、itertools、functools、re、datetime。禁止导入其他任何模块。
+3. 图表：matplotlib 使用 Agg 后端，禁止 plt.show()。每张图保存为 chart1.png、chart2.png（plt.savefig('chart1.png')，dpi=100），最多 3 张。
+4. 图表文字一律使用英文（服务器没有中文字体，中文会显示为方块）；图表标题、轴标签要清晰。
+5. 文本结论：用 print() 输出中文结论，包含关键数字、趋势与业务解读。结论直接面向用户，不要出现分析步骤叙述。
+6. 绝对禁止的写法（会被沙箱直接拒绝）：open 函数、os 模块、subprocess、eval 与 exec 函数、import 非白名单模块、网络请求、文件删除。
+7. 代码要健壮：先 df.head() 了解结构，处理缺失值与类型转换，避免除零。
+8. 只输出代码本身，用 ```python 代码块包裹，不要输出任何解释文字。"""
+
+
+def _extract_code(raw: str) -> str:
+    """从 LLM 回复中提取 python 代码块（无代码块时整段视为代码）。"""
+    m = _CODE_BLOCK_RE.search(raw or "")
+    return (m.group(1) if m else (raw or "")).strip()
+
+
+def _csv_info(text: str) -> dict:
+    """解析 CSV 文本，返回列名/总行数/预览行（供 LLM 与前端使用）。"""
+    try:
+        rows = list(csv.reader(io.StringIO(text)))
+    except Exception:
+        rows = []
+    if not rows:
+        return {"columns": [], "rows": 0, "preview": ""}
+    columns = [c.strip() for c in rows[0] if c.strip()]
+    total = max(len(rows) - 1, 0)
+    preview_rows = rows[1 : PREVIEW_ROWS + 1]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(rows[0])
+    writer.writerows(preview_rows)
+    return {"columns": columns, "rows": total, "preview": buf.getvalue()}
+
+
+def _bytes_to_csv(content: bytes) -> str:
+    """文件字节转 CSV 文本（UTF-8/GBK 容错）。"""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+@router.post("/api/data-analyzer/upload")
+async def data_analyzer_upload(file: UploadFile = File(...), current_user: dict = require_auth()):
+    """上传表格文件（CSV/Excel），解析为 CSV 文本返回（前端预览与回传分析）。"""
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in ("csv", "xlsx", "xls"):
+        raise HTTPException(400, f"不支持的文件类型: .{ext}（仅支持 CSV / Excel）")
+
+    content = await file.read()
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(400, "文件过大（上限 8MB）")
+
+    if ext == "csv":
+        text = _bytes_to_csv(content)
+    else:
+        try:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            out = io.StringIO()
+            writer = csv.writer(out)
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i >= MAX_CSV_ROWS:
+                    break
+                writer.writerow(["" if c is None else c for c in row])
+            text = out.getvalue()
+        except Exception as e:
+            raise HTTPException(400, f"Excel 解析失败: {e}") from e
+
+    text = text[:MAX_DATA_CHARS]
+    if not text.strip():
+        raise HTTPException(400, "文件内容为空")
+
+    info = _csv_info(text)
+    if not info["columns"]:
+        raise HTTPException(400, "无法识别表格结构（缺少表头？）")
+    if info["rows"] < 1:
+        raise HTTPException(400, "表格缺少数据行（至少需要表头 + 一行数据）")
+
+    return {"csv": text, "filename": file.filename or "data.csv", **info}
+
+
+@router.post("/api/data-analyzer/analyze")
+async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
+    """AI 数据分析：自然语言提问 → LLM 生成 pandas 代码 → 沙箱执行 → 结论+图表。
+
+    请求体：{question: str, data: CSV文本, filename?: str}
+    """
+    question = (req.get("question") or "").strip()
+    data = (req.get("data") or "").strip()
+    if not question:
+        raise HTTPException(400, "请描述你想分析的问题")
+    if not data:
+        raise HTTPException(400, "请先上传或粘贴数据（CSV 文本）")
+    if len(question) > 2000:
+        raise HTTPException(400, "问题过长（上限 2000 字）")
+    if len(data) > MAX_DATA_CHARS:
+        raise HTTPException(400, "数据过大（上限 1.5MB）")
+
+    info = _csv_info(data)
+    if not info["columns"]:
+        raise HTTPException(400, "数据不是有效的 CSV（缺少表头？）")
+    if info["rows"] < 1:
+        raise HTTPException(400, "数据缺少数据行（至少需要表头 + 一行数据）")
+
+    # ── LLM 生成分析代码 ──
+    user_prompt = (
+        f"## 数据概览\n"
+        f"- 文件名：{req.get('filename') or 'data.csv'}\n"
+        f"- 列名：{', '.join(info['columns'])}\n"
+        f"- 总行数（不含表头）：{info['rows']}\n\n"
+        f"## 数据预览（前 {PREVIEW_ROWS} 行）\n"
+        f"```\n{info['preview']}\n```\n\n"
+        f"## 用户的问题\n{question}\n"
+    )
+    start = datetime.now()
+    raw_code = ""
+    try:
+        raw_code = await call_llm_async(
+            _ANALYZER_SYSTEM_PROMPT, user_prompt, max_tokens=4000, temperature=0.2
+        )
+    except HTTPException as e:
+        log_usage("data_analyzer", len(user_prompt), 0, 0.0, success=False)
+        raise e
+
+    code = _extract_code(raw_code)
+    if not code:
+        raise HTTPException(500, "模型未能生成分析代码，请重试")
+    if len(code) > MAX_CODE_LEN:
+        raise HTTPException(500, "生成的代码过长，请简化问题后重试")
+
+    # ── 安全检查 + 受限执行 ──
+    blocked = check_sandbox_code(code)
+    if blocked:
+        log_usage("data_analyzer", len(user_prompt), len(code), 0.0, success=False)
+        raise HTTPException(400, f"生成的代码未通过安全检查：{blocked}")
+
+    result = run_sandbox_python(code, extra_files={"data.csv": data})
+    elapsed = round((datetime.now() - start).total_seconds(), 2)
+    log_usage("data_analyzer", len(user_prompt), len(code), elapsed)
+
+    charts = [{"name": k, "data": v} for k, v in result["files"].items()]
+    return {
+        "conclusion": result["output"],
+        "error": result["error"],
+        "charts": charts,
+        "code": code,
+        "duration": result["duration"],
+    }

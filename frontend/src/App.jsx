@@ -83,6 +83,7 @@ const WebSearchPage = lazy(() => import('./pages/WebSearchPage'))
 const BatchProcessPage = lazy(() => import('./pages/BatchProcessPage'))
 const ApiDocsPage = lazy(() => import('./pages/ApiDocsPage'))
 const CodeSandboxPage = lazy(() => import('./pages/CodeSandboxPage'))
+const DataAnalyzerPage = lazy(() => import('./pages/DataAnalyzerPage'))
 const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
 // 全量修复 v1：内容策略 / 竞品监控 / 收藏中心
@@ -458,6 +459,14 @@ export default function App() {
                               element={
                                 <AccessGuard path="/code-interpreter">
                                   <CodeSandboxPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/data-analyzer"
+                              element={
+                                <AccessGuard path="/data-analyzer">
+                                  <DataAnalyzerPage />
                                 </AccessGuard>
                               }
                             />

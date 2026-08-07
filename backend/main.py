@@ -83,6 +83,7 @@ from common.models import (  # noqa: E402
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
+from common.sandbox_check import MAX_CODE_LEN, check_sandbox_code, run_sandbox_python  # noqa: E402
 from competitor_monitor import router as competitor_monitor_router  # noqa: E402
 from content_strategy import router as content_strategy_router  # noqa: E402
 from data_forecast import router as data_forecast_router  # noqa: E402
@@ -254,6 +255,7 @@ _QUOTA_PATHS = (
     "/api/prd/test-cases",
     "/api/prd/generate-code",
     "/api/prd/code-chat",
+    "/api/data-analyzer/analyze",
     "/api/image-factory/generate/",
     "/api/image-factory/edit/",
     "/api/image-factory/template/render",
@@ -495,6 +497,35 @@ async def quota(current_user: dict = require_auth()):
 
 
 # ── 结果分享（商业版：引流传播） ─────────────────────────────
+@app.get("/api/showcase")
+async def showcase(limit: int = 12):
+    """公开成果精选：用户主动分享的内容中挑高浏览案例（首页案例墙，无需登录）。
+
+    分享内容本身即公开（分享页无鉴权），此处仅聚合展示，点击跳转分享页形成传播闭环。
+    """
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT share_code, title, content_type, views, created_at,
+                      substr(content, 1, 200) AS preview
+               FROM shares
+               WHERE content != '' AND length(content) >= 10
+               ORDER BY views DESC, created_at DESC
+               LIMIT ?""",
+            (min(limit, 30),),
+        ).fetchall()
+        items = []
+        for r in rows:
+            item = dict(r)
+            item["preview"] = (item.get("preview") or "").replace("\n", " ").strip()[:120]
+            items.append(item)
+        return {"items": items}
+    finally:
+        conn.close()
+
+
 @app.post("/api/shares")
 async def create_share_api(req: ShareCreateRequest, current_user: dict = require_auth()):
     """创建分享，返回 share_code。"""
@@ -2450,92 +2481,8 @@ async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: d
 
 
 # ── 代码沙箱静态检查（AI 代码解释器安全）──────────────────────
-# 黑名单：危险操作 token（小写匹配）；白名单：允许 import 的模块。
-# 策略：宁误伤勿放过——沙箱仅服务“纯计算 + 白名单绘图/分析”场景。
-_SANDBOX_BLOCKED_TOKENS = [
-    "os.",
-    "system(",
-    "subprocess",
-    "socket",
-    "shutil",
-    "ctypes",
-    "importlib",
-    "__import__",
-    "eval(",
-    "exec(",
-    "open(",
-    "path(",
-    "tempfile",
-    "glob",
-    "urllib",
-    "http.",
-    "ftp",
-    "pickle",
-    "marshal",
-    "pty",
-    "popen",
-    "fork(",
-    "environ",
-    "getenv",
-    "chmod",
-    "chown",
-    "remove(",
-    "unlink(",
-    "rmdir",
-    "sqlite3",
-    "requests",
-    "multiprocessing",
-    "threading",
-    "signal",
-    "compile(",
-    "input(",
-]
-_SANDBOX_ALLOWED_IMPORTS = {
-    "math",
-    "random",
-    "json",
-    "time",
-    "datetime",
-    "statistics",
-    "collections",
-    "itertools",
-    "functools",
-    "re",
-    "base64",
-    "io",
-    "string",
-    "decimal",
-    "fractions",
-    "heapq",
-    "bisect",
-    "array",
-    "textwrap",
-    "unicodedata",
-    "operator",
-    "types",
-    "copy",
-    "pprint",
-    "traceback",
-    "matplotlib",
-    "pandas",
-    "numpy",
-    "PIL",
-}
-
-
-def _check_sandbox_code(code: str) -> str | None:
-    """沙箱静态检查：返回违规说明（None=通过）。"""
-    import re as _re
-
-    lowered = code.lower()
-    for tok in _SANDBOX_BLOCKED_TOKENS:
-        if tok in lowered:
-            return f"代码包含被禁止的操作: {tok!r}（沙箱仅允许纯计算与白名单库）"
-    for line in code.splitlines():
-        m = _re.match(r"^\s*(?:import|from)\s+([a-zA-Z_][a-zA-Z0-9_]*)", line)
-        if m and m.group(1) not in _SANDBOX_ALLOWED_IMPORTS:
-            return f"禁止导入模块: {m.group(1)}（不在沙箱白名单内）"
-    return None
+# 策略与实现见 common/sandbox_check.py（黑名单/白名单/受限执行器，
+# 供代码解释器与数据分析沙箱共用）。
 
 
 @app.post("/api/sandbox/execute")
@@ -2549,61 +2496,27 @@ async def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
     - 隔离环境：独立临时工作目录，清空 HOME/TMPDIR，忽略 PYTHON* 环境变量
     - 超时 30s + 输出截断 20KB
     """
-    import resource as _resource
-    import shutil as _shutil
-    import subprocess as _sp
-    import sys as _sys
-    import tempfile as _tf
-
     code = (req.get("code") or "").strip()
     language = (req.get("language") or "python").lower()
     if not code:
         raise HTTPException(400, "代码不能为空")
-    if len(code) > 20000:
+    if len(code) > MAX_CODE_LEN:
         raise HTTPException(400, "代码过长（上限 20KB）")
     if language not in ("python", "python3", "py"):
         raise HTTPException(400, f"暂不支持语言: {language}（当前仅支持 python）")
 
     # ── 静态安全检查 ──
-    blocked = _check_sandbox_code(code)
+    blocked = check_sandbox_code(code)
     if blocked:
         return {"output": "", "error": blocked, "duration": 0.0, "exit_code": -1}
 
-    def _limits():
-        """子进程资源限制。
-
-        注意：macOS 上 Python 进程 VIRT 基础值达十几 GB，RLIMIT_AS/RLIMIT_DATA
-        会导致 exec 失败，故内存保护依赖静态扫描 + 超时兜底。
-        """
-        _resource.setrlimit(_resource.RLIMIT_CPU, (10, 10))  # CPU 10 秒
-        _resource.setrlimit(_resource.RLIMIT_FSIZE, (2 * 1024 * 1024, 2 * 1024 * 1024))  # 单文件 2MB
-        _resource.setrlimit(_resource.RLIMIT_NOFILE, (128, 128))  # 文件描述符上限（解释器/绘图库需较多 fd）
-
-    workdir = _tf.mkdtemp(prefix="sandbox_exec_")
-    start = time.time()
-    try:
-        r = _sp.run(
-            [_sys.executable, "-E", "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=workdir,
-            env={"HOME": workdir, "TMPDIR": workdir, "PYTHONIOENCODING": "utf-8"},
-            preexec_fn=_limits,
-        )
-        duration = round(time.time() - start, 2)
-        return {
-            "output": (r.stdout or "")[:20000],
-            "error": (r.stderr or "")[:20000],
-            "duration": duration,
-            "exit_code": r.returncode,
-        }
-    except _sp.TimeoutExpired:
-        return {"output": "", "error": "执行超时（30秒）", "duration": 30.0, "exit_code": -1}
-    except Exception as e:
-        return {"output": "", "error": f"执行器错误: {e}", "duration": 0.0, "exit_code": -1}
-    finally:
-        _shutil.rmtree(workdir, ignore_errors=True)
+    result = run_sandbox_python(code)
+    return {
+        "output": result["output"],
+        "error": result["error"],
+        "duration": result["duration"],
+        "exit_code": result["exit_code"],
+    }
 
 
 app.include_router(image_factory_router)
@@ -2660,6 +2573,11 @@ app.include_router(extended_api_router)
 from tool_hub import router as tool_hub_router  # noqa: E402
 
 app.include_router(tool_hub_router)
+
+# v9.0: AI 数据分析沙箱
+from data_analyzer import router as data_analyzer_router  # noqa: E402
+
+app.include_router(data_analyzer_router)
 
 # v9.0: Stock Tools API
 from stock_tools import router as stock_tools_router  # noqa: E402
