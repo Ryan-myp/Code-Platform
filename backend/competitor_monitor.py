@@ -132,6 +132,7 @@ RADAR_SYSTEM = """你是竞品分析与数据可视化专家，擅长将多维�
 
 只输出JSON，不要其他内容。"""
 
+
 # ── 数据库 ──────────────────────────────────────────────────
 def _ensure_tables(conn) -> None:
     conn.execute(
@@ -162,6 +163,7 @@ def _ensure_tables(conn) -> None:
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class CompetitorAddRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="竞品名称")
     platform: str = Field(..., max_length=50, description="平台（如 抖音/小红书/B站/公众号）")
@@ -171,12 +173,12 @@ class CompetitorAddRequest(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    competitor_ids: list[str] = Field(..., min_length=1, max_length=10,
-                                       description="要分析的竞品ID列表")
+    competitor_ids: list[str] = Field(..., min_length=1, max_length=10, description="要分析的竞品ID列表")
     query: str = Field("", max_length=500, description="可选：分析重点（如：聚焦选题策略）")
 
 
 # ── API ──────────────────────────────────────────────────
+
 
 @router.post("/competitors")
 async def add_competitor(req: CompetitorAddRequest, current_user: dict = require_auth()):
@@ -189,8 +191,7 @@ async def add_competitor(req: CompetitorAddRequest, current_user: dict = require
         """INSERT INTO competitors (id, user_id, name, platform, account_id,
            description, profile_url, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        (comp_id, user, req.name, req.platform, req.account_id,
-         req.description, req.profile_url, now, now),
+        (comp_id, user, req.name, req.platform, req.account_id, req.description, req.profile_url, now, now),
     )
     conn.commit()
     conn.close()
@@ -201,9 +202,7 @@ async def add_competitor(req: CompetitorAddRequest, current_user: dict = require
 async def list_competitors(current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
-    rows = conn.execute(
-        "SELECT * FROM competitors ORDER BY updated_at DESC LIMIT 100"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM competitors ORDER BY updated_at DESC LIMIT 100").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -237,10 +236,7 @@ async def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_
         raise HTTPException(404, "未找到指定竞品")
 
     competitors = [dict(r) for r in rows]
-    comp_desc = "\n".join(
-        f"- {c['name']}（{c['platform']}）: {c['description']}"
-        for c in competitors
-    )
+    comp_desc = "\n".join(f"- {c['name']}（{c['platform']}）: {c['description']}" for c in competitors)
 
     user_prompt = f"竞品列表：\n{comp_desc}"
     if req.query:
@@ -254,16 +250,17 @@ async def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         analysis = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "AI分析结果格式异常")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "AI分析结果格式异常") from e
     except Exception as e:
         logger.exception("competitor analysis failed")
-        raise HTTPException(500, f"竞品分析失败：{e}")
+        raise HTTPException(500, f"竞品分析失败：{e}") from e
 
     # 2. 雷达图
     try:
-        radar_raw = call_llm(RADAR_SYSTEM, f"分析以下竞品并生成雷达图：\n{comp_desc}",
-                             max_tokens=1500, temperature=0.3, timeout=60)
+        radar_raw = call_llm(
+            RADAR_SYSTEM, f"分析以下竞品并生成雷达图：\n{comp_desc}", max_tokens=1500, temperature=0.3, timeout=60
+        )
         radar_raw = radar_raw.strip()
         if radar_raw.startswith("```"):
             lines = radar_raw.split("\n")
@@ -280,10 +277,14 @@ async def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_
         """INSERT INTO competitor_reports
            (id, user_id, competitor_ids, analysis_data, radar_data, created_at)
            VALUES (?,?,?,?,?,?)""",
-        (report_id, user, json.dumps(req.competitor_ids),
-         json.dumps(analysis, ensure_ascii=False),
-         json.dumps(radar, ensure_ascii=False),
-         datetime.now().isoformat()),
+        (
+            report_id,
+            user,
+            json.dumps(req.competitor_ids),
+            json.dumps(analysis, ensure_ascii=False),
+            json.dumps(radar, ensure_ascii=False),
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -303,9 +304,7 @@ async def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_
 async def get_report(report_id: str, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
-    row = conn.execute(
-        "SELECT * FROM competitor_reports WHERE id=?", (report_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM competitor_reports WHERE id=?", (report_id,)).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "报告不存在")
@@ -323,8 +322,6 @@ async def get_report(report_id: str, current_user: dict = require_auth()):
 async def list_reports(limit: int = 50, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
-    rows = conn.execute(
-        "SELECT * FROM competitor_reports ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM competitor_reports ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

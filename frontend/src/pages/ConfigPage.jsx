@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Settings, Save, RefreshCw, Eye, EyeOff, Key, Globe, Cpu,
-  CheckCircle2, Wifi, Plus, Trash2, Loader2, Bell, Mail, Webhook, Send,
+  Settings,
+  Save,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  Key,
+  Globe,
+  Cpu,
+  CheckCircle2,
+  Wifi,
+  Plus,
+  Trash2,
+  Loader2,
+  Bell,
+  Mail,
+  Webhook,
+  Send,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
-import {
-  Button, PageHeader, Badge, PageLoading, ErrorState,
-} from '../components/ui'
+import { Button, PageHeader, Badge, PageLoading, ErrorState } from '../components/ui'
 
 // 掩码占位符（与后端脱敏返回一致）
 const MASKED_PREFIX = '••••'
@@ -47,10 +60,14 @@ export default function ConfigPage() {
     try {
       const res = await api.get('/api/notify/config')
       setNotifyCfg(res.data || {})
-    } catch { setNotifyCfg(null) }
+    } catch {
+      setNotifyCfg(null)
+    }
   }, [])
 
-  useEffect(() => { fetchNotifyConfig() }, [fetchNotifyConfig])
+  useEffect(() => {
+    fetchNotifyConfig()
+  }, [fetchNotifyConfig])
 
   const handleSaveNotify = async () => {
     if (!notifyCfg) return
@@ -59,7 +76,11 @@ export default function ConfigPage() {
       await api.put('/api/notify/config', notifyCfg)
       toast.success('通知配置已保存')
       fetchNotifyConfig()
-    } catch (e) { toast.error(`保存失败：${e.message}`) } finally { setSavingNotify(false) }
+    } catch (e) {
+      toast.error(`保存失败：${e.message}`)
+    } finally {
+      setSavingNotify(false)
+    }
   }
 
   const handleTestEmail = async () => {
@@ -67,7 +88,11 @@ export default function ConfigPage() {
     try {
       const res = await api.post('/api/notify/test-email')
       toast.success(res.data?.message || '测试邮件已发送')
-    } catch (e) { toast.error(e.message || '测试邮件失败') } finally { setTestingEmail(false) }
+    } catch (e) {
+      toast.error(e.message || '测试邮件失败')
+    } finally {
+      setTestingEmail(false)
+    }
   }
 
   const handleTestWebhook = async () => {
@@ -75,7 +100,11 @@ export default function ConfigPage() {
     try {
       const res = await api.post('/api/notify/test-webhook')
       toast.success(res.data?.message || 'Webhook 测试成功')
-    } catch (e) { toast.error(e.message || 'Webhook 测试失败') } finally { setTestingWebhook(false) }
+    } catch (e) {
+      toast.error(e.message || 'Webhook 测试失败')
+    } finally {
+      setTestingWebhook(false)
+    }
   }
 
   const setNotifyField = (key, val) => setNotifyCfg((p) => ({ ...(p || {}), [key]: val }))
@@ -108,7 +137,8 @@ export default function ConfigPage() {
   const validate = () => {
     const e = {}
     if (!apiUrl.trim()) e.apiUrl = 'API URL 不能为空'
-    else if (!/^https?:\/\//i.test(apiUrl.trim())) e.apiUrl = 'API URL 需以 http:// 或 https:// 开头'
+    else if (!/^https?:\/\//i.test(apiUrl.trim()))
+      e.apiUrl = 'API URL 需以 http:// 或 https:// 开头'
     if (!modelName.trim()) e.modelName = '请选择默认模型'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -235,7 +265,9 @@ export default function ConfigPage() {
         icon={Settings}
         iconColor="from-blue-500 to-indigo-600"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={fetchConfig}>刷新</Button>
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchConfig}>
+            刷新
+          </Button>
         }
       />
 
@@ -270,7 +302,11 @@ export default function ConfigPage() {
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-100 rounded-lg"
                 title={showKey ? '隐藏' : '显示'}
               >
-                {showKey ? <EyeOff className="w-4 h-4 text-gray-400" /> : <Eye className="w-4 h-4 text-gray-400" />}
+                {showKey ? (
+                  <EyeOff className="w-4 h-4 text-gray-400" />
+                ) : (
+                  <Eye className="w-4 h-4 text-gray-400" />
+                )}
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">
@@ -291,9 +327,11 @@ export default function ConfigPage() {
               placeholder="https://api.agnes-ai.cn/v1"
               className={`w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all font-mono ${errors.apiUrl ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'}`}
             />
-            {errors.apiUrl
-              ? <p className="text-xs text-red-500 mt-1">{errors.apiUrl}</p>
-              : <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>}
+            {errors.apiUrl ? (
+              <p className="text-xs text-red-500 mt-1">{errors.apiUrl}</p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>
+            )}
           </div>
 
           {/* 模型列表（每个模型独立配置 base_url / api_key，多供应商接入） */}
@@ -312,9 +350,15 @@ export default function ConfigPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5">
                         <span className="text-sm font-medium text-gray-800">{m.name}</span>
-                        {m.note && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500">{m.note}</span>}
+                        {m.note && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-500">
+                            {m.note}
+                          </span>
+                        )}
                         {m.name === modelName && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">默认</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600">
+                            默认
+                          </span>
                         )}
                       </div>
                       <div className="flex items-center gap-3 mt-0.5 text-[11px] text-gray-400 font-mono">
@@ -339,7 +383,11 @@ export default function ConfigPage() {
                       className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                       title={`移除 ${m.name}`}
                     >
-                      {deletingModel === m.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      {deletingModel === m.name ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
                 ))
@@ -378,13 +426,19 @@ export default function ConfigPage() {
                   disabled={addingModel}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors disabled:opacity-60 flex-shrink-0"
                 >
-                  {addingModel ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                  {addingModel ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
                   添加模型
                 </button>
               </div>
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
-              每个模型可配置独立的 API 地址与密钥（如智谱 / DeepSeek / 豆包均为不同服务商）；留空则使用上方全局 API Key / URL。切换模型时自动使用对应供应商的地址与密钥
+              每个模型可配置独立的 API 地址与密钥（如智谱 / DeepSeek /
+              豆包均为不同服务商）；留空则使用上方全局 API Key /
+              URL。切换模型时自动使用对应供应商的地址与密钥
             </p>
           </div>
 
@@ -401,11 +455,14 @@ export default function ConfigPage() {
             >
               {models.map((m) => (
                 <option key={m.name} value={m.name}>
-                  {m.name}{m.note ? `（${m.note}）` : ''}
+                  {m.name}
+                  {m.note ? `（${m.note}）` : ''}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">Agent 默认使用的模型，保存后所有 AI 功能立即生效</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Agent 默认使用的模型，保存后所有 AI 功能立即生效
+            </p>
           </div>
 
           {/* 当前状态 */}
@@ -414,13 +471,17 @@ export default function ConfigPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">API Key:</span>
-                {keyConfigured
-                  ? <Badge status="active" dot label="已配置" />
-                  : <Badge status="inactive" dot label="未配置" />}
+                {keyConfigured ? (
+                  <Badge status="active" dot label="已配置" />
+                ) : (
+                  <Badge status="inactive" dot label="未配置" />
+                )}
               </div>
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-gray-500 flex-shrink-0">API URL:</span>
-                <span className="font-mono text-xs text-gray-700 truncate">{config?.api_url || config?.agnes_api_base || '未配置'}</span>
+                <span className="font-mono text-xs text-gray-700 truncate">
+                  {config?.api_url || config?.agnes_api_base || '未配置'}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">默认模型:</span>
@@ -452,17 +513,28 @@ export default function ConfigPage() {
         </h4>
         <p className="text-sm text-amber-700">
           访问{' '}
-          <a href="https://api.agnes-ai.cn" target="_blank" rel="noopener noreferrer" className="underline hover:text-amber-900">
+          <a
+            href="https://api.agnes-ai.cn"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-amber-900"
+          >
             api.agnes-ai.cn
-          </a>
-          {' '}注册账号并创建 API Key。免费额度足够个人使用。
+          </a>{' '}
+          注册账号并创建 API Key。免费额度足够个人使用。
         </p>
       </div>
 
       {/* 编辑模型弹窗 */}
       {editingModel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setEditingModel(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setEditingModel(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="font-semibold text-gray-900 mb-1">编辑模型配置</h3>
             <p className="text-xs text-gray-400 mb-5 font-mono">{editingModel.name}</p>
             <div className="space-y-4">
@@ -488,7 +560,10 @@ export default function ConfigPage() {
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
                 />
                 <p className="text-[11px] text-gray-400 mt-1">
-                  当前：{editingModel.base_url ? editingModel.base_url : '继承全局（' + (config?.api_url || config?.agnes_api_base || '未配置') + '）'}
+                  当前：
+                  {editingModel.base_url
+                    ? editingModel.base_url
+                    : '继承全局（' + (config?.api_url || config?.agnes_api_base || '未配置') + '）'}
                 </p>
               </div>
               <div>
@@ -499,7 +574,11 @@ export default function ConfigPage() {
                   type="password"
                   value={editingModel.new_key || ''}
                   onChange={(e) => setEditingModel({ ...editingModel, new_key: e.target.value })}
-                  placeholder={editingModel.api_key ? `已配置（${editingModel.api_key}），留空则不变` : '未配置，留空则继承全局 Key'}
+                  placeholder={
+                    editingModel.api_key
+                      ? `已配置（${editingModel.api_key}），留空则不变`
+                      : '未配置，留空则继承全局 Key'
+                  }
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
@@ -539,9 +618,17 @@ export default function ConfigPage() {
           </div>
           <div className="flex-1">
             <h2 className="text-sm font-semibold text-gray-900">通知渠道配置</h2>
-            <p className="text-xs text-gray-500 mt-0.5">配置 SMTP 邮件 / Webhook 通知渠道，用于发布、任务等场景的消息推送</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              配置 SMTP 邮件 / Webhook 通知渠道，用于发布、任务等场景的消息推送
+            </p>
           </div>
-          <Button variant="primary" size="sm" icon={Save} loading={savingNotify} onClick={handleSaveNotify}>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Save}
+            loading={savingNotify}
+            onClick={handleSaveNotify}
+          >
             保存通知配置
           </Button>
         </div>
@@ -559,51 +646,87 @@ export default function ConfigPage() {
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <span className="text-xs text-gray-500">启用</span>
-                  <input type="checkbox" checked={!!notifyCfg.email_enabled}
+                  <input
+                    type="checkbox"
+                    checked={!!notifyCfg.email_enabled}
                     onChange={(e) => setNotifyField('email_enabled', e.target.checked ? 1 : 0)}
-                    className="w-4 h-4 rounded accent-blue-500" />
+                    className="w-4 h-4 rounded accent-blue-500"
+                  />
                 </label>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">SMTP 服务器</label>
-                  <input value={notifyCfg.email_smtp_host || ''} onChange={(e) => setNotifyField('email_smtp_host', e.target.value)}
+                  <input
+                    value={notifyCfg.email_smtp_host || ''}
+                    onChange={(e) => setNotifyField('email_smtp_host', e.target.value)}
                     placeholder="smtp.qq.com"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">端口</label>
-                  <input type="number" value={notifyCfg.email_smtp_port ?? 587} onChange={(e) => setNotifyField('email_smtp_port', Number(e.target.value) || 587)}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                  <input
+                    type="number"
+                    value={notifyCfg.email_smtp_port ?? 587}
+                    onChange={(e) =>
+                      setNotifyField('email_smtp_port', Number(e.target.value) || 587)
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">账号</label>
-                  <input value={notifyCfg.email_smtp_user || ''} onChange={(e) => setNotifyField('email_smtp_user', e.target.value)}
+                  <input
+                    value={notifyCfg.email_smtp_user || ''}
+                    onChange={(e) => setNotifyField('email_smtp_user', e.target.value)}
                     placeholder="xxx@qq.com"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">密码（授权码）</label>
-                  <input type="password" value={notifyCfg.email_smtp_password || ''} onChange={(e) => setNotifyField('email_smtp_password', e.target.value)}
-                    placeholder={notifyCfg.email_smtp_password === '••••••••' ? '已配置，留空保持不变' : 'SMTP 授权码'}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                  <input
+                    type="password"
+                    value={notifyCfg.email_smtp_password || ''}
+                    onChange={(e) => setNotifyField('email_smtp_password', e.target.value)}
+                    placeholder={
+                      notifyCfg.email_smtp_password === '••••••••'
+                        ? '已配置，留空保持不变'
+                        : 'SMTP 授权码'
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">发件人</label>
-                  <input value={notifyCfg.email_from || ''} onChange={(e) => setNotifyField('email_from', e.target.value)}
+                  <input
+                    value={notifyCfg.email_from || ''}
+                    onChange={(e) => setNotifyField('email_from', e.target.value)}
                     placeholder="小团智能平台 <xxx@qq.com>"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">收件人</label>
-                  <input value={notifyCfg.email_to || ''} onChange={(e) => setNotifyField('email_to', e.target.value)}
+                  <input
+                    value={notifyCfg.email_to || ''}
+                    onChange={(e) => setNotifyField('email_to', e.target.value)}
                     placeholder="接收通知的邮箱"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  />
                 </div>
               </div>
-              <button onClick={handleTestEmail} disabled={testingEmail}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 disabled:opacity-50 transition-all">
-                {testingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <button
+                onClick={handleTestEmail}
+                disabled={testingEmail}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 disabled:opacity-50 transition-all"
+              >
+                {testingEmail ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
                 发送测试邮件
               </button>
             </div>
@@ -617,28 +740,49 @@ export default function ConfigPage() {
                 </div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <span className="text-xs text-gray-500">启用</span>
-                  <input type="checkbox" checked={!!notifyCfg.webhook_enabled}
+                  <input
+                    type="checkbox"
+                    checked={!!notifyCfg.webhook_enabled}
                     onChange={(e) => setNotifyField('webhook_enabled', e.target.checked ? 1 : 0)}
-                    className="w-4 h-4 rounded accent-indigo-500" />
+                    className="w-4 h-4 rounded accent-indigo-500"
+                  />
                 </label>
               </div>
               <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Webhook URL</label>
-                  <input value={notifyCfg.webhook_url || ''} onChange={(e) => setNotifyField('webhook_url', e.target.value)}
+                  <input
+                    value={notifyCfg.webhook_url || ''}
+                    onChange={(e) => setNotifyField('webhook_url', e.target.value)}
                     placeholder="https://hooks.example.com/xxx"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">密钥（X-Webhook-Secret）</label>
-                  <input type="password" value={notifyCfg.webhook_secret || ''} onChange={(e) => setNotifyField('webhook_secret', e.target.value)}
-                    placeholder={notifyCfg.webhook_secret === '••••••••' ? '已配置，留空保持不变' : '可选'}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono" />
+                  <label className="block text-xs text-gray-500 mb-1">
+                    密钥（X-Webhook-Secret）
+                  </label>
+                  <input
+                    type="password"
+                    value={notifyCfg.webhook_secret || ''}
+                    onChange={(e) => setNotifyField('webhook_secret', e.target.value)}
+                    placeholder={
+                      notifyCfg.webhook_secret === '••••••••' ? '已配置，留空保持不变' : '可选'
+                    }
+                    className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                  />
                 </div>
               </div>
-              <button onClick={handleTestWebhook} disabled={testingWebhook}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-medium hover:bg-indigo-50 disabled:opacity-50 transition-all">
-                {testingWebhook ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <button
+                onClick={handleTestWebhook}
+                disabled={testingWebhook}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-xs font-medium hover:bg-indigo-50 disabled:opacity-50 transition-all"
+              >
+                {testingWebhook ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-3.5 h-3.5" />
+                )}
                 发送测试 Webhook
               </button>
             </div>

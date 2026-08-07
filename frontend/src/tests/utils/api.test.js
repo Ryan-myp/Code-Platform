@@ -14,7 +14,7 @@ describe('API Utilities', () => {
 
   it('should handle API error responses', async () => {
     vi.spyOn(axios, 'get').mockRejectedValue({
-      response: { status: 500, data: { detail: 'Internal error' } }
+      response: { status: 500, data: { detail: 'Internal error' } },
     })
 
     try {

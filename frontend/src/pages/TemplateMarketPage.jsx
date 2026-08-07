@@ -1,9 +1,25 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  LayoutGrid, Gamepad2, Smartphone, Sticker, Mic2, ArrowRight,
-  Layers, Sparkles, Search, Star, X, Upload, Package, ShoppingCart,
-  Coins, Trash2, Plus, Loader2, Store,
+  LayoutGrid,
+  Gamepad2,
+  Smartphone,
+  Sticker,
+  Mic2,
+  ArrowRight,
+  Layers,
+  Sparkles,
+  Search,
+  Star,
+  X,
+  Upload,
+  Package,
+  ShoppingCart,
+  Coins,
+  Trash2,
+  Plus,
+  Loader2,
+  Store,
 } from 'lucide-react'
 import { PageHeader, Empty, SkeletonGrid, Modal, Button } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -42,21 +58,35 @@ export default function TemplateMarketPage() {
   const [buyingId, setBuyingId] = useState('')
 
   const [uploadForm, setUploadForm] = useState({
-    name: '', description: '', category: 'game', price: 0, content_json: '{}',
+    name: '',
+    description: '',
+    category: 'game',
+    price: 0,
+    content_json: '{}',
   })
 
   useEffect(() => {
-    try { setFavs(JSON.parse(localStorage.getItem('tm_favs') || '[]')) } catch { setFavs([]) }
+    try {
+      setFavs(JSON.parse(localStorage.getItem('tm_favs') || '[]'))
+    } catch {
+      setFavs([])
+    }
   }, [])
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setLoading(true)
-      api.get('/api/templates/market', { params: { q: q.trim() } })
-        .then((res) => { setData(res.data) })
-        .catch(() => toast.error('模板加载失败'))
-        .finally(() => setLoading(false))
-    }, q ? 300 : 0)
+    const t = setTimeout(
+      () => {
+        setLoading(true)
+        api
+          .get('/api/templates/market', { params: { q: q.trim() } })
+          .then((res) => {
+            setData(res.data)
+          })
+          .catch(() => toast.error('模板加载失败'))
+          .finally(() => setLoading(false))
+      },
+      q ? 300 : 0
+    )
     return () => clearTimeout(t)
   }, [q, toast])
 
@@ -65,21 +95,29 @@ export default function TemplateMarketPage() {
     try {
       const res = await api.get('/api/templates/c2c', { params: { q: q.trim() } })
       setC2c(Array.isArray(res.data) ? res.data : [])
-    } catch (e) { toast.error(`C2C 市场加载失败：${e.message}`) } finally { setC2cLoading(false) }
+    } catch (e) {
+      toast.error(`C2C 市场加载失败：${e.message}`)
+    } finally {
+      setC2cLoading(false)
+    }
   }, [q, toast])
 
   const loadMine = useCallback(async () => {
     try {
       const res = await api.get('/api/templates/user')
       setMine(Array.isArray(res.data) ? res.data : [])
-    } catch (e) { toast.error(`我的模板加载失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`我的模板加载失败：${e.message}`)
+    }
   }, [toast])
 
   const loadPurchases = useCallback(async () => {
     try {
       const res = await api.get('/api/templates/purchases')
       setPurchases(Array.isArray(res.data) ? res.data : [])
-    } catch (e) { toast.error(`购买记录加载失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`购买记录加载失败：${e.message}`)
+    }
   }, [toast])
 
   useEffect(() => {
@@ -97,7 +135,10 @@ export default function TemplateMarketPage() {
   }
 
   const handleUpload = async () => {
-    if (!uploadForm.name.trim()) { toast.error('请输入模板名称'); return }
+    if (!uploadForm.name.trim()) {
+      toast.error('请输入模板名称')
+      return
+    }
     setUploading(true)
     try {
       const res = await api.post('/api/templates/upload', {
@@ -112,7 +153,11 @@ export default function TemplateMarketPage() {
       setUploadForm({ name: '', description: '', category: 'game', price: 0, content_json: '{}' })
       loadMine()
       loadC2C()
-    } catch (e) { toast.error(`上架失败：${e.message}`) } finally { setUploading(false) }
+    } catch (e) {
+      toast.error(`上架失败：${e.message}`)
+    } finally {
+      setUploading(false)
+    }
   }
 
   const handleBuy = async (tpl) => {
@@ -121,8 +166,11 @@ export default function TemplateMarketPage() {
       const res = await api.post(`/api/templates/${tpl.id}/buy`)
       toast.success(res.data?.message || '购买成功')
       loadPurchases()
-    } catch (e) { toast.error(e.message?.includes('积分不足') ? e.message : `购买失败：${e.message}`) }
-    finally { setBuyingId('') }
+    } catch (e) {
+      toast.error(e.message?.includes('积分不足') ? e.message : `购买失败：${e.message}`)
+    } finally {
+      setBuyingId('')
+    }
   }
 
   const handleDeleteMine = async (tpl) => {
@@ -131,40 +179,57 @@ export default function TemplateMarketPage() {
       toast.success(`「${tpl.name}」已下架`)
       loadMine()
       loadC2C()
-    } catch (e) { toast.error(`下架失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`下架失败：${e.message}`)
+    }
   }
 
   const groups = data?.groups || {}
   const all = Object.values(groups).flatMap((g) => g.items || [])
   const items = useMemo(() => {
-    let list = cat === 'all' ? all : (groups[cat]?.items || [])
+    let list = cat === 'all' ? all : groups[cat]?.items || []
     if (onlyFav) list = list.filter((i) => favs.includes(i.id))
     return [...list].sort((a, b) => (favs.includes(b.id) ? 1 : 0) - (favs.includes(a.id) ? 1 : 0))
   }, [cat, all, groups, onlyFav, favs])
 
   const renderC2cCard = (t) => (
-    <div key={t.id} className="group bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg hover:-translate-y-0.5 hover:border-amber-200 transition-all flex flex-col">
+    <div
+      key={t.id}
+      className="group bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg hover:-translate-y-0.5 hover:border-amber-200 transition-all flex flex-col"
+    >
       <div className="flex items-start justify-between mb-3">
         <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-xl shadow-soft">
           <Store className="w-5 h-5 text-white" />
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[10px] font-medium border border-orange-100">{t.category}</span>
-          <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.price > 0 ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-green-50 text-green-600 border border-green-100'}`}>
+          <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[10px] font-medium border border-orange-100">
+            {t.category}
+          </span>
+          <span
+            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.price > 0 ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-green-50 text-green-600 border border-green-100'}`}
+          >
             <Coins className="w-3 h-3" /> {t.price > 0 ? `${t.price} 积分` : '免费'}
           </span>
         </div>
       </div>
       <h3 className="text-sm font-semibold text-gray-900">{t.name}</h3>
-      <p className="text-xs text-gray-500 mt-1.5 flex-1 leading-relaxed line-clamp-2">{t.description || '暂无描述'}</p>
+      <p className="text-xs text-gray-500 mt-1.5 flex-1 leading-relaxed line-clamp-2">
+        {t.description || '暂无描述'}
+      </p>
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-        <span className="text-[10px] text-gray-400">已售 {t.sales || 0} · {t.user_id}</span>
+        <span className="text-[10px] text-gray-400">
+          已售 {t.sales || 0} · {t.user_id}
+        </span>
         <button
           onClick={() => handleBuy(t)}
           disabled={buyingId === t.id}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-all"
         >
-          {buyingId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShoppingCart className="w-3.5 h-3.5" />}
+          {buyingId === t.id ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <ShoppingCart className="w-3.5 h-3.5" />
+          )}
           购买
         </button>
       </div>
@@ -220,16 +285,25 @@ export default function TemplateMarketPage() {
           <div className="flex flex-col sm:flex-row gap-3 mb-5">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模板名称 / 描述 / 标签…"
-                className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="搜索模板名称 / 描述 / 标签…"
+                className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+              />
               {q && (
-                <button onClick={() => setQ('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-300 hover:text-gray-500 rounded-full">
+                <button
+                  onClick={() => setQ('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-gray-300 hover:text-gray-500 rounded-full"
+                >
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
-            <button onClick={() => setOnlyFav(!onlyFav)}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all ${onlyFav ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-300 hover:text-amber-600'}`}>
+            <button
+              onClick={() => setOnlyFav(!onlyFav)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all ${onlyFav ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-300 hover:text-amber-600'}`}
+            >
               <Star className={`w-3.5 h-3.5 ${onlyFav ? 'fill-amber-500 text-amber-500' : ''}`} />
               只看收藏（{favs.length}）
             </button>
@@ -248,7 +322,9 @@ export default function TemplateMarketPage() {
                   onClick={() => navigate(t.path)}
                 >
                   <div className="flex items-start justify-between mb-3">
-                    <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center text-2xl shadow-soft`}>
+                    <div
+                      className={`w-12 h-12 rounded-xl bg-gradient-to-br ${t.color} flex items-center justify-center text-2xl shadow-soft`}
+                    >
                       {t.icon}
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -256,25 +332,40 @@ export default function TemplateMarketPage() {
                         {t.tool}
                       </span>
                       <button
-                        onClick={(e) => { e.stopPropagation(); toggleFav(t.id) }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleFav(t.id)
+                        }}
                         className={`p-1.5 rounded-lg transition-all ${favs.includes(t.id) ? 'text-amber-500 bg-amber-50' : 'text-gray-300 hover:text-amber-500 hover:bg-amber-50'}`}
                         title={favs.includes(t.id) ? '取消收藏' : '收藏模板'}
                       >
-                        <Star className={`w-4 h-4 ${favs.includes(t.id) ? 'fill-amber-500' : ''}`} />
+                        <Star
+                          className={`w-4 h-4 ${favs.includes(t.id) ? 'fill-amber-500' : ''}`}
+                        />
                       </button>
                     </div>
                   </div>
                   <h3 className="text-sm font-semibold text-gray-900">{t.name}</h3>
-                  <p className="text-xs text-gray-500 mt-1.5 flex-1 leading-relaxed">{t.description}</p>
+                  <p className="text-xs text-gray-500 mt-1.5 flex-1 leading-relaxed">
+                    {t.description}
+                  </p>
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
                     <div className="flex gap-1.5">
                       {(t.tags || []).map((tag) => (
-                        <span key={tag} className="px-1.5 py-0.5 rounded-md bg-gray-50 text-gray-400 text-[10px]">{tag}</span>
+                        <span
+                          key={tag}
+                          className="px-1.5 py-0.5 rounded-md bg-gray-50 text-gray-400 text-[10px]"
+                        >
+                          {tag}
+                        </span>
                       ))}
                     </div>
                     <div className="flex items-center gap-2.5 flex-shrink-0">
-                      <span className={`flex items-center gap-1 text-[10px] font-medium ${t.used > 0 ? 'text-gray-500' : 'text-gray-300'}`}>
-                        <Sparkles className="w-3 h-3" /> {t.used > 0 ? `已使用 ${t.used} 次` : '未使用'}
+                      <span
+                        className={`flex items-center gap-1 text-[10px] font-medium ${t.used > 0 ? 'text-gray-500' : 'text-gray-300'}`}
+                      >
+                        <Sparkles className="w-3 h-3" />{' '}
+                        {t.used > 0 ? `已使用 ${t.used} 次` : '未使用'}
                       </span>
                       <span className="flex items-center gap-1 text-xs font-medium text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity">
                         去使用 <ArrowRight className="w-3 h-3" />
@@ -291,13 +382,20 @@ export default function TemplateMarketPage() {
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索用户市场模板…"
-                className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="搜索用户市场模板…"
+                className="w-full pl-9 pr-8 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-400"
+              />
             </div>
             <div className="flex gap-1.5 flex-wrap">
               {C2C_CATEGORIES.map((c) => (
-                <button key={c} onClick={() => setUploadForm((p) => ({ ...p, category: c }))}
-                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${uploadForm.category === c ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500'}`}>
+                <button
+                  key={c}
+                  onClick={() => setUploadForm((p) => ({ ...p, category: c }))}
+                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${uploadForm.category === c ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500'}`}
+                >
                   {c}
                 </button>
               ))}
@@ -306,10 +404,16 @@ export default function TemplateMarketPage() {
           {c2cLoading ? (
             <SkeletonGrid count={6} />
           ) : c2c.length === 0 ? (
-            <Empty icon={Store} title="暂无用户模板" description="点击右上角「上传模板」分享你的模板" />
+            <Empty
+              icon={Store}
+              title="暂无用户模板"
+              description="点击右上角「上传模板」分享你的模板"
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {c2c.filter((t) => !uploadForm.category || t.category === uploadForm.category).map(renderC2cCard)}
+              {c2c
+                .filter((t) => !uploadForm.category || t.category === uploadForm.category)
+                .map(renderC2cCard)}
             </div>
           )}
         </div>
@@ -317,28 +421,43 @@ export default function TemplateMarketPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-gray-700">我上传的模板（{mine.length}）</h3>
-            <Button variant="secondary" size="sm" icon={Plus} onClick={() => setUploadOpen(true)}>上传新模板</Button>
+            <Button variant="secondary" size="sm" icon={Plus} onClick={() => setUploadOpen(true)}>
+              上传新模板
+            </Button>
           </div>
           {mine.length === 0 ? (
-            <Empty icon={Package} title="还没有上传模板" description="上传模板到市场，赚取积分收益" />
+            <Empty
+              icon={Package}
+              title="还没有上传模板"
+              description="上传模板到市场，赚取积分收益"
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {mine.map((t) => (
-                <div key={t.id} className="bg-white rounded-2xl border border-gray-200 p-5 flex flex-col">
+                <div
+                  key={t.id}
+                  className="bg-white rounded-2xl border border-gray-200 p-5 flex flex-col"
+                >
                   <div className="flex items-start justify-between mb-3">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-xl shadow-soft">
                       <Package className="w-5 h-5 text-white" />
                     </div>
-                    <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.price > 0 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+                    <span
+                      className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.price > 0 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}
+                    >
                       <Coins className="w-3 h-3" /> {t.price > 0 ? `${t.price} 积分` : '免费'}
                     </span>
                   </div>
                   <h3 className="text-sm font-semibold text-gray-900">{t.name}</h3>
-                  <p className="text-xs text-gray-500 mt-1.5 flex-1 line-clamp-2">{t.description || '暂无描述'}</p>
+                  <p className="text-xs text-gray-500 mt-1.5 flex-1 line-clamp-2">
+                    {t.description || '暂无描述'}
+                  </p>
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
                     <span className="text-[10px] text-gray-400">已售 {t.sales || 0} 次</span>
-                    <button onClick={() => handleDeleteMine(t)}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-medium hover:bg-red-50 transition-all">
+                    <button
+                      onClick={() => handleDeleteMine(t)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-red-200 text-red-500 text-xs font-medium hover:bg-red-50 transition-all"
+                    >
                       <Trash2 className="w-3.5 h-3.5" /> 下架
                     </button>
                   </div>
@@ -351,11 +470,18 @@ export default function TemplateMarketPage() {
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-gray-700">我的购买记录（{purchases.length}）</h3>
           {purchases.length === 0 ? (
-            <Empty icon={ShoppingCart} title="还没有购买记录" description="去用户市场逛逛，发现好模板" />
+            <Empty
+              icon={ShoppingCart}
+              title="还没有购买记录"
+              description="去用户市场逛逛，发现好模板"
+            />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {purchases.map((p) => (
-                <div key={p.id} className="bg-white rounded-2xl border border-gray-200 p-5 flex flex-col">
+                <div
+                  key={p.id}
+                  className="bg-white rounded-2xl border border-gray-200 p-5 flex flex-col"
+                >
                   <div className="flex items-start justify-between mb-3">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-xl shadow-soft">
                       <ShoppingCart className="w-5 h-5 text-white" />
@@ -364,8 +490,12 @@ export default function TemplateMarketPage() {
                       {p.price > 0 ? `${p.price} 积分` : '免费'}
                     </span>
                   </div>
-                  <h3 className="text-sm font-semibold text-gray-900">{p.template_name || '模板'}</h3>
-                  <p className="text-xs text-gray-500 mt-1.5 flex-1 line-clamp-2">{p.template_desc || '已购买，可直接使用'}</p>
+                  <h3 className="text-sm font-semibold text-gray-900">
+                    {p.template_name || '模板'}
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1.5 flex-1 line-clamp-2">
+                    {p.template_desc || '已购买，可直接使用'}
+                  </p>
                   <div className="text-[10px] text-gray-400 mt-3 pt-3 border-t border-gray-100">
                     购买时间：{p.created_at ? new Date(p.created_at).toLocaleString() : '-'}
                   </div>
@@ -384,8 +514,12 @@ export default function TemplateMarketPage() {
               <Sparkles className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-800">模板只是起点，AI 帮你完成全部实现</p>
-              <p className="text-xs text-gray-500">描述你的想法，其余交给平台：小游戏双端生成、小程序项目、表情包绘制、配音合成</p>
+              <p className="text-sm font-semibold text-gray-800">
+                模板只是起点，AI 帮你完成全部实现
+              </p>
+              <p className="text-xs text-gray-500">
+                描述你的想法，其余交给平台：小游戏双端生成、小程序项目、表情包绘制、配音合成
+              </p>
             </div>
           </div>
           <div className="flex gap-2 flex-shrink-0">
@@ -408,47 +542,82 @@ export default function TemplateMarketPage() {
       )}
 
       {/* 上传模板弹窗 */}
-      <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="上传模板到市场" size="md"
+      <Modal
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        title="上传模板到市场"
+        size="md"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setUploadOpen(false)}>取消</Button>
-            <Button onClick={handleUpload} loading={uploading} icon={Upload}>上架</Button>
+            <Button variant="secondary" onClick={() => setUploadOpen(false)}>
+              取消
+            </Button>
+            <Button onClick={handleUpload} loading={uploading} icon={Upload}>
+              上架
+            </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 <span className="text-red-500">*</span></label>
-            <input value={uploadForm.name} onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })}
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              模板名称 <span className="text-red-500">*</span>
+            </label>
+            <input
+              value={uploadForm.name}
+              onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })}
               placeholder="例如：抖音爆款口播脚本模板"
-              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm" />
+              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm"
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
-            <textarea value={uploadForm.description} onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
-              rows={3} placeholder="模板的用途、特点、适用场景…"
-              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm" />
+            <textarea
+              value={uploadForm.description}
+              onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
+              rows={3}
+              placeholder="模板的用途、特点、适用场景…"
+              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">分类</label>
-              <select value={uploadForm.category} onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
-                className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 outline-none text-sm bg-white">
-                {C2C_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              <select
+                value={uploadForm.category}
+                onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
+                className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 outline-none text-sm bg-white"
+              >
+                {C2C_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">定价（积分）</label>
-              <input type="number" min={0} value={uploadForm.price} onChange={(e) => setUploadForm({ ...uploadForm, price: e.target.value })}
+              <input
+                type="number"
+                min={0}
+                value={uploadForm.price}
+                onChange={(e) => setUploadForm({ ...uploadForm, price: e.target.value })}
                 placeholder="0 = 免费"
-                className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm" />
+                className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm"
+              />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">模板内容（JSON）</label>
-            <textarea value={uploadForm.content_json} onChange={(e) => setUploadForm({ ...uploadForm, content_json: e.target.value })}
-              rows={4} placeholder='{"style": "搞笑", "duration": "60s", ...}'
-              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm font-mono" />
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              模板内容（JSON）
+            </label>
+            <textarea
+              value={uploadForm.content_json}
+              onChange={(e) => setUploadForm({ ...uploadForm, content_json: e.target.value })}
+              rows={4}
+              placeholder='{"style": "搞笑", "duration": "60s", ...}'
+              className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-sm font-mono"
+            />
           </div>
         </div>
       </Modal>

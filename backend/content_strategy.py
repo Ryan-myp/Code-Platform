@@ -41,14 +41,28 @@ _HOTSPOT_CACHE_TTL = 900  # 15 分钟
 def _fetch_weibo_hotspots() -> list[dict]:
     """微博热搜 mock（真实接入：爬取或调用第三方热搜 API）。"""
     topics = [
-        "#AI写作工具哪家强#", "#35岁程序员转型之路#", "#新一线城市抢人大战#",
-        "#ChatGPT企业版发布#", "#短视频创作者收入排行#", "#大厂裁员潮#",
-        "#00后整顿职场#", "#数字人直播带货翻车#", "#AI绘画版权争议#",
-        "#远程办公效率大比拼#", "#小红书电商GMV破千亿#", "#新能源汽车价格战#",
+        "#AI写作工具哪家强#",
+        "#35岁程序员转型之路#",
+        "#新一线城市抢人大战#",
+        "#ChatGPT企业版发布#",
+        "#短视频创作者收入排行#",
+        "#大厂裁员潮#",
+        "#00后整顿职场#",
+        "#数字人直播带货翻车#",
+        "#AI绘画版权争议#",
+        "#远程办公效率大比拼#",
+        "#小红书电商GMV破千亿#",
+        "#新能源汽车价格战#",
     ]
     return [
-        {"rank": i + 1, "title": t, "heat": max(5000000 - i * 380000, 120000),
-         "source": "weibo", "source_label": "微博热搜", "url": ""}
+        {
+            "rank": i + 1,
+            "title": t,
+            "heat": max(5000000 - i * 380000, 120000),
+            "source": "weibo",
+            "source_label": "微博热搜",
+            "url": "",
+        }
         for i, t in enumerate(topics)
     ]
 
@@ -56,14 +70,26 @@ def _fetch_weibo_hotspots() -> list[dict]:
 def _fetch_zhihu_hotspots() -> list[dict]:
     """知乎热榜 mock。"""
     topics = [
-        "如何用AI提升内容创作效率？", "2026年还值得做自媒体吗？", "公众号阅读量越来越低怎么办？",
-        "抖音算法推荐机制深度解析", "一人公司年入百万的真实故事", "副业做小红书一个月涨粉10万",
-        "程序员转行做运营的优劣分析", "快手和抖音的用户画像差异",
-        "内容创作者如何打造个人IP？", "AI时代哪些职业最容易被替代？",
+        "如何用AI提升内容创作效率？",
+        "2026年还值得做自媒体吗？",
+        "公众号阅读量越来越低怎么办？",
+        "抖音算法推荐机制深度解析",
+        "一人公司年入百万的真实故事",
+        "副业做小红书一个月涨粉10万",
+        "程序员转行做运营的优劣分析",
+        "快手和抖音的用户画像差异",
+        "内容创作者如何打造个人IP？",
+        "AI时代哪些职业最容易被替代？",
     ]
     return [
-        {"rank": i + 1, "title": t, "heat": max(3000000 - i * 280000, 80000),
-         "source": "zhihu", "source_label": "知乎热榜", "url": ""}
+        {
+            "rank": i + 1,
+            "title": t,
+            "heat": max(3000000 - i * 280000, 80000),
+            "source": "zhihu",
+            "source_label": "知乎热榜",
+            "url": "",
+        }
         for i, t in enumerate(topics)
     ]
 
@@ -71,15 +97,26 @@ def _fetch_zhihu_hotspots() -> list[dict]:
 def _fetch_36kr_hotspots() -> list[dict]:
     """36氪热榜 mock。"""
     topics = [
-        "OpenAI发布GPT-5企业版，支持私有化部署", "字节跳动推出AI内容创作平台",
-        "微信公众号改版：推荐流权重提升至60%", "小红书完成新一轮融资，估值超300亿美元",
-        "AI视频生成赛道融资热：Runway获5亿美元", "2026年内容营销趋势报告",
-        "快手电商双11GMV同比增长120%", "数字人直播合规监管新规落地",
-        "B站UP主商业化新政策解读", "AIGC内容平台版权归属争议升级",
+        "OpenAI发布GPT-5企业版，支持私有化部署",
+        "字节跳动推出AI内容创作平台",
+        "微信公众号改版：推荐流权重提升至60%",
+        "小红书完成新一轮融资，估值超300亿美元",
+        "AI视频生成赛道融资热：Runway获5亿美元",
+        "2026年内容营销趋势报告",
+        "快手电商双11GMV同比增长120%",
+        "数字人直播合规监管新规落地",
+        "B站UP主商业化新政策解读",
+        "AIGC内容平台版权归属争议升级",
     ]
     return [
-        {"rank": i + 1, "title": t, "heat": max(2000000 - i * 180000, 60000),
-         "source": "36kr", "source_label": "36氪", "url": ""}
+        {
+            "rank": i + 1,
+            "title": t,
+            "heat": max(2000000 - i * 180000, 60000),
+            "source": "36kr",
+            "source_label": "36氪",
+            "url": "",
+        }
         for i, t in enumerate(topics)
     ]
 
@@ -105,9 +142,12 @@ async def get_hotspots(source: str = "", limit: int = 30, current_user: dict = r
     items = _get_hotspots()
     if source:
         items = [i for i in items if i["source"] == source]
-    return {"total": len(items), "items": items[:limit],
-            "sources": ["weibo", "zhihu", "36kr"],
-            "updated_at": datetime.fromtimestamp(_HOTSPOT_CACHE["ts"]).isoformat()}
+    return {
+        "total": len(items),
+        "items": items[:limit],
+        "sources": ["weibo", "zhihu", "36kr"],
+        "updated_at": datetime.fromtimestamp(_HOTSPOT_CACHE["ts"]).isoformat(),
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -181,12 +221,16 @@ async def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_a
         logger.exception("topic suggest LLM failed")
         # 回退：返回简单的选题建议
         suggestions = [
-            {"title_direction": f"深度解析：{req.hotspot}背后的真相",
-             "angle": "从专业角度拆解热点，提供独到见解",
-             "audience": "关注该领域的从业者和爱好者"},
-            {"title_direction": f"普通人如何从{req.hotspot[:10]}中受益？",
-             "angle": "实用角度，告诉读者怎么抓住机会",
-             "audience": "想提升自己的职场人和创业者"},
+            {
+                "title_direction": f"深度解析：{req.hotspot}背后的真相",
+                "angle": "从专业角度拆解热点，提供独到见解",
+                "audience": "关注该领域的从业者和爱好者",
+            },
+            {
+                "title_direction": f"普通人如何从{req.hotspot[:10]}中受益？",
+                "angle": "实用角度，告诉读者怎么抓住机会",
+                "audience": "想提升自己的职场人和创业者",
+            },
         ]
 
     log_usage("strategy_topic", len(req.hotspot), len(suggestions), 0)
@@ -200,25 +244,82 @@ async def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_a
 # 内置敏感词库（常见违禁词/广告法禁用词/平台风险词，~200+ 词，可扩展）
 _SENSITIVE_WORDS = {
     "high": [  # 高风险：绝对禁用
-        "最", "第一", "唯一", "首个", "顶级", "极品", "绝佳", "无敌",
-        "国家级", "世界级", "全网第一", "销量第一", "排名第一",
-        "永久", "万能", "100%", "百分百", "彻底", "完全",
-        "点击领取", "免费领取", "立即抢购", "限时抢购",
-        "加微信", "加QQ", "扫码加", "私信我",
-        "日赚", "月入过万", "躺赚", "暴富", "发财",
-        "包治", "根治", "治愈", "神药", "特效",
-        "赌博", "彩票", "时时彩", "六合彩",
-        "翻墙", "VPN推荐", "科学上网",
+        "最",
+        "第一",
+        "唯一",
+        "首个",
+        "顶级",
+        "极品",
+        "绝佳",
+        "无敌",
+        "国家级",
+        "世界级",
+        "全网第一",
+        "销量第一",
+        "排名第一",
+        "永久",
+        "万能",
+        "100%",
+        "百分百",
+        "彻底",
+        "完全",
+        "点击领取",
+        "免费领取",
+        "立即抢购",
+        "限时抢购",
+        "加微信",
+        "加QQ",
+        "扫码加",
+        "私信我",
+        "日赚",
+        "月入过万",
+        "躺赚",
+        "暴富",
+        "发财",
+        "包治",
+        "根治",
+        "治愈",
+        "神药",
+        "特效",
+        "赌博",
+        "彩票",
+        "时时彩",
+        "六合彩",
+        "翻墙",
+        "VPN推荐",
+        "科学上网",
     ],
     "medium": [  # 中风险：平台限流风险
-        "最好", "最大", "最全", "最新", "独家",
-        "免费送", "免费领", "白嫖", "薅羊毛",
-        "赚钱", "副业", "兼职", "在家做",
-        "关注我", "点赞关注", "转发", "收藏",
-        "震惊", "不看后悔", "速看", "紧急通知",
-        "优惠券", "折扣码", "促销", "特价",
-        "联系我", "咨询我", "私聊",
-        "赚钱方法", "赚钱秘籍",
+        "最好",
+        "最大",
+        "最全",
+        "最新",
+        "独家",
+        "免费送",
+        "免费领",
+        "白嫖",
+        "薅羊毛",
+        "赚钱",
+        "副业",
+        "兼职",
+        "在家做",
+        "关注我",
+        "点赞关注",
+        "转发",
+        "收藏",
+        "震惊",
+        "不看后悔",
+        "速看",
+        "紧急通知",
+        "优惠券",
+        "折扣码",
+        "促销",
+        "特价",
+        "联系我",
+        "咨询我",
+        "私聊",
+        "赚钱方法",
+        "赚钱秘籍",
     ],
 }
 
@@ -247,18 +348,28 @@ def _scan_text(text: str) -> list[dict]:
                     if not (before_ok and after_ok):
                         idx += 1
                         continue
-                hits.append({"word": w, "level": level,
-                             "position": idx, "context": text[max(0, idx - 5):idx + len(w) + 5]})
+                hits.append(
+                    {"word": w, "level": level, "position": idx, "context": text[max(0, idx - 5) : idx + len(w) + 5]}
+                )
                 idx += 1
     return hits
 
 
 COMPLIANCE_REPLACEMENTS = {
-    "最": "更", "第一": "领先", "唯一": "独家", "顶级": "优质",
-    "100%": "接近全部", "百分百": "绝大多数", "永久": "长期",
-    "免费送": "分享", "免费领取": "获取", "点击领取": "查看详情",
-    "加微信": "了解更多", "私信我": "与我交流",
-    "震惊": "关注", "不看后悔": "值得一看",
+    "最": "更",
+    "第一": "领先",
+    "唯一": "独家",
+    "顶级": "优质",
+    "100%": "接近全部",
+    "百分百": "绝大多数",
+    "永久": "长期",
+    "免费送": "分享",
+    "免费领取": "获取",
+    "点击领取": "查看详情",
+    "加微信": "了解更多",
+    "私信我": "与我交流",
+    "震惊": "关注",
+    "不看后悔": "值得一看",
 }
 
 
@@ -273,9 +384,13 @@ async def compliance_check(req: ComplianceCheckRequest, current_user: dict = req
     all_hits = _scan_text(req.title) + _scan_text(req.content)
 
     if not all_hits:
-        return {"risk": "safe", "risk_label": "安全",
-                "message": "未检测到风险词，内容合规。",
-                "hits": [], "suggestions": []}
+        return {
+            "risk": "safe",
+            "risk_label": "安全",
+            "message": "未检测到风险词，内容合规。",
+            "hits": [],
+            "suggestions": [],
+        }
 
     # 去重（同词同级别只保留一次）
     seen = set()
@@ -307,11 +422,18 @@ async def compliance_check(req: ComplianceCheckRequest, current_user: dict = req
     for h in unique_hits:
         replacement = COMPLIANCE_REPLACEMENTS.get(h["word"])
         if replacement:
-            suggestions.append({"original": h["word"], "suggest": replacement,
-                                "level": h["level"], "context": h["context"]})
+            suggestions.append(
+                {"original": h["word"], "suggest": replacement, "level": h["level"], "context": h["context"]}
+            )
 
-    return {"risk": risk, "risk_label": risk_label, "message": message,
-            "hits": unique_hits, "suggestions": suggestions, "total_hits": len(unique_hits)}
+    return {
+        "risk": risk,
+        "risk_label": risk_label,
+        "message": message,
+        "hits": unique_hits,
+        "suggestions": suggestions,
+        "total_hits": len(unique_hits),
+    }
 
 
 # ══════════════════════════════════════════════════════════════
@@ -362,12 +484,27 @@ async def best_publish_time(platform: str = "", current_user: dict = require_aut
             "data_points": 0,
             "note": "暂无足够历史数据，以下为行业通用最佳时段建议",
             "top_slots": [
-                {"weekday": "周二", "hour": 12, "label": "周二 12:00（午休）",
-                 "avg_views": 0, "reason": "午休时段阅读高峰"},
-                {"weekday": "周四", "hour": 20, "label": "周四 20:00（晚间）",
-                 "avg_views": 0, "reason": "晚间黄金时段，用户活跃"},
-                {"weekday": "周六", "hour": 10, "label": "周六 10:00（周末早）",
-                 "avg_views": 0, "reason": "周末早晨浏览习惯"},
+                {
+                    "weekday": "周二",
+                    "hour": 12,
+                    "label": "周二 12:00（午休）",
+                    "avg_views": 0,
+                    "reason": "午休时段阅读高峰",
+                },
+                {
+                    "weekday": "周四",
+                    "hour": 20,
+                    "label": "周四 20:00（晚间）",
+                    "avg_views": 0,
+                    "reason": "晚间黄金时段，用户活跃",
+                },
+                {
+                    "weekday": "周六",
+                    "hour": 10,
+                    "label": "周六 10:00（周末早）",
+                    "avg_views": 0,
+                    "reason": "周末早晨浏览习惯",
+                },
             ],
         }
 
@@ -375,9 +512,11 @@ async def best_publish_time(platform: str = "", current_user: dict = require_aut
     slot_data = {}
     for r in rows:
         try:
-            dt = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00")
-                                       if "T" in (r["created_at"] or "") else
-                                       (r["created_at"] or "2000-01-01T00:00"))
+            dt = datetime.fromisoformat(
+                r["created_at"].replace("Z", "+00:00")
+                if "T" in (r["created_at"] or "")
+                else (r["created_at"] or "2000-01-01T00:00")
+            )
         except (ValueError, TypeError):
             continue
         key = f"{dt.weekday()}:{dt.hour}"
@@ -391,15 +530,17 @@ async def best_publish_time(platform: str = "", current_user: dict = require_aut
     for key, data in slot_data.items():
         wd, hr = key.split(":")
         avg = round(data["views"] / max(data["count"], 1))
-        scored.append({
-            "weekday": WEEKDAY_LABELS[int(wd)],
-            "weekday_num": int(wd),
-            "hour": int(hr),
-            "avg_views": avg,
-            "sample_count": data["count"],
-            "label": f"{WEEKDAY_LABELS[int(wd)]} {int(hr):02d}:00",
-            "platform": data.get("platform", ""),
-        })
+        scored.append(
+            {
+                "weekday": WEEKDAY_LABELS[int(wd)],
+                "weekday_num": int(wd),
+                "hour": int(hr),
+                "avg_views": avg,
+                "sample_count": data["count"],
+                "label": f"{WEEKDAY_LABELS[int(wd)]} {int(hr):02d}:00",
+                "platform": data.get("platform", ""),
+            }
+        )
     scored.sort(key=lambda x: x["avg_views"], reverse=True)
 
     return {
@@ -414,6 +555,7 @@ async def best_publish_time(platform: str = "", current_user: dict = require_aut
 # ══════════════════════════════════════════════════════════════
 # 第2轮：内容系列 / 专栏管理
 # ══════════════════════════════════════════════════════════════
+
 
 def _ensure_series_tables(conn) -> None:
     conn.execute(
@@ -477,9 +619,9 @@ async def list_series(current_user: dict = require_auth()):
     result = []
     for r in rows:
         d = dict(r)
-        item_count = conn.execute(
-            "SELECT COUNT(*) as n FROM series_items WHERE series_id=?", (d["id"],)
-        ).fetchone()["n"]
+        item_count = conn.execute("SELECT COUNT(*) as n FROM series_items WHERE series_id=?", (d["id"],)).fetchone()[
+            "n"
+        ]
         d["item_count"] = item_count
         result.append(d)
     conn.close()

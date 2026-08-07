@@ -1,23 +1,62 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Plus, Play, Square, Trash2, RefreshCw,
-  FolderOpen, Server, Container, Search, Terminal,
-  LayoutGrid, List as ListIcon, Activity, Zap, Clock, Loader2, ExternalLink,
+  Plus,
+  Play,
+  Square,
+  Trash2,
+  RefreshCw,
+  FolderOpen,
+  Server,
+  Container,
+  Search,
+  Terminal,
+  LayoutGrid,
+  List as ListIcon,
+  Activity,
+  Zap,
+  Clock,
+  Loader2,
+  ExternalLink,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 // 预置服务模板（前端展示用，与后端 SERVICE_TEMPLATES 互补）
 const PRESET_SERVICES = [
-  { id: 'python', name: 'Python 环境', image: 'python:3.11', ports: '8000:8000', desc: 'Python 3.11 开发环境' },
-  { id: 'node', name: 'Node.js 环境', image: 'node:20', ports: '3000:3000', desc: 'Node.js 20 LTS 环境' },
+  {
+    id: 'python',
+    name: 'Python 环境',
+    image: 'python:3.11',
+    ports: '8000:8000',
+    desc: 'Python 3.11 开发环境',
+  },
+  {
+    id: 'node',
+    name: 'Node.js 环境',
+    image: 'node:20',
+    ports: '3000:3000',
+    desc: 'Node.js 20 LTS 环境',
+  },
   { id: 'go', name: 'Go 环境', image: 'golang:1.21', ports: '8080:8080', desc: 'Go 1.21 开发环境' },
-  { id: 'postgres', name: 'PostgreSQL', image: 'postgres:16', ports: '5432:5432', desc: 'PostgreSQL 16 数据库' },
+  {
+    id: 'postgres',
+    name: 'PostgreSQL',
+    image: 'postgres:16',
+    ports: '5432:5432',
+    desc: 'PostgreSQL 16 数据库',
+  },
   { id: 'redis', name: 'Redis', image: 'redis:7', ports: '6379:6379', desc: 'Redis 7 缓存' },
   { id: 'mysql', name: 'MySQL', image: 'mysql:8', ports: '3306:3306', desc: 'MySQL 8 数据库' },
 ]
@@ -45,7 +84,11 @@ function firstPort(ports) {
   if (!ports) return null
   let arr = ports
   if (!Array.isArray(arr)) {
-    try { arr = JSON.parse(ports) } catch { return null }
+    try {
+      arr = JSON.parse(ports)
+    } catch {
+      return null
+    }
   }
   if (!Array.isArray(arr) || !arr.length) return null
   const p = String(arr[0]).split(':').pop()
@@ -104,7 +147,10 @@ function LogModal({ project, onClose }) {
     }
     fetchLogs()
     timer = setInterval(fetchLogs, 3000)
-    return () => { alive = false; clearInterval(timer) }
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
   }, [project])
 
   useEffect(() => {
@@ -128,7 +174,9 @@ function LogModal({ project, onClose }) {
   return (
     <Modal open={!!project} onClose={onClose} title={`容器日志 - ${project?.name || ''}`} size="lg">
       {message && (
-        <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">{message}</div>
+        <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">
+          {message}
+        </div>
       )}
       <div className="mb-3 flex items-center gap-2">
         <button
@@ -136,7 +184,11 @@ function LogModal({ project, onClose }) {
           disabled={analyzing}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all disabled:opacity-60"
         >
-          {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+          {analyzing ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Search className="w-3.5 h-3.5" />
+          )}
           {analyzing ? 'AI 分析中（约 10-60 秒）…' : 'AI 分析日志定位问题'}
         </button>
         {analysis && (
@@ -171,9 +223,11 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
   if (viewMode === 'list') {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4 hover:shadow-md transition-shadow">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-          isRunning ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500'
-        }`}>
+        <div
+          className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+            isRunning ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500'
+          }`}
+        >
           <FolderOpen className="w-5 h-5" />
         </div>
         <div className="flex-1 min-w-0">
@@ -181,7 +235,9 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
             <h3 className="font-semibold text-gray-900 truncate">{project.name}</h3>
             <Badge status={project.status} customMap={SANDBOX_STATUS_MAP} />
           </div>
-          <p className="text-sm text-gray-500 truncate">{project.image} · {ports}</p>
+          <p className="text-sm text-gray-500 truncate">
+            {project.image} · {ports}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <AccessLink project={project} />
@@ -193,9 +249,13 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
             <Terminal className="w-4 h-4" />
           </button>
           {isRunning ? (
-            <Button variant="danger" size="sm" icon={Square} onClick={() => onStop(project)}>停止</Button>
+            <Button variant="danger" size="sm" icon={Square} onClick={() => onStop(project)}>
+              停止
+            </Button>
           ) : (
-            <Button variant="success" size="sm" icon={Play} onClick={() => onStart(project)}>启动</Button>
+            <Button variant="success" size="sm" icon={Play} onClick={() => onStart(project)}>
+              启动
+            </Button>
           )}
           <button
             onClick={() => onDelete(project)}
@@ -213,14 +273,21 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
     <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all flex flex-col">
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-            isRunning ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500'
-          }`}>
+          <div
+            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+              isRunning ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-500'
+            }`}
+          >
             <FolderOpen className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{project.name}</h3>
-            <p className="text-xs text-gray-500 truncate">{project.image}{project.project_dir ? ` · ${project.project_dir.split('/').slice(-2).join('/')}` : ''}</p>
+            <p className="text-xs text-gray-500 truncate">
+              {project.image}
+              {project.project_dir
+                ? ` · ${project.project_dir.split('/').slice(-2).join('/')}`
+                : ''}
+            </p>
           </div>
         </div>
         <Badge status={project.status} customMap={SANDBOX_STATUS_MAP} />
@@ -232,10 +299,12 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
 
       <div className="flex items-center gap-4 text-xs text-gray-500 mb-4">
         <span className="flex items-center gap-1" title="端口映射">
-          <Zap className="w-3 h-3" />{ports}
+          <Zap className="w-3 h-3" />
+          {ports}
         </span>
         <span className="flex items-center gap-1" title="创建时间">
-          <Clock className="w-3 h-3" />{formatRelativeTime(project.created_at)}
+          <Clock className="w-3 h-3" />
+          {formatRelativeTime(project.created_at)}
         </span>
       </div>
 
@@ -249,9 +318,25 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
           <Terminal className="w-4 h-4" />
         </button>
         {isRunning ? (
-          <Button variant="danger" size="sm" icon={Square} onClick={() => onStop(project)} className="flex-1">停止</Button>
+          <Button
+            variant="danger"
+            size="sm"
+            icon={Square}
+            onClick={() => onStop(project)}
+            className="flex-1"
+          >
+            停止
+          </Button>
         ) : (
-          <Button variant="success" size="sm" icon={Play} onClick={() => onStart(project)} className="flex-1">启动</Button>
+          <Button
+            variant="success"
+            size="sm"
+            icon={Play}
+            onClick={() => onStart(project)}
+            className="flex-1"
+          >
+            启动
+          </Button>
         )}
         <button
           onClick={() => onDelete(project)}
@@ -272,15 +357,16 @@ function ProjectFormModal({ open, onClose, onSubmit, editing, loading }) {
 
   useEffect(() => {
     if (open) {
-      setForm(editing
-        ? {
-            name: editing.name || '',
-            description: editing.description || '',
-            image: editing.image || '',
-            ports: editing.ports || '',
-            env: editing.env || '',
-          }
-        : { name: '', description: '', image: '', ports: '', env: '' }
+      setForm(
+        editing
+          ? {
+              name: editing.name || '',
+              description: editing.description || '',
+              image: editing.image || '',
+              ports: editing.ports || '',
+              env: editing.env || '',
+            }
+          : { name: '', description: '', image: '', ports: '', env: '' }
       )
       setErrors({})
     }
@@ -308,14 +394,20 @@ function ProjectFormModal({ open, onClose, onSubmit, editing, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -404,14 +496,20 @@ function ServiceFormModal({ open, onClose, onSubmit, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>添加</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            添加
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -422,7 +520,9 @@ function ServiceFormModal({ open, onClose, onSubmit, loading }) {
           {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">镜像 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            镜像 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.image}
@@ -499,11 +599,11 @@ export default function SandboxPage() {
   const fetchServices = useCallback(async () => {
     try {
       const res = await api.get('/api/sandbox/services')
-      const list = Array.isArray(res.data) ? res.data : (res.data.services || [])
+      const list = Array.isArray(res.data) ? res.data : res.data.services || []
       // 兼容后端返回 dict 的旧格式：{id: {name, image, ...}}
-      setServices(Array.isArray(list)
-        ? list
-        : Object.entries(list).map(([id, s]) => ({ id, ...s })))
+      setServices(
+        Array.isArray(list) ? list : Object.entries(list).map(([id, s]) => ({ id, ...s }))
+      )
     } catch {
       setServices([])
     }
@@ -512,7 +612,7 @@ export default function SandboxPage() {
   const fetchImages = useCallback(async () => {
     try {
       const res = await api.get('/api/sandbox/images')
-      setImages(Array.isArray(res.data) ? res.data : (res.data.images || []))
+      setImages(Array.isArray(res.data) ? res.data : res.data.images || [])
     } catch {
       setImages([])
     }
@@ -554,7 +654,12 @@ export default function SandboxPage() {
         id: `custom-${Date.now()}`,
         name: formData.name,
         image: formData.image,
-        ports: formData.ports ? formData.ports.split(',').map((p) => p.trim()).filter(Boolean) : [],
+        ports: formData.ports
+          ? formData.ports
+              .split(',')
+              .map((p) => p.trim())
+              .filter(Boolean)
+          : [],
         description: '自定义服务',
       }
       setServices((prev) => [...(Array.isArray(prev) ? prev : []), custom])
@@ -570,7 +675,9 @@ export default function SandboxPage() {
   const handleAction = async (project, action) => {
     try {
       await api.post(`/api/sandbox/projects/${project.id}/${action}`, {})
-      toast.success(action === 'start' ? `项目「${project.name}」已启动` : `项目「${project.name}」已停止`)
+      toast.success(
+        action === 'start' ? `项目「${project.name}」已启动` : `项目「${project.name}」已停止`
+      )
       fetchProjects(false)
     } catch (e) {
       toast.error(`${action === 'start' ? '启动' : '停止'}失败：${e.message}`)
@@ -609,9 +716,24 @@ export default function SandboxPage() {
   )
 
   const stats = [
-    { label: '运行中', value: projects.filter((p) => p.status === 'running').length, icon: Activity, color: 'from-emerald-500 to-green-600' },
-    { label: '已停止', value: projects.filter((p) => p.status !== 'running').length, icon: Square, color: 'from-gray-400 to-gray-500' },
-    { label: '总项目', value: projects.length, icon: FolderOpen, color: 'from-violet-500 to-purple-600' },
+    {
+      label: '运行中',
+      value: projects.filter((p) => p.status === 'running').length,
+      icon: Activity,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: '已停止',
+      value: projects.filter((p) => p.status !== 'running').length,
+      icon: Square,
+      color: 'from-gray-400 to-gray-500',
+    },
+    {
+      label: '总项目',
+      value: projects.length,
+      icon: FolderOpen,
+      color: 'from-violet-500 to-purple-600',
+    },
     { label: '镜像数', value: images.length, icon: Container, color: 'from-blue-500 to-cyan-600' },
   ]
 
@@ -623,8 +745,17 @@ export default function SandboxPage() {
         icon={Container}
         actions={
           <>
-            <Button variant="secondary" icon={RefreshCw} onClick={handleRefresh} loading={refreshing}>刷新</Button>
-            <Button variant="primary" icon={Plus} onClick={() => setShowProjectForm(true)}>新建项目</Button>
+            <Button
+              variant="secondary"
+              icon={RefreshCw}
+              onClick={handleRefresh}
+              loading={refreshing}
+            >
+              刷新
+            </Button>
+            <Button variant="primary" icon={Plus} onClick={() => setShowProjectForm(true)}>
+              新建项目
+            </Button>
           </>
         }
       />
@@ -638,7 +769,9 @@ export default function SandboxPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -703,13 +836,18 @@ export default function SandboxPage() {
           {loading ? (
             <SkeletonGrid count={6} />
           ) : error ? (
-            <ErrorState message={`加载失败：${error.message}`} onRetry={() => fetchProjects(true)} />
+            <ErrorState
+              message={`加载失败：${error.message}`}
+              onRetry={() => fetchProjects(true)}
+            />
           ) : filteredProjects.length === 0 ? (
             <div className="bg-white rounded-2xl border border-gray-200">
               <Empty
                 icon={FolderOpen}
                 title={searchQuery ? '未找到匹配的项目' : '暂无项目'}
-                description={searchQuery ? '尝试调整搜索条件' : '点击「新建项目」开始你的第一个沙箱项目'}
+                description={
+                  searchQuery ? '尝试调整搜索条件' : '点击「新建项目」开始你的第一个沙箱项目'
+                }
                 actionLabel={searchQuery ? undefined : '新建项目'}
                 onAction={searchQuery ? undefined : () => setShowProjectForm(true)}
               />
@@ -751,11 +889,21 @@ export default function SandboxPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-medium text-gray-900">预置服务模板</h3>
-            <Button variant="primary" size="sm" icon={Plus} onClick={() => setShowServiceForm(true)}>添加服务</Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Plus}
+              onClick={() => setShowServiceForm(true)}
+            >
+              添加服务
+            </Button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {PRESET_SERVICES.map((service) => (
-              <div key={service.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all">
+              <div
+                key={service.id}
+                className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all"
+              >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
                     <Server className="w-5 h-5 text-white" />
@@ -767,12 +915,18 @@ export default function SandboxPage() {
                 </div>
                 <p className="text-sm text-gray-600 mb-4">{service.desc}</p>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{service.ports}</span>
+                  <span className="flex items-center gap-1">
+                    <Zap className="w-3 h-3" />
+                    {service.ports}
+                  </span>
                 </div>
               </div>
             ))}
             {services.map((service) => (
-              <div key={service.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all">
+              <div
+                key={service.id}
+                className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all"
+              >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
                     <Server className="w-5 h-5 text-white" />
@@ -784,7 +938,10 @@ export default function SandboxPage() {
                 </div>
                 <p className="text-sm text-gray-600 mb-4">{service.description || '自定义服务'}</p>
                 <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="flex items-center gap-1"><Zap className="w-3 h-3" />{formatPorts(service.ports)}</span>
+                  <span className="flex items-center gap-1">
+                    <Zap className="w-3 h-3" />
+                    {formatPorts(service.ports)}
+                  </span>
                 </div>
               </div>
             ))}
@@ -804,7 +961,13 @@ export default function SandboxPage() {
               className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
               onKeyDown={(e) => e.key === 'Enter' && handlePullImage()}
             />
-            <Button variant="primary" icon={Plus} loading={pulling} disabled={!pullImage.trim()} onClick={handlePullImage}>
+            <Button
+              variant="primary"
+              icon={Plus}
+              loading={pulling}
+              disabled={!pullImage.trim()}
+              onClick={handlePullImage}
+            >
               拉取
             </Button>
           </div>
@@ -825,7 +988,9 @@ export default function SandboxPage() {
                       <Container className="w-5 h-5 text-white" />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="font-semibold text-gray-900 truncate">{img.repository}:{img.tag}</h3>
+                      <h3 className="font-semibold text-gray-900 truncate">
+                        {img.repository}:{img.tag}
+                      </h3>
                       <p className="text-xs text-gray-500 truncate">{img.id}</p>
                     </div>
                   </div>

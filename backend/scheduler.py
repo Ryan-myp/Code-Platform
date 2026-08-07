@@ -84,9 +84,7 @@ def _run_scheduler_loop():
         try:
             conn = get_db()
             try:
-                jobs = conn.execute(
-                    "SELECT * FROM scheduler_jobs WHERE enabled=1"
-                ).fetchall()
+                jobs = conn.execute("SELECT * FROM scheduler_jobs WHERE enabled=1").fetchall()
             finally:
                 conn.close()
 

@@ -1,8 +1,24 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  FileText, Folder, FolderOpen, ChevronRight, ChevronDown, Plus, Upload, Download,
-  Trash2, RefreshCw, Pencil, X, Check, FileCode2, Image as ImageIcon, Loader2,
-  Sparkles, Save, FolderPlus,
+  FileText,
+  Folder,
+  FolderOpen,
+  ChevronRight,
+  ChevronDown,
+  Plus,
+  Upload,
+  Download,
+  Trash2,
+  RefreshCw,
+  Pencil,
+  X,
+  Check,
+  FileCode2,
+  Image as ImageIcon,
+  Loader2,
+  Sparkles,
+  Save,
+  FolderPlus,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -25,7 +41,11 @@ function parseFrontmatter(text) {
   const meta = {}
   for (const line of m[1].split('\n')) {
     const idx = line.indexOf(':')
-    if (idx > 0) meta[line.slice(0, idx).trim()] = line.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (idx > 0)
+      meta[line.slice(0, idx).trim()] = line
+        .slice(idx + 1)
+        .trim()
+        .replace(/^['"]|['"]$/g, '')
   }
   return { meta, body: text.slice(m[0].length) }
 }
@@ -41,31 +61,45 @@ function TreeNode({ node, depth = 0, expanded, onToggle, selectedPath, onSelect,
     return (
       <div>
         <button
-          onClick={() => { onToggle(node.path); onSelect(node) }}
+          onClick={() => {
+            onToggle(node.path)
+            onSelect(node)
+          }}
           className={`w-full flex items-center gap-1.5 py-1.5 pr-2 rounded-lg text-left text-sm transition-colors ${
             isSelected ? 'bg-violet-50 text-violet-700' : 'text-gray-700 hover:bg-gray-100'
           }`}
           style={{ paddingLeft: 8 + depth * 14 }}
         >
-          {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />}
-          {isExpanded ? <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" /> : <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />}
+          {isExpanded ? (
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+          )}
+          {isExpanded ? (
+            <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" />
+          ) : (
+            <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
+          )}
           <span className="truncate flex-1 font-medium">{displayName}</span>
           {node.file_count > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">{node.file_count}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">
+              {node.file_count}
+            </span>
           )}
         </button>
-        {isExpanded && (node.children || []).map((child) => (
-          <TreeNode
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            expanded={expanded}
-            onToggle={onToggle}
-            selectedPath={selectedPath}
-            onSelect={onSelect}
-            rootName={rootName}
-          />
-        ))}
+        {isExpanded &&
+          (node.children || []).map((child) => (
+            <TreeNode
+              key={child.path}
+              node={child}
+              depth={depth + 1}
+              expanded={expanded}
+              onToggle={onToggle}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              rootName={rootName}
+            />
+          ))}
       </div>
     )
   }
@@ -151,27 +185,35 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
     return selected.path.includes('/') ? selected.path.slice(0, selected.path.lastIndexOf('/')) : ''
   }, [selected])
 
-  const selectNode = useCallback(async (node) => {
-    setSelected(node)
-    setEditing(false)
-    setContent(null)
-    setImageUrl(null)
-    if (node.type !== 'file') return
-    setContentLoading(true)
-    try {
-      if (IMAGE_EXTS.has(node.ext)) {
-        const res = await api.get(`/api/skills/${skill.id}/file/raw?path=${encodeURIComponent(node.path)}`, { responseType: 'blob' })
-        setImageUrl(URL.createObjectURL(res.data))
-      } else {
-        const res = await api.get(`/api/skills/${skill.id}/file?path=${encodeURIComponent(node.path)}`)
-        setContent(res.data)
+  const selectNode = useCallback(
+    async (node) => {
+      setSelected(node)
+      setEditing(false)
+      setContent(null)
+      setImageUrl(null)
+      if (node.type !== 'file') return
+      setContentLoading(true)
+      try {
+        if (IMAGE_EXTS.has(node.ext)) {
+          const res = await api.get(
+            `/api/skills/${skill.id}/file/raw?path=${encodeURIComponent(node.path)}`,
+            { responseType: 'blob' }
+          )
+          setImageUrl(URL.createObjectURL(res.data))
+        } else {
+          const res = await api.get(
+            `/api/skills/${skill.id}/file?path=${encodeURIComponent(node.path)}`
+          )
+          setContent(res.data)
+        }
+      } catch (e) {
+        toast.error(`读取文件失败：${e.message}`)
+      } finally {
+        setContentLoading(false)
       }
-    } catch (e) {
-      toast.error(`读取文件失败：${e.message}`)
-    } finally {
-      setContentLoading(false)
-    }
-  }, [skill, toast])
+    },
+    [skill, toast]
+  )
 
   const toggleDir = (path) => {
     setExpanded((prev) => {
@@ -192,7 +234,9 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
     if (!selected) return
     setSaving(true)
     try {
-      await api.put(`/api/skills/${skill.id}/file?path=${encodeURIComponent(selected.path)}`, { content: editText })
+      await api.put(`/api/skills/${skill.id}/file?path=${encodeURIComponent(selected.path)}`, {
+        content: editText,
+      })
       toast.success('文件已保存')
       setEditing(false)
       await selectNode(selected)
@@ -232,10 +276,13 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
         await api.post(`/api/skills/${skill.id}/folder?path=${encodeURIComponent(rel)}`)
         toast.success(`已创建目录「${name}」`)
       } else {
-        const defaultContent = name === 'SKILL.md'
-          ? `---\nname: ${skill.name || ''}\ndescription: ${skill.description || ''}\n---\n\n（在此编写技能指令）`
-          : ''
-        await api.put(`/api/skills/${skill.id}/file?path=${encodeURIComponent(rel)}`, { content: defaultContent })
+        const defaultContent =
+          name === 'SKILL.md'
+            ? `---\nname: ${skill.name || ''}\ndescription: ${skill.description || ''}\n---\n\n（在此编写技能指令）`
+            : ''
+        await api.put(`/api/skills/${skill.id}/file?path=${encodeURIComponent(rel)}`, {
+          content: defaultContent,
+        })
         toast.success(`已创建文件「${name}」`)
       }
       setCreating(null)
@@ -338,7 +385,11 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
     if (imageUrl) {
       return (
         <div className="h-full flex items-center justify-center bg-[repeating-conic-gradient(#f3f4f6_0%_25%,#ffffff_0%_50%)] bg-[length:20px_20px] rounded-xl">
-          <img src={imageUrl} alt={selected.name} className="max-w-full max-h-[56vh] object-contain rounded-lg shadow" />
+          <img
+            src={imageUrl}
+            alt={selected.name}
+            className="max-w-full max-h-[56vh] object-contain rounded-lg shadow"
+          />
         </div>
       )
     }
@@ -346,7 +397,11 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
     if (!content.is_text) {
       return (
         <div className="h-full flex items-center justify-center">
-          <Empty icon={FileCode2} title="二进制文件不可预览" description={`${selected.name}（${formatSize(content.size)}）请下载后查看`} />
+          <Empty
+            icon={FileCode2}
+            title="二进制文件不可预览"
+            description={`${selected.name}（${formatSize(content.size)}）请下载后查看`}
+          />
         </div>
       )
     }
@@ -360,8 +415,12 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
             spellCheck={false}
           />
           <div className="flex justify-end gap-2 mt-3">
-            <Button variant="secondary" size="sm" icon={X} onClick={() => setEditing(false)}>取消</Button>
-            <Button size="sm" icon={Save} loading={saving} onClick={handleSave}>保存</Button>
+            <Button variant="secondary" size="sm" icon={X} onClick={() => setEditing(false)}>
+              取消
+            </Button>
+            <Button size="sm" icon={Save} loading={saving} onClick={handleSave}>
+              保存
+            </Button>
           </div>
         </div>
       )
@@ -373,7 +432,11 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
             <div className="flex flex-wrap items-center gap-2 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
               <Sparkles className="w-4 h-4 text-violet-500" />
               <span className="text-sm font-semibold text-violet-700">{fm.meta.name}</span>
-              {fm.meta.description && <span className="text-xs text-violet-500 truncate flex-1">{fm.meta.description}</span>}
+              {fm.meta.description && (
+                <span className="text-xs text-violet-500 truncate flex-1">
+                  {fm.meta.description}
+                </span>
+              )}
             </div>
           )}
           <div className="bg-white rounded-xl border border-gray-100 p-4">
@@ -383,7 +446,9 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
       )
     }
     return (
-      <pre className="h-full overflow-auto bg-gray-50 rounded-xl p-4 text-xs text-gray-800 font-mono whitespace-pre-wrap break-all">{content.content || '（空文件）'}</pre>
+      <pre className="h-full overflow-auto bg-gray-50 rounded-xl p-4 text-xs text-gray-800 font-mono whitespace-pre-wrap break-all">
+        {content.content || '（空文件）'}
+      </pre>
     )
   }
 
@@ -396,10 +461,32 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
         size="2xl"
         footer={
           <>
-            <Button variant="secondary" icon={Download} onClick={handleExportZip}>导出 ZIP</Button>
-            <Button variant="secondary" onClick={onClose}>关闭</Button>
-            <Button variant="ghost" icon={Pencil} onClick={() => { onEdit(skill); onClose() }}>编辑信息</Button>
-            <Button variant="danger" icon={Trash2} onClick={() => { onDelete(skill); onClose() }}>删除 Skill</Button>
+            <Button variant="secondary" icon={Download} onClick={handleExportZip}>
+              导出 ZIP
+            </Button>
+            <Button variant="secondary" onClick={onClose}>
+              关闭
+            </Button>
+            <Button
+              variant="ghost"
+              icon={Pencil}
+              onClick={() => {
+                onEdit(skill)
+                onClose()
+              }}
+            >
+              编辑信息
+            </Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              onClick={() => {
+                onDelete(skill)
+                onClose()
+              }}
+            >
+              删除 Skill
+            </Button>
           </>
         }
       >
@@ -407,10 +494,47 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
           {/* 左侧：目录树 */}
           <div className="w-64 flex-shrink-0 border-r border-gray-100 pr-2 flex flex-col">
             <div className="flex items-center gap-1 flex-wrap pb-2 border-b border-gray-100">
-              <Button size="sm" variant="ghost" icon={Plus} onClick={() => { setCreating('file'); setCreateName('') }} title="新建文件">文件</Button>
-              <Button size="sm" variant="ghost" icon={FolderPlus} onClick={() => { setCreating('folder'); setCreateName('') }} title="新建文件夹">目录</Button>
-              <Button size="sm" variant="ghost" icon={Upload} loading={uploading} onClick={() => fileInputRef.current?.click()} title="上传文件">上传</Button>
-              <Button size="sm" variant="ghost" icon={Download} onClick={handleExportZip} title="导出 ZIP" />
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={Plus}
+                onClick={() => {
+                  setCreating('file')
+                  setCreateName('')
+                }}
+                title="新建文件"
+              >
+                文件
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={FolderPlus}
+                onClick={() => {
+                  setCreating('folder')
+                  setCreateName('')
+                }}
+                title="新建文件夹"
+              >
+                目录
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={Upload}
+                loading={uploading}
+                onClick={() => fileInputRef.current?.click()}
+                title="上传文件"
+              >
+                上传
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={Download}
+                onClick={handleExportZip}
+                title="导出 ZIP"
+              />
               <Button size="sm" variant="ghost" icon={RefreshCw} onClick={loadTree} title="刷新" />
             </div>
 
@@ -427,20 +551,45 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
                   placeholder={`${creating === 'folder' ? '目录名' : '文件名'}（创建于 ${targetDir || '根目录'}/）`}
                   className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
                 />
-                <button onClick={handleCreate} className="p-1.5 rounded-lg text-violet-600 hover:bg-violet-50" title="确认"><Check className="w-4 h-4" /></button>
-                <button onClick={() => setCreating(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100" title="取消"><X className="w-4 h-4" /></button>
+                <button
+                  onClick={handleCreate}
+                  className="p-1.5 rounded-lg text-violet-600 hover:bg-violet-50"
+                  title="确认"
+                >
+                  <Check className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setCreating(null)}
+                  className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"
+                  title="取消"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             )}
 
             <div className="flex-1 overflow-y-auto mt-2">
               {loading ? (
-                <div className="p-4 text-gray-400 flex items-center gap-2 text-sm"><Loader2 className="w-4 h-4 animate-spin" />加载中…</div>
+                <div className="p-4 text-gray-400 flex items-center gap-2 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  加载中…
+                </div>
               ) : tree ? (
                 <>
-                  <TreeNode node={tree} depth={0} expanded={expanded} onToggle={toggleDir} selectedPath={selected?.path} onSelect={selectNode} rootName={skill?.name} />
+                  <TreeNode
+                    node={tree}
+                    depth={0}
+                    expanded={expanded}
+                    onToggle={toggleDir}
+                    selectedPath={selected?.path}
+                    onSelect={selectNode}
+                    rootName={skill?.name}
+                  />
                   {tree.file_count === 0 && (
                     <div className="mt-3 px-3 py-4 bg-gray-50 rounded-xl text-center">
-                      <p className="text-xs text-gray-500 mb-2">目录为空，点击「文件 / 目录 / 上传」开始构建标准结构</p>
+                      <p className="text-xs text-gray-500 mb-2">
+                        目录为空，点击「文件 / 目录 / 上传」开始构建标准结构
+                      </p>
                     </div>
                   )}
                 </>
@@ -461,14 +610,29 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
                   ) : (
                     <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
                   )}
-                  <span className="font-mono text-xs text-gray-700 truncate">{selected.path || skill.name}</span>
-                  {content && <span className="text-[10px] text-gray-400 flex-shrink-0">{formatSize(content.size)}</span>}
+                  <span className="font-mono text-xs text-gray-700 truncate">
+                    {selected.path || skill.name}
+                  </span>
+                  {content && (
+                    <span className="text-[10px] text-gray-400 flex-shrink-0">
+                      {formatSize(content.size)}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   {selected.type === 'file' && content?.is_text && !editing && (
-                    <Button size="sm" variant="ghost" icon={Pencil} onClick={startEdit}>编辑</Button>
+                    <Button size="sm" variant="ghost" icon={Pencil} onClick={startEdit}>
+                      编辑
+                    </Button>
                   )}
-                  <Button size="sm" variant="ghost" icon={Trash2} onClick={() => setDeleteTarget(selected)}>删除</Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={Trash2}
+                    onClick={() => setDeleteTarget(selected)}
+                  >
+                    删除
+                  </Button>
                 </div>
               </div>
             )}
@@ -482,9 +646,21 @@ export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, 
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title={deleteTarget?.type === 'dir' ? '确认删除目录' : '确认删除文件'}
-        message={deleteTarget?.type === 'dir'
-          ? <>确定要删除目录「<span className="font-medium text-gray-700">{deleteTarget?.path}</span>」及其全部内容吗？此操作不可撤销。</>
-          : <>确定要删除文件「<span className="font-medium text-gray-700">{deleteTarget?.path}</span>」吗？此操作不可撤销。</>}
+        message={
+          deleteTarget?.type === 'dir' ? (
+            <>
+              确定要删除目录「
+              <span className="font-medium text-gray-700">{deleteTarget?.path}</span>
+              」及其全部内容吗？此操作不可撤销。
+            </>
+          ) : (
+            <>
+              确定要删除文件「
+              <span className="font-medium text-gray-700">{deleteTarget?.path}</span>
+              」吗？此操作不可撤销。
+            </>
+          )
+        }
         confirmLabel="确认删除"
       />
     </>

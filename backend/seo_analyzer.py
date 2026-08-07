@@ -128,6 +128,7 @@ KEYWORD_SYSTEM = """你是一位资深SEO关键词策略顾问，精通百度关
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class SEOAnalyzeRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=300, description="文章标题")
     content: str = Field(..., min_length=50, max_length=10000, description="文章正文")
@@ -141,6 +142,7 @@ class KeywordResearchRequest(BaseModel):
 
 
 # ── API ──────────────────────────────────────────────────
+
 
 @router.post("/analyze")
 async def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth()):
@@ -158,11 +160,11 @@ async def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth(
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "SEO分析结果格式异常")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "SEO分析结果格式异常") from e
     except Exception as e:
         logger.exception("seo analyze failed")
-        raise HTTPException(500, f"SEO分析失败：{e}")
+        raise HTTPException(500, f"SEO分析失败：{e}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("seo_analyze", len(req.title) + len(req.content), len(raw), elapsed)
@@ -192,11 +194,11 @@ async def research_keywords(req: KeywordResearchRequest, current_user: dict = re
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "关键词研究结果格式异常")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "关键词研究结果格式异常") from e
     except Exception as e:
         logger.exception("keyword research failed")
-        raise HTTPException(500, f"关键词研究失败：{e}")
+        raise HTTPException(500, f"关键词研究失败：{e}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("seo_keywords", len(req.seed_keyword), len(raw), elapsed)

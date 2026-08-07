@@ -1,7 +1,18 @@
 import React, { useState } from 'react'
 import {
-  BookOpen, ChevronDown, Code2, HelpCircle, Mail, MessageCircle,
-  Play, Sparkles, UserCircle, Wand2, Wrench, Zap, Shield,
+  BookOpen,
+  ChevronDown,
+  Code2,
+  HelpCircle,
+  Mail,
+  MessageCircle,
+  Play,
+  Sparkles,
+  UserCircle,
+  Wand2,
+  Wrench,
+  Zap,
+  Shield,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -154,10 +165,14 @@ export default function HelpPage() {
             to={f.path}
             className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5 hover:shadow-lg hover:-translate-y-0.5 transition-all group"
           >
-            <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-3 shadow-soft`}>
+            <div
+              className={`w-10 h-10 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-3 shadow-soft`}
+            >
               <f.icon className="w-5 h-5 text-white" />
             </div>
-            <h3 className="font-semibold text-ink-900 group-hover:text-brand-600 transition-colors">{f.title}</h3>
+            <h3 className="font-semibold text-ink-900 group-hover:text-brand-600 transition-colors">
+              {f.title}
+            </h3>
             <p className="text-xs text-ink-500 mt-1.5 leading-relaxed">{f.desc}</p>
           </Link>
         ))}
@@ -182,7 +197,9 @@ export default function HelpPage() {
                   </span>
                   {faq.q}
                 </span>
-                <ChevronDown className={`w-4 h-4 text-ink-400 transition-transform ${openIndex === i ? 'rotate-180' : ''}`} />
+                <ChevronDown
+                  className={`w-4 h-4 text-ink-400 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
+                />
               </button>
               {openIndex === i && (
                 <div className="px-4 pb-3.5 pl-11 text-sm text-ink-500 leading-relaxed bg-ink-50/40">
@@ -224,9 +241,9 @@ export default function HelpPage() {
       <div className="flex items-center gap-3 px-5 py-4 bg-white rounded-2xl border border-ink-200/60 shadow-soft text-sm text-ink-500">
         <Zap className="w-4 h-4 text-amber-500 flex-shrink-0" />
         <p>
-          免费版每日 <span className="font-semibold text-ink-800">30 次</span> 额度 ·
-          专业版每日 <span className="font-semibold text-ink-800">200 次</span> ·
-          至尊版 <span className="font-semibold text-ink-800">无限使用</span>
+          免费版每日 <span className="font-semibold text-ink-800">30 次</span> 额度 · 专业版每日{' '}
+          <span className="font-semibold text-ink-800">200 次</span> · 至尊版{' '}
+          <span className="font-semibold text-ink-800">无限使用</span>
           <Link to="/profile" className="ml-2 text-brand-600 hover:underline">
             查看我的额度 →
           </Link>

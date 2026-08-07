@@ -23,6 +23,7 @@ router = APIRouter(tags=["全平台搜索"])
 
 # ── 各类型搜索（按类型拆分，避免 global_search 复杂度过高）──────────────────
 
+
 def _search_requirements(conn, like: str, limit: int) -> list:
     """需求：名称/描述 LIKE 匹配。"""
     results = []
@@ -34,15 +35,17 @@ def _search_requirements(conn, like: str, limit: int) -> list:
     except Exception:
         rows = []
     for r in rows:
-        results.append({
-            "type": "requirement",
-            "id": r["id"],
-            "title": r["name"],
-            "description": (r["description"] or "")[:120],
-            "status": r["status"],
-            "path": f"/workspace?requirement_id={r['id']}",
-            "created_at": r["created_at"],
-        })
+        results.append(
+            {
+                "type": "requirement",
+                "id": r["id"],
+                "title": r["name"],
+                "description": (r["description"] or "")[:120],
+                "status": r["status"],
+                "path": f"/workspace?requirement_id={r['id']}",
+                "created_at": r["created_at"],
+            }
+        )
     return results
 
 
@@ -57,14 +60,16 @@ def _search_tools(q: str, limit: int) -> list:
         desc = tdef.get("description", "")
         category = tdef.get("category", "通用")
         if q in name.lower() or q in desc.lower() or q in tid.lower():
-            results.append({
-                "type": "tool",
-                "id": tid,
-                "title": name,
-                "description": desc[:120],
-                "category": category,
-                "path": f"/tool/{tid}",
-            })
+            results.append(
+                {
+                    "type": "tool",
+                    "id": tid,
+                    "title": name,
+                    "description": desc[:120],
+                    "category": category,
+                    "path": f"/tool/{tid}",
+                }
+            )
             hits += 1
     return results
 
@@ -81,15 +86,17 @@ def _search_typed_table(conn, _type: str, _table: str, _label: str, path_tpl: st
     except Exception:
         rows = []
     for r in rows:
-        results.append({
-            "type": _type,
-            "id": r["id"],
-            "title": r["name"],
-            "description": (r["description"] or "")[:120],
-            "module": _label,
-            "path": path_tpl.format(id=r["id"]),
-            "created_at": r["created_at"],
-        })
+        results.append(
+            {
+                "type": _type,
+                "id": r["id"],
+                "title": r["name"],
+                "description": (r["description"] or "")[:120],
+                "module": _label,
+                "path": path_tpl.format(id=r["id"]),
+                "created_at": r["created_at"],
+            }
+        )
     return results
 
 
@@ -104,14 +111,16 @@ def _search_docs(conn, like: str, limit: int) -> list:
     except Exception:
         rows = []
     for r in rows:
-        results.append({
-            "type": "document",
-            "id": r["id"],
-            "title": r["name"],
-            "description": (r["description"] or "")[:120],
-            "path": "/knowledge-bases",
-            "created_at": r["created_at"],
-        })
+        results.append(
+            {
+                "type": "document",
+                "id": r["id"],
+                "title": r["name"],
+                "description": (r["description"] or "")[:120],
+                "path": "/knowledge-bases",
+                "created_at": r["created_at"],
+            }
+        )
     return results
 
 
@@ -126,15 +135,17 @@ def _search_history(conn, like: str, limit: int) -> list:
     except Exception:
         rows = []
     for r in rows:
-        results.append({
-            "type": "history",
-            "id": r["id"],
-            "title": (r["title"] or "")[:80],
-            "description": "会话",
-            "module": "会话",
-            "path": "/chat",
-            "created_at": r["created_at"],
-        })
+        results.append(
+            {
+                "type": "history",
+                "id": r["id"],
+                "title": (r["title"] or "")[:80],
+                "description": "会话",
+                "module": "会话",
+                "path": "/chat",
+                "created_at": r["created_at"],
+            }
+        )
     try:
         rows = conn.execute(
             f"SELECT id, conversation_id, content, created_at FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT {limit}",
@@ -143,19 +154,22 @@ def _search_history(conn, like: str, limit: int) -> list:
     except Exception:
         rows = []
     for r in rows:
-        results.append({
-            "type": "history",
-            "id": r["id"],
-            "title": (r["content"] or "")[:80],
-            "description": "消息",
-            "module": "会话",
-            "path": "/chat",
-            "created_at": r["created_at"],
-        })
+        results.append(
+            {
+                "type": "history",
+                "id": r["id"],
+                "title": (r["content"] or "")[:80],
+                "description": "消息",
+                "module": "会话",
+                "path": "/chat",
+                "created_at": r["created_at"],
+            }
+        )
     return results
 
 
 # ── 统一入口 ────────────────────────────────────────────────────────────────
+
 
 @router.post("/api/search/global")
 def global_search(payload: dict, current_user: dict = Depends(require_auth)):

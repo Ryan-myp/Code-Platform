@@ -27,11 +27,47 @@ STANDARD_DIRS = ("scripts", "references", "examples", "assets")
 
 # 文本文件扩展名（其余按二进制处理）
 TEXT_EXTS = {
-    ".md", ".markdown", ".txt", ".py", ".js", ".jsx", ".ts", ".tsx", ".json",
-    ".yaml", ".yml", ".toml", ".ini", ".cfg", ".sh", ".bash", ".zsh", ".ps1",
-    ".css", ".html", ".htm", ".xml", ".csv", ".sql", ".java", ".go", ".rs",
-    ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".vue", ".env", ".gitignore",
-    ".dockerfile", ".ipynb", ".log", ".rst", ".svg",
+    ".md",
+    ".markdown",
+    ".txt",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".ps1",
+    ".css",
+    ".html",
+    ".htm",
+    ".xml",
+    ".csv",
+    ".sql",
+    ".java",
+    ".go",
+    ".rs",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".php",
+    ".vue",
+    ".env",
+    ".gitignore",
+    ".dockerfile",
+    ".ipynb",
+    ".log",
+    ".rst",
+    ".svg",
 }
 
 _SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -40,6 +76,7 @@ _SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 # ══════════════════════════════════════════════════════════════
 # 路径解析与校验（防路径穿越）
 # ══════════════════════════════════════════════════════════════
+
 
 def get_skills_dir() -> Path:
     """返回 skills 根目录（动态读取，支持测试替换 SKILLS_DIR）。"""
@@ -85,6 +122,7 @@ def resolve_path(skill_id: str, rel_path: str) -> Path:
 # SKILL.md frontmatter 解析 / 渲染
 # ══════════════════════════════════════════════════════════════
 
+
 def parse_skill_markdown(text: str) -> dict:
     """解析标准 SKILL.md：--- frontmatter（name/description） + 正文。
 
@@ -97,7 +135,7 @@ def parse_skill_markdown(text: str) -> dict:
     if end == -1:
         return {"name": "", "description": "", "content": text}
     fm = text[3:end]
-    body = text[end + 4:].strip()
+    body = text[end + 4 :].strip()
     name, description = "", ""
     for line in fm.splitlines():
         line = line.strip()
@@ -122,6 +160,7 @@ def render_skill_markdown(skill: dict) -> str:
 # 目录树与统计
 # ══════════════════════════════════════════════════════════════
 
+
 def list_tree(skill_id: str) -> dict:
     """递归目录树，节点含 name/type/file_count/path/size/ext。
 
@@ -143,13 +182,15 @@ def list_tree(skill_id: str) -> dict:
                 count += sub["file_count"]
                 children.append(sub)
             else:
-                children.append({
-                    "name": child.name,
-                    "type": "file",
-                    "path": child_rel,
-                    "size": child.stat().st_size,
-                    "ext": child.suffix.lower().lstrip("."),
-                })
+                children.append(
+                    {
+                        "name": child.name,
+                        "type": "file",
+                        "path": child_rel,
+                        "size": child.stat().st_size,
+                        "ext": child.suffix.lower().lstrip("."),
+                    }
+                )
                 count += 1
         return {"name": directory.name, "path": rel, "type": "dir", "children": children, "file_count": count}
 
@@ -163,7 +204,11 @@ def list_tree(skill_id: str) -> dict:
 
 def _empty_tree(skill_id: str) -> dict:
     return {
-        "name": skill_id, "path": "", "type": "dir", "children": [], "file_count": 0,
+        "name": skill_id,
+        "path": "",
+        "type": "dir",
+        "children": [],
+        "file_count": 0,
         "dir_counts": {d: 0 for d in STANDARD_DIRS},
     }
 
@@ -191,6 +236,7 @@ def scan_stats() -> dict:
 # ══════════════════════════════════════════════════════════════
 # 文件读写
 # ══════════════════════════════════════════════════════════════
+
 
 def read_file(skill_id: str, rel_path: str) -> dict:
     """读取文件内容。文本文件返回 content 字符串；二进制返回 is_text=False。"""
@@ -262,7 +308,8 @@ def ensure_standard_dirs(skill_id: str) -> None:
 # ZIP 导入 / 导出
 # ══════════════════════════════════════════════════════════════
 
-def parse_skill_zip(zip_bytes: bytes) -> dict:
+
+def parse_skill_zip(zip_bytes: bytes) -> dict:  # noqa: C901
     """解析标准 skill zip 包，返回 {name, description, files: [(rel_path, bytes), ...]}。
 
     兼容两种形态：
@@ -351,6 +398,7 @@ def export_zip(skill_id: str, top_name: str | None = None) -> tuple[bytes, str]:
 # SKILL.md 与 DB 元数据同步
 # ══════════════════════════════════════════════════════════════
 
+
 def read_skill_md(skill_id: str) -> str | None:
     """读取磁盘 SKILL.md（不存在返回 None）。"""
     try:
@@ -383,6 +431,7 @@ def sync_db_from_skill_md(skill_id: str, markdown: str) -> dict:
 # ══════════════════════════════════════════════════════════════
 # 启动迁移（幂等）
 # ══════════════════════════════════════════════════════════════
+
 
 def _clean_legacy_text(val: str | None) -> str:
     """清洗历史文本字段：空 JSON（{} / []）视为空。"""

@@ -1,25 +1,42 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Package, RefreshCw, Eye, FolderKanban, ListTodo, Search,
-  ChevronDown, ChevronRight, Download, Trash2, FileText,
-  LayoutGrid, List as ListIcon, Clock,
+  Package,
+  RefreshCw,
+  Eye,
+  FolderKanban,
+  ListTodo,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Trash2,
+  FileText,
+  LayoutGrid,
+  List as ListIcon,
+  Clock,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { formatDateTime, formatRelativeTime } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState,
-  Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const TYPE_META = {
-  prd:    { label: 'PRD',      icon: '📋', color: 'blue' },
-  review: { label: '审查报告',   icon: '🔍', color: 'orange' },
-  td:     { label: '技术方案',   icon: '📐', color: 'cyan' },
-  test:   { label: '测试用例',   icon: '🧪', color: 'amber' },
-  code:   { label: '代码',      icon: '💻', color: 'gray' },
-  doc:    { label: '文档',      icon: '📄', color: 'slate' },
+  prd: { label: 'PRD', icon: '📋', color: 'blue' },
+  review: { label: '审查报告', icon: '🔍', color: 'orange' },
+  td: { label: '技术方案', icon: '📐', color: 'cyan' },
+  test: { label: '测试用例', icon: '🧪', color: 'amber' },
+  code: { label: '代码', icon: '💻', color: 'gray' },
+  doc: { label: '文档', icon: '📄', color: 'slate' },
 }
 
 const getTypeMeta = (t) => TYPE_META[t] || { label: t || '其他', icon: '📄', color: 'gray' }
@@ -64,14 +81,17 @@ export default function ArtifactsPage() {
     }
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   const toggleProject = (pid) => setExpandedProjects((p) => ({ ...p, [pid]: !p[pid] }))
   const toggleReq = (rid) => setExpandedReqs((p) => ({ ...p, [rid]: !p[rid] }))
 
   const filtered = artifacts.filter((a) => {
     const q = searchTerm.toLowerCase()
-    const matchSearch = !q ||
+    const matchSearch =
+      !q ||
       a.type?.toLowerCase().includes(q) ||
       a.requirement_id?.toLowerCase().includes(q) ||
       a.project_id?.toLowerCase().includes(q)
@@ -104,9 +124,12 @@ export default function ArtifactsPage() {
     try {
       const meta = getTypeMeta(art.type)
       const content = art.content || art.content_preview || ''
-      const blob = new Blob([typeof content === 'string' ? content : JSON.stringify(content, null, 2)], {
-        type: 'text/markdown;charset=utf-8',
-      })
+      const blob = new Blob(
+        [typeof content === 'string' ? content : JSON.stringify(content, null, 2)],
+        {
+          type: 'text/markdown;charset=utf-8',
+        }
+      )
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -142,7 +165,9 @@ export default function ArtifactsPage() {
         icon={Package}
         iconColor="from-emerald-500 to-teal-600"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={fetchData}>刷新</Button>
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchData}>
+            刷新
+          </Button>
         }
       />
 
@@ -164,7 +189,11 @@ export default function ArtifactsPage() {
           className="px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all text-sm bg-white"
         >
           <option value="">全部类型</option>
-          {Object.entries(TYPE_META).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          {Object.entries(TYPE_META).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v.label}
+            </option>
+          ))}
         </select>
         <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
           {VIEW_MODES.map((mode) => {
@@ -193,7 +222,11 @@ export default function ArtifactsPage() {
           <Empty
             icon={Package}
             title={searchTerm || filterType ? '未找到匹配的成果' : '暂无成果'}
-            description={searchTerm || filterType ? '尝试调整搜索或筛选条件' : '创建需求并生成 PRD/审查报告后，成果将在此显示'}
+            description={
+              searchTerm || filterType
+                ? '尝试调整搜索或筛选条件'
+                : '创建需求并生成 PRD/审查报告后，成果将在此显示'
+            }
           />
         </div>
       ) : viewMode === 'tree' ? (
@@ -203,61 +236,77 @@ export default function ArtifactsPage() {
             const isExpanded = expandedProjects[projectId]
             const totalCount = Object.values(reqMap).reduce((s, arr) => s + arr.length, 0)
             return (
-              <div key={projectId} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div
+                key={projectId}
+                className="bg-white border border-gray-200 rounded-xl overflow-hidden"
+              >
                 <button
                   onClick={() => toggleProject(projectId)}
                   className="w-full flex items-center gap-3 p-4 hover:bg-gray-50 transition-colors"
                 >
-                  {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                  {isExpanded ? (
+                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  )}
                   <FolderKanban className="w-5 h-5 text-amber-500" />
                   <span className="font-medium text-gray-900 truncate">{projectName}</span>
                   <Badge status="inactive" label={`${totalCount} 个成果`} className="ml-auto" />
                 </button>
-                {isExpanded && Object.entries(reqMap).map(([reqId, arts]) => {
-                  const reqName = getReqName(reqId)
-                  const reqExpanded = expandedReqs[reqId]
-                  return (
-                    <div key={reqId} className="ml-6 border-l-2 border-gray-100 pl-4 py-2">
-                      <button
-                        onClick={() => toggleReq(reqId)}
-                        className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 py-1"
-                      >
-                        {reqExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                        <ListTodo className="w-4 h-4 text-gray-400" />
-                        <span>{reqName}</span>
-                        <span className="text-xs text-gray-400">({arts.length})</span>
-                      </button>
-                      {reqExpanded && (
-                        <div className="ml-6 mt-2 space-y-1">
-                          {arts.map((art) => {
-                            const meta = getTypeMeta(art.type)
-                            return (
-                              <div
-                                key={art.id}
-                                className="flex items-center gap-3 p-2.5 hover:bg-gray-50 rounded-lg cursor-pointer group"
-                                onClick={() => setSelected(art)}
-                              >
-                                <span className="text-lg">{meta.icon}</span>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-medium text-gray-800">{meta.label}</span>
-                                    <span className="text-xs text-gray-400">v{art.version || 1}</span>
+                {isExpanded &&
+                  Object.entries(reqMap).map(([reqId, arts]) => {
+                    const reqName = getReqName(reqId)
+                    const reqExpanded = expandedReqs[reqId]
+                    return (
+                      <div key={reqId} className="ml-6 border-l-2 border-gray-100 pl-4 py-2">
+                        <button
+                          onClick={() => toggleReq(reqId)}
+                          className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 py-1"
+                        >
+                          {reqExpanded ? (
+                            <ChevronDown className="w-3 h-3" />
+                          ) : (
+                            <ChevronRight className="w-3 h-3" />
+                          )}
+                          <ListTodo className="w-4 h-4 text-gray-400" />
+                          <span>{reqName}</span>
+                          <span className="text-xs text-gray-400">({arts.length})</span>
+                        </button>
+                        {reqExpanded && (
+                          <div className="ml-6 mt-2 space-y-1">
+                            {arts.map((art) => {
+                              const meta = getTypeMeta(art.type)
+                              return (
+                                <div
+                                  key={art.id}
+                                  className="flex items-center gap-3 p-2.5 hover:bg-gray-50 rounded-lg cursor-pointer group"
+                                  onClick={() => setSelected(art)}
+                                >
+                                  <span className="text-lg">{meta.icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium text-gray-800">
+                                        {meta.label}
+                                      </span>
+                                      <span className="text-xs text-gray-400">
+                                        v{art.version || 1}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-xs text-gray-400">
+                                      <span className="font-mono">{art.id?.slice(0, 12)}…</span>
+                                      <span>{formatRelativeTime(art.created_at)}</span>
+                                      {art.author && <span>作者: {art.author}</span>}
+                                    </div>
                                   </div>
-                                  <div className="flex items-center gap-3 text-xs text-gray-400">
-                                    <span className="font-mono">{art.id?.slice(0, 12)}…</span>
-                                    <span>{formatRelativeTime(art.created_at)}</span>
-                                    {art.author && <span>作者: {art.author}</span>}
-                                  </div>
+                                  <Eye className="w-4 h-4 text-gray-300 group-hover:text-emerald-600" />
                                 </div>
-                                <Eye className="w-4 h-4 text-gray-300 group-hover:text-emerald-600" />
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
               </div>
             )
           })}
@@ -283,17 +332,29 @@ export default function ArtifactsPage() {
                 const proj = projects.find((p) => p.id === art.project_id)
                 return (
                   <tr key={art.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3"><span className="text-lg mr-1">{meta.icon}</span>{meta.label}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{art.id?.slice(0, 16)}…</td>
+                    <td className="px-4 py-3">
+                      <span className="text-lg mr-1">{meta.icon}</span>
+                      {meta.label}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                      {art.id?.slice(0, 16)}…
+                    </td>
                     <td className="px-4 py-3">
                       <div className="text-gray-700">{req?.name || '—'}</div>
                       {proj && <div className="text-xs text-gray-400">{proj.name}</div>}
                     </td>
                     <td className="px-4 py-3 text-gray-500">v{art.version || 1}</td>
                     <td className="px-4 py-3 text-gray-500">{art.author || '—'}</td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">{formatDateTime(art.created_at)}</td>
+                    <td className="px-4 py-3 text-gray-400 text-xs">
+                      {formatDateTime(art.created_at)}
+                    </td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => setSelected(art)} className="text-emerald-600 hover:text-emerald-700 text-sm font-medium">查看</button>
+                      <button
+                        onClick={() => setSelected(art)}
+                        className="text-emerald-600 hover:text-emerald-700 text-sm font-medium"
+                      >
+                        查看
+                      </button>
                     </td>
                   </tr>
                 )
@@ -324,11 +385,23 @@ export default function ArtifactsPage() {
                         <span className="text-sm font-semibold text-gray-800">{meta.label}</span>
                         <span className="text-xs text-gray-400 ml-2">v{art.version || 1}</span>
                       </div>
-                      <span className="ml-auto text-xs text-gray-400">{formatDateTime(art.created_at)}</span>
+                      <span className="ml-auto text-xs text-gray-400">
+                        {formatDateTime(art.created_at)}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
-                      {proj && <span className="flex items-center gap-1"><FolderKanban className="w-3 h-3" />{proj.name}</span>}
-                      {req && <span className="flex items-center gap-1"><ListTodo className="w-3 h-3" />{req.name}</span>}
+                      {proj && (
+                        <span className="flex items-center gap-1">
+                          <FolderKanban className="w-3 h-3" />
+                          {proj.name}
+                        </span>
+                      )}
+                      {req && (
+                        <span className="flex items-center gap-1">
+                          <ListTodo className="w-3 h-3" />
+                          {req.name}
+                        </span>
+                      )}
                       <span className="font-mono">{art.id?.slice(0, 12)}…</span>
                     </div>
                   </div>
@@ -343,13 +416,23 @@ export default function ArtifactsPage() {
       <Modal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected ? `${getTypeMeta(selected.type).icon} ${getTypeMeta(selected.type).label} · v${selected.version || 1}` : ''}
+        title={
+          selected
+            ? `${getTypeMeta(selected.type).icon} ${getTypeMeta(selected.type).label} · v${selected.version || 1}`
+            : ''
+        }
         size="lg"
         footer={
           <>
-            <Button variant="secondary" icon={Download} onClick={() => handleDownload(selected)}>下载</Button>
-            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(selected)}>删除</Button>
-            <Button variant="primary" onClick={() => setSelected(null)}>关闭</Button>
+            <Button variant="secondary" icon={Download} onClick={() => handleDownload(selected)}>
+              下载
+            </Button>
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(selected)}>
+              删除
+            </Button>
+            <Button variant="primary" onClick={() => setSelected(null)}>
+              关闭
+            </Button>
           </>
         }
       >
@@ -374,9 +457,14 @@ export default function ArtifactsPage() {
               </div>
             </div>
             <div>
-              <p className="text-xs text-gray-500 mb-2 flex items-center gap-1"><FileText className="w-3.5 h-3.5" />内容</p>
+              <p className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5" />
+                内容
+              </p>
               <div className="bg-gray-50 p-4 rounded-xl border max-h-[55vh] overflow-auto">
-                <MarkdownRenderer content={selected.content || selected.content_preview || '无内容'} />
+                <MarkdownRenderer
+                  content={selected.content || selected.content_preview || '无内容'}
+                />
               </div>
             </div>
           </div>
@@ -389,7 +477,11 @@ export default function ArtifactsPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="确认删除成果"
-        message={deleteTarget ? `确定要删除成果「${getTypeMeta(deleteTarget.type).label} · v${deleteTarget.version || 1}」吗？此操作不可撤销。` : ''}
+        message={
+          deleteTarget
+            ? `确定要删除成果「${getTypeMeta(deleteTarget.type).label} · v${deleteTarget.version || 1}」吗？此操作不可撤销。`
+            : ''
+        }
         confirmLabel="确认删除"
       />
     </div>

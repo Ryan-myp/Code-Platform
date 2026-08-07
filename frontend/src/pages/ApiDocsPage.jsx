@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react'
-import { Key, Copy, Trash2, ExternalLink, Code, Terminal, Shield, Clock, Plus, Eye, EyeOff, Zap } from 'lucide-react'
+import {
+  Key,
+  Copy,
+  Trash2,
+  ExternalLink,
+  Code,
+  Terminal,
+  Shield,
+  Clock,
+  Plus,
+  Eye,
+  EyeOff,
+  Zap,
+} from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -22,11 +35,15 @@ export default function ApiDocsPage() {
       ])
       setKeys(keysRes.data || [])
       setDocs(docsRes.data)
-    } catch {/* 静默失败，不阻塞 UI */}
+    } catch {
+      /* 静默失败，不阻塞 UI */
+    }
     setLoaded(true)
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    loadData()
+  }, [])
 
   const createKey = async () => {
     const label = prompt('输入备注标签（可选）：') || ''
@@ -36,7 +53,9 @@ export default function ApiDocsPage() {
       setNewKey(res.data)
       loadData()
       toast.success('API Key 创建成功')
-    } catch (e) { toast.error(`创建失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`创建失败：${e.message}`)
+    }
     setCreating(false)
   }
 
@@ -46,7 +65,9 @@ export default function ApiDocsPage() {
       await api.delete(`/api/api-keys/${deleteId}`)
       setKeys((prev) => prev.filter((k) => k.id !== deleteId))
       toast.success('已吊销')
-    } catch (e) { toast.error(e.message) }
+    } catch (e) {
+      toast.error(e.message)
+    }
     setDeleteId(null)
   }
 
@@ -76,7 +97,9 @@ export default function ApiDocsPage() {
               <Key className="w-4 h-4 text-violet-500" /> 我的API Keys
             </h3>
             {!loaded ? (
-              <button onClick={loadData} className="text-sm text-violet-500 hover:underline">加载数据</button>
+              <button onClick={loadData} className="text-sm text-violet-500 hover:underline">
+                加载数据
+              </button>
             ) : keys.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无API Key</div>
             ) : (
@@ -87,13 +110,23 @@ export default function ApiDocsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-gray-800 flex items-center gap-1">
                           <span className="font-mono">{k.prefix}•••</span>
-                          <button onClick={() => toggleShow(k.id)} className="text-gray-400 hover:text-violet-500">
-                            {showFullKey[k.id] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                          <button
+                            onClick={() => toggleShow(k.id)}
+                            className="text-gray-400 hover:text-violet-500"
+                          >
+                            {showFullKey[k.id] ? (
+                              <EyeOff className="w-3 h-3" />
+                            ) : (
+                              <Eye className="w-3 h-3" />
+                            )}
                           </button>
                         </div>
                         {k.label && <div className="text-xs text-gray-500 mt-0.5">{k.label}</div>}
                       </div>
-                      <button onClick={() => setDeleteId(k.id)} className="p-1 text-gray-300 hover:text-red-500">
+                      <button
+                        onClick={() => setDeleteId(k.id)}
+                        className="p-1 text-gray-300 hover:text-red-500"
+                      >
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -105,7 +138,13 @@ export default function ApiDocsPage() {
                 ))}
               </div>
             )}
-            <Button variant="primary" icon={Plus} loading={creating} onClick={createKey} className="w-full mt-3">
+            <Button
+              variant="primary"
+              icon={Plus}
+              loading={creating}
+              onClick={createKey}
+              className="w-full mt-3"
+            >
               创建新 Key
             </Button>
           </Card>
@@ -121,8 +160,12 @@ export default function ApiDocsPage() {
                 {newKey.api_key}
               </div>
               <div className="flex gap-2">
-                <Button size="sm" icon={Copy} onClick={() => copyKey(newKey.api_key)}>复制</Button>
-                <Button size="sm" variant="ghost" onClick={() => setNewKey(null)}>关闭</Button>
+                <Button size="sm" icon={Copy} onClick={() => copyKey(newKey.api_key)}>
+                  复制
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setNewKey(null)}>
+                  关闭
+                </Button>
               </div>
               <p className="text-xs text-amber-600 mt-2">请立即保存，关闭后无法再次查看完整Key</p>
             </Card>
@@ -134,8 +177,18 @@ export default function ApiDocsPage() {
             </h3>
             <div className="space-y-2 text-xs text-gray-600">
               <div>1. 创建API Key</div>
-              <div>2. 在请求头中添加：<code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">Authorization: Bearer YOUR_KEY</code></div>
-              <div>3. 发送请求到 <code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">https://platform.xiaotuan.ai/api/...</code></div>
+              <div>
+                2. 在请求头中添加：
+                <code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">
+                  Authorization: Bearer YOUR_KEY
+                </code>
+              </div>
+              <div>
+                3. 发送请求到{' '}
+                <code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">
+                  https://platform.xiaotuan.ai/api/...
+                </code>
+              </div>
             </div>
           </Card>
         </div>
@@ -150,7 +203,10 @@ export default function ApiDocsPage() {
                 <Code className="w-4 h-4 text-violet-500" /> {docs.title} {docs.version}
               </h3>
               <p className="text-sm text-gray-500 mb-4">
-                基础URL: <code className="px-2 py-0.5 bg-gray-100 rounded text-violet-600">{docs.base_url}</code>
+                基础URL:{' '}
+                <code className="px-2 py-0.5 bg-gray-100 rounded text-violet-600">
+                  {docs.base_url}
+                </code>
                 <span className="mx-2">·</span>
                 认证: <Badge color="violet">{docs.auth}</Badge>
                 <span className="mx-2">·</span>

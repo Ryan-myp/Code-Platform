@@ -6,6 +6,7 @@
 - GET  /api/digital-human/records   历史生成记录
 """
 
+import json
 import logging
 import os
 import shutil
@@ -14,13 +15,12 @@ import tempfile
 import threading
 import time
 import uuid
-import json
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Callable
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from pydantic import BaseModel, Field
 
@@ -180,7 +180,13 @@ VOICES = [
     {"id": "zh-CN-YunyangNeural", "name": "云扬", "gender": "男", "style": "字正腔圆，新闻播报感", "emoji": "🎙️"},
     {"id": "zh-CN-XiaomoNeural", "name": "晓墨", "gender": "童", "style": "童声可爱，适合儿童/亲子内容", "emoji": "🧒"},
     {"id": "en-US-AriaNeural", "name": "Aria", "gender": "女", "style": "英文女声，自然流利", "emoji": "🇺🇸"},
-    {"id": "en-US-ChristopherNeural", "name": "Christopher", "gender": "男", "style": "英文男声，沉稳有力", "emoji": "🇬🇧"},
+    {
+        "id": "en-US-ChristopherNeural",
+        "name": "Christopher",
+        "gender": "男",
+        "style": "英文男声，沉稳有力",
+        "emoji": "🇬🇧",
+    },
 ]
 
 # ── 背景模板 ──────────────────────────────────────────────────
@@ -188,18 +194,63 @@ BACKGROUNDS = [
     {"id": "office", "name": "现代办公室", "type": "image", "color": "#1a1a2e"},
     {"id": "studio", "name": "简约演播室", "type": "image", "color": "#16213e"},
     {"id": "nature", "name": "自然风景", "type": "image", "color": "#0f3460"},
-    {"id": "tech", "name": "科技蓝幕", "type": "gradient", "color": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"},
-    {"id": "warm", "name": "温馨暖调", "type": "gradient", "color": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)"},
-    {"id": "dark", "name": "暗黑质感", "type": "gradient", "color": "linear-gradient(135deg, #434343 0%, #000000 100%)"},
+    {
+        "id": "tech",
+        "name": "科技蓝幕",
+        "type": "gradient",
+        "color": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+    },
+    {
+        "id": "warm",
+        "name": "温馨暖调",
+        "type": "gradient",
+        "color": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+    },
+    {
+        "id": "dark",
+        "name": "暗黑质感",
+        "type": "gradient",
+        "color": "linear-gradient(135deg, #434343 0%, #000000 100%)",
+    },
 ]
 
 # ── 场景模板 ──────────────────────────────────────────────────
 SCENE_TEMPLATES = [
-    {"id": "product", "name": "产品介绍", "desc": "突出产品卖点，节奏明快", "voice_hint": "zh-CN-YunjianNeural", "speed_hint": 1.05},
-    {"id": "course", "name": "课程讲解", "desc": "结构化讲解，娓娓道来", "voice_hint": "zh-CN-XiaoxiaoNeural", "speed_hint": 0.95},
-    {"id": "news", "name": "新闻播报", "desc": "字正腔圆，专业播报", "voice_hint": "zh-CN-YunyangNeural", "speed_hint": 1.0},
-    {"id": "livestream", "name": "直播带货", "desc": "感染力强，促单话术", "voice_hint": "zh-CN-YunjianNeural", "speed_hint": 1.1},
-    {"id": "story", "name": "故事讲述", "desc": "情感丰富，引人入胜", "voice_hint": "zh-CN-XiaoxiaoNeural", "speed_hint": 0.9},
+    {
+        "id": "product",
+        "name": "产品介绍",
+        "desc": "突出产品卖点，节奏明快",
+        "voice_hint": "zh-CN-YunjianNeural",
+        "speed_hint": 1.05,
+    },
+    {
+        "id": "course",
+        "name": "课程讲解",
+        "desc": "结构化讲解，娓娓道来",
+        "voice_hint": "zh-CN-XiaoxiaoNeural",
+        "speed_hint": 0.95,
+    },
+    {
+        "id": "news",
+        "name": "新闻播报",
+        "desc": "字正腔圆，专业播报",
+        "voice_hint": "zh-CN-YunyangNeural",
+        "speed_hint": 1.0,
+    },
+    {
+        "id": "livestream",
+        "name": "直播带货",
+        "desc": "感染力强，促单话术",
+        "voice_hint": "zh-CN-YunjianNeural",
+        "speed_hint": 1.1,
+    },
+    {
+        "id": "story",
+        "name": "故事讲述",
+        "desc": "情感丰富，引人入胜",
+        "voice_hint": "zh-CN-XiaoxiaoNeural",
+        "speed_hint": 0.9,
+    },
 ]
 
 
@@ -227,10 +278,15 @@ def _skin_region_metrics(img: Image.Image) -> dict | None:
     mx, mn = np.maximum(np.maximum(R, G), B), np.minimum(np.minimum(R, G), B)
     diff = mx - mn
     is_skin = (
-        (diff > 0.04) & (diff < 0.55)                     # 饱和度适中
-        & (mx > 0.45) & (mx < 0.98)                       # 亮度区间（排除纯白/纯黑）
-        & (R >= G) & (G >= B * 0.72) & (G <= B * 1.45)    # 橙黄主导 R>G>B
-        & (R - B > 0.06) & (np.abs(R - G) > 0.03)         # 色相偏红黄
+        (diff > 0.04)
+        & (diff < 0.55)  # 饱和度适中
+        & (mx > 0.45)
+        & (mx < 0.98)  # 亮度区间（排除纯白/纯黑）
+        & (R >= G)
+        & (G >= B * 0.72)
+        & (G <= B * 1.45)  # 橙黄主导 R>G>B
+        & (R - B > 0.06)
+        & (np.abs(R - G) > 0.03)  # 色相偏红黄
     )
     if int(is_skin.sum()) < 300:
         return None
@@ -325,6 +381,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
     )
 
     from common.config import AGNES_API_BASE, AGNES_API_KEY
+
     if not AGNES_API_KEY:
         logger.warning("未配置 AGNES_API_KEY，无法生成数字人写真")
         return None
@@ -333,6 +390,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
     for size in ("1024x1280", "1024x1024"):
         try:
             import requests as _req
+
             url = f"{AGNES_API_BASE}/images/generations"
             headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
             payload = {
@@ -376,6 +434,7 @@ def _font_has_cjk(font) -> bool:
     真汉字笔画不规则、不会四边满格。用于选择能正确显示中文的字体。"""
     try:
         import numpy as np
+
         img = Image.new("L", (80, 80), 255)
         d = ImageDraw.Draw(img)
         d.text((20, 20), "好", fill=0, font=font)
@@ -384,7 +443,7 @@ def _font_has_cjk(font) -> bool:
         if len(ys) < 30:
             return False  # 空白 = 无字形
         y0, y1, x0, x1 = ys.min(), ys.max(), xs.min(), xs.max()
-        region = arr[y0:y1 + 1, x0:x1 + 1]
+        region = arr[y0 : y1 + 1, x0 : x1 + 1]
         border = np.concatenate([region[0, :], region[-1, :], region[:, 0], region[:, -1]])
         return (border < 128).mean() <= 0.75  # 豆腐块四边几乎全暗
     except Exception:
@@ -412,9 +471,19 @@ def _audio_duration(path: str) -> float:
     """用 ffprobe 获取音频时长（秒）；文件无效/不可读返回 0（调用方拦截）。"""
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", path],
-            capture_output=True, text=True, timeout=15,
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         duration = float(out.stdout.strip())
         return max(duration, 1.0)
@@ -423,6 +492,7 @@ def _audio_duration(path: str) -> float:
 
 
 _VIDEO_ENCODER_CACHE: str | None = None
+
 
 def _pick_video_encoder() -> str:
     """选择视频编码器，按平台/设备可用性自动探测：
@@ -436,7 +506,9 @@ def _pick_video_encoder() -> str:
         try:
             out = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-encoders"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             lines = out.stdout.splitlines()
             if any("h264_videotoolbox" in line for line in lines):
@@ -457,7 +529,9 @@ def _build_portrait_src(avatar: dict):
     造成的脸部变形——1:1 生成图被压扁成 0.8 比例是"AI 感"的重要来源。
     face_meta = 头部中心/宽度（画布坐标）或 None：渲染层据此动态定位眼/嘴/颊彩。
     """
-    portrait_path = avatar.get("local_image_path") or (_get_portrait_path(avatar["id"]) if not avatar.get("is_custom") else "")
+    portrait_path = avatar.get("local_image_path") or (
+        _get_portrait_path(avatar["id"]) if not avatar.get("is_custom") else ""
+    )
     if not portrait_path or not os.path.exists(portrait_path):
         return None
     try:
@@ -534,6 +608,7 @@ def _clean_script_text(text: str) -> str:
     字幕与配音必须与用户输入一致，仅做渲染友好的空白规范化。
     """
     import re
+
     # 连续空行折叠为单空行（\n\n），保留分段结构；单换行保留原样
     return re.sub(r"\n{2,}", "\n\n", text or "").strip()
 
@@ -547,15 +622,17 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
     try:
         out = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         import numpy as np
+
         raw = np.frombuffer(out.stdout, dtype=np.int16).astype(np.float32) / 32768.0
         hop = max(int(16000 / fps), 1)
         curve = []
         for i in range(0, max(len(raw) - hop, 1), hop):
-            seg = raw[i:i + hop]
-            curve.append(float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0)
+            seg = raw[i : i + hop]
+            curve.append(float(np.sqrt(np.mean(seg**2))) if len(seg) else 0.0)
         if not curve:
             return []
         mx = max(float(np.percentile(curve, 95)), 1e-4)
@@ -585,6 +662,7 @@ def _build_script_timeline(text: str, duration: float) -> list:
     i扁嘴/u嘟嘴），让嘴型动作真正对上朗读的每个字。
     """
     import re
+
     from pypinyin import Style, pinyin
 
     hanzi = re.compile(r"[\u4e00-\u9fff]")
@@ -614,25 +692,35 @@ def _build_script_timeline(text: str, duration: float) -> list:
     return timeline
 
 
-def _mouth_shape_at(timeline: list, t: float) -> tuple:
+def _mouth_shape_at(timeline: list, t: float, smooth: float = 0.03) -> tuple:
     """当前时刻的字级口型 → (open 0~1, round 0~1)。
 
     字周期内包络：前 15% 张嘴、中间 70% 维持口型、后 15% 收拢，
     形成自然说话感（每个字一次完整的开合）。
+    smooth: 时间窗（秒）。帧渲染是并发无状态的，不能用全局状态做平滑，
+    因此对 t 前后窗口内三点采样加权平均，消除字间开度的硬切换（"打嗝感"）。
     """
-    for ch, start, end, open_, round_ in timeline:
-        if start <= t < end:
-            if open_ <= 0.01:
-                return (0.0, 0.5)
-            prog = (t - start) / max(end - start, 1e-4)
-            if prog < 0.15:
-                env = prog / 0.15
-            elif prog > 0.85:
-                env = (1 - prog) / 0.15
-            else:
-                env = 1.0
-            return (open_ * env, round_)
-    return (0.0, 0.5)
+
+    def _shape_at(t0: float) -> tuple:
+        for _, start, end, open_, round_ in timeline:
+            if start <= t0 < end:
+                if open_ <= 0.01:
+                    return (0.0, 0.5)
+                prog = (t0 - start) / max(end - start, 1e-4)
+                if prog < 0.15:
+                    env = prog / 0.15
+                elif prog > 0.85:
+                    env = (1 - prog) / 0.15
+                else:
+                    env = 1.0
+                return (open_ * env, round_)
+        return (0.0, 0.5)
+
+    if smooth <= 0:
+        return _shape_at(t)
+    half = smooth / 2.0
+    a, b, c = _shape_at(t - half), _shape_at(t), _shape_at(t + half)
+    return ((a[0] + 2 * b[0] + c[0]) / 4.0, (a[1] + 2 * b[1] + c[1]) / 4.0)
 
 
 # ── 逼真化渲染素材：嘴部/眼睑贴图模板 + 摄影棚光影 ─────────────
@@ -645,6 +733,7 @@ _BLINK_PATTERN: list = []
 def _build_blink_pattern(count: int = 260) -> list:
     """确定性眨眼模式：[(间隔秒, 闭眼过程秒)]，间隔 2.2~4.8s 随机（固定种子可复现）。"""
     import random
+
     rnd = random.Random(20260805)
     return [(rnd.uniform(2.2, 4.8), rnd.uniform(0.13, 0.20)) for _ in range(count)]
 
@@ -676,6 +765,7 @@ def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
     key = (open_idx, round_idx)
     if key not in _MOUTH_TEMPLATES:
         import numpy as np
+
         W, H = 128, 96
         open_ratio = open_idx / 5.0
         round_ratio = 0.25 + 0.75 * (round_idx / 3.0)
@@ -733,6 +823,7 @@ def _get_eyelid_template(eye_w: int) -> Image.Image:
     key = eye_w
     if key not in _EYELID_TEMPLATES:
         import numpy as np
+
         w = eye_w
         h = max(8, int(w * 0.32))
         y, x = np.mgrid[0:h, 0:w].astype(np.float32)
@@ -764,6 +855,7 @@ def _get_studio_lighting(w: int, h: int):
     key = (w, h)
     if key not in _LIGHT_CACHE:
         import numpy as np
+
         y, x = np.mgrid[0:h, 0:w].astype(np.float32)
         spot_cx, spot_cy = w * 0.26, h * 0.40
         spot_r = max(w, h) * 0.95
@@ -780,7 +872,9 @@ def _get_studio_lighting(w: int, h: int):
 def _apply_studio_lighting(img: Image.Image, t: float) -> Image.Image:
     """把摄影棚光影叠加到背景帧（人物叠加之前）：主光脉动 + 地面反光 + 暗角。"""
     import math
+
     import numpy as np
+
     spot, floor, vig = _get_studio_lighting(img.width, img.height)
     arr = np.asarray(img).astype(np.float32)
     light = 1.0 + 0.10 * spot * (0.92 + 0.08 * math.sin(t * 0.9))
@@ -794,12 +888,13 @@ def _apply_studio_lighting(img: Image.Image, t: float) -> Image.Image:
 def _hex_to_rgb(hex_str: str) -> tuple:
     """#rrggbb → (r,g,b)。"""
     hex_str = hex_str.lstrip("#")
-    return tuple(int(hex_str[i:i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
 
 
 def _accent_color(bg_hex: str) -> str:
     """从背景色派生高亮主题色（色相偏移 + 提亮），用于字幕当前字/进度条。"""
     import colorsys
+
     r, g, b = _hex_to_rgb(bg_hex)
     h, lightness, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
     h2 = (h + 1 / 12) % 1.0
@@ -812,6 +907,7 @@ def _accent_color(bg_hex: str) -> str:
 def _derive_gradient_colors(bg_hex: str) -> tuple:
     """从背景色派生渐变两端颜色 → (亮端RGB, 暗端RGB)。"""
     import colorsys
+
     r, g, b = _hex_to_rgb(bg_hex)
     h, lightness, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
     dark = colorsys.hls_to_rgb(h, max(lightness - 0.10, 0.06), min(s + 0.05, 1.0))
@@ -823,27 +919,28 @@ def _derive_gradient_colors(bg_hex: str) -> tuple:
 
 
 _GRADIENT_CACHE = {}
+
+
 def _get_gradient_base(w: int, h: int, bg_hex: str):
     """缓存对角渐变基座（numpy float32 数组），避免每帧重新生成。"""
     global _GRADIENT_CACHE
     key = (w, h, bg_hex)
     if key not in _GRADIENT_CACHE:
         import numpy as np
+
         c_light, c_dark = _derive_gradient_colors(bg_hex)
         x = np.linspace(0, 1, w, dtype=np.float32)
         y = np.linspace(0, 1, h, dtype=np.float32)
         xx, yy = np.meshgrid(x, y)
         t = (xx * 0.62 + yy * 0.38)[..., None]
-        _GRADIENT_CACHE[key] = (
-            np.array(c_light, dtype=np.float32) * t
-            + np.array(c_dark, dtype=np.float32) * (1 - t)
-        )
+        _GRADIENT_CACHE[key] = np.array(c_light, dtype=np.float32) * t + np.array(c_dark, dtype=np.float32) * (1 - t)
     return _GRADIENT_CACHE[key]
 
 
 def _make_gradient(w: int, h: int, bg_hex: str, breath: float = 0.0) -> Image.Image:
     """从缓存基座生成渐变帧；breath 为亮度呼吸系数（向量化乘法，~6ms）。"""
     import numpy as np
+
     base = _get_gradient_base(w, h, bg_hex)
     if breath:
         base = base * (1 + 0.03 * breath)  # 呼吸幅度收敛（0.06→0.03），避免背景闪烁感
@@ -862,7 +959,9 @@ def _make_scene_background(bg_id: str, w: int, h: int) -> Image.Image:
     低分辨率绘制 + 放大，模糊成本可控；结果按 (bg_id, w, h) 缓存、固定种子可复现。
     """
     import random
+
     import numpy as np
+
     palettes = {
         # 场景 → 基色 + [(色块颜色, 数量权重), ...]（权重高 = 色块更多更明显）
         "office": [("#f5f0e6", 1.0), ("#e2d9c8", 0.8), ("#cbb99f", 0.5), ("#ffffff", 0.7)],
@@ -901,12 +1000,15 @@ def _build_bg_src(bg: dict, w: int, h: int) -> Image.Image | None:
 
 
 _GLOW_CACHE = {}
+
+
 def _get_glow_template(radius: int = 150, scale: float = 1.0):
     """高斯柔光斑 RGBA 模板（按 (radius, scale) 缓存，避免每帧重复计算/resize）。"""
     global _GLOW_CACHE
     key = (radius, scale)
     if key not in _GLOW_CACHE:
         import numpy as np
+
         r = radius
         y, x = np.ogrid[-r:r, -r:r]
         d2 = x.astype(np.float32) ** 2 + y.astype(np.float32) ** 2
@@ -926,6 +1028,8 @@ def _get_glow_template(radius: int = 150, scale: float = 1.0):
 
 
 _PARTICLES_CACHE = None
+
+
 def _get_particles(count: int = 24) -> list:
     """确定性粒子系统（固定种子，按时间纯函数式计算，无随机状态）。
 
@@ -934,6 +1038,7 @@ def _get_particles(count: int = 24) -> list:
     global _PARTICLES_CACHE
     if _PARTICLES_CACHE is None:
         import random
+
         rnd = random.Random(2026)
         _PARTICLES_CACHE = [
             {
@@ -952,6 +1057,7 @@ def _get_particles(count: int = 24) -> list:
 def _draw_particles(img: Image.Image, t: float) -> None:
     """绘制漂浮粒子：缓慢上升 + 左右摆动 + 明暗闪烁。"""
     import math
+
     w, h = img.size
     d = ImageDraw.Draw(img)
     for p in _get_particles():
@@ -963,8 +1069,9 @@ def _draw_particles(img: Image.Image, t: float) -> None:
         d.ellipse([px - r, py - r, px + r, py + r], fill=f"#ffffff{alpha:02x}")
 
 
-def _draw_karaoke(draw, lines: list, progress: float, font, x: int, y0: int,
-                  line_h: int, accent: str, max_rows: int = 12) -> None:
+def _draw_karaoke(
+    draw, lines: list, progress: float, font, x: int, y0: int, line_h: int, accent: str, max_rows: int = 12
+) -> None:
     """卡拉OK逐字字幕：已读行整行半透明白，当前行逐字显示且当前字主题色高亮。"""
     if not lines:
         return
@@ -991,7 +1098,8 @@ def _draw_karaoke(draw, lines: list, progress: float, font, x: int, y0: int,
     line_w = draw.textlength(line, font=font)
     draw.rounded_rectangle(
         [x - 8, y_cur - 3, x + line_w + 8, y_cur + line_h - 5],
-        radius=7, fill="#0000003a",
+        radius=7,
+        fill="#0000003a",
     )
     cur_x = x
     for j, ch in enumerate(line):
@@ -1005,15 +1113,23 @@ def _draw_karaoke(draw, lines: list, progress: float, font, x: int, y0: int,
         cur_x += draw.textlength(ch, font=font)
 
 
-def _render_frame(
-    avatar: dict, bg_hex: str, fonts: dict,
-    portrait, text_lines: list,
-    t: float, progress: float, width: int, height: int,
-    energy: float = 0.0, mouth_shape: tuple = (0.0, 0.5),
+def _render_frame(  # noqa: C901
+    avatar: dict,
+    bg_hex: str,
+    fonts: dict,
+    portrait,
+    text_lines: list,
+    t: float,
+    progress: float,
+    width: int,
+    height: int,
+    energy: float = 0.0,
+    mouth_shape: tuple = (0.0, 0.5),
     bg_img: Image.Image | None = None,
 ) -> Image.Image:
     """绘制一帧：拟摄影/动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
     import math
+
     S = width / 1280.0  # 渲染缩放系数（Ken Burns 放大画布时保持坐标比例）
 
     # ── 1. 背景底图：image 类型用拟摄影底图（静态，动态感由光斑/光影承担），
@@ -1030,9 +1146,13 @@ def _render_frame(
     draw = ImageDraw.Draw(ui)
 
     # ── 2. 高斯柔光斑（缓慢漂移，营造摄影棚光效）──
-    for i, (gx, gy, scale) in enumerate([
-        (0.82, 0.20, 1.6), (0.12, 0.72, 1.3), (0.58, 0.92, 1.9),
-    ]):
+    for i, (gx, gy, scale) in enumerate(
+        [
+            (0.82, 0.20, 1.6),
+            (0.12, 0.72, 1.3),
+            (0.58, 0.92, 1.9),
+        ]
+    ):
         layer = _get_glow_template(150, scale)
         cx = int(width * gx + math.sin(t * 0.3 + i * 2.1) * 40 * S)
         cy = int(height * gy + math.cos(t * 0.25 + i * 1.7) * 30 * S)
@@ -1062,9 +1182,9 @@ def _render_frame(
         if face_meta:
             cy_c = face_meta["cy"]
             head_h_c = face_meta["head_w"] * 1.30  # 头高估计（检测带宽含肩，按唇色实测校准）
-            eye_y_c = cy_c - 12            # 眼 ≈ 肤色区上界（眉骨附近）
-            mouth_y_c = cy_c + head_h_c * 0.15   # 唇：实测校准（唇-头中心差 ≈ 0.15 x 头高）
-            cheek_y_c = cy_c + head_h_c * 0.08   # 颊：眼唇之间
+            eye_y_c = cy_c - 12  # 眼 ≈ 肤色区上界（眉骨附近）
+            mouth_y_c = cy_c + head_h_c * 0.15  # 唇：实测校准（唇-头中心差 ≈ 0.15 x 头高）
+            cheek_y_c = cy_c + head_h_c * 0.08  # 颊：眼唇之间
             cheek_dx_c = face_meta["head_w"] * 0.32
         else:
             eye_y_c, mouth_y_c, cheek_y_c, cheek_dx_c = 240, 340, 290, 140
@@ -1075,10 +1195,8 @@ def _render_frame(
         # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
         tilt = 0.9 * sway_t * (1.0 + 0.9 * talk) + 0.45 * talk * math.sin(t * 2.9) + 0.22 * math.sin(t * 5.1)
         nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
-        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(
-            tilt, resample=Image.BILINEAR, center=nod_pivot)
-        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(
-            tilt, resample=Image.BILINEAR, center=nod_pivot)
+        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
+        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
         # 垂直浮动 + 水平摇摆（幅度收敛，说话时叠加轻微起伏）
         float_offset = int((breathe_t * 6 + talk * 4 * math.sin(t * 2.8)) * S)
         sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
@@ -1095,7 +1213,9 @@ def _render_frame(
         # 阴影 + 写真
         shadow = Image.new("RGBA", (p_w + 20, p_h + 20), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).rounded_rectangle(
-            [10, 10, p_w + 10, p_h + 10], radius=40, fill=(0, 0, 0, 50),
+            [10, 10, p_w + 10, p_h + 10],
+            radius=40,
+            fill=(0, 0, 0, 50),
         )
         img.paste(shadow, (px - 5, py - 5), shadow)
         img.paste(p_img, (px, py), p_mask)
@@ -1120,8 +1240,7 @@ def _render_frame(
         cd = ImageDraw.Draw(cheek)
         for s in (-1.0, 1.0):
             cex = cheek_w + 2 + int(s * cheek_dx_c * bx * breath_scale)
-            cd.ellipse([cex - cheek_w, 2, cex + cheek_w, 2 + cheek_h * 2],
-                       fill=(240, 120, 130, cheek_alpha))
+            cd.ellipse([cex - cheek_w, 2, cex + cheek_w, 2 + cheek_h * 2], fill=(240, 120, 130, cheek_alpha))
         cheek = cheek.filter(ImageFilter.GaussianBlur(cheek_w * 0.55))
         img.paste(cheek, (px + int(p_w * 0.5) - cheek.width // 2, cheek_y - cheek.height // 2), cheek)
 
@@ -1136,7 +1255,8 @@ def _render_frame(
             mw = max(6, int(p_w * (0.20 + 0.08 * roundness)))
             mh = max(3, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
             mouth_layer = _get_mouth_template(open_idx, round_idx).resize(
-                (mw, mh), Image.LANCZOS,
+                (mw, mh),
+                Image.LANCZOS,
             )
             mx = px + int(p_w * 0.49)
             my = py + int(mouth_y_c * by * breath_scale)
@@ -1145,8 +1265,7 @@ def _render_frame(
         # 光环脉动
         glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow_layer)
-        gd.rounded_rectangle([60, 55, p_w + 60, p_h + 55], radius=48,
-                             outline=(255, 255, 255, glow_alpha), width=6)
+        gd.rounded_rectangle([60, 55, p_w + 60, p_h + 55], radius=48, outline=(255, 255, 255, glow_alpha), width=6)
         img.paste(glow_layer, (px - 60, py - 55), glow_layer)
     else:
         # fallback：emoji 大头像（有真实人物感）
@@ -1165,7 +1284,8 @@ def _render_frame(
         glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         ImageDraw.Draw(glow).ellipse(
             [cx - r - 18, cy - r - 18, cx + r + 18, cy + r + 18],
-            outline=(255, 255, 255, glow_alpha), width=6,
+            outline=(255, 255, 255, glow_alpha),
+            width=6,
         )
         img.paste(glow, (0, 0), glow)
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ffffff12", outline="#ffffff30", width=4)
@@ -1211,8 +1331,11 @@ def _render_frame(
     if style_text:
         tag_w = draw.textbbox((0, 0), style_text, font=fonts["tag"])[2] + 20
         draw.rounded_rectangle(
-            [right_x, int(108 * S), right_x + tag_w, int(134 * S)], radius=12,
-            fill="#ffffff20", outline="#ffffff30", width=1,
+            [right_x, int(108 * S), right_x + tag_w, int(134 * S)],
+            radius=12,
+            fill="#ffffff20",
+            outline="#ffffff30",
+            width=1,
         )
         draw.text((right_x + 10, int(110 * S)), style_text, fill="#ffffffcc", font=fonts["tag"])
 
@@ -1220,13 +1343,21 @@ def _render_frame(
 
     accent = _accent_color(bg_hex)
     _draw_karaoke(
-        draw, text_lines, progress, fonts["body"],
-        right_x, int(175 * S), int(32 * S), accent,
+        draw,
+        text_lines,
+        progress,
+        fonts["body"],
+        right_x,
+        int(175 * S),
+        int(32 * S),
+        accent,
     )
     if len(text_lines) > 12:
         draw.text(
             (right_x, int(175 * S) + 12 * int(32 * S)),
-            f"...共{sum(len(ln) for ln in text_lines)}字", fill="#ffffff55", font=fonts["tag"],
+            f"...共{sum(len(ln) for ln in text_lines)}字",
+            fill="#ffffff55",
+            font=fonts["tag"],
         )
 
     # ── 6. 底部：品牌信息 + 主题色进度条 ──
@@ -1244,20 +1375,30 @@ def _render_frame(
     bar_w = width - int(60 * S)
     draw.rounded_rectangle(
         [int(30 * S), bar_y, int(30 * S) + bar_w, bar_y + int(6 * S)],
-        radius=3, fill="#ffffff20",
+        radius=3,
+        fill="#ffffff20",
     )
     fill_w = int(bar_w * progress)
     if fill_w > 4:
         draw.rounded_rectangle(
             [int(30 * S), bar_y, int(30 * S) + fill_w, bar_y + int(6 * S)],
-            radius=3, fill=accent,
+            radius=3,
+            fill=accent,
         )
 
     return Image.alpha_composite(img.convert("RGBA"), ui).convert("RGB")
 
 
-def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_path: str,
-                  resolution: str = "720p", fps: int = 15, watermark: bool = False) -> None:
+def _render_video(
+    text: str,
+    avatar: dict,
+    bg: dict,
+    audio_path: str,
+    output_path: str,
+    resolution: str = "720p",
+    fps: int = 15,
+    watermark: bool = False,
+) -> None:
     """真实视频感多帧渲染：动态背景粒子 + 卡拉OK逐字字幕 + 镜头缓慢推近。
 
     相比静态图循环，加入全套时序动画呈现"直播/口播视频"观感：
@@ -1276,19 +1417,20 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     bg_hex = bg.get("color", "#1a1a2e")
     if bg_hex.startswith("linear-gradient"):
         import re
+
         m = re.search(r"#[0-9a-fA-F]{6}", bg_hex)
         bg_hex = m.group(0) if m else "#667eea"
 
     # 字体（优先中文 GB 字体：PingFang.ttc 在部分 macOS 无法加载，
     # Helvetica 等西文字体渲染中文为豆腐块，故候选按中文字形可用性排序）
     FONT_CANDIDATES = [
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",       # 中文黑体（简体全覆盖）
-        "/System/Library/Fonts/STHeiti Light.ttc",          # 黑体-简
-        "/System/Library/Fonts/Supplemental/Songti.ttc",    # 宋体
-        "/System/Library/Fonts/PingFang.ttc",               # 部分 macOS 可加载
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",   # Linux 容器：文泉驿（简体字型，优先于 Noto JP 变体）
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",  # 中文黑体（简体全覆盖）
+        "/System/Library/Fonts/STHeiti Light.ttc",  # 黑体-简
+        "/System/Library/Fonts/Supplemental/Songti.ttc",  # 宋体
+        "/System/Library/Fonts/PingFang.ttc",  # 部分 macOS 可加载
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",  # Linux 容器：文泉驿（简体字型，优先于 Noto JP 变体）
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux 容器：Noto CJK
-        "/System/Library/Fonts/Helvetica.ttc",              # 英文兜底
+        "/System/Library/Fonts/Helvetica.ttc",  # 英文兜底
         "/System/Library/Fonts/ArialHB.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -1332,10 +1474,18 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
         mouth_shape = _mouth_shape_at(script_timeline, t)
         frame = _render_frame(
-            avatar=avatar, bg_hex=bg_hex, fonts=fonts,
-            portrait=portrait, text_lines=text_lines,
-            t=t, progress=progress, width=RENDER_W, height=RENDER_H,
-            energy=energy, mouth_shape=mouth_shape, bg_img=bg_img,
+            avatar=avatar,
+            bg_hex=bg_hex,
+            fonts=fonts,
+            portrait=portrait,
+            text_lines=text_lines,
+            t=t,
+            progress=progress,
+            width=RENDER_W,
+            height=RENDER_H,
+            energy=energy,
+            mouth_shape=mouth_shape,
+            bg_img=bg_img,
         )
         # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
         zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
@@ -1349,7 +1499,8 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         x0 = max(0, min(x0, RENDER_W - win_w))
         y0 = max(0, min(y0, RENDER_H - win_h))
         frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
-            (OUT_W, OUT_H), Image.LANCZOS,
+            (OUT_W, OUT_H),
+            Image.LANCZOS,
         )
         # 开头淡入 / 结尾淡出
         fade = 1.0
@@ -1390,22 +1541,36 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
             # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
             # 去除 JPG 帧软糊感；硬件编码器（videotoolbox/nvenc）不支持 qscale
             # （ffmpeg 8.x 报错）改用目标码率模式，libx264 用 crf 18
-            quality_args = (["-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M"]
-                            if enc != "libx264" else ["-crf", "18"])
+            quality_args = ["-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M"] if enc != "libx264" else ["-crf", "18"]
             subprocess.run(
                 [
-                    "ffmpeg", "-y",
-                    "-framerate", str(fps),
-                    "-i", os.path.join(frames_dir, "%04d.jpg"),
-                    "-i", audio_path,
-                    "-c:v", enc, "-pix_fmt", "yuv420p",
-                    "-vf", "unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
+                    "ffmpeg",
+                    "-y",
+                    "-framerate",
+                    str(fps),
+                    "-i",
+                    os.path.join(frames_dir, "%04d.jpg"),
+                    "-i",
+                    audio_path,
+                    "-c:v",
+                    enc,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-vf",
+                    "unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
                     *quality_args,
-                    "-c:a", "aac", "-b:a", "128k",
-                    "-shortest", "-movflags", "+faststart",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-shortest",
+                    "-movflags",
+                    "+faststart",
                     output_path,
                 ],
-                check=True, capture_output=True, timeout=900,
+                check=True,
+                capture_output=True,
+                timeout=900,
             )
         except subprocess.CalledProcessError as e:
             # 把 ffmpeg stderr 带进错误信息，否则用户只能看到 exit code，无法诊断
@@ -1544,7 +1709,9 @@ def _load_custom_avatars(user_id: str = "") -> dict:
         d["is_custom"] = True
         # /uploads/dh_avatars/xxx.jpg → 本地绝对路径（渲染引擎用）
         url = d.get("image_url") or ""
-        d["local_image_path"] = os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        d["local_image_path"] = (
+            os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        )
         out[d["id"]] = d
     return out
 
@@ -1564,7 +1731,9 @@ def _load_custom_voices(user_id: str = "") -> dict:
         d = dict(r)
         d["is_custom"] = True
         url = d.get("audio_url") or ""
-        d["local_audio_path"] = os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        d["local_audio_path"] = (
+            os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
+        )
         out[d["id"]] = d
     return out
 
@@ -1598,7 +1767,7 @@ async def upload_custom_avatar(
         img.thumbnail((1024, 1024), Image.LANCZOS)
         img.save(path, "JPEG", quality=92)
     except Exception as e:
-        raise HTTPException(400, f"图片解析失败: {e}")
+        raise HTTPException(400, f"图片解析失败: {e}") from e
     image_url = f"/uploads/dh_avatars/{filename}"
     conn = get_db()
     try:
@@ -1606,13 +1775,24 @@ async def upload_custom_avatar(
         conn.execute(
             "INSERT INTO digital_human_custom_avatars (id, user_id, name, style, gender, desc, emoji, image_url, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
-            (avatar_id, user, (name or "我的形象").strip()[:20], "自定义形象", "自定义",
-             (desc or "").strip()[:100], "🖼️", image_url, datetime.now().isoformat()),
+            (
+                avatar_id,
+                user,
+                (name or "我的形象").strip()[:20],
+                "自定义形象",
+                "自定义",
+                (desc or "").strip()[:100],
+                "🖼️",
+                image_url,
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
     finally:
         conn.close()
-    return {"avatar": {"id": avatar_id, "name": name.strip()[:20] or "我的形象", "image_url": image_url, "is_custom": True}}
+    return {
+        "avatar": {"id": avatar_id, "name": name.strip()[:20] or "我的形象", "image_url": image_url, "is_custom": True}
+    }
 
 
 @router.get("/custom-avatars")
@@ -1630,7 +1810,8 @@ async def delete_custom_avatar(avatar_id: str, current_user: dict = require_auth
     try:
         _ensure_tables(conn)
         row = conn.execute(
-            "SELECT image_url FROM digital_human_custom_avatars WHERE id=? AND user_id=?", (avatar_id, user),
+            "SELECT image_url FROM digital_human_custom_avatars WHERE id=? AND user_id=?",
+            (avatar_id, user),
         ).fetchone()
         if not row:
             raise HTTPException(404, "自定义形象不存在")
@@ -1681,13 +1862,29 @@ async def upload_custom_voice(
         conn.execute(
             "INSERT INTO digital_human_custom_voices (id, user_id, name, desc, emoji, audio_url, duration, created_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            (voice_id, user, (name or "我的声音").strip()[:20], (desc or "").strip()[:100], "🎙️",
-             audio_url, round(duration, 1), datetime.now().isoformat()),
+            (
+                voice_id,
+                user,
+                (name or "我的声音").strip()[:20],
+                (desc or "").strip()[:100],
+                "🎙️",
+                audio_url,
+                round(duration, 1),
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
     finally:
         conn.close()
-    return {"voice": {"id": voice_id, "name": name.strip()[:20] or "我的声音", "audio_url": audio_url, "duration": round(duration, 1), "is_custom": True}}
+    return {
+        "voice": {
+            "id": voice_id,
+            "name": name.strip()[:20] or "我的声音",
+            "audio_url": audio_url,
+            "duration": round(duration, 1),
+            "is_custom": True,
+        }
+    }
 
 
 @router.get("/custom-voices")
@@ -1705,7 +1902,8 @@ async def delete_custom_voice(voice_id: str, current_user: dict = require_auth()
     try:
         _ensure_tables(conn)
         row = conn.execute(
-            "SELECT audio_url FROM digital_human_custom_voices WHERE id=? AND user_id=?", (voice_id, user),
+            "SELECT audio_url FROM digital_human_custom_voices WHERE id=? AND user_id=?",
+            (voice_id, user),
         ).fetchone()
         if not row:
             raise HTTPException(404, "自定义声音不存在")
@@ -1741,15 +1939,37 @@ WATERMARK_TEXT = "AI 数字人 · 小团智能"
 # 广告法极限词（最/第一/顶级等）仅作提示不拦截——口语叙事中"第一次/最好"
 # 属正常表达，硬拦截会误伤正常文案，故从硬拦截列表剔除。
 _HARD_BLOCK_WORDS = [
-    "点击领取", "免费领取", "立即抢购", "限时抢购", "免费送", "免费领",
-    "加微信", "加QQ", "扫码加", "私信我",
-    "日赚", "月入过万", "躺赚", "暴富", "发财",
-    "包治", "根治", "治愈", "神药", "特效",
-    "赌博", "彩票", "时时彩", "六合彩", "翻墙", "科学上网",
+    "点击领取",
+    "免费领取",
+    "立即抢购",
+    "限时抢购",
+    "免费送",
+    "免费领",
+    "加微信",
+    "加QQ",
+    "扫码加",
+    "私信我",
+    "日赚",
+    "月入过万",
+    "躺赚",
+    "暴富",
+    "发财",
+    "包治",
+    "根治",
+    "治愈",
+    "神药",
+    "特效",
+    "赌博",
+    "彩票",
+    "时时彩",
+    "六合彩",
+    "翻墙",
+    "科学上网",
 ]
 
 
 # ── API ──────────────────────────────────────────────────────
+
 
 @router.get("/avatars")
 async def list_avatars():
@@ -1784,6 +2004,7 @@ async def list_scenes():
 
 # ── 写真肖像 API ────────────────────────────────────────────
 
+
 @router.get("/portraits")
 async def list_portraits():
     """列出所有已缓存的数字人写真肖像。"""
@@ -1791,13 +2012,15 @@ async def list_portraits():
     for avatar in AVATARS:
         portrait_path = _get_portrait_path(avatar["id"])
         exists = os.path.exists(portrait_path)
-        portraits.append({
-            "avatar_id": avatar["id"],
-            "avatar_name": avatar["name"],
-            "avatar_emoji": avatar["emoji"],
-            "exists": exists,
-            "url": _get_portrait_url(avatar["id"]) if exists else None,
-        })
+        portraits.append(
+            {
+                "avatar_id": avatar["id"],
+                "avatar_name": avatar["name"],
+                "avatar_emoji": avatar["emoji"],
+                "exists": exists,
+                "url": _get_portrait_url(avatar["id"]) if exists else None,
+            }
+        )
     return {"portraits": portraits, "total": len(portraits), "cached": sum(1 for p in portraits if p["exists"])}
 
 
@@ -1841,20 +2064,24 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     for avatar in AVATARS:
         portrait_path = _get_portrait_path(avatar["id"])
         if os.path.exists(portrait_path):
-            results.append({
-                "avatar_id": avatar["id"],
-                "avatar_name": avatar["name"],
-                "success": True,
-                "cached": True,
-            })
+            results.append(
+                {
+                    "avatar_id": avatar["id"],
+                    "avatar_name": avatar["name"],
+                    "success": True,
+                    "cached": True,
+                }
+            )
             continue
         path = _generate_portrait(avatar["id"])
-        results.append({
-            "avatar_id": avatar["id"],
-            "avatar_name": avatar["name"],
-            "success": path is not None,
-            "cached": False,
-        })
+        results.append(
+            {
+                "avatar_id": avatar["id"],
+                "avatar_name": avatar["name"],
+                "success": path is not None,
+                "cached": False,
+            }
+        )
     return {
         "results": results,
         "total": len(results),
@@ -1864,8 +2091,13 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     }
 
 
-def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
-                  progress: Callable[[float, str], None] | None = None) -> dict:
+def _generate_one(  # noqa: C901
+    req: GenerateRequest,
+    user: str,
+    uid: str,
+    role: str = "",
+    progress: Callable[[float, str], None] | None = None,
+) -> dict:
     """单条数字人视频生成流水线（供单条接口与批量任务复用）。
 
     流程：
@@ -1886,6 +2118,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
 
     # 0. 商业配额：生成消耗 1 次今日额度（管理员/VIP 不受限）
     from common.auth import consume_quota, get_quota_info
+
     quota = consume_quota(uid)
     if not quota.get("allowed"):
         raise HTTPException(
@@ -1897,6 +2130,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
     # 0.5 内容安全：硬违规词直接拒绝生成；广告法极限词/中风险词放行但提示
     try:
         from content_strategy import _scan_text
+
         hits = _scan_text(req.text)
     except Exception:
         hits = []
@@ -1949,6 +2183,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
         _report(20, "正在合成配音…")
         try:
             from voice_factory import _tts_one
+
             audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
             if not audio_bytes:
                 raise RuntimeError("TTS 返回空音频")
@@ -2010,19 +2245,33 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
             background_id, scene_id, text, text_length, status,
             audio_url, video_url, error, resolution, fps, watermark, created_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
-        (record_id, user, req.avatar_id, avatar["name"], req.voice_id, voice["name"],
-         req.background_id, req.scene_id, optimized_text, len(optimized_text),
-         status, audio_url, video_url, error_msg,
-         req.resolution, req.fps, 1 if use_watermark else 0,
-         datetime.now().isoformat()),
+        (
+            record_id,
+            user,
+            req.avatar_id,
+            avatar["name"],
+            req.voice_id,
+            voice["name"],
+            req.background_id,
+            req.scene_id,
+            optimized_text,
+            len(optimized_text),
+            status,
+            audio_url,
+            video_url,
+            error_msg,
+            req.resolution,
+            req.fps,
+            1 if use_watermark else 0,
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
     _report(95, "记录已保存")
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("digital_human", len(req.text), len(optimized_text), elapsed,
-              success=not error_msg)
+    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg)
     _report(100, "生成完成")
 
     return {
@@ -2037,8 +2286,7 @@ def _generate_one(req: GenerateRequest, user: str, uid: str, role: str = "",
         "watermark": use_watermark,
         "quota_remaining": quota.get("remaining"),
         "sensitive_warning": (
-            f"文案含风险词（{', '.join(risk_hits[:6])}），发布到平台时可能限流，建议修改"
-            if risk_hits else ""
+            f"文案含风险词（{', '.join(risk_hits[:6])}），发布到平台时可能限流，建议修改" if risk_hits else ""
         ),
         "audio_url": audio_url,
         "video_url": video_url,
@@ -2057,14 +2305,16 @@ def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:
     """异步提交前快速失败预检：违规词 / 今日额度 / 素材参数（不消耗配额，执行时再扣）。"""
     try:
         from content_strategy import _scan_text
-        hits = _scan_text(req.text)
+
+        _scan_text(req.text)  # 触发内容策略扫描（软校验，结果不阻断预检）
     except Exception:
-        hits = []
+        pass
     lower_text = req.text.lower()
     hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
     if hard_hits:
         raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
     from common.auth import get_quota_info
+
     qi = get_quota_info(uid) or {}
     remaining = qi.get("remaining_today")
     if remaining is not None and remaining <= 0:
@@ -2127,7 +2377,10 @@ async def generate(
 
 @router.get("/records")
 async def list_records(
-    page: int = 1, page_size: int = 20, status: str = "", q: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "",
+    q: str = "",
     current_user: dict = require_auth(),
 ):
     """历史记录分页查询：状态筛选（done/audio_only/failed）+ 关键词搜索（文案/形象/声音）。"""
@@ -2144,11 +2397,11 @@ async def list_records(
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     total = conn.execute(
-        f"SELECT COUNT(*) FROM digital_human_records WHERE {' AND '.join(where)}", args,
+        f"SELECT COUNT(*) FROM digital_human_records WHERE {' AND '.join(where)}",
+        args,
     ).fetchone()[0]
     rows = conn.execute(
-        f"SELECT * FROM digital_human_records WHERE {' AND '.join(where)}"
-        f" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        f"SELECT * FROM digital_human_records WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT ? OFFSET ?",
         args + [page_size, (page - 1) * page_size],
     ).fetchall()
     conn.close()
@@ -2167,7 +2420,8 @@ def _url_to_path(url: str) -> str:
 def _delete_record_files(conn, record_id: str) -> None:
     """删除记录关联的音频/视频文件（释放磁盘空间）。"""
     row = conn.execute(
-        "SELECT audio_url, video_url FROM digital_human_records WHERE id=?", (record_id,),
+        "SELECT audio_url, video_url FROM digital_human_records WHERE id=?",
+        (record_id,),
     ).fetchone()
     if not row:
         return
@@ -2213,6 +2467,7 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
 # 批量生产流水线：多条文案 → 后台线程逐条生成 → 进度查询 → ZIP 打包
 # ══════════════════════════════════════════════════════════════
 
+
 class BatchGenerateRequest(BaseModel):
     texts: list[str] = Field(..., min_length=1, max_length=50, description="文案列表（1-50 条）")
     avatar_id: str = Field("business-female", description="数字人形象ID")
@@ -2249,39 +2504,62 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
         if not row:
             return None
         items = conn.execute(
-            "SELECT * FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx", (batch_id,),
+            "SELECT * FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx",
+            (batch_id,),
         ).fetchall()
     finally:
         conn.close()
     return {
-        "id": row["id"], "user": row["user_id"], "status": row["status"],
+        "id": row["id"],
+        "user": row["user_id"],
+        "status": row["status"],
         "total": row["total"],
         "done": row["success"] + row["failed"] + row["skipped"],
-        "success": row["success"], "failed": row["failed"], "skipped": row["skipped"],
-        "avatar_id": row["avatar_id"], "avatar_name": row["avatar_name"],
-        "resolution": row["resolution"], "fps": row["fps"],
-        "voice_id": row["voice_id"], "background_id": row["background_id"],
+        "success": row["success"],
+        "failed": row["failed"],
+        "skipped": row["skipped"],
+        "avatar_id": row["avatar_id"],
+        "avatar_name": row["avatar_name"],
+        "resolution": row["resolution"],
+        "fps": row["fps"],
+        "voice_id": row["voice_id"],
+        "background_id": row["background_id"],
         "speed": row["speed"],
-        "created_at": row["created_at"], "finished_at": row["finished_at"],
+        "created_at": row["created_at"],
+        "finished_at": row["finished_at"],
         "items": [
-            {"index": r["idx"], "text_preview": r["text"][:40], "status": r["status"],
-             "error": r["error"], "record_id": r["record_id"],
-             "audio_url": r["audio_url"], "video_url": r["video_url"],
-             "watermark": bool(r["watermark"]), "sensitive_warning": r["sensitive_warning"]}
+            {
+                "index": r["idx"],
+                "text_preview": r["text"][:40],
+                "status": r["status"],
+                "error": r["error"],
+                "record_id": r["record_id"],
+                "audio_url": r["audio_url"],
+                "video_url": r["video_url"],
+                "watermark": bool(r["watermark"]),
+                "sensitive_warning": r["sensitive_warning"],
+            }
             for r in items
         ],
     }
 
 
-def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
-                  user: str, uid: str, role: str, indexes: list[int] | None = None) -> None:
+def _batch_worker(
+    batch_id: str,
+    texts: list[str],
+    req: BatchGenerateRequest,
+    user: str,
+    uid: str,
+    role: str,
+    indexes: list[int] | None = None,
+) -> None:
     """后台批量生成：逐条走完整流水线；违规词/超短文案直接失败（不浪费配额）。
 
     indexes 非空时表示部分重试（只处理指定下标）；每条结果实时落库，进程重启可从 DB 恢复。
     """
     task = _BATCH_TASKS[batch_id]
     try:
-        for i in (indexes if indexes is not None else range(len(texts))):
+        for i in indexes if indexes is not None else range(len(texts)):
             item = task["items"][i]
             text = texts[i].strip()
             if len(text) < 5:
@@ -2293,10 +2571,15 @@ def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
             else:
                 try:
                     sub = GenerateRequest(
-                        text=text, avatar_id=req.avatar_id, voice_id=req.voice_id,
-                        background_id=req.background_id, scene_id=req.scene_id,
-                        speed=req.speed, resolution=req.resolution,
-                        fps=req.fps, watermark=req.watermark,
+                        text=text,
+                        avatar_id=req.avatar_id,
+                        voice_id=req.voice_id,
+                        background_id=req.background_id,
+                        scene_id=req.scene_id,
+                        speed=req.speed,
+                        resolution=req.resolution,
+                        fps=req.fps,
+                        watermark=req.watermark,
                     )
                     res = _generate_one(sub, user, uid, role)
                     if res["status"] == "done":
@@ -2328,10 +2611,17 @@ def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
                        SET status=?, error=?, record_id=?, audio_url=?, video_url=?,
                            watermark=?, sensitive_warning=?
                        WHERE batch_id=? AND idx=?""",
-                    (item["status"], item["error"], item.get("record_id", ""),
-                     item.get("audio_url", ""), item.get("video_url", ""),
-                     1 if item.get("watermark") else 0,
-                     item.get("sensitive_warning", ""), batch_id, i),
+                    (
+                        item["status"],
+                        item["error"],
+                        item.get("record_id", ""),
+                        item.get("audio_url", ""),
+                        item.get("video_url", ""),
+                        1 if item.get("watermark") else 0,
+                        item.get("sensitive_warning", ""),
+                        batch_id,
+                        i,
+                    ),
                 )
     except Exception:
         logger.exception("batch worker crashed %s", batch_id)
@@ -2349,8 +2639,7 @@ def _batch_worker(batch_id: str, texts: list[str], req: BatchGenerateRequest,
             """UPDATE digital_human_batches
                SET status=?, success=?, failed=?, skipped=?, finished_at=?
                WHERE id=?""",
-            (task["status"], task["success"], task["failed"], task["skipped"],
-             task["finished_at"], batch_id),
+            (task["status"], task["success"], task["failed"], task["skipped"], task["finished_at"], batch_id),
         )
 
 
@@ -2387,6 +2676,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
         raise HTTPException(400, "单次最多 50 条文案")
     # 预检配额：今日剩余为 0 直接拒绝（避免空跑任务）
     from common.auth import get_quota_info
+
     qi = get_quota_info(uid) or {}
     remaining = qi.get("remaining_today")
     if remaining is not None and remaining <= 0:
@@ -2396,9 +2686,17 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
     avatar_name = avatar["name"] if avatar else req.avatar_id
     batch_id = f"dhb_{uuid.uuid4().hex[:10]}"
     items = [
-        {"index": i, "text_preview": t[:40], "status": "pending", "error": "",
-         "record_id": "", "audio_url": "", "video_url": "",
-         "watermark": False, "sensitive_warning": ""}
+        {
+            "index": i,
+            "text_preview": t[:40],
+            "status": "pending",
+            "error": "",
+            "record_id": "",
+            "audio_url": "",
+            "video_url": "",
+            "watermark": False,
+            "sensitive_warning": "",
+        }
         for i, t in enumerate(texts)
     ]
     # 持久化落库 + 运行中任务数限制（同用户最多 2 个，防止堆积打爆资源）
@@ -2416,10 +2714,24 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
                 avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed,
                 created_at, finished_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (batch_id, user, "running", len(texts), 0, 0, 0,
-             req.avatar_id, avatar_name, req.resolution, req.fps,
-             req.voice_id, req.background_id, req.speed,
-             datetime.now().isoformat(), ""),
+            (
+                batch_id,
+                user,
+                "running",
+                len(texts),
+                0,
+                0,
+                0,
+                req.avatar_id,
+                avatar_name,
+                req.resolution,
+                req.fps,
+                req.voice_id,
+                req.background_id,
+                req.speed,
+                datetime.now().isoformat(),
+                "",
+            ),
         )
         for i, t in enumerate(texts):
             conn.execute(
@@ -2427,12 +2739,23 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
                 (batch_id, i, t, "pending"),
             )
     task = {
-        "id": batch_id, "user": user, "status": "running",
-        "total": len(texts), "done": 0, "success": 0, "failed": 0, "skipped": 0,
-        "avatar_id": req.avatar_id, "avatar_name": avatar_name,
-        "resolution": req.resolution, "fps": req.fps,
-        "voice_id": req.voice_id, "background_id": req.background_id, "speed": req.speed,
-        "created_at": datetime.now().isoformat(), "finished_at": "",
+        "id": batch_id,
+        "user": user,
+        "status": "running",
+        "total": len(texts),
+        "done": 0,
+        "success": 0,
+        "failed": 0,
+        "skipped": 0,
+        "avatar_id": req.avatar_id,
+        "avatar_name": avatar_name,
+        "resolution": req.resolution,
+        "fps": req.fps,
+        "voice_id": req.voice_id,
+        "background_id": req.background_id,
+        "speed": req.speed,
+        "created_at": datetime.now().isoformat(),
+        "finished_at": "",
         "items": items,
     }
     with _BATCH_LOCK:
@@ -2444,8 +2767,12 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
                 del _BATCH_TASKS[k]
     threading.Thread(target=_batch_worker, args=(batch_id, texts, req, user, uid, role), daemon=True).start()
     return {
-        "batch_id": batch_id, "total": len(texts), "status": "running",
-        "avatar_name": avatar_name, "resolution": req.resolution, "fps": req.fps,
+        "batch_id": batch_id,
+        "total": len(texts),
+        "status": "running",
+        "avatar_name": avatar_name,
+        "resolution": req.resolution,
+        "fps": req.fps,
     }
 
 
@@ -2464,7 +2791,9 @@ async def download_batch(batch_id: str, current_user: dict = require_auth()):
     """打包下载批量任务的全部成功视频（ZIP，文件名含序号+形象+记录ID）。"""
     import io
     import zipfile
+
     from fastapi.responses import StreamingResponse
+
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     task = _BATCH_TASKS.get(batch_id) or _load_batch_from_db(batch_id)
     if not task or task["user"] != user:
@@ -2505,47 +2834,62 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
     if task["failed"] == 0:
         raise HTTPException(400, "没有失败项需要重试")
     retry_indexes = [
-        item["index"] for item in task["items"]
-        if item["status"] == "failed" and "违规词" not in item["error"]
-        and "文案太短" not in item["error"]
+        item["index"]
+        for item in task["items"]
+        if item["status"] == "failed" and "违规词" not in item["error"] and "文案太短" not in item["error"]
     ]
     if not retry_indexes:
         raise HTTPException(400, "失败项均为内容问题（违规词/文案过短），无需重试")
     # 完整文案从 DB 读取（text_preview 被截断，重试必须用原文）
     with get_db_context() as conn:
         rows = conn.execute(
-            "SELECT idx, text FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx", (batch_id,),
+            "SELECT idx, text FROM digital_human_batch_items WHERE batch_id=? ORDER BY idx",
+            (batch_id,),
         ).fetchall()
     full_texts = [r["text"] for r in rows]
     req = BatchGenerateRequest(
         texts=full_texts,
-        avatar_id=task["avatar_id"], voice_id=task["voice_id"],
-        background_id=task["background_id"], scene_id="product",
-        speed=task["speed"], resolution=task["resolution"], fps=task["fps"],
+        avatar_id=task["avatar_id"],
+        voice_id=task["voice_id"],
+        background_id=task["background_id"],
+        scene_id="product",
+        speed=task["speed"],
+        resolution=task["resolution"],
+        fps=task["fps"],
         watermark=None,
     )
     # 重建任务（失败项重置为 pending，其余保持原结果）
     new_items = [dict(item) for item in task["items"]]
     for i in retry_indexes:
-        new_items[i].update(status="pending", error="", record_id="", audio_url="",
-                            video_url="", watermark=False, sensitive_warning="")
+        new_items[i].update(
+            status="pending", error="", record_id="", audio_url="", video_url="", watermark=False, sensitive_warning=""
+        )
     new_task = {
-        "id": batch_id, "user": user, "status": "running",
-        "total": task["total"], "done": task["total"] - len(retry_indexes),
-        "success": task["success"], "failed": task["failed"] - len(retry_indexes),
+        "id": batch_id,
+        "user": user,
+        "status": "running",
+        "total": task["total"],
+        "done": task["total"] - len(retry_indexes),
+        "success": task["success"],
+        "failed": task["failed"] - len(retry_indexes),
         "skipped": task["skipped"],
-        "avatar_id": task["avatar_id"], "avatar_name": task["avatar_name"],
-        "resolution": task["resolution"], "fps": task["fps"],
-        "voice_id": task["voice_id"], "background_id": task["background_id"],
+        "avatar_id": task["avatar_id"],
+        "avatar_name": task["avatar_name"],
+        "resolution": task["resolution"],
+        "fps": task["fps"],
+        "voice_id": task["voice_id"],
+        "background_id": task["background_id"],
         "speed": task["speed"],
-        "created_at": task["created_at"], "finished_at": "",
+        "created_at": task["created_at"],
+        "finished_at": "",
         "items": new_items,
     }
     with _BATCH_LOCK:
         _BATCH_TASKS[batch_id] = new_task
     with get_db_context() as conn:
         conn.execute(
-            "UPDATE digital_human_batches SET status='running', finished_at='' WHERE id=?", (batch_id,),
+            "UPDATE digital_human_batches SET status='running', finished_at='' WHERE id=?",
+            (batch_id,),
         )
         for i in retry_indexes:
             conn.execute(
@@ -2565,6 +2909,7 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
 # ══════════════════════════════════════════════════════════════
 # 内容生产提效：AI 口播文案助手 + 文案合规预检
 # ══════════════════════════════════════════════════════════════
+
 
 class ScriptAssistRequest(BaseModel):
     topic: str = Field(..., min_length=2, max_length=100, description="口播主题")
@@ -2635,6 +2980,7 @@ async def compliance_check(req: ComplianceCheckRequest, current_user: dict = req
     risk_hits = []
     try:
         from content_strategy import _scan_text
+
         risk_hits = list(dict.fromkeys(h["word"] for h in _scan_text(req.text)))
     except Exception:
         pass
@@ -2645,6 +2991,7 @@ async def compliance_check(req: ComplianceCheckRequest, current_user: dict = req
 # 生产运营：磁盘治理（保留期清理）+ 存储统计 + 管理员专项报表
 # ══════════════════════════════════════════════════════════════
 
+
 def _cleanup_expired_records() -> int:
     """删除超过保留期的历史记录及其文件（DH_RETENTION_DAYS 天，默认 30；<=0 不清理）。"""
     if DH_RETENTION_DAYS <= 0:
@@ -2653,7 +3000,8 @@ def _cleanup_expired_records() -> int:
     with get_db_context() as conn:
         _ensure_tables(conn)
         rows = conn.execute(
-            "SELECT id FROM digital_human_records WHERE created_at < ?", (cutoff,),
+            "SELECT id FROM digital_human_records WHERE created_at < ?",
+            (cutoff,),
         ).fetchall()
         for row in rows:
             _delete_record_files(conn, row["id"])
@@ -2697,16 +3045,19 @@ def _compute_storage_bytes() -> dict:
                     sz = os.path.getsize(p)
                     total += sz
                     if is_audio:
-                        audio_bytes += sz; audio_count += 1
+                        audio_bytes += sz
+                        audio_count += 1
                     else:
-                        video_bytes += sz; video_count += 1
+                        video_bytes += sz
+                        video_count += 1
             except OSError:
                 pass
     return {
         "total_mb": round(total / 1048576, 1),
         "audio_mb": round(audio_bytes / 1048576, 1),
         "video_mb": round(video_bytes / 1048576, 1),
-        "audio_count": audio_count, "video_count": video_count,
+        "audio_count": audio_count,
+        "video_count": video_count,
     }
 
 
@@ -2717,7 +3068,8 @@ async def my_storage(current_user: dict = require_auth()):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT audio_url, video_url FROM digital_human_records WHERE user_id=?", (user,),
+            "SELECT audio_url, video_url FROM digital_human_records WHERE user_id=?",
+            (user,),
         ).fetchall()
     finally:
         conn.close()
@@ -2750,40 +3102,57 @@ async def my_storage(current_user: dict = require_auth()):
 async def admin_dh_stats(current_user: dict = require_auth()):
     """数字人专项运营报表（管理员）：总量/成功率/耗时/失败原因/用户TOP/趋势/存储/批量任务。"""
     from admin_api import _check_admin
+
     _check_admin(current_user)
     conn = get_db()
     try:
-        total_records = conn.execute(
-            "SELECT COUNT(*) FROM digital_human_records").fetchone()[0]
+        total_records = conn.execute("SELECT COUNT(*) FROM digital_human_records").fetchone()[0]
         today_prefix = datetime.now().strftime("%Y-%m-%d")
         today_records = conn.execute(
             "SELECT COUNT(*) FROM digital_human_records WHERE created_at LIKE ?",
             (today_prefix + "%",),
         ).fetchone()[0]
-        status_dist = {r["status"]: r["c"] for r in conn.execute(
-            "SELECT status, COUNT(*) c FROM digital_human_records GROUP BY status").fetchall()}
-        res_dist = {r["resolution"]: r["c"] for r in conn.execute(
-            "SELECT resolution, COUNT(*) c FROM digital_human_records GROUP BY resolution").fetchall()}
-        user_top = [dict(r) for r in conn.execute(
-            "SELECT user_id, COUNT(*) c FROM digital_human_records GROUP BY user_id ORDER BY c DESC LIMIT 5").fetchall()]
+        status_dist = {
+            r["status"]: r["c"]
+            for r in conn.execute("SELECT status, COUNT(*) c FROM digital_human_records GROUP BY status").fetchall()
+        }
+        res_dist = {
+            r["resolution"]: r["c"]
+            for r in conn.execute(
+                "SELECT resolution, COUNT(*) c FROM digital_human_records GROUP BY resolution"
+            ).fetchall()
+        }
+        user_top = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT user_id, COUNT(*) c FROM digital_human_records GROUP BY user_id ORDER BY c DESC LIMIT 5"
+            ).fetchall()
+        ]
         trend_7d = []
         for i in range(6, -1, -1):
             d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
             c = conn.execute(
-                "SELECT COUNT(*) FROM digital_human_records WHERE created_at LIKE ?", (d + "%",),
+                "SELECT COUNT(*) FROM digital_human_records WHERE created_at LIKE ?",
+                (d + "%",),
             ).fetchone()[0]
             trend_7d.append({"date": d, "count": c})
-        recent_failures = [dict(r) for r in conn.execute(
-            "SELECT text, error, created_at FROM digital_human_records WHERE status='failed'"
-            " AND error != '' ORDER BY created_at DESC LIMIT 10").fetchall()]
+        recent_failures = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT text, error, created_at FROM digital_human_records WHERE status='failed'"
+                " AND error != '' ORDER BY created_at DESC LIMIT 10"
+            ).fetchall()
+        ]
         usage = conn.execute(
             "SELECT COUNT(*) c, AVG(response_time) avg_sec, SUM(success) ok"
-            " FROM usage_logs WHERE task_type='digital_human'").fetchone()
+            " FROM usage_logs WHERE task_type='digital_human'"
+        ).fetchone()
         batch_row = conn.execute(
             "SELECT COUNT(*) c,"
             " SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) done_cnt,"
             " SUM(CASE WHEN status='interrupted' THEN 1 ELSE 0 END) interrupted_cnt"
-            " FROM digital_human_batches").fetchone()
+            " FROM digital_human_batches"
+        ).fetchone()
     finally:
         conn.close()
     ok = usage["ok"] or 0
@@ -2817,6 +3186,7 @@ async def regenerate_portraits(current_user: dict = require_auth()):
     逐形象串行调用（避免同时打爆图片 API），返回成功/失败清单。
     """
     from admin_api import _check_admin
+
     _check_admin(current_user)
     ok, failed = [], []
     for avatar in AVATARS:
@@ -2834,6 +3204,7 @@ async def regenerate_portraits(current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 # 通用异步任务框架接入：单条生成为后台任务（默认异步，页面可关闭）
 # ══════════════════════════════════════════════════════════════
+
 
 def _dh_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务处理器：接收 GenerateRequest 参数，走完整生成流水线并实时回报进度。

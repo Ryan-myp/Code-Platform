@@ -1,11 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Sparkles, Download, Trash2, Clock, RefreshCw, Share2, Maximize2, Minimize2 } from 'lucide-react'
+import {
+  Sparkles,
+  Download,
+  Trash2,
+  Clock,
+  RefreshCw,
+  Share2,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
 
-const PALETTE = ['#667eea', '#4A90D9', '#6B8E23', '#E91E63', '#FF9800', '#9C27B0', '#00BCD4', '#FF5722']
+const PALETTE = [
+  '#667eea',
+  '#4A90D9',
+  '#6B8E23',
+  '#E91E63',
+  '#FF9800',
+  '#9C27B0',
+  '#00BCD4',
+  '#FF5722',
+]
 
 function MindMapCanvas({ data, width = 800, height = 600 }) {
   const canvasRef = useRef(null)
@@ -134,22 +152,45 @@ export default function MindMapPage() {
   const [recordsError, setRecordsError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
 
-  useEffect(() => { loadRecords() }, [])
+  useEffect(() => {
+    loadRecords()
+  }, [])
 
   const loadRecords = async () => {
     setRecordsLoading(true)
     setRecordsError(null)
-    try { const res = await api.get('/api/mindmap/records'); setRecords(res.data || []) } catch (e) { setRecordsError(e.message) }
-    finally { setRecordsLoading(false) }
+    try {
+      const res = await api.get('/api/mindmap/records')
+      setRecords(res.data || [])
+    } catch (e) {
+      setRecordsError(e.message)
+    } finally {
+      setRecordsLoading(false)
+    }
   }
 
   const generate = async () => {
-    if (!topic.trim()) { toast.error('请输入主题'); return }
-    await submitTask('/api/mindmap/generate', { topic: topic.trim(), depth, style: 'professional' }, {
-      onUpdate: (t) => setTask(t),
-      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('思维导图生成成功') },
-      onError: (e) => { setTask(null); toast.error(`生成失败：${e.message}`) },
-    })
+    if (!topic.trim()) {
+      toast.error('请输入主题')
+      return
+    }
+    await submitTask(
+      '/api/mindmap/generate',
+      { topic: topic.trim(), depth, style: 'professional' },
+      {
+        onUpdate: (t) => setTask(t),
+        onSuccess: (data) => {
+          setResult(data)
+          setTask(null)
+          loadRecords()
+          toast.success('思维导图生成成功')
+        },
+        onError: (e) => {
+          setTask(null)
+          toast.error(`生成失败：${e.message}`)
+        },
+      }
+    )
   }
 
   const exportPNG = () => {
@@ -163,8 +204,13 @@ export default function MindMapPage() {
   }
 
   const deleteRecord = async (id) => {
-    try { await api.delete(`/api/mindmap/records/${id}`); loadRecords(); toast.success('已删除') }
-    catch (e) { toast.error(e.message) }
+    try {
+      await api.delete(`/api/mindmap/records/${id}`)
+      loadRecords()
+      toast.success('已删除')
+    } catch (e) {
+      toast.error(e.message)
+    }
   }
 
   return (
@@ -193,15 +239,26 @@ export default function MindMapPage() {
             <div className="flex items-center gap-2 mb-3">
               <label className="text-xs text-gray-500">展开深度：</label>
               {[2, 3, 4].map((d) => (
-                <button key={d} onClick={() => setDepth(d)}
+                <button
+                  key={d}
+                  onClick={() => setDepth(d)}
                   className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
-                    depth === d ? 'bg-purple-100 text-purple-700 border border-purple-300' : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
-                  }`}>
+                    depth === d
+                      ? 'bg-purple-100 text-purple-700 border border-purple-300'
+                      : 'bg-gray-50 text-gray-600 border border-gray-100 hover:bg-gray-100'
+                  }`}
+                >
                   {d}层
                 </button>
               ))}
             </div>
-            <Button variant="primary" icon={Sparkles} loading={!!task} onClick={generate} className="w-full">
+            <Button
+              variant="primary"
+              icon={Sparkles}
+              loading={!!task}
+              onClick={generate}
+              className="w-full"
+            >
               {task ? 'AI正在生成思维导图...' : '生成思维导图'}
             </Button>
             {task && (
@@ -211,8 +268,10 @@ export default function MindMapPage() {
                   <span>{task.progress || 0}%</span>
                 </div>
                 <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-purple-500 to-violet-500 rounded-full transition-all duration-300"
-                    style={{ width: `${task.progress || 0}%` }} />
+                  <div
+                    className="h-full bg-gradient-to-r from-purple-500 to-violet-500 rounded-full transition-all duration-300"
+                    style={{ width: `${task.progress || 0}%` }}
+                  />
                 </div>
               </div>
             )}
@@ -231,12 +290,20 @@ export default function MindMapPage() {
             ) : (
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
                 {records.slice(0, 10).map((r) => (
-                  <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs">
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
+                  >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-700 truncate">{r.topic}</div>
-                      <div className="text-gray-400">{r.depth}层 · {r.created_at?.slice(0, 10)}</div>
+                      <div className="text-gray-400">
+                        {r.depth}层 · {r.created_at?.slice(0, 10)}
+                      </div>
                     </div>
-                    <button onClick={() => deleteRecord(r.id)} className="p-1 text-gray-300 hover:text-red-500">
+                    <button
+                      onClick={() => deleteRecord(r.id)}
+                      className="p-1 text-gray-300 hover:text-red-500"
+                    >
                       <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
@@ -255,17 +322,29 @@ export default function MindMapPage() {
               </h3>
               {result && (
                 <div className="flex items-center gap-1">
-                  <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>导出PNG</Button>
-                  <Button variant="ghost" size="sm" icon={fullscreen ? Minimize2 : Maximize2}
-                    onClick={() => setFullscreen(!fullscreen)} />
+                  <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>
+                    导出PNG
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={fullscreen ? Minimize2 : Maximize2}
+                    onClick={() => setFullscreen(!fullscreen)}
+                  />
                 </div>
               )}
             </div>
             {!result ? (
-              <Empty icon={Share2} title="等待生成" description="输入主题后点击生成，AI将创建思维导图" />
+              <Empty
+                icon={Share2}
+                title="等待生成"
+                description="输入主题后点击生成，AI将创建思维导图"
+              />
             ) : (
-              <div className="mindmap-canvas flex items-center justify-center overflow-auto rounded-xl bg-gradient-to-br from-gray-50 to-purple-50/30 border border-gray-100"
-                style={{ minHeight: 500 }}>
+              <div
+                className="mindmap-canvas flex items-center justify-center overflow-auto rounded-xl bg-gradient-to-br from-gray-50 to-purple-50/30 border border-gray-100"
+                style={{ minHeight: 500 }}
+              >
                 <MindMapCanvas
                   data={{ root: result.root, title: result.title }}
                   width={fullscreen ? 1000 : 700}

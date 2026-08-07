@@ -34,22 +34,27 @@ router = APIRouter()
 # Phase 2: 研发增强
 # ══════════════════════════════════════════════════════════════
 
+
 class CodeGenRequest(BaseModel):
     language: str = "python"
     prompt: str
     model: str = ""
+
 
 class CodeReviewRequest(BaseModel):
     language: str = "python"
     code: str
     model: str = ""
 
+
 class CodeImproveRequest(BaseModel):
     """根据代码审查意见修改代码"""
+
     language: str = "python"
     code: str
     review: str
     model: str = ""
+
 
 class PipelineCreate(BaseModel):
     name: str
@@ -60,6 +65,7 @@ class PipelineCreate(BaseModel):
 
 class DeployRequest(BaseModel):
     """一键部署请求：代码落盘 + 构建镜像 + 沙箱容器运行"""
+
     name: str
     language: str = "python"
     code: str
@@ -73,13 +79,27 @@ _PODMAN_LOCK = threading.Lock()
 
 # 代码 import 顶层模块 → pip 包名（用于生成 requirements.txt）
 _PIP_PACKAGES = {
-    "fastapi": "fastapi", "uvicorn": "uvicorn", "flask": "flask",
-    "requests": "requests", "httpx": "httpx", "pydantic": "pydantic",
-    "sqlalchemy": "sqlalchemy", "numpy": "numpy", "pandas": "pandas",
-    "aiohttp": "aiohttp", "redis": "redis", "openai": "openai",
-    "dotenv": "python-dotenv", "bs4": "beautifulsoup4", "PIL": "pillow",
-    "yaml": "pyyaml", "flask_cors": "flask-cors", "jwt": "pyjwt",
-    "celery": "celery", "django": "django", "click": "click",
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "flask": "flask",
+    "requests": "requests",
+    "httpx": "httpx",
+    "pydantic": "pydantic",
+    "sqlalchemy": "sqlalchemy",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "aiohttp": "aiohttp",
+    "redis": "redis",
+    "openai": "openai",
+    "dotenv": "python-dotenv",
+    "bs4": "beautifulsoup4",
+    "PIL": "pillow",
+    "yaml": "pyyaml",
+    "flask_cors": "flask-cors",
+    "jwt": "pyjwt",
+    "celery": "celery",
+    "django": "django",
+    "click": "click",
 }
 
 
@@ -103,15 +123,38 @@ def _detect_project_type(project_dir: str) -> dict:
     """
     files = set()
     for root, dirs, fs in os.walk(project_dir):
-        dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".next", "coverage", "target")]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d
+            not in (
+                "node_modules",
+                ".git",
+                "__pycache__",
+                ".venv",
+                "venv",
+                "dist",
+                "build",
+                ".next",
+                "coverage",
+                "target",
+            )
+        ]
         for f in fs:
             files.add(os.path.relpath(os.path.join(root, f), project_dir))
-    info = {"lang": "python", "entry": "main.py", "test_file": "test_main.py",
-            "test_cmd": ["pytest", "-q", "--tb=short", "test_main.py"], "container_port": 8000,
-            "has_dockerfile": False}
+    info = {
+        "lang": "python",
+        "entry": "main.py",
+        "test_file": "test_main.py",
+        "test_cmd": ["pytest", "-q", "--tb=short", "test_main.py"],
+        "container_port": 8000,
+        "has_dockerfile": False,
+    }
     if "package.json" in files:
         info["lang"] = "node"
-        info["entry"] = next((e for e in ("server.js", "index.js", "app.js", "main.js", "src/index.js") if e in files), "server.js")
+        info["entry"] = next(
+            (e for e in ("server.js", "index.js", "app.js", "main.js", "src/index.js") if e in files), "server.js"
+        )
         info["test_file"] = "test_api.test.js"
         info["test_cmd"] = ["npm", "test"]
     elif "go.mod" in files:
@@ -122,8 +165,12 @@ def _detect_project_type(project_dir: str) -> dict:
     else:
         # python 工程：入口缺失 main.py 时按典型入口名/首个非测试 .py 推断
         if "main.py" not in files:
-            pys = sorted(f for f in files if f.endswith(".py") and not f.startswith("test_") and not f.endswith("_test.py"))
-            info["entry"] = next((c for c in ("app.py", "server.py", "api.py", "index.py") if c in pys), pys[0] if pys else "main.py")
+            pys = sorted(
+                f for f in files if f.endswith(".py") and not f.startswith("test_") and not f.endswith("_test.py")
+            )
+            info["entry"] = next(
+                (c for c in ("app.py", "server.py", "api.py", "index.py") if c in pys), pys[0] if pys else "main.py"
+            )
     # 已有 Dockerfile 的项目直接复用（尊重用户容器化配置，最通用）
     if "Dockerfile" in files or "dockerfile" in files:
         info["has_dockerfile"] = True
@@ -251,9 +298,13 @@ def _safe_slug(name: str) -> str:
 
 
 _INFRA_ERROR_MARKERS = (
-    "cannot connect to podman", "connection refused",
-    "no space left", "command not found", "permission denied",
-    "cannot connect to the docker daemon", "docker daemon is not running",
+    "cannot connect to podman",
+    "connection refused",
+    "no space left",
+    "command not found",
+    "permission denied",
+    "cannot connect to the docker daemon",
+    "docker daemon is not running",
     "executable file not found",
 )
 
@@ -264,7 +315,7 @@ def _is_infra_error(msg: str) -> bool:
     return any(m in low for m in _INFRA_ERROR_MARKERS)
 
 
-def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:
+def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:  # noqa: C901
     """准备自定义网络 + 依赖容器（Redis/MySQL），已存在且健康则复用（幂等）。
 
     podman 5.x 已移除 --link，改用自定义网络 + --network-alias（同网络容器名/别名可直接解析）。
@@ -289,10 +340,21 @@ def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:
             else:
                 step_run(["podman", "rm", "-f", dep], timeout=30)
                 append(f"  - 依赖: 启动 Redis 容器 {dep} …")
-                ok, out = step_run([
-                    "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
-                    "docker.io/library/redis:7-alpine",
-                ], timeout=300)
+                ok, out = step_run(
+                    [
+                        "podman",
+                        "run",
+                        "-d",
+                        "--name",
+                        dep,
+                        "--network",
+                        net,
+                        "--network-alias",
+                        "redis",
+                        "docker.io/library/redis:7-alpine",
+                    ],
+                    timeout=300,
+                )
                 if not ok:
                     return "", [], False, f"Redis 依赖容器启动失败: {out[-300:]}"
             env_flags += ["-e", "REDIS_URL=redis://redis:6379/0"]
@@ -304,7 +366,9 @@ def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:
             ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
             if ok and out.strip() == "true":
                 # 已运行：仍校验 MySQL 可 ping（避免复用坏实例）
-                ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+                ok2, _ = step_run(
+                    ["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10
+                )
                 if ok2:
                     append(f"  - 依赖: MySQL 容器 {dep} 已运行且就绪，复用 ✓")
                 else:
@@ -315,18 +379,34 @@ def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:
             if not ok:
                 step_run(["podman", "rm", "-f", dep], timeout=30)
                 append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
-                ok, out = step_run([
-                    "podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
-                    "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}",
-                    img,
-                ], timeout=600)
+                ok, out = step_run(
+                    [
+                        "podman",
+                        "run",
+                        "-d",
+                        "--name",
+                        dep,
+                        "--network",
+                        net,
+                        "--network-alias",
+                        "mysql",
+                        "-e",
+                        f"MYSQL_ROOT_PASSWORD={pw}",
+                        "-e",
+                        f"MYSQL_DATABASE={db}",
+                        img,
+                    ],
+                    timeout=600,
+                )
                 if not ok:
                     return "", [], False, f"MySQL 依赖容器启动失败: {out[-300:]}"
                 append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
                 ready = False
                 for _ in range(60):
                     time.sleep(2)
-                    ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+                    ok2, _ = step_run(
+                        ["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10
+                    )
                     if ok2:
                         ready = True
                         break
@@ -358,7 +438,10 @@ def _deploy_once(name, project_dir, port, image_tag, container_name, append, ste
     # 阶段 3：启动沙箱容器（先清理同名旧容器，支持修复重部署）
     step_run(["podman", "rm", "-f", container_name], timeout=30)
     container_port = cfg.get("container_port") or _detect_project_type(project_dir)["container_port"]
-    append(f"  - 启动容器: podman run -d --name {container_name} -p {port}:{container_port}" + (f" --network {net}" if deps else ""))
+    append(
+        f"  - 启动容器: podman run -d --name {container_name} -p {port}:{container_port}"
+        + (f" --network {net}" if deps else "")
+    )
     cmd = ["podman", "run", "-d", "--name", container_name, "-p", f"{port}:{container_port}"]
     if deps:
         cmd += ["--network", net]
@@ -377,7 +460,9 @@ def _deploy_once(name, project_dir, port, image_tag, container_name, append, ste
         try:
             r = subprocess.run(
                 ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"http://localhost:{port}/"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             code = r.stdout.strip()
             if code and code != "000":
@@ -396,8 +481,25 @@ def _register_sandbox(slug, port, project_dir, image_tag, cfg, display_name=None
         conn.execute(
             "INSERT INTO sandbox_projects (id, name, status, port, project_dir, image, ports, config, created_at, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=?, port=?, project_dir=?, image=?, ports=?, config=?, updated_at=?",
-            (f"deploy-{slug}", name, "running", port, project_dir, image_tag, json.dumps([port]), json.dumps(cfg, ensure_ascii=False), now, now,
-             "running", port, project_dir, image_tag, json.dumps([port]), json.dumps(cfg, ensure_ascii=False), now),
+            (
+                f"deploy-{slug}",
+                name,
+                "running",
+                port,
+                project_dir,
+                image_tag,
+                json.dumps([port]),
+                json.dumps(cfg, ensure_ascii=False),
+                now,
+                now,
+                "running",
+                port,
+                project_dir,
+                image_tag,
+                json.dumps([port]),
+                json.dumps(cfg, ensure_ascii=False),
+                now,
+            ),
         )
         conn.commit()
     finally:
@@ -421,8 +523,12 @@ def _extract_code_block(text: str) -> str:
     cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", text).strip()
     if cleaned != text:
         # 剥离后仍带中文解释文字且无代码特征 → 视为无效输出
-        if re.search(r"[，。；：、]|以下是|修复建议|问题|错误|请提供|您好|需要", cleaned[:200]) \
-                and "def " not in cleaned[:200] and "import " not in cleaned[:200] and "class " not in cleaned[:200]:
+        if (
+            re.search(r"[，。；：、]|以下是|修复建议|问题|错误|请提供|您好|需要", cleaned[:200])
+            and "def " not in cleaned[:200]
+            and "import " not in cleaned[:200]
+            and "class " not in cleaned[:200]
+        ):
             return ""
         return cleaned
     # 无明显解释性文字才视为纯代码（避免把 LLM 的说明文字写入 main.py）
@@ -577,20 +683,20 @@ _TEST_PROMPTS = {
         "8. 每个测试函数必须写 docstring，首行标注需求用例编号与标题（如 `TC-API-001: 搜索北京`），编号严格取自【需求测试用例】文档；需求用例缺失编号时写中文场景名（如 `搜索北京`）\n"
         "\n推荐测试骨架（可直接使用）：\n"
         "import os, subprocess, time, httpx, pytest\n"
-        "@pytest.fixture(scope=\"module\")\n"
+        '@pytest.fixture(scope="module")\n'
         "def base_url():\n"
-        "    port = os.environ.get(\"TEST_PORT\", \"8911\")\n"
-        "    proc = subprocess.Popen([\"uvicorn\", \"main:app\", \"--host\", \"127.0.0.1\", \"--port\", port],\n"
+        '    port = os.environ.get("TEST_PORT", "8911")\n'
+        '    proc = subprocess.Popen(["uvicorn", "main:app", "--host", "127.0.0.1", "--port", port],\n'
         "        env={**os.environ}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
         "    for _ in range(40):\n"
         "        try:\n"
-        "            httpx.get(f\"http://127.0.0.1:{port}/docs\", timeout=1)\n"
+        '            httpx.get(f"http://127.0.0.1:{port}/docs", timeout=1)\n'
         "            break\n"
         "        except Exception:\n"
         "            time.sleep(0.5)\n"
-        "    yield f\"http://127.0.0.1:{port}\"\n"
+        '    yield f"http://127.0.0.1:{port}"\n'
         "    proc.terminate()\n"
-        "测试用例通过 httpx.get(base_url + \"/路径\", params=...) 调用并断言。"
+        '测试用例通过 httpx.get(base_url + "/路径", params=...) 调用并断言。'
     ),
     "node": (
         "你是一个资深的 Node.js 测试工程师。根据需求测试用例和入口文件代码，生成 node --test 测试文件 test_api.test.js：\n"
@@ -625,12 +731,12 @@ _TEST_PROMPTS = {
         "5. 只输出 ```go 围栏包裹的完整测试代码，不要任何解释文字，代码必须完整不截断\n"
         "\n推荐测试骨架（可直接使用）：\n"
         "package main\n\n"
-        "import (\n\t\"net/http\"\n\t\"os\"\n\t\"os/exec\"\n\t\"testing\"\n\t\"time\"\n)\n\n"
-        "func TestMain(m *testing.M) {\n\tport := os.Getenv(\"TEST_PORT\")\n\tif port == \"\" {\n\t\tport = \"8911\"\n\t}\n"
-        "\tcmd := exec.Command(\"go\", \"run\", \".\")\n\tcmd.Env = append(os.Environ(), \"PORT=\"+port)\n"
+        'import (\n\t"net/http"\n\t"os"\n\t"os/exec"\n\t"testing"\n\t"time"\n)\n\n'
+        'func TestMain(m *testing.M) {\n\tport := os.Getenv("TEST_PORT")\n\tif port == "" {\n\t\tport = "8911"\n\t}\n'
+        '\tcmd := exec.Command("go", "run", ".")\n\tcmd.Env = append(os.Environ(), "PORT="+port)\n'
         "\t_ = cmd.Start()\n\ttime.Sleep(3 * time.Second)\n"
         "\tcode := m.Run()\n\t_ = cmd.Process.Kill()\n\tos.Exit(code)\n}\n\n"
-        "测试用例通过 http.Get(\"http://127.0.0.1:\" + port + \"/路径\") 调用并断言。"
+        '测试用例通过 http.Get("http://127.0.0.1:" + port + "/路径") 调用并断言。'
     ),
 }
 
@@ -640,9 +746,11 @@ def _validate_test_file(lang: str, content: str) -> tuple:
     本地缺少对应运行时（node/go）时跳过校验（容器内执行时由测试命令兜底）。
     """
     import tempfile
+
     try:
         if lang == "python":
             import ast
+
             ast.parse(content)
             return True, ""
         suffix = {"node": ".js", "go": ".go"}.get(lang)
@@ -723,7 +831,7 @@ def _fix_system(lang: str, kind: str) -> str:
     return TEST_FIX_SYSTEM
 
 
-def _ensure_test_file(project_dir, cfg, append) -> bool:
+def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。
 
     LLM 不可用或语言无法推断时返回 False（调用方跳过测试门禁并提示），不阻塞部署。
@@ -734,7 +842,11 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:
         ext = (cfg.get("entry") or "main.py").rsplit(".", 1)[-1]
         lang = {"py": "python", "js": "node", "ts": "node", "go": "go"}.get(ext, "python")
     entry = cfg.get("entry") or "main.py"
-    test_file = cfg.get("test_file") or {"python": "test_main.py", "node": "test_api.test.js", "go": "main_test.go"}.get(lang, "test_main.py")
+    test_file = cfg.get("test_file") or {
+        "python": "test_main.py",
+        "node": "test_api.test.js",
+        "go": "main_test.go",
+    }.get(lang, "test_main.py")
     tf_path = os.path.join(project_dir, test_file)
     if os.path.exists(tf_path) and os.path.getsize(tf_path) > 50:
         return True
@@ -775,8 +887,8 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:
             flines = fixed.splitlines()
             em = re.search(r"L(\d+)|:(\d+):", err_v)
             err_line = int(em.group(1) or em.group(2) or 1) if em else 1
-            ctx_lines = flines[max(0, err_line - 22):err_line + 18]
-            ctx = "\n".join(f"{max(0, err_line - 22) + i + 1}| {l}" for i, l in enumerate(ctx_lines))
+            ctx_lines = flines[max(0, err_line - 22) : err_line + 18]
+            ctx = "\n".join(f"{max(0, err_line - 22) + i + 1}| {line}" for i, line in enumerate(ctx_lines))
             brief = fixed[:4000] + f"\n……（共 {len(flines)} 行，中间省略）……\n" + fixed[-2000:]
             fix2 = call_llm(
                 _fix_system(lang, "test_file"),
@@ -822,8 +934,16 @@ def _record_test_run(requirement_id, pipeline_id, status, summary, log_text, cas
         conn.execute(
             "INSERT INTO test_runs (id, requirement_id, pipeline_id, status, summary, log, cases, created_at)"
             " VALUES (?,?,?,?,?,?,?,?)",
-            (f"test_{uuid.uuid4().hex[:12]}", requirement_id, pipeline_id, status, summary or "",
-             log_text or "", json.dumps(cases or [], ensure_ascii=False), datetime.now().isoformat()),
+            (
+                f"test_{uuid.uuid4().hex[:12]}",
+                requirement_id,
+                pipeline_id,
+                status,
+                summary or "",
+                log_text or "",
+                json.dumps(cases or [], ensure_ascii=False),
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
     except Exception as e:
@@ -837,7 +957,11 @@ def _parse_test_summary(out: str, lang: str = "python") -> str:
     out = out or ""
     if lang == "node":
         parts = re.findall(r"#\s*(pass|fail)\s+(\d+)", out)
-        return ", ".join(f"{k} {v}" for k, v in parts) if parts else (out.splitlines()[-1][:120] if out.strip() else "无输出")
+        return (
+            ", ".join(f"{k} {v}" for k, v in parts)
+            if parts
+            else (out.splitlines()[-1][:120] if out.strip() else "无输出")
+        )
     if lang == "go":
         m = re.search(r"^(ok|FAIL)\s+\S+[^\n]{0,60}", out, re.M)
         return m.group(0).strip() if m else (out.splitlines()[-1][:120] if out.strip() else "无输出")
@@ -860,8 +984,9 @@ def _parse_pytest_cases(out: str) -> list:
     if idx >= 0:
         body = out[idx:]
     # 分隔用 [ \t] 而非 \s：避免 \s 吞换行导致 (.*) 串行抓取下一行
-    for m in re.finditer(r"^(PASSED|FAILED|SKIPPED|ERROR)\s+(?:\[\d+\]\s*)?(\S+)(?:[ \t]*(?::[ \t]*)?(.*))?$",
-                         body, re.M):
+    for m in re.finditer(
+        r"^(PASSED|FAILED|SKIPPED|ERROR)\s+(?:\[\d+\]\s*)?(\S+)(?:[ \t]*(?::[ \t]*)?(.*))?$", body, re.M
+    ):
         kind, path = m.group(1), m.group(2)
         if path in seen:
             continue
@@ -869,20 +994,28 @@ def _parse_pytest_cases(out: str) -> list:
         msg = (m.group(3) or "").strip()
         if msg.startswith("- "):
             msg = msg[2:].strip()
-        cases.append({
-            "name": path.split("::")[-1].rstrip(":"),
-            "path": path,
-            "status": {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "ERROR": "error"}[kind],
-            "message": msg[:500],
-        })
+        cases.append(
+            {
+                "name": path.split("::")[-1].rstrip(":"),
+                "path": path,
+                "status": {"PASSED": "passed", "FAILED": "failed", "SKIPPED": "skipped", "ERROR": "error"}[kind],
+                "message": msg[:500],
+            }
+        )
     if not cases:
         for m in re.finditer(r"^FAILED\s+(\S+?)(?:[ \t]*-[ \t]*(.*))?$", out or "", re.M):
             path = m.group(1)
             if path in seen:
                 continue
             seen.add(path)
-            cases.append({"name": path.split("::")[-1].rstrip(":"), "path": path,
-                          "status": "failed", "message": (m.group(2) or "").strip()[:500]})
+            cases.append(
+                {
+                    "name": path.split("::")[-1].rstrip(":"),
+                    "path": path,
+                    "status": "failed",
+                    "message": (m.group(2) or "").strip()[:500],
+                }
+            )
     return cases
 
 
@@ -919,7 +1052,7 @@ def _attach_case_meta(cases: list, project_dir: str) -> list:
     return cases
 
 
-def _extract_failed_functions(project_dir: str, out: str) -> list:
+def _extract_failed_functions(project_dir: str, out: str) -> list:  # noqa: C901
     """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。
 
     pytest 无 -x 时输出所有失败：解析 FAILED ...::test_x 行（+ traceback 帧）→
@@ -928,6 +1061,7 @@ def _extract_failed_functions(project_dir: str, out: str) -> list:
     定位失败返回 []。test_seg 为失败测试用例源码（供 LLM 理解断言要求）。
     """
     import ast
+
     main_file = os.path.join(project_dir, "main.py")
     try:
         with open(main_file, encoding="utf-8") as f:
@@ -957,8 +1091,11 @@ def _extract_failed_functions(project_dir: str, out: str) -> list:
     for node in ast.walk(ttree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
             seg = ast.get_source_segment(tcode, node) or ""
-            paths = [p for p in re.findall(r'["\'][^"\']*?(/[^"\']+)[^"\']*["\']', seg)
-                     if p not in ("/", "/docs", "/openapi.json", "/redoc")]
+            paths = [
+                p
+                for p in re.findall(r'["\'][^"\']*?(/[^"\']+)[^"\']*["\']', seg)
+                if p not in ("/", "/docs", "/openapi.json", "/redoc")
+            ]
             info = test_info.setdefault(node.name, {"paths": [], "segs": []})
             info["paths"] += [p for p in paths if p not in info["paths"]]
             if seg not in info["segs"]:
@@ -973,12 +1110,14 @@ def _extract_failed_functions(project_dir: str, out: str) -> list:
             m = re.search(r'["\'](/[^"\']+)["\']', seg)
             if not m:
                 continue
-            for tname, info in test_info.items():
+            for _, info in test_info.items():
                 if m.group(1) in info["paths"]:
                     if node.name not in funcs:
-                        funcs[node.name] = {"start": node.lineno,
-                                           "end": getattr(node, "end_lineno", node.lineno),
-                                           "segs": []}
+                        funcs[node.name] = {
+                            "start": node.lineno,
+                            "end": getattr(node, "end_lineno", node.lineno),
+                            "segs": [],
+                        }
                         order.append(node.name)
                     funcs[node.name]["segs"] += [s for s in info["segs"] if s not in funcs[node.name]["segs"]]
                     break
@@ -991,21 +1130,21 @@ def _replace_function(target_path: str, new_code: str, start_line: int, end_line
         lines = f.read().splitlines(keepends=True)
     orig = lines[start_line - 1]
     indent = orig[: len(orig) - len(orig.lstrip())]
-    body_lines = [l for l in new_code.strip("\n").splitlines()]
+    body_lines = [line for line in new_code.strip("\n").splitlines()]
     adapted = []
     if body_lines:
         base = body_lines[0][: len(body_lines[0]) - len(body_lines[0].lstrip())]
-        for l in body_lines:
-            if l.strip():
-                adapted.append(indent + (l[len(base):] if l.startswith(base) else l.lstrip()))
+        for line in body_lines:
+            if line.strip():
+                adapted.append(indent + (line[len(base) :] if line.startswith(base) else line.lstrip()))
             else:
                 adapted.append("")
-    lines[start_line - 1:end_line] = [l + "\n" for l in adapted]
+    lines[start_line - 1 : end_line] = [line + "\n" for line in adapted]
     with open(target_path, "w", encoding="utf-8") as f:
         f.write("".join(lines))
 
 
-def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
+def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     """自动化测试门禁：按技术栈生成测试文件 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
 
     python→pytest / node→node --test / go→go test；返回 (ok, summary)；ok=False 表示测试多次失败且修复未解决，
@@ -1020,7 +1159,6 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
     entry = cfg.get("entry") or "main.py"
     test_file = cfg.get("test_file") or "test_main.py"
     test_cmd = cfg.get("test_cmd") or ["pytest", "-q", "--tb=short", "test_main.py"]
-    main_file = os.path.join(project_dir, entry)
     # 0. 依赖容器（测试容器与部署容器同网络，可真实访问 Redis/MySQL）
     net, env_flags, ok, err = _prepare_dependencies(cfg, container_name, append, step_run)
     if not ok:
@@ -1041,8 +1179,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         append(f"  - 容器内执行测试（{lang}）…")
         exec_cmd = list(test_cmd)
         # python/pytest：追加 -rA 输出逐条用例摘要（PASSED/FAILED/SKIPPED 行），供按 case 展示结果与失败原因
-        if lang == "python" and exec_cmd and "pytest" in exec_cmd[0].lower() \
-                and not any("-rA" in c for c in exec_cmd):
+        if lang == "python" and exec_cmd and "pytest" in exec_cmd[0].lower() and not any("-rA" in c for c in exec_cmd):
             exec_cmd.insert(1, "-rA")
         cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag] + exec_cmd
         ok, out = step_run(cmd, timeout=300)
@@ -1064,8 +1201,14 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
             _record_test_run(cfg.get("requirement_id"), pid, "failed", "基础设施故障", out[-800:])
             return False, out[-400:]
         # 失败轮次落库：每条 case 的失败原因在 AI 工作台可见（含 AI 修复过程轨迹）
-        _record_test_run(cfg.get("requirement_id"), pid, "failed",
-                         f"第{round_no + 1}轮: {_parse_test_summary(out, lang)}", out, cases)
+        _record_test_run(
+            cfg.get("requirement_id"),
+            pid,
+            "failed",
+            f"第{round_no + 1}轮: {_parse_test_summary(out, lang)}",
+            out,
+            cases,
+        )
         if round_no >= 3:
             break
         append(f"  - ⚠ 测试未通过（第 {round_no + 1} 次验证），AI 诊断修复中…")
@@ -1073,10 +1216,23 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         # - 语法/收集/断言预期错误（422 vs 400 等）→ 测试文件自身问题 → 修测试文件
         # - 服务端错误（500/Internal Server Error）→ 实现缺陷/外部依赖 → 修入口文件
         low = out.lower()
-        if "syntax" in low or "collection" in low or "unresolved import" in low or "assert 422" in low or "assert 400" in low:
+        if (
+            "syntax" in low
+            or "collection" in low
+            or "unresolved import" in low
+            or "assert 422" in low
+            or "assert 400" in low
+        ):
             target = test_file
-        elif "internal server error" in low or " 500 " in out or "status_code == 500" in low \
-                or "keyerror" in low or "typeerror" in low or "attributeerror" in low or "valueerror" in low:
+        elif (
+            "internal server error" in low
+            or " 500 " in out
+            or "status_code == 500" in low
+            or "keyerror" in low
+            or "typeerror" in low
+            or "attributeerror" in low
+            or "valueerror" in low
+        ):
             # 服务端错误/响应数据结构异常（KeyError 等）→ 实现缺陷 → 修入口文件
             target = entry
         else:
@@ -1084,6 +1240,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         target_path = os.path.join(project_dir, target)
         backup_path = target_path + ".bak"
         import shutil
+
         try:
             with open(target_path, encoding="utf-8") as f:
                 content = f.read()
@@ -1105,19 +1262,20 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
                 # 自下而上替换（行号高的先替换，避免低行号区间的行号偏移）
                 for fname, fstart, fend, test_segs in sorted(funcs, key=lambda x: -x[1]):
                     cur = open(target_path, encoding="utf-8").read()
-                    func_code = "\n".join(cur.splitlines()[fstart - 1:fend])
+                    func_code = "\n".join(cur.splitlines()[fstart - 1 : fend])
                     # 定位函数上方连续的路由装饰器块（response_model 约束，允许 LLM 修改）
                     cur_lines = cur.splitlines()
                     deco_start = fstart - 1
                     while deco_start > 0 and cur_lines[deco_start - 1].lstrip().startswith("@"):
                         deco_start -= 1
-                    deco_lines = cur_lines[deco_start:fstart - 1]
+                    deco_lines = cur_lines[deco_start : fstart - 1]
                     ctx_extra = ""
                     if deco_lines:
                         ctx_extra += "\n\n【路由装饰器（response_model 约束，可修改）】\n" + "\n".join(deco_lines)
                     if test_segs:
-                        ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + \
-                            "\n---\n".join(s[:600] for s in test_segs[:3])
+                        ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + "\n---\n".join(
+                            s[:600] for s in test_segs[:3]
+                        )
                     try:
                         fix = call_llm(
                             FUNCTION_FIX_SYSTEM,
@@ -1139,6 +1297,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
                             fixed = "\n".join(deco_lines) + "\n" + fixed
                     if fixed and (re.match(r"^(async\s+)?def ", fixed.strip()) or fixed.strip().startswith("@")):
                         import ast
+
                         try:
                             ast.parse(fixed)
                             shutil.copy2(target_path, backup_path)
@@ -1159,7 +1318,11 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
             # 修复策略二：unified diff 补丁（大文件全量重写易被 token 截断，优先最小补丁）
             patch_text = ""
             try:
-                fix = call_llm(_fix_system(lang, "patch"), f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}", timeout=180)
+                fix = call_llm(
+                    _fix_system(lang, "patch"),
+                    f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}",
+                    timeout=180,
+                )
                 m = re.search(r"```diff\s*\n(.*?)```", fix or "", re.DOTALL)
                 patch_text = m.group(1).strip() if m else _extract_code_block(fix)
             except Exception:
@@ -1168,11 +1331,17 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
                 shutil.copy2(target_path, backup_path)
                 pr = subprocess.run(
                     ["patch", "-p1", "--forward", "--batch"],
-                    input=patch_text, capture_output=True, text=True, cwd=project_dir, timeout=30,
+                    input=patch_text,
+                    capture_output=True,
+                    text=True,
+                    cwd=project_dir,
+                    timeout=30,
                 )
                 if pr.returncode != 0:
                     # diff 质量不稳：携带 patch 错误让 LLM 重新生成一次合法 diff
-                    append(f"  - ⚠ diff 补丁应用失败（{pr.stderr.strip().splitlines()[-1][:80] if pr.stderr else '未知原因'}），要求 LLM 重新生成补丁…")
+                    append(
+                        f"  - ⚠ diff 补丁应用失败（{pr.stderr.strip().splitlines()[-1][:80] if pr.stderr else '未知原因'}），要求 LLM 重新生成补丁…"
+                    )
                     try:
                         fix2 = call_llm(
                             _fix_system(lang, "patch"),
@@ -1189,22 +1358,33 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
                         shutil.copy2(target_path, backup_path)
                         pr = subprocess.run(
                             ["patch", "-p1", "--forward", "--batch"],
-                            input=patch_text, capture_output=True, text=True, cwd=project_dir, timeout=30,
+                            input=patch_text,
+                            capture_output=True,
+                            text=True,
+                            cwd=project_dir,
+                            timeout=30,
                         )
                 if pr.returncode == 0:
                     try:
                         import ast
+
                         ast.parse(open(target_path, encoding="utf-8").read())
                     except Exception:
-                        pr = subprocess.run(["patch", "-p1", "--batch"],
-                                            input=patch_text, capture_output=True, text=True,
-                                            cwd=project_dir, timeout=30)  # 首次可能部分应用，重试
+                        pr = subprocess.run(
+                            ["patch", "-p1", "--batch"],
+                            input=patch_text,
+                            capture_output=True,
+                            text=True,
+                            cwd=project_dir,
+                            timeout=30,
+                        )  # 首次可能部分应用，重试
                     if pr.returncode == 0:
                         try:
                             import ast
+
                             ast.parse(open(target_path, encoding="utf-8").read())
                             os.remove(backup_path)
-                            append(f"  - AI 生成 diff 补丁并应用成功，重新构建并复跑测试…")
+                            append("  - AI 生成 diff 补丁并应用成功，重新构建并复跑测试…")
                             continue
                         except Exception as e:
                             append(f"  - ⚠ 补丁后语法校验失败: {e}，恢复原文件并改用全量重写…")
@@ -1221,7 +1401,9 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
             if target == test_file:
                 append("  - ⚠ 测试文件断言问题不做全量重写（避免丢失既有用例覆盖），本轮跳过")
                 break
-            brief = content if len(content) <= 15000 else content[:9000] + "\n# ……（代码过长已截断）……\n" + content[-6000:]
+            brief = (
+                content if len(content) <= 15000 else content[:9000] + "\n# ……（代码过长已截断）……\n" + content[-6000:]
+            )
             try:
                 fix = call_llm(
                     _fix_system(lang, "test_file" if target == test_file else "main"),
@@ -1248,12 +1430,18 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(fixed)
         append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
-    _record_test_run(cfg.get("requirement_id"), pid, "failed", "AI 修复轮次用尽", last_out[-1500:],
-                     _attach_case_meta(_parse_pytest_cases(last_out), project_dir) if lang == "python" else [])
+    _record_test_run(
+        cfg.get("requirement_id"),
+        pid,
+        "failed",
+        "AI 修复轮次用尽",
+        last_out[-1500:],
+        _attach_case_meta(_parse_pytest_cases(last_out), project_dir) if lang == "python" else [],
+    )
     return False, "自动化测试多次失败且 AI 修复未解决: " + last_out[-300:]
 
 
-def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
+def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:  # noqa: C901
     """后台执行部署流水线：构建镜像 → 启动沙箱容器 → 健康检查；失败自动进入 AI 修复循环。"""
     name = cfg["service_name"]
     slug = _safe_slug(name)
@@ -1284,7 +1472,9 @@ def _exec_deploy_pipeline(pid: str, run_id: str, cfg: dict) -> None:
         main_file = os.path.join(project_dir, entry)
         if not os.path.exists(main_file):
             raise RuntimeError(f"{entry} 不存在，无法构建")
-        append(f"  - 检出代码: 就绪（artifacts/{name}/，技术栈 {pt['lang']}，入口 {entry}，{os.path.getsize(main_file)} 字节）")
+        append(
+            f"  - 检出代码: 就绪（artifacts/{name}/，技术栈 {pt['lang']}，入口 {entry}，{os.path.getsize(main_file)} 字节）"
+        )
         # 阶段 1.6：自动化测试门禁（生成测试 → 容器内执行 → 失败 AI 修复 → 通过后放行部署）
         if cfg.get("auto_test", True):
             append("  - ⚡ 自动化测试门禁已开启：先执行测试，通过后再部署")
@@ -1372,10 +1562,39 @@ async def create_deployment(data: DeployRequest, current_user: dict = require_au
 _CODE_FILE_HEADER_RE = re.compile(
     r"^(?:#|//|/\*|--)?\s*([\w./\-]+\.(?:py|js|ts|jsx|tsx|go|java|json|html|css|sh|mod|sum|yml|yaml|sql|md|txt))\s*\*?/?$"
 )
-_NODE_BUILTIN_MODS = {"http", "https", "fs", "path", "crypto", "os", "url", "stream", "events", "util",
-                      "child_process", "process", "assert", "buffer", "dns", "net", "tls", "zlib",
-                      "querystring", "readline", "repl", "tty", "v8", "vm", "worker_threads",
-                      "perf_hooks", "async_hooks", "cluster", "module", "node:test", "node:http"}
+_NODE_BUILTIN_MODS = {
+    "http",
+    "https",
+    "fs",
+    "path",
+    "crypto",
+    "os",
+    "url",
+    "stream",
+    "events",
+    "util",
+    "child_process",
+    "process",
+    "assert",
+    "buffer",
+    "dns",
+    "net",
+    "tls",
+    "zlib",
+    "querystring",
+    "readline",
+    "repl",
+    "tty",
+    "v8",
+    "vm",
+    "worker_threads",
+    "perf_hooks",
+    "async_hooks",
+    "cluster",
+    "module",
+    "node:test",
+    "node:http",
+}
 
 
 def _parse_code_files(code: str) -> dict:
@@ -1425,11 +1644,17 @@ def _ensure_project_manifests(files: dict) -> None:
                 dep = m.group(2).split("/")[0]
                 if dep not in _NODE_BUILTIN_MODS and not dep.startswith(".") and not dep.startswith("node:"):
                     deps.add(dep)
-        files["package.json"] = json.dumps({
-            "name": "app", "version": "1.0.0", "private": True,
-            "scripts": {"start": f"node {entry}", "test": "node --test test_api.test.js"},
-            "dependencies": {d: "*" for d in sorted(deps)},
-        }, indent=2, ensure_ascii=False)
+        files["package.json"] = json.dumps(
+            {
+                "name": "app",
+                "version": "1.0.0",
+                "private": True,
+                "scripts": {"start": f"node {entry}", "test": "node --test test_api.test.js"},
+                "dependencies": {d: "*" for d in sorted(deps)},
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
     if "go.mod" not in files and any(f.endswith(".go") for f in files):
         files["go.mod"] = "module app\n\ngo 1.22\n"
 
@@ -1441,6 +1666,7 @@ def _create_deploy_pipeline(name: str, code: str, requirement_id: str, username:
     → 生成或复用 Dockerfile → 按语言执行测试与部署。供「一键部署」与「一句话全自动」共用。
     """
     import shutil
+
     # 1. 解析多文件代码并落盘到 artifacts/<name>/（重部署时以新产物为准，清理旧文件）
     files = _parse_code_files(code)
     if not files:
@@ -1467,9 +1693,19 @@ def _create_deploy_pipeline(name: str, code: str, requirement_id: str, username:
     pid = f"pipe_{uuid.uuid4().hex[:12]}"
     port = _find_free_port()
     desc = f"需求 {requirement_id} 自动部署" if requirement_id else f"{name} 沙箱部署"
-    cfg = {"service_name": name, "project_dir": project_dir, "port": port, "requirement_id": requirement_id,
-           "auto_fix": True, "auto_test": True, "language": pt["lang"], "entry": pt["entry"],
-           "test_file": pt["test_file"], "test_cmd": pt["test_cmd"], "container_port": pt["container_port"]}
+    cfg = {
+        "service_name": name,
+        "project_dir": project_dir,
+        "port": port,
+        "requirement_id": requirement_id,
+        "auto_fix": True,
+        "auto_test": True,
+        "language": pt["lang"],
+        "entry": pt["entry"],
+        "test_file": pt["test_file"],
+        "test_cmd": pt["test_cmd"],
+        "container_port": pt["container_port"],
+    }
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
     conn = get_db()
@@ -1477,8 +1713,18 @@ def _create_deploy_pipeline(name: str, code: str, requirement_id: str, username:
         conn.execute(
             "INSERT INTO pipelines (id, name, description, type, config, status, last_run, created_by, created_at, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (pid, f"部署 {name}", desc, "deploy", json.dumps(cfg, ensure_ascii=False),
-             "running", now, username, now, now),
+            (
+                pid,
+                f"部署 {name}",
+                desc,
+                "deploy",
+                json.dumps(cfg, ensure_ascii=False),
+                "running",
+                now,
+                username,
+                now,
+                now,
+            ),
         )
         conn.execute(
             "INSERT INTO pipeline_runs (id, pipeline_id, status, log, started_at) VALUES (?,?,?,?,?)",
@@ -1552,8 +1798,16 @@ def _auto_run_is_stopping(run_id: str) -> bool:
         conn.close()
 
 
-def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
-                     language: str, deploy: bool, target_stage: str, username: str) -> None:
+def _auto_run_worker(  # noqa: C901
+    run_id: str,
+    req_id: str,
+    name: str,
+    description: str,
+    language: str,
+    deploy: bool,
+    target_stage: str,
+    username: str,
+) -> None:
     """后台执行全自动流水线：一句话需求 → 6 阶段产物 → 自动部署。"""
     import asyncio
 
@@ -1563,8 +1817,7 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
         _auto_run_append(run_id, f"[{datetime.now().isoformat()[:19]}] {line}")
 
     def progress(stage: str, status: str) -> None:
-        _auto_run_update(run_id, current_stage=stage,
-                         stage_progress=json.dumps(progress_map, ensure_ascii=False))
+        _auto_run_update(run_id, current_stage=stage, stage_progress=json.dumps(progress_map, ensure_ascii=False))
 
     def check_stop() -> None:
         if _auto_run_is_stopping(run_id):
@@ -1584,7 +1837,6 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
         return content
 
     progress_map: dict = {}
-    stage_idx = {s[0]: i for i, s in enumerate(AUTO_STAGES, 1)}
     try:
         started = time.time()
         log(f"🎯 一句话需求：{description[:150]}")
@@ -1596,7 +1848,9 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
             return
 
         # 2. PRD 审查
-        results["review"] = run_stage("review", "PRD 审查", 2, lambda: call_llm(REVIEW_SYSTEM, results["prd"], max_tokens=4000))
+        results["review"] = run_stage(
+            "review", "PRD 审查", 2, lambda: call_llm(REVIEW_SYSTEM, results["prd"], max_tokens=4000)
+        )
         if target_stage == "review":
             return
 
@@ -1606,23 +1860,36 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
             return
 
         # 4. 测试用例
-        results["test"] = run_stage("test", "测试用例", 4,
-                                     lambda: call_llm(TEST_SYSTEM, f"PRD:\n{results['prd']}\n\n技术方案:\n{results['td']}", max_tokens=4000))
+        results["test"] = run_stage(
+            "test",
+            "测试用例",
+            4,
+            lambda: call_llm(TEST_SYSTEM, f"PRD:\n{results['prd']}\n\n技术方案:\n{results['td']}", max_tokens=4000),
+        )
         if target_stage == "test":
             return
 
         # 5. 代码生成（提取纯代码，供部署落盘）
-        raw_code = run_stage("code", "代码生成", 5,
-                             lambda: call_llm(CODE_SYSTEM, f"语言: {language}\n任务类型: code\n\n技术方案:\n{results['td']}", max_tokens=8000))
+        raw_code = run_stage(
+            "code",
+            "代码生成",
+            5,
+            lambda: call_llm(
+                CODE_SYSTEM, f"语言: {language}\n任务类型: code\n\n技术方案:\n{results['td']}", max_tokens=8000
+            ),
+        )
         results["code"] = _extract_code_block(raw_code)
         if target_stage == "code":
             return
 
         # 6. 代码审查
-        review_system = (f"你是一位资深的{language}代码审查专家。审查以下代码，给出改进建议，包括："
-                         "1.代码质量 2.潜在bug 3.性能优化 4.安全建议。")
-        results["review_code"] = run_stage("review_code", "代码审查", 6,
-                                            lambda: call_llm(review_system, results["code"]))
+        review_system = (
+            f"你是一位资深的{language}代码审查专家。审查以下代码，给出改进建议，包括："
+            "1.代码质量 2.潜在bug 3.性能优化 4.安全建议。"
+        )
+        results["review_code"] = run_stage(
+            "review_code", "代码审查", 6, lambda: call_llm(review_system, results["code"])
+        )
         log(f"⏱ 6 个阶段全部完成，耗时 {time.time() - started:.0f}s")
         if target_stage == "review_code":
             return
@@ -1661,19 +1928,32 @@ def _auto_run_worker(run_id: str, req_id: str, name: str, description: str,
         else:
             progress_map["deploy"] = "skipped"
 
-        _auto_run_update(run_id, status="success", current_stage="done",
-                         stage_progress=json.dumps(progress_map, ensure_ascii=False),
-                         finished_at=datetime.now().isoformat())
+        _auto_run_update(
+            run_id,
+            status="success",
+            current_stage="done",
+            stage_progress=json.dumps(progress_map, ensure_ascii=False),
+            finished_at=datetime.now().isoformat(),
+        )
         log("🎉 一句话全自动完成！所有产物已保存到需求，可到 AI 工作台查看/微调。")
     except _AutoRunStopped:
-        _auto_run_update(run_id, status="stopped", current_stage="stopped",
-                         stage_progress=json.dumps(progress_map, ensure_ascii=False),
-                         finished_at=datetime.now().isoformat())
+        _auto_run_update(
+            run_id,
+            status="stopped",
+            current_stage="stopped",
+            stage_progress=json.dumps(progress_map, ensure_ascii=False),
+            finished_at=datetime.now().isoformat(),
+        )
         log("⏹ 已手动停止")
     except Exception as e:
-        _auto_run_update(run_id, status="failed", error=str(e), current_stage="failed",
-                         stage_progress=json.dumps(progress_map, ensure_ascii=False),
-                         finished_at=datetime.now().isoformat())
+        _auto_run_update(
+            run_id,
+            status="failed",
+            error=str(e),
+            current_stage="failed",
+            stage_progress=json.dumps(progress_map, ensure_ascii=False),
+            finished_at=datetime.now().isoformat(),
+        )
         log(f"❌ 流程失败：{e}")
 
 
@@ -1699,14 +1979,28 @@ async def create_auto_run(data: AutoRunRequest, current_user: dict = require_aut
         conn.execute(
             "INSERT INTO auto_runs (id, requirement_id, name, language, status, current_stage, stage_progress, log, created_by, created_at, updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (run_id, req_id, name, data.language, "running", "prd", "{}",
-             f"[{now[:19]}] 🚀 一句话全自动流水线已启动", current_user["username"], now, now),
+            (
+                run_id,
+                req_id,
+                name,
+                data.language,
+                "running",
+                "prd",
+                "{}",
+                f"[{now[:19]}] 🚀 一句话全自动流水线已启动",
+                current_user["username"],
+                now,
+                now,
+            ),
         )
         conn.commit()
     finally:
         conn.close()
-    threading.Thread(target=_auto_run_worker, daemon=True,
-                     args=(run_id, req_id, name, desc, data.language, data.deploy, data.target_stage, current_user["username"])).start()
+    threading.Thread(
+        target=_auto_run_worker,
+        daemon=True,
+        args=(run_id, req_id, name, desc, data.language, data.deploy, data.target_stage, current_user["username"]),
+    ).start()
     return {"ok": True, "run_id": run_id, "requirement_id": req_id, "status": "running"}
 
 
@@ -1734,8 +2028,9 @@ async def stop_auto_run(run_id: str, current_user: dict = require_auth()):
         if not row:
             raise HTTPException(404, "未找到运行记录")
         if row["status"] == "running":
-            conn.execute("UPDATE auto_runs SET status='stopping', updated_at=? WHERE id=?",
-                         (datetime.now().isoformat(), run_id))
+            conn.execute(
+                "UPDATE auto_runs SET status='stopping', updated_at=? WHERE id=?", (datetime.now().isoformat(), run_id)
+            )
             conn.commit()
     finally:
         conn.close()
@@ -1767,14 +2062,15 @@ async def generate_code(data: CodeGenRequest, current_user: dict = require_auth(
         gen_id = f"cg_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
+
         with get_db_context() as conn:
             conn.execute(
                 "INSERT INTO code_generations (id, language, prompt, result, model) VALUES (?,?,?,?,?)",
-                (gen_id, data.language, data.prompt, result, data.model)
+                (gen_id, data.language, data.prompt, result, data.model),
             )
         return {"ok": True, "id": gen_id, "result": result}
     except Exception as e:
-        raise HTTPException(500, f"代码生成失败: {str(e)}")
+        raise HTTPException(500, f"代码生成失败: {str(e)}") from e
 
 
 @router.get("/api/code/generations")
@@ -1825,15 +2121,16 @@ async def review_code(data: CodeReviewRequest, current_user: dict = require_auth
         review_id = f"cr_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
         from common.db import get_db_context
+
         with get_db_context() as conn:
             conn.execute(
                 "INSERT INTO code_reviews (id, language, code, result, model) VALUES (?,?,?,?,?)",
-                (review_id, data.language, data.code, result, data.model)
+                (review_id, data.language, data.code, result, data.model),
             )
         return {"ok": True, "id": review_id, "result": result}
     except Exception as e:
         logger.error(f"[review_code] {traceback.format_exc()}")
-        raise HTTPException(500, f"代码审查失败: {str(e)}")
+        raise HTTPException(500, f"代码审查失败: {str(e)}") from e
 
 
 @router.post("/api/code/improve")
@@ -1860,7 +2157,7 @@ async def improve_code(data: CodeImproveRequest, current_user: dict = require_au
         return {"ok": True, "result": result}
     except Exception as e:
         logger.error(f"[code_improve] {traceback.format_exc()}")
-        raise HTTPException(500, f"代码修改失败: {str(e)}")
+        raise HTTPException(500, f"代码修改失败: {str(e)}") from e
 
 
 @router.get("/api/code/reviews")
@@ -1894,7 +2191,8 @@ async def list_pipelines(current_user: dict = require_auth()):
                     p["config"]["requirement_name"] = req["name"]
             # 最近一次运行摘要
             run = conn.execute(
-                "SELECT status, started_at, finished_at FROM pipeline_runs WHERE pipeline_id=? ORDER BY started_at DESC LIMIT 1", (p["id"],)
+                "SELECT status, started_at, finished_at FROM pipeline_runs WHERE pipeline_id=? ORDER BY started_at DESC LIMIT 1",
+                (p["id"],),
             ).fetchone()
             p["last_run"] = dict(run) if run else None
             items.append(p)
@@ -1910,7 +2208,7 @@ async def create_pipeline(data: PipelineCreate, current_user: dict = require_aut
         pid = f"pipe_{uuid.uuid4().hex[:12]}"
         conn.execute(
             "INSERT INTO pipelines (id, name, description, type, config, created_by) VALUES (?,?,?,?,?,?)",
-            (pid, data.name, data.description, data.type, json.dumps(data.config), current_user["username"])
+            (pid, data.name, data.description, data.type, json.dumps(data.config), current_user["username"]),
         )
         conn.commit()
         return {"ok": True, "id": pid}
@@ -1934,16 +2232,21 @@ async def update_pipeline(pid: str, data: PipelineUpdate, current_user: dict = r
             raise HTTPException(404, "流水线不存在")
         updates, values = [], []
         if data.name:
-            updates.append("name=?"); values.append(data.name)
+            updates.append("name=?")
+            values.append(data.name)
         if data.description is not None:
-            updates.append("description=?"); values.append(data.description)
+            updates.append("description=?")
+            values.append(data.description)
         if data.type:
-            updates.append("type=?"); values.append(data.type)
+            updates.append("type=?")
+            values.append(data.type)
         if data.config is not None:
-            updates.append("config=?"); values.append(json.dumps(data.config, ensure_ascii=False))
+            updates.append("config=?")
+            values.append(json.dumps(data.config, ensure_ascii=False))
         if not updates:
             raise HTTPException(400, "没有需要更新的字段")
-        updates.append("updated_at=?"); values.append(datetime.now().isoformat())
+        updates.append("updated_at=?")
+        values.append(datetime.now().isoformat())
         values.append(pid)
         conn.execute(f"UPDATE pipelines SET {','.join(updates)} WHERE id=?", values)
         conn.commit()
@@ -1977,7 +2280,12 @@ async def run_pipeline(pid: str, current_user: dict = require_auth()):
                 )
                 conn.execute("UPDATE pipelines SET status='failed', last_run=? WHERE id=?", (started, pid))
                 conn.commit()
-                return {"ok": False, "id": run_id, "status": "failed", "error": "部署配置缺失（service_name/project_dir）"}
+                return {
+                    "ok": False,
+                    "id": run_id,
+                    "status": "failed",
+                    "error": "部署配置缺失（service_name/project_dir）",
+                }
             conn.execute(
                 "INSERT INTO pipeline_runs (id, pipeline_id, status, log, started_at) VALUES (?,?,?,?,?)",
                 (run_id, pid, "running", f"[{started[:19]}] 部署任务已创建，等待执行…", started),
@@ -2027,7 +2335,14 @@ async def run_pipeline(pid: str, current_user: dict = require_auth()):
         )
         conn.execute("UPDATE pipelines SET status='success', last_run=? WHERE id=?", (finished, pid))
         conn.commit()
-        return {"ok": True, "id": run_id, "status": "success", "log": log, "started_at": started, "finished_at": finished}
+        return {
+            "ok": True,
+            "id": run_id,
+            "status": "success",
+            "log": log,
+            "started_at": started,
+            "finished_at": finished,
+        }
     finally:
         conn.close()
 
@@ -2051,8 +2366,10 @@ async def auto_fix_pipeline(pid: str, current_user: dict = require_auth()):
             raise HTTPException(400, "部署配置缺失，无法修复")
         # 确保 auto_fix 生效（修复后也保持开启）
         cfg["auto_fix"] = True
-        conn.execute("UPDATE pipelines SET config=?, status='running', last_run=? WHERE id=?",
-                     (json.dumps(cfg, ensure_ascii=False), datetime.now().isoformat(), pid))
+        conn.execute(
+            "UPDATE pipelines SET config=?, status='running', last_run=? WHERE id=?",
+            (json.dumps(cfg, ensure_ascii=False), datetime.now().isoformat(), pid),
+        )
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         started = datetime.now().isoformat()
         conn.execute(
@@ -2070,13 +2387,15 @@ async def auto_fix_pipeline(pid: str, current_user: dict = require_auth()):
 async def analyze_sandbox_logs(project_id: str, current_user: dict = require_auth()):
     """AI 分析沙箱容器日志：拉取日志 → LLM 定位问题根因 → 返回诊断报告。"""
     import subprocess as _sp
+
     logs = ""
     if project_id.startswith("deploy-"):
-        container = f"sandbox-{project_id[len('deploy-'):]}"
+        container = f"sandbox-{project_id[len('deploy-') :]}"
         r = _sp.run(["podman", "logs", "--tail", "200", container], capture_output=True, text=True, timeout=15)
         logs = r.stdout if r.returncode == 0 else (r.stderr or "")
     else:
         from sandbox import process_manager
+
         logs = "\n".join(process_manager.get_logs(project_id, tail=200))
     if not logs.strip():
         return {"ok": True, "analysis": "容器暂无日志输出，可能尚未启动或无错误信息。", "logs": ""}
@@ -2088,7 +2407,7 @@ async def analyze_sandbox_logs(project_id: str, current_user: dict = require_aut
     try:
         analysis = call_llm(sys_prompt, f"【容器日志】\n{logs[-6000:]}")
     except Exception as e:
-        raise HTTPException(500, f"日志分析失败: {str(e)}")
+        raise HTTPException(500, f"日志分析失败: {str(e)}") from e
     return {"ok": True, "analysis": analysis, "logs": logs}
 
 
@@ -2121,6 +2440,7 @@ async def delete_pipeline(pid: str, current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 # Phase 3: 内容创作增强
 # ══════════════════════════════════════════════════════════════
+
 
 # ── 商业化基线：历史表用户隔离（幂等迁移，兼容存量库）──
 # 新库由 common/db.py 建表 SQL 直接带 user_id；旧库在 import 时补列。
@@ -2175,6 +2495,7 @@ class CopywritingRequest(BaseModel):
     prompt: str
     model: str = ""
 
+
 class TranslationRequest(BaseModel):
     source_lang: str = "中文"
     target_lang: str = "English"
@@ -2187,40 +2508,40 @@ _COPYWRITING_SPECS = {
     "marketing": {
         "role": "资深营销文案专家（8年+4A公司经验）",
         "focus": ["卖点提炼", "行动号召(CTA)", "情感共鸣", "信任背书"],
-        "format": "标题（3-5个备选）+ 正文（300-500字）+ 标语Slogan + 发布建议"
+        "format": "标题（3-5个备选）+ 正文（300-500字）+ 标语Slogan + 发布建议",
     },
     "social": {
         "role": "社交媒体内容策划专家",
         "focus": ["话题性", "互动引导", "平台适配", "时效热点"],
-        "format": "标题 + 正文（150-300字）+ 话题标签# + 配图建议 + 发布时间建议"
+        "format": "标题 + 正文（150-300字）+ 话题标签# + 配图建议 + 发布时间建议",
     },
     "seo": {
         "role": "SEO内容策略专家",
         "focus": ["关键词密度", "标题标签优化", "元描述", "内部链接建议"],
-        "format": "SEO标题（含主关键词）+ 元描述（150-160字符）+ 正文（800-1500字）+ 关键词列表 + 结构建议"
+        "format": "SEO标题（含主关键词）+ 元描述（150-160字符）+ 正文（800-1500字）+ 关键词列表 + 结构建议",
     },
     "email": {
         "role": "邮件营销转化率优化专家",
         "focus": ["打开率优化", "点击率优化", "个性化", "A/B测试建议"],
-        "format": "邮件主题行（3个备选）+ 预览文本 + 正文HTML（含CTA按钮）+ 发送时间建议"
+        "format": "邮件主题行（3个备选）+ 预览文本 + 正文HTML（含CTA按钮）+ 发送时间建议",
     },
     "ad": {
         "role": "创意广告策略专家",
         "focus": ["差异化定位", "用户痛点", "场景植入", "记忆点设计"],
-        "format": "广告语（5-8个备选）+ 长文案（200-400字）+ 视觉创意brief + 投放渠道建议"
+        "format": "广告语（5-8个备选）+ 长文案（200-400字）+ 视觉创意brief + 投放渠道建议",
     },
 }
 
 
 def _build_copywriting_prompt(copy_type: str, user_prompt: str) -> str:
     spec = _COPYWRITING_SPECS.get(copy_type, _COPYWRITING_SPECS["marketing"])
-    return f"""你是{spec['role']}。
+    return f"""你是{spec["role"]}。
 
 核心能力：
-{chr(10).join(f'- {f}' for f in spec['focus'])}
+{chr(10).join(f"- {f}" for f in spec["focus"])}
 
 输出格式（必须严格遵循）：
-{spec['format']}
+{spec["format"]}
 
 创作原则：
 1. 始终以目标用户视角思考，回答"这对我有什么用？"
@@ -2232,6 +2553,7 @@ def _build_copywriting_prompt(copy_type: str, user_prompt: str) -> str:
 
 async def _copywriting_worker(payload: dict, progress: Callable | None = None) -> dict:
     """文案生成 worker：LLM 创作 → 记录入库（带用户归属）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -2245,7 +2567,15 @@ async def _copywriting_worker(payload: dict, progress: Callable | None = None) -
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO copywriting_tasks (id, type, title, prompt, result, model, user_id) VALUES (?,?,?,?,?,?,?)",
-            (task_id, payload.get("type", "marketing"), payload.get("title", ""), payload.get("prompt", ""), result, payload.get("model", ""), payload.get("user_id", ""))
+            (
+                task_id,
+                payload.get("type", "marketing"),
+                payload.get("title", ""),
+                payload.get("prompt", ""),
+                result,
+                payload.get("model", ""),
+                payload.get("user_id", ""),
+            ),
         )
     _report(100, "完成")
     return {"id": task_id, "result": result}
@@ -2262,11 +2592,16 @@ async def generate_copywriting(data: CopywritingRequest, current_user: dict = re
     if not data.prompt.strip():
         raise HTTPException(400, "文案需求不能为空")
     payload = {
-        "type": data.type, "title": data.title, "prompt": data.prompt, "model": data.model,
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "type": data.type,
+        "title": data.title,
+        "prompt": data.prompt,
+        "model": data.model,
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "copywriting_generate", payload,
+        "copywriting_generate",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -2280,7 +2615,9 @@ async def list_copywriting_history(current_user: dict = require_auth()):
     try:
         where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute(f"SELECT * FROM copywriting_tasks WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
+        for row in conn.execute(
+            f"SELECT * FROM copywriting_tasks WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args
+        ).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2318,6 +2655,7 @@ def _build_translation_prompt(source_lang: str, target_lang: str) -> str:
 
 async def _translation_worker(payload: dict, progress: Callable | None = None) -> dict:
     """翻译 worker：LLM 翻译 → 记录入库（带用户归属）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -2330,7 +2668,15 @@ async def _translation_worker(payload: dict, progress: Callable | None = None) -
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO translations (id, source_lang, target_lang, source_text, result, model, user_id) VALUES (?,?,?,?,?,?,?)",
-            (trans_id, payload.get("source_lang", "中文"), payload.get("target_lang", "English"), payload.get("text", ""), result, payload.get("model", ""), payload.get("user_id", ""))
+            (
+                trans_id,
+                payload.get("source_lang", "中文"),
+                payload.get("target_lang", "English"),
+                payload.get("text", ""),
+                result,
+                payload.get("model", ""),
+                payload.get("user_id", ""),
+            ),
         )
     _report(100, "完成")
     return {"id": trans_id, "result": result}
@@ -2347,11 +2693,16 @@ async def translate_text(data: TranslationRequest, current_user: dict = require_
     if not data.text.strip():
         raise HTTPException(400, "待翻译文本不能为空")
     payload = {
-        "source_lang": data.source_lang, "target_lang": data.target_lang, "text": data.text, "model": data.model,
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "source_lang": data.source_lang,
+        "target_lang": data.target_lang,
+        "text": data.text,
+        "model": data.model,
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "translation_translate", payload,
+        "translation_translate",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -2365,7 +2716,9 @@ async def list_translation_history(current_user: dict = require_auth()):
     try:
         where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute(f"SELECT * FROM translations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
+        for row in conn.execute(
+            f"SELECT * FROM translations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args
+        ).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2388,6 +2741,7 @@ async def delete_translation(task_id: str, current_user: dict = require_auth()):
 # Phase 4: 运营分析
 # ══════════════════════════════════════════════════════════════
 
+
 class ABTestCreate(BaseModel):
     name: str
     description: str = ""
@@ -2405,7 +2759,9 @@ async def get_dashboard_stats(current_user: dict = require_auth()):
             "workflows": conn.execute("SELECT COUNT(*) FROM workflows WHERE active=1").fetchone()[0],
             "projects": conn.execute("SELECT COUNT(*) FROM projects WHERE active=1").fetchone()[0],
             "tasks": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE active=1").fetchone()[0],
-            "tasks_completed": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE status='done' AND active=1").fetchone()[0],
+            "tasks_completed": conn.execute(
+                "SELECT COUNT(*) FROM global_tasks WHERE status='done' AND active=1"
+            ).fetchone()[0],
             "pipelines": conn.execute("SELECT COUNT(*) FROM pipelines WHERE active=1").fetchone()[0],
             "code_generations": conn.execute("SELECT COUNT(*) FROM code_generations").fetchone()[0],
             "translations": conn.execute("SELECT COUNT(*) FROM translations").fetchone()[0],
@@ -2456,7 +2812,7 @@ async def create_ab_test(data: ABTestCreate, current_user: dict = require_auth()
         tid = f"ab_{uuid.uuid4().hex[:12]}"
         conn.execute(
             "INSERT INTO ab_tests (id, name, description, variant_a, variant_b, created_by) VALUES (?,?,?,?,?,?)",
-            (tid, data.name, data.description, data.variant_a, data.variant_b, current_user["username"])
+            (tid, data.name, data.description, data.variant_a, data.variant_b, current_user["username"]),
         )
         conn.commit()
         return {"ok": True, "id": tid}
@@ -2479,10 +2835,12 @@ async def delete_ab_test(tid: str, current_user: dict = require_auth()):
 # 办公效率: PPT + Excel
 # ══════════════════════════════════════════════════════════════
 
+
 class PPTGenerateRequest(BaseModel):
     title: str
     outline: str = ""
     model: str = ""
+
 
 class ExcelRequest(BaseModel):
     operation: str = "create"
@@ -2529,7 +2887,7 @@ def _parse_ppt_outline(result: str) -> dict:
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
-        text = text[start:end + 1]
+        text = text[start : end + 1]
     try:
         data = parse_llm_json(text)
     except Exception:
@@ -2609,8 +2967,20 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
         _rect(slide, 0, 4.7, 13.333, 0.06, ACCENT)
         _text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, WHITE, bold=True, align=PP_ALIGN.CENTER)
         if subtitle:
-            _text(slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER, first=False)
-        _text(slide, 1.2, 6.8, 10.9, 0.4, f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}", 12, RGBColor(0x9A, 0xA3, 0xB8), align=PP_ALIGN.CENTER)
+            _text(
+                slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER, first=False
+            )
+        _text(
+            slide,
+            1.2,
+            6.8,
+            10.9,
+            0.4,
+            f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
+            12,
+            RGBColor(0x9A, 0xA3, 0xB8),
+            align=PP_ALIGN.CENTER,
+        )
 
     def _render_thanks(slide, title_text, subtitle):
         _rect(slide, 0, 0, 13.333, 7.5, DARK)
@@ -2694,6 +3064,7 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
 
 async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     """PPT worker：LLM 大纲 → 解析 → 生成 PPTX 文件 → 记录入库（带用户归属）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -2714,10 +3085,24 @@ async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO ppt_generations (id, title, outline, slides, result, model, user_id, file_path) VALUES (?,?,?,?,?,?,?,?)",
-            (ppt_id, payload.get("title", ""), payload.get("outline", ""), json.dumps(outline_data, ensure_ascii=False), result, payload.get("model", ""), payload.get("user_id", ""), f"/api/ppt/download/{filename}")
+            (
+                ppt_id,
+                payload.get("title", ""),
+                payload.get("outline", ""),
+                json.dumps(outline_data, ensure_ascii=False),
+                result,
+                payload.get("model", ""),
+                payload.get("user_id", ""),
+                f"/api/ppt/download/{filename}",
+            ),
         )
     _report(100, "完成")
-    return {"id": ppt_id, "result": result, "slides": len(outline_data.get("slides", [])), "pptx": f"/api/ppt/download/{filename}"}
+    return {
+        "id": ppt_id,
+        "result": result,
+        "slides": len(outline_data.get("slides", [])),
+        "pptx": f"/api/ppt/download/{filename}",
+    }
 
 
 async def _ppt_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
@@ -2731,11 +3116,15 @@ async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_au
     if not data.title.strip():
         raise HTTPException(400, "PPT 主题不能为空")
     payload = {
-        "title": data.title, "outline": data.outline, "model": data.model,
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "title": data.title,
+        "outline": data.outline,
+        "model": data.model,
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "ppt_generate", payload,
+        "ppt_generate",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -2750,7 +3139,9 @@ async def download_ppt(filename: str, current_user: dict = require_auth()):
     path = os.path.join(PPTX_DIR, safe)
     if not os.path.exists(path):
         raise HTTPException(404, "文件不存在或已过期清理")
-    return FileResponse(path, filename=safe, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    return FileResponse(
+        path, filename=safe, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
 
 
 @router.get("/api/ppt/history")
@@ -2759,7 +3150,9 @@ async def list_ppt_history(current_user: dict = require_auth()):
     try:
         where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute(f"SELECT * FROM ppt_generations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
+        for row in conn.execute(
+            f"SELECT * FROM ppt_generations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args
+        ).fetchall():
             items.append(dict(row))
         return items
     finally:
@@ -2833,12 +3226,12 @@ async def excel_operate(data: ExcelRequest, current_user: dict = require_auth())
 
         conn.execute(
             "INSERT INTO excel_operations (id, operation, title, data, result) VALUES (?,?,?,?,?)",
-            (op_id, data.operation, data.title, json.dumps(data.data), result)
+            (op_id, data.operation, data.title, json.dumps(data.data), result),
         )
         conn.commit()
         return {"ok": True, "id": op_id, "result": result}
     except Exception as e:
-        raise HTTPException(500, f"Excel操作失败: {str(e)}")
+        raise HTTPException(500, f"Excel操作失败: {str(e)}") from e
     finally:
         conn.close()
 
@@ -2849,7 +3242,9 @@ async def list_excel_history(current_user: dict = require_auth()):
     try:
         where, args = _user_scope_clause(conn, current_user)
         items = []
-        for row in conn.execute(f"SELECT * FROM excel_operations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args).fetchall():
+        for row in conn.execute(
+            f"SELECT * FROM excel_operations WHERE 1=1{where} ORDER BY created_at DESC LIMIT 50", args
+        ).fetchall():
             e = dict(row)
             e["data"] = json.loads(e.get("data", "{}"))
             items.append(e)

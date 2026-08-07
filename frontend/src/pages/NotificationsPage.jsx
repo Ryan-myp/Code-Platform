@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Bell, Check, CheckCheck, Trash2, AlertCircle, Info, AlertTriangle,
-  CheckCircle2, X, Filter, Search
+  Bell,
+  Check,
+  CheckCheck,
+  Trash2,
+  AlertCircle,
+  Info,
+  AlertTriangle,
+  CheckCircle2,
+  X,
+  Filter,
+  Search,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -22,7 +31,9 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState({ type: '', unreadOnly: false })
 
-  useEffect(() => { loadNotifications() }, [filter])
+  useEffect(() => {
+    loadNotifications()
+  }, [filter])
 
   const loadNotifications = async () => {
     setLoading(true)
@@ -67,9 +78,9 @@ export default function NotificationsPage() {
     }
   }
 
-  const unreadCount = notifications.filter(n => !n.read).length
+  const unreadCount = notifications.filter((n) => !n.read).length
 
-  const filteredNotifications = notifications.filter(n => {
+  const filteredNotifications = notifications.filter((n) => {
     if (filter.type && n.type !== filter.type) return false
     return true
   })
@@ -116,11 +127,17 @@ export default function NotificationsPage() {
           >
             <option value="">全部类型</option>
             {Object.entries(TYPE_CONFIG).map(([key, config]) => (
-              <option key={key} value={key}>{config.label}</option>
+              <option key={key} value={key}>
+                {config.label}
+              </option>
             ))}
           </select>
           {(filter.type || filter.unreadOnly) && (
-            <Button variant="ghost" size="sm" onClick={() => setFilter({ type: '', unreadOnly: false })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setFilter({ type: '', unreadOnly: false })}
+            >
               清除筛选
             </Button>
           )}
@@ -152,18 +169,22 @@ export default function NotificationsPage() {
                 className={`!p-4 transition-all ${isUnread ? 'bg-blue-50/50 border-blue-200' : 'bg-white'}`}
               >
                 <div className="flex items-start gap-3">
-                  <div className={`w-8 h-8 rounded-lg bg-${typeConfig.color}-100 flex items-center justify-center flex-shrink-0`}>
+                  <div
+                    className={`w-8 h-8 rounded-lg bg-${typeConfig.color}-100 flex items-center justify-center flex-shrink-0`}
+                  >
                     <TypeIcon className={`w-4 h-4 text-${typeConfig.color}-600`} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`text-sm font-medium ${isUnread ? 'text-gray-900' : 'text-gray-600'}`}>
+                      <span
+                        className={`text-sm font-medium ${isUnread ? 'text-gray-900' : 'text-gray-600'}`}
+                      >
                         {notif.title}
                       </span>
-                      {isUnread && (
-                        <span className="w-2 h-2 rounded-full bg-blue-500" />
-                      )}
-                      <Badge color={typeConfig.color} size="sm">{typeConfig.label}</Badge>
+                      {isUnread && <span className="w-2 h-2 rounded-full bg-blue-500" />}
+                      <Badge color={typeConfig.color} size="sm">
+                        {typeConfig.label}
+                      </Badge>
                     </div>
                     {notif.content && (
                       <p className={`text-sm mt-1 ${isUnread ? 'text-gray-700' : 'text-gray-500'}`}>

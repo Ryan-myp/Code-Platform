@@ -1,8 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react'
 import {
-  Languages, Play, Copy, Check, ArrowRightLeft, Clock, Upload, X,
-  FileText, Globe, Scale, Stethoscope, BookOpen, Briefcase, Code2,
-  Trash2, Sparkles, FileUp, Star, ListOrdered, BookMarked, Plus, Download,
+  Languages,
+  Play,
+  Copy,
+  Check,
+  ArrowRightLeft,
+  Clock,
+  Upload,
+  X,
+  FileText,
+  Globe,
+  Scale,
+  Stethoscope,
+  BookOpen,
+  Briefcase,
+  Code2,
+  Trash2,
+  Sparkles,
+  FileUp,
+  Star,
+  ListOrdered,
+  BookMarked,
+  Plus,
+  Download,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -11,7 +31,18 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
 
-const LANGS = ['中文', 'English', '日本語', '한국어', 'Français', 'Deutsch', 'Español', 'Русский', 'العربية', 'Português']
+const LANGS = [
+  '中文',
+  'English',
+  '日本語',
+  '한국어',
+  'Français',
+  'Deutsch',
+  'Español',
+  'Русский',
+  'العربية',
+  'Português',
+]
 
 const DOMAINS = [
   { value: 'general', label: '通用', icon: Globe, desc: '日常文本翻译' },
@@ -29,12 +60,36 @@ const STYLES = [
 ]
 
 const TEMPLATES = [
-  { name: '技术文档', icon: '💻', text: '请将以下技术文档翻译为目标语言，保持专业术语准确性，保留代码示例和格式：' },
-  { name: '商务邮件', icon: '📧', text: '请将以下商务邮件翻译为目标语言，保持正式商务语气，注意礼仪用语：' },
-  { name: '产品说明', icon: '📦', text: '请将以下产品说明翻译为目标语言，突出产品特性，用词简洁明了：' },
-  { name: '合同条款', icon: '⚖️', text: '请将以下合同条款翻译为目标语言，确保法律术语准确，条款含义不变：' },
-  { name: '营销内容', icon: '📢', text: '请将以下营销内容翻译为目标语言，保持吸引力，适应当地文化表达：' },
-  { name: '学术论文', icon: '🎓', text: '请将以下学术内容翻译为目标语言，保持学术规范，引用格式不变：' },
+  {
+    name: '技术文档',
+    icon: '💻',
+    text: '请将以下技术文档翻译为目标语言，保持专业术语准确性，保留代码示例和格式：',
+  },
+  {
+    name: '商务邮件',
+    icon: '📧',
+    text: '请将以下商务邮件翻译为目标语言，保持正式商务语气，注意礼仪用语：',
+  },
+  {
+    name: '产品说明',
+    icon: '📦',
+    text: '请将以下产品说明翻译为目标语言，突出产品特性，用词简洁明了：',
+  },
+  {
+    name: '合同条款',
+    icon: '⚖️',
+    text: '请将以下合同条款翻译为目标语言，确保法律术语准确，条款含义不变：',
+  },
+  {
+    name: '营销内容',
+    icon: '📢',
+    text: '请将以下营销内容翻译为目标语言，保持吸引力，适应当地文化表达：',
+  },
+  {
+    name: '学术论文',
+    icon: '🎓',
+    text: '请将以下学术内容翻译为目标语言，保持学术规范，引用格式不变：',
+  },
 ]
 
 export default function TranslationPage() {
@@ -55,58 +110,96 @@ export default function TranslationPage() {
   const [batchTexts, setBatchTexts] = useState([''])
   const [batchResults, setBatchResults] = useState([])
   const [favorites, setFavorites] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('translation_favorites') || '[]') } catch { return [] }
+    try {
+      return JSON.parse(localStorage.getItem('translation_favorites') || '[]')
+    } catch {
+      return []
+    }
   })
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState(null)
   const fileInputRef = useRef(null)
 
-  useEffect(() => { loadHistory() }, [])
+  useEffect(() => {
+    loadHistory()
+  }, [])
   const loadHistory = async () => {
     setHistoryLoading(true)
     setHistoryError(null)
-    try { const res = await api.get('/api/translation/history'); setHistory(res.data) } catch (e) { setHistoryError(e.message) }
-    finally { setHistoryLoading(false) }
+    try {
+      const res = await api.get('/api/translation/history')
+      setHistory(res.data)
+    } catch (e) {
+      setHistoryError(e.message)
+    } finally {
+      setHistoryLoading(false)
+    }
   }
 
   const buildSystemPrompt = () => {
-    const domainMeta = DOMAINS.find(d => d.value === domain)
-    const styleMeta = STYLES.find(s => s.value === style)
+    const domainMeta = DOMAINS.find((d) => d.value === domain)
+    const styleMeta = STYLES.find((s) => s.value === style)
     return `你是专业翻译，将以下内容从${sourceLang}翻译为${targetLang}。\n领域：${domainMeta.label}（${domainMeta.desc}）\n翻译风格：${styleMeta.label}（${styleMeta.desc}）\n要求：保持原文格式，术语准确，表达自然流畅。只返回翻译结果。`
   }
 
   const translate = async () => {
     const finalText = fileContent || text
-    if (!finalText.trim()) { toast.error('请输入翻译内容'); return }
+    if (!finalText.trim()) {
+      toast.error('请输入翻译内容')
+      return
+    }
     setResult('')
-    await submitTask('/api/translation/translate', {
-      source_lang: sourceLang, target_lang: targetLang, text: `${buildSystemPrompt()}\n\n${finalText}`
-    }, {
-      onUpdate: (t) => setTask(t),
-      onSuccess: (data) => {
-        setResult(data.result); setTask(null); loadHistory(); toast.success('翻译完成')
+    await submitTask(
+      '/api/translation/translate',
+      {
+        source_lang: sourceLang,
+        target_lang: targetLang,
+        text: `${buildSystemPrompt()}\n\n${finalText}`,
       },
-      onError: (e) => { setTask(null); toast.error(`翻译失败：${e.message}`) },
-    })
+      {
+        onUpdate: (t) => setTask(t),
+        onSuccess: (data) => {
+          setResult(data.result)
+          setTask(null)
+          loadHistory()
+          toast.success('翻译完成')
+        },
+        onError: (e) => {
+          setTask(null)
+          toast.error(`翻译失败：${e.message}`)
+        },
+      }
+    )
   }
 
   const swapLangs = () => {
-    setSourceLang(targetLang); setTargetLang(sourceLang)
-    if (result) { setText(result); setResult('') }
+    setSourceLang(targetLang)
+    setTargetLang(sourceLang)
+    if (result) {
+      setText(result)
+      setResult('')
+    }
   }
 
   const copyResult = () => {
     const content = result || batchResults.map((r) => r.translated).join('\n\n---\n\n')
-    navigator.clipboard.writeText(content); setCopied(true)
+    navigator.clipboard.writeText(content)
+    setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   const downloadResult = () => {
-    const content = result || batchResults.map((r) => `## ${r.original.slice(0, 40)}\n\n${r.translated}`).join('\n\n---\n\n')
+    const content =
+      result ||
+      batchResults
+        .map((r) => `## ${r.original.slice(0, 40)}\n\n${r.translated}`)
+        .join('\n\n---\n\n')
     const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `翻译结果-${sourceLang}到${targetLang}.md`; a.click()
+    a.href = url
+    a.download = `翻译结果-${sourceLang}到${targetLang}.md`
+    a.click()
     URL.revokeObjectURL(url)
     toast.success('已下载翻译文件')
   }
@@ -119,13 +212,16 @@ export default function TranslationPage() {
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) { toast.error('文件不能超过 10MB'); return }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('文件不能超过 10MB')
+      return
+    }
     setUploadedFile(file)
     const formData = new FormData()
     formData.append('file', file)
     try {
       const res = await api.post('/api/tools/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
       })
       setFileContent(res.data.content || '')
       toast.success(`已上传: ${file.name}`)
@@ -136,54 +232,99 @@ export default function TranslationPage() {
   }
 
   const removeFile = () => {
-    setUploadedFile(null); setFileContent('')
+    setUploadedFile(null)
+    setFileContent('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const reuseHistory = (item) => {
-    setText(item.source_text); setSourceLang(item.source_lang); setTargetLang(item.target_lang); setResult(item.result)
+    setText(item.source_text)
+    setSourceLang(item.source_lang)
+    setTargetLang(item.target_lang)
+    setResult(item.result)
   }
 
   const toggleFavorite = (item, e) => {
     e.stopPropagation()
-    const isFav = favorites.some(f => f.id === item.id)
-    const next = isFav ? favorites.filter(f => f.id !== item.id) : [...favorites, { id: item.id, source_text: item.source_text, source_lang: item.source_lang, target_lang: item.target_lang, result: item.result, created_at: item.created_at }]
+    const isFav = favorites.some((f) => f.id === item.id)
+    const next = isFav
+      ? favorites.filter((f) => f.id !== item.id)
+      : [
+          ...favorites,
+          {
+            id: item.id,
+            source_text: item.source_text,
+            source_lang: item.source_lang,
+            target_lang: item.target_lang,
+            result: item.result,
+            created_at: item.created_at,
+          },
+        ]
     setFavorites(next)
     localStorage.setItem('translation_favorites', JSON.stringify(next))
     toast.success(isFav ? '已取消收藏' : '已收藏')
   }
 
   const addBatchLine = () => setBatchTexts([...batchTexts, ''])
-  const updateBatchLine = (idx, val) => { const next = [...batchTexts]; next[idx] = val; setBatchTexts(next) }
+  const updateBatchLine = (idx, val) => {
+    const next = [...batchTexts]
+    next[idx] = val
+    setBatchTexts(next)
+  }
   const removeBatchLine = (idx) => setBatchTexts(batchTexts.filter((_, i) => i !== idx))
 
   const batchTranslate = async () => {
-    const validTexts = batchTexts.filter(t => t.trim())
-    if (validTexts.length === 0) { toast.error('请输入至少一段翻译内容'); return }
+    const validTexts = batchTexts.filter((t) => t.trim())
+    if (validTexts.length === 0) {
+      toast.error('请输入至少一段翻译内容')
+      return
+    }
     setBatchResults([])
     const outputs = []
     for (let i = 0; i < validTexts.length; i++) {
       // 异步任务模式：每段独立任务，串行等待（受后端用户并发限制保护）
       await new Promise((resolve) => {
-        submitTask('/api/translation/translate', {
-          source_lang: sourceLang, target_lang: targetLang, text: `${buildSystemPrompt()}\n\n${validTexts[i]}`
-        }, {
-          onUpdate: (t) => setTask({ ...t, batchIndex: i + 1, batchTotal: validTexts.length }),
-          onSuccess: (data) => { outputs.push({ original: validTexts[i], translated: data.result }); resolve() },
-          onError: () => { outputs.push({ original: validTexts[i], translated: '' }); resolve() },
-        })
+        submitTask(
+          '/api/translation/translate',
+          {
+            source_lang: sourceLang,
+            target_lang: targetLang,
+            text: `${buildSystemPrompt()}\n\n${validTexts[i]}`,
+          },
+          {
+            onUpdate: (t) => setTask({ ...t, batchIndex: i + 1, batchTotal: validTexts.length }),
+            onSuccess: (data) => {
+              outputs.push({ original: validTexts[i], translated: data.result })
+              resolve()
+            },
+            onError: () => {
+              outputs.push({ original: validTexts[i], translated: '' })
+              resolve()
+            },
+          }
+        )
       })
     }
     setTask(null)
     setBatchResults(outputs)
     loadHistory()
-    const failed = outputs.filter(o => !o.translated).length
-    toast.success(failed ? `批量翻译完成（${outputs.length - failed}成功/${failed}失败）` : `批量翻译完成（${outputs.length}段）`)
+    const failed = outputs.filter((o) => !o.translated).length
+    toast.success(
+      failed
+        ? `批量翻译完成（${outputs.length - failed}成功/${failed}失败）`
+        : `批量翻译完成（${outputs.length}段）`
+    )
   }
 
   const deleteHistory = async (id, e) => {
     e.stopPropagation()
-    try { await api.delete(`/api/translation/${id}`); loadHistory(); toast.success('已删除') } catch {/* 静默失败，不阻塞 UI */}
+    try {
+      await api.delete(`/api/translation/${id}`)
+      loadHistory()
+      toast.success('已删除')
+    } catch {
+      /* 静默失败，不阻塞 UI */
+    }
   }
 
   return (
@@ -198,14 +339,36 @@ export default function TranslationPage() {
       {/* 统计卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: '总翻译数', value: history.length, icon: FileText, color: 'from-blue-500 to-indigo-600' },
-          { label: '语言对', value: `${new Set(history.map(h => `${h.source_lang}→${h.target_lang}`)).size}`, icon: Globe, color: 'from-purple-500 to-violet-600' },
-          { label: '当前方向', value: `${sourceLang} → ${targetLang}`, icon: ArrowRightLeft, color: 'from-emerald-500 to-green-600' },
-          { label: '支持语言', value: `${LANGS.length}种`, icon: Languages, color: 'from-amber-500 to-orange-600' },
+          {
+            label: '总翻译数',
+            value: history.length,
+            icon: FileText,
+            color: 'from-blue-500 to-indigo-600',
+          },
+          {
+            label: '语言对',
+            value: `${new Set(history.map((h) => `${h.source_lang}→${h.target_lang}`)).size}`,
+            icon: Globe,
+            color: 'from-purple-500 to-violet-600',
+          },
+          {
+            label: '当前方向',
+            value: `${sourceLang} → ${targetLang}`,
+            icon: ArrowRightLeft,
+            color: 'from-emerald-500 to-green-600',
+          },
+          {
+            label: '支持语言',
+            value: `${LANGS.length}种`,
+            icon: Languages,
+            color: 'from-amber-500 to-orange-600',
+          },
         ].map((s, i) => (
           <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
             <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${s.color} flex items-center justify-center`}>
+              <div
+                className={`w-10 h-10 rounded-lg bg-gradient-to-br ${s.color} flex items-center justify-center`}
+              >
                 <s.icon className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -227,31 +390,52 @@ export default function TranslationPage() {
             </h3>
             {/* 语言方向 */}
             <div className="flex items-center gap-2 mb-4">
-              <select value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none">
-                {LANGS.map(l => <option key={l} value={l}>{l}</option>)}
+              <select
+                value={sourceLang}
+                onChange={(e) => setSourceLang(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              >
+                {LANGS.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
               </select>
-              <button onClick={swapLangs} className="p-2 hover:bg-gray-100 rounded-lg transition-colors" title="交换语言">
+              <button
+                onClick={swapLangs}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="交换语言"
+              >
                 <ArrowRightLeft className="w-4 h-4 text-gray-500" />
               </button>
-              <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none">
-                {LANGS.map(l => <option key={l} value={l}>{l}</option>)}
+              <select
+                value={targetLang}
+                onChange={(e) => setTargetLang(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              >
+                {LANGS.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
               </select>
             </div>
             {/* 领域模式 */}
             <div className="mb-3">
               <label className="block text-xs font-medium text-gray-500 mb-1.5">翻译领域</label>
               <div className="grid grid-cols-2 gap-2">
-                {DOMAINS.map(d => {
+                {DOMAINS.map((d) => {
                   const Icon = d.icon
                   return (
-                    <button key={d.value} onClick={() => setDomain(d.value)}
+                    <button
+                      key={d.value}
+                      onClick={() => setDomain(d.value)}
                       className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs border transition-all ${
                         domain === d.value
                           ? 'bg-blue-50 border-blue-300 text-blue-700 font-medium'
                           : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                      }`}>
+                      }`}
+                    >
                       <Icon className="w-3.5 h-3.5" />
                       {d.label}
                     </button>
@@ -263,13 +447,16 @@ export default function TranslationPage() {
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">翻译风格</label>
               <div className="grid grid-cols-2 gap-2">
-                {STYLES.map(s => (
-                  <button key={s.value} onClick={() => setStyle(s.value)}
+                {STYLES.map((s) => (
+                  <button
+                    key={s.value}
+                    onClick={() => setStyle(s.value)}
                     className={`px-3 py-2 rounded-lg text-xs border transition-all text-center ${
                       style === s.value
                         ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-medium'
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}>
+                    }`}
+                  >
                     <div className="font-medium">{s.label}</div>
                     <div className="text-[10px] text-gray-400 mt-0.5">{s.desc}</div>
                   </button>
@@ -285,8 +472,11 @@ export default function TranslationPage() {
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {TEMPLATES.map((tpl, i) => (
-                <button key={i} onClick={() => applyTemplate(tpl)}
-                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-left">
+                <button
+                  key={i}
+                  onClick={() => applyTemplate(tpl)}
+                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-left"
+                >
                   <span className="text-base">{tpl.icon}</span>
                   <span className="text-xs text-gray-700">{tpl.name}</span>
                 </button>
@@ -305,66 +495,119 @@ export default function TranslationPage() {
                 {uploadedFile ? (
                   <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
                     <FileUp className="w-4 h-4 text-blue-600" />
-                    <span className="flex-1 text-sm text-gray-700 truncate">{uploadedFile.name}</span>
-                    <button onClick={removeFile} className="text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                    <span className="flex-1 text-sm text-gray-700 truncate">
+                      {uploadedFile.name}
+                    </span>
+                    <button onClick={removeFile} className="text-gray-400 hover:text-red-500">
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 ) : (
                   <label className="flex items-center justify-center gap-2 px-3 py-2 border-2 border-dashed border-gray-200 rounded-lg cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-colors">
                     <Upload className="w-4 h-4 text-gray-400" />
                     <span className="text-sm text-gray-500">上传文档翻译（.txt/.md/.docx）</span>
-                    <input ref={fileInputRef} type="file" onChange={handleFileUpload}
-                      accept=".txt,.md,.docx" className="hidden" />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileUpload}
+                      accept=".txt,.md,.docx"
+                      className="hidden"
+                    />
                   </label>
                 )}
               </div>
               {/* 批量模式开关 */}
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={batchMode} onChange={(e) => setBatchMode(e.target.checked)}
-                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <input
+                    type="checkbox"
+                    checked={batchMode}
+                    onChange={(e) => setBatchMode(e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
                   <span className="text-xs font-medium text-gray-600 flex items-center gap-1">
                     <ListOrdered className="w-3 h-3" /> 批量翻译模式
                   </span>
                 </label>
-                <span className="text-xs text-gray-400">{batchMode ? `${batchTexts.filter(t=>t.trim()).length} 段待翻译` : '单段翻译'}</span>
+                <span className="text-xs text-gray-400">
+                  {batchMode ? `${batchTexts.filter((t) => t.trim()).length} 段待翻译` : '单段翻译'}
+                </span>
               </div>
 
               {batchMode ? (
                 <div className="space-y-2">
                   {batchTexts.map((t, i) => (
                     <div key={i} className="flex items-start gap-2">
-                      <span className="text-xs text-gray-400 mt-2 flex-shrink-0 w-5 text-right">{i + 1}.</span>
-                      <textarea value={t} onChange={(e) => updateBatchLine(i, e.target.value)}
-                        placeholder={`第${i + 1}段文本...`} rows={2}
-                        className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
+                      <span className="text-xs text-gray-400 mt-2 flex-shrink-0 w-5 text-right">
+                        {i + 1}.
+                      </span>
+                      <textarea
+                        value={t}
+                        onChange={(e) => updateBatchLine(i, e.target.value)}
+                        placeholder={`第${i + 1}段文本...`}
+                        rows={2}
+                        className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      />
                       {batchTexts.length > 1 && (
-                        <button onClick={() => removeBatchLine(i)} className="p-1 text-gray-400 hover:text-red-500 mt-1"><X className="w-3.5 h-3.5" /></button>
+                        <button
+                          onClick={() => removeBatchLine(i)}
+                          className="p-1 text-gray-400 hover:text-red-500 mt-1"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       )}
                     </div>
                   ))}
-                  <button onClick={addBatchLine} className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 ml-7">
+                  <button
+                    onClick={addBatchLine}
+                    className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1 ml-7"
+                  >
                     <Plus className="w-3 h-3" /> 添加一段
                   </button>
-                  <Button variant="primary" icon={Languages} loading={!!task} onClick={batchTranslate} className="w-full">批量翻译（{batchTexts.filter(t=>t.trim()).length}段）</Button>
+                  <Button
+                    variant="primary"
+                    icon={Languages}
+                    loading={!!task}
+                    onClick={batchTranslate}
+                    className="w-full"
+                  >
+                    批量翻译（{batchTexts.filter((t) => t.trim()).length}段）
+                  </Button>
                   {task?.batchTotal > 1 && (
                     <div className="w-full">
                       <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                        <span>第 {task.batchIndex}/{task.batchTotal} 段 · {task.stage || '处理中…'}</span>
+                        <span>
+                          第 {task.batchIndex}/{task.batchTotal} 段 · {task.stage || '处理中…'}
+                        </span>
                         <span>{task.progress || 0}%</span>
                       </div>
                       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
-                          style={{ width: `${task.progress || 0}%` }} />
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
+                          style={{ width: `${task.progress || 0}%` }}
+                        />
                       </div>
                     </div>
                   )}
                 </div>
               ) : (
                 <>
-                  <textarea value={text} onChange={(e) => setText(e.target.value)}
+                  <textarea
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
                     placeholder="输入需要翻译的文本..."
-                    rows={8} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none" />
-                  <Button variant="primary" icon={Languages} loading={!!task} onClick={translate} className="w-full">翻译</Button>
+                    rows={8}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                  />
+                  <Button
+                    variant="primary"
+                    icon={Languages}
+                    loading={!!task}
+                    onClick={translate}
+                    className="w-full"
+                  >
+                    翻译
+                  </Button>
                   {task && !task.batchTotal && (
                     <div className="w-full">
                       <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
@@ -372,8 +615,10 @@ export default function TranslationPage() {
                         <span>{task.progress || 0}%</span>
                       </div>
                       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
-                          style={{ width: `${task.progress || 0}%` }} />
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full transition-all duration-300"
+                          style={{ width: `${task.progress || 0}%` }}
+                        />
                       </div>
                     </div>
                   )}
@@ -388,13 +633,30 @@ export default function TranslationPage() {
           <Card className="min-h-[400px]">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                <Languages className="w-4 h-4 text-blue-500" /> {batchMode ? '批量翻译结果' : '翻译结果'}
+                <Languages className="w-4 h-4 text-blue-500" />{' '}
+                {batchMode ? '批量翻译结果' : '翻译结果'}
               </h3>
               {(result || batchResults.length > 0) && (
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>下载</Button>
-                  <ShareButton content={result || batchResults.map((r) => `**${r.original}**\n\n${r.translated}`).join('\n\n---\n\n')} title="翻译结果" contentType="translation" />
-                  <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyResult}>
+                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>
+                    下载
+                  </Button>
+                  <ShareButton
+                    content={
+                      result ||
+                      batchResults
+                        .map((r) => `**${r.original}**\n\n${r.translated}`)
+                        .join('\n\n---\n\n')
+                    }
+                    title="翻译结果"
+                    contentType="translation"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={copied ? Check : Copy}
+                    onClick={copyResult}
+                  >
                     {copied ? '已复制' : '复制'}
                   </Button>
                 </div>
@@ -455,33 +717,49 @@ export default function TranslationPage() {
         <Card>
           <ErrorState message={`历史加载失败：${historyError}`} onRetry={loadHistory} />
         </Card>
-      ) : history.length > 0 && (
-        <Card>
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-gray-400" /> 翻译历史
-          </h3>
-          <div className="space-y-2">
-            {history.slice(0, 10).map(item => (
-              <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
-                onClick={() => reuseHistory(item)}>
-                <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded flex-shrink-0">
-                  {item.source_lang} → {item.target_lang}
-                </span>
-                <span className="text-sm text-gray-700 truncate flex-1">{item.source_text?.slice(0, 60)}</span>
-                <span className="text-xs text-gray-400 flex-shrink-0">{item.created_at?.slice(0, 16).replace('T', ' ')}</span>
-                <button onClick={(e) => toggleFavorite(item, e)}
-                  className={`p-1 rounded transition-colors flex-shrink-0 ${favorites.some(f => f.id === item.id) ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
-                  title="收藏">
-                  <Star className="w-3.5 h-3.5" fill={favorites.some(f => f.id === item.id) ? 'currentColor' : 'none'} />
-                </button>
-                <button onClick={(e) => deleteHistory(item.id, e)}
-                  className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors flex-shrink-0">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </Card>
+      ) : (
+        history.length > 0 && (
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-400" /> 翻译历史
+            </h3>
+            <div className="space-y-2">
+              {history.slice(0, 10).map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                  onClick={() => reuseHistory(item)}
+                >
+                  <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded flex-shrink-0">
+                    {item.source_lang} → {item.target_lang}
+                  </span>
+                  <span className="text-sm text-gray-700 truncate flex-1">
+                    {item.source_text?.slice(0, 60)}
+                  </span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">
+                    {item.created_at?.slice(0, 16).replace('T', ' ')}
+                  </span>
+                  <button
+                    onClick={(e) => toggleFavorite(item, e)}
+                    className={`p-1 rounded transition-colors flex-shrink-0 ${favorites.some((f) => f.id === item.id) ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                    title="收藏"
+                  >
+                    <Star
+                      className="w-3.5 h-3.5"
+                      fill={favorites.some((f) => f.id === item.id) ? 'currentColor' : 'none'}
+                    />
+                  </button>
+                  <button
+                    onClick={(e) => deleteHistory(item.id, e)}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors flex-shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )
       )}
     </div>
   )

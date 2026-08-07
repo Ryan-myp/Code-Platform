@@ -5,6 +5,7 @@
 """
 
 import json
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -276,4 +277,3 @@ class PrintNode(BusinessNode):
         current_input = context.get("current_node_input", {})
         print(f"[PrintNode {self.node_id}] Input: {json.dumps(current_input, ensure_ascii=False)}")
         return NodeResult.success(output={"echo": current_input}, messages=[f"已打印 {self.node_id} 的输入"])
-

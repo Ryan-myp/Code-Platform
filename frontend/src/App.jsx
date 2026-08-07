@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useLayoutEffect, lazy, Suspense } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom'
 import axios from 'axios'
 import Sidebar from './components/Sidebar'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -127,7 +134,9 @@ export default function App() {
       return null
     }
   })
-  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token') && !!user)
+  const [isAuthenticated, setIsAuthenticated] = useState(
+    () => !!localStorage.getItem('token') && !!user
+  )
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
 
   useEffect(() => {
@@ -166,115 +175,400 @@ export default function App() {
     <Router>
       <ShareRedirect />
       <ToastProvider>
-      <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
-      <OnboardingTour isAuthenticated={isAuthenticated} />
-      <Suspense fallback={<PageFallback />}>
-      <Routes>
-        <Route path="/login" element={!isAuthenticated ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/home" replace />} />
-        {/* 公开分享查看页（无需登录） */}
-        <Route path="/share/:shareCode" element={<ShareViewPage />} />
-        <Route path="*" element={
-          <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <div className="flex min-h-screen bg-ink-50">
-              <Sidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} user={user} onLogout={handleLogout} />
-              <div className="flex-1 flex flex-col md:ml-64 min-w-0">
-                <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 animate-page-in">
-                  <ErrorBoundary>
-                  <Routes>
-                    <Route path="/home" element={<HomePage />} />
-                    <Route path="/tasks" element={<TasksPage />} />
-                    <Route path="/notifications" element={<NotificationsPage />} />
-                    <Route path="/board" element={<ReqBoardPage />} />
-                    <Route path="/workspace" element={<AIWorkspacePage />} />
-                    <Route path="/projects" element={<ProjectSpacePage />} />
-                    <Route path="/projects/:id" element={<ProjectSpacePage />} />
-                    <Route path="/artifacts" element={<ArtifactsPage />} />
-                    <Route path="/plugins" element={<AccessGuard path="/plugins"><PluginsPage /></AccessGuard>} />
-                    <Route path="/chat" element={<AccessGuard path="/chat"><ChatPage /></AccessGuard>} />
-                    <Route path="/agents" element={<AccessGuard path="/agents"><AgentsPage /></AccessGuard>} />
-                    <Route path="/agents/:id" element={<AgentExecutePage />} />
-                    <Route path="/teams" element={<TeamsPage />} />
-                    <Route path="/workflows" element={<AccessGuard path="/workflows"><WorkflowsPage /></AccessGuard>} />
-                    <Route path="/workflows/:id" element={<WorkflowEditorPage />} />
-                    <Route path="/workflows/:id/edit" element={<WorkflowEditorPage />} />
-                    <Route path="/config" element={<ConfigPage />} />
-                    <Route path="/knowledge-bases" element={<KnowledgeBasesPage />} />
-                    <Route path="/skills" element={<SkillsPage />} />
-                    <Route path="/sandbox" element={<AccessGuard path="/sandbox"><SandboxPage /></AccessGuard>} />
-                    <Route path="/mcp-servers" element={<MCPServersPage />} />
-                    <Route path="/evolution" element={<PlatformEvolutionPage />} />
-                    <Route path="/image-factory" element={<AccessGuard path="/image-factory"><ImageFactoryPage /></AccessGuard>} />
-                    <Route path="/video-factory" element={<AccessGuard path="/video-factory"><VideoFactoryPage /></AccessGuard>} />
-                    <Route path="/music-factory" element={<AccessGuard path="/music-factory"><MusicFactoryPage /></AccessGuard>} />
-                    {/* v9.0 Phase 2: 研发增强（代码生成/代码审查已并入 AI 工作台） */}
-                    <Route path="/code-gen" element={<Navigate to="/workspace?tab=code" replace />} />
-                    <Route path="/code-review" element={<Navigate to="/workspace?tab=review_code" replace />} />
-                    <Route path="/pipelines" element={<PipelinesPage />} />
-                    {/* v9.0 Phase 3: 内容创作 */}
-                    <Route path="/copywriting" element={<AccessGuard path="/copywriting"><CopywritingPage /></AccessGuard>} />
-                    <Route path="/translation" element={<AccessGuard path="/translation"><TranslationPage /></AccessGuard>} />
-                    {/* v9.3 内容发布 + 小程序开发 */}
-                    <Route path="/publish" element={<AccessGuard path="/publish"><PublishingPage /></AccessGuard>} />
-                    <Route path="/growth" element={<AccessGuard path="/growth"><GrowthPage /></AccessGuard>} />
-                    <Route path="/miniapp" element={<AccessGuard path="/miniapp"><MiniAppPage /></AccessGuard>} />
-                    {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
-                    <Route path="/games" element={<AccessGuard path="/games"><GameFactoryPage /></AccessGuard>} />
-                    {/* v9.5 AI 配音 + 表情包 */}
-                    <Route path="/voice-dubbing" element={<AccessGuard path="/voice-dubbing"><VoicePage /></AccessGuard>} />
-                    <Route path="/meme" element={<AccessGuard path="/meme"><MemePage /></AccessGuard>} />
-                    <Route path="/digital-human" element={<AccessGuard path="/digital-human"><DigitalHumanPage /></AccessGuard>} />
-                    <Route path="/voice-chat" element={<AccessGuard path="/voice-chat"><VoiceChatPage /></AccessGuard>} />
-                    <Route path="/video-analyzer" element={<AccessGuard path="/video-analyzer"><VideoAnalyzerPage /></AccessGuard>} />
-                    <Route path="/mindmap" element={<AccessGuard path="/mindmap"><MindMapPage /></AccessGuard>} />
-                    <Route path="/forecast" element={<AccessGuard path="/forecast"><ForecastPage /></AccessGuard>} />
-                    <Route path="/doc-qa" element={<AccessGuard path="/doc-qa"><DocQAPage /></AccessGuard>} />
-                    <Route path="/pdf-tools" element={<AccessGuard path="/pdf-tools"><PDFToolPage /></AccessGuard>} />
-                    {/* v10.1 新功能 */}
-                    <Route path="/web-search" element={<AccessGuard path="/web-search"><WebSearchPage /></AccessGuard>} />
-                    <Route path="/batch-process" element={<AccessGuard path="/batch-process"><BatchProcessPage /></AccessGuard>} />
-                    <Route path="/code-interpreter" element={<AccessGuard path="/code-interpreter"><CodeSandboxPage /></AccessGuard>} />
-                    <Route path="/api-platform" element={<AccessGuard path="/api-platform"><ApiDocsPage /></AccessGuard>} />
-                    <Route path="/usage-analytics" element={<AccessGuard path="/usage-analytics"><UsageAnalyticsPage /></AccessGuard>} />
-                    <Route path="/scheduler" element={<AccessGuard path="/scheduler"><SchedulerPage /></AccessGuard>} />
-                    {/* v10.0 社区与变现 */}
-                    <Route path="/gallery" element={<AccessGuard path="/gallery"><GalleryPage /></AccessGuard>} />
-                    <Route path="/templates" element={<AccessGuard path="/templates"><TemplateMarketPage /></AccessGuard>} />
-                    {/* v11 全量修复：内容策略 / 竞品监控 / 收藏中心 */}
-                    <Route path="/strategy" element={<AccessGuard path="/strategy"><ContentStrategyPage /></AccessGuard>} />
-                    <Route path="/monitor" element={<AccessGuard path="/monitor"><CompetitorMonitorPage /></AccessGuard>} />
-                    <Route path="/favorites" element={<AccessGuard path="/favorites"><FavoritesPage /></AccessGuard>} />
-                    {/* v9.0 Phase 4: 运营分析 */}
-                    <Route path="/dashboard" element={<DashboardPage />} />
-                    <Route path="/ab-testing" element={<ABTestingPage />} />
-                    {/* v9.0 办公效率 */}
-                    <Route path="/ppt-factory" element={<AccessGuard path="/ppt-factory"><PPTFactoryPage /></AccessGuard>} />
-                    <Route path="/excel" element={<AccessGuard path="/excel"><ExcelPage /></AccessGuard>} />
-                    {/* v9.0 效率工具箱 */}
-                    <Route path="/tool-hub" element={<ToolHubPage />} />
-                    <Route path="/tool/:toolId" element={<ToolRunPage />} />
-                    <Route path="/stock" element={<AccessGuard path="/stock"><StockAnalysisPage /></AccessGuard>} />
-                    {/* v9.1 商业版 */}
-                    <Route path="/profile" element={<ProfilePage user={user} onUserUpdate={handleUserUpdate} />} />
-                    <Route path="/membership" element={<MembershipPage />} />
-                    <Route path="/admin" element={<AdminPage />} />
-                    <Route path="/help" element={<HelpPage />} />
-                    <Route path="/records" element={<RecordsPage />} />
-                    <Route path="/" element={<Navigate to="/home" replace />} />
-                    {/* 404 兜底：未匹配路由展示 NotFound，避免空白空壳 */}
-                    <Route path="*" element={<NotFoundPage />} />
-                  </Routes>
-                  </ErrorBoundary>
-                </main>
-                {/* 全局浮动机器人：登录后所有页面可用 */}
-                <FloatingAssistant />
-                {/* 移动端底部导航 */}
-                <MobileBottomNav />
-              </div>
-            </div>
-          </ProtectedRoute>
-        } />
-      </Routes>
-      </Suspense>
+        <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+        <OnboardingTour isAuthenticated={isAuthenticated} />
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                !isAuthenticated ? (
+                  <LoginPage onLogin={handleLogin} />
+                ) : (
+                  <Navigate to="/home" replace />
+                )
+              }
+            />
+            {/* 公开分享查看页（无需登录） */}
+            <Route path="/share/:shareCode" element={<ShareViewPage />} />
+            <Route
+              path="*"
+              element={
+                <ProtectedRoute isAuthenticated={isAuthenticated}>
+                  <div className="flex min-h-screen bg-ink-50">
+                    <Sidebar
+                      sidebarOpen={sidebarOpen}
+                      setSidebarOpen={setSidebarOpen}
+                      user={user}
+                      onLogout={handleLogout}
+                    />
+                    <div className="flex-1 flex flex-col md:ml-64 min-w-0">
+                      <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 animate-page-in">
+                        <ErrorBoundary>
+                          <Routes>
+                            <Route path="/home" element={<HomePage />} />
+                            <Route path="/tasks" element={<TasksPage />} />
+                            <Route path="/notifications" element={<NotificationsPage />} />
+                            <Route path="/board" element={<ReqBoardPage />} />
+                            <Route path="/workspace" element={<AIWorkspacePage />} />
+                            <Route path="/projects" element={<ProjectSpacePage />} />
+                            <Route path="/projects/:id" element={<ProjectSpacePage />} />
+                            <Route path="/artifacts" element={<ArtifactsPage />} />
+                            <Route
+                              path="/plugins"
+                              element={
+                                <AccessGuard path="/plugins">
+                                  <PluginsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/chat"
+                              element={
+                                <AccessGuard path="/chat">
+                                  <ChatPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/agents"
+                              element={
+                                <AccessGuard path="/agents">
+                                  <AgentsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route path="/agents/:id" element={<AgentExecutePage />} />
+                            <Route path="/teams" element={<TeamsPage />} />
+                            <Route
+                              path="/workflows"
+                              element={
+                                <AccessGuard path="/workflows">
+                                  <WorkflowsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route path="/workflows/:id" element={<WorkflowEditorPage />} />
+                            <Route path="/workflows/:id/edit" element={<WorkflowEditorPage />} />
+                            <Route path="/config" element={<ConfigPage />} />
+                            <Route path="/knowledge-bases" element={<KnowledgeBasesPage />} />
+                            <Route path="/skills" element={<SkillsPage />} />
+                            <Route
+                              path="/sandbox"
+                              element={
+                                <AccessGuard path="/sandbox">
+                                  <SandboxPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route path="/mcp-servers" element={<MCPServersPage />} />
+                            <Route path="/evolution" element={<PlatformEvolutionPage />} />
+                            <Route
+                              path="/image-factory"
+                              element={
+                                <AccessGuard path="/image-factory">
+                                  <ImageFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/video-factory"
+                              element={
+                                <AccessGuard path="/video-factory">
+                                  <VideoFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/music-factory"
+                              element={
+                                <AccessGuard path="/music-factory">
+                                  <MusicFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.0 Phase 2: 研发增强（代码生成/代码审查已并入 AI 工作台） */}
+                            <Route
+                              path="/code-gen"
+                              element={<Navigate to="/workspace?tab=code" replace />}
+                            />
+                            <Route
+                              path="/code-review"
+                              element={<Navigate to="/workspace?tab=review_code" replace />}
+                            />
+                            <Route path="/pipelines" element={<PipelinesPage />} />
+                            {/* v9.0 Phase 3: 内容创作 */}
+                            <Route
+                              path="/copywriting"
+                              element={
+                                <AccessGuard path="/copywriting">
+                                  <CopywritingPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/translation"
+                              element={
+                                <AccessGuard path="/translation">
+                                  <TranslationPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.3 内容发布 + 小程序开发 */}
+                            <Route
+                              path="/publish"
+                              element={
+                                <AccessGuard path="/publish">
+                                  <PublishingPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/growth"
+                              element={
+                                <AccessGuard path="/growth">
+                                  <GrowthPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/miniapp"
+                              element={
+                                <AccessGuard path="/miniapp">
+                                  <MiniAppPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
+                            <Route
+                              path="/games"
+                              element={
+                                <AccessGuard path="/games">
+                                  <GameFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.5 AI 配音 + 表情包 */}
+                            <Route
+                              path="/voice-dubbing"
+                              element={
+                                <AccessGuard path="/voice-dubbing">
+                                  <VoicePage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/meme"
+                              element={
+                                <AccessGuard path="/meme">
+                                  <MemePage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/digital-human"
+                              element={
+                                <AccessGuard path="/digital-human">
+                                  <DigitalHumanPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/voice-chat"
+                              element={
+                                <AccessGuard path="/voice-chat">
+                                  <VoiceChatPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/video-analyzer"
+                              element={
+                                <AccessGuard path="/video-analyzer">
+                                  <VideoAnalyzerPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/mindmap"
+                              element={
+                                <AccessGuard path="/mindmap">
+                                  <MindMapPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/forecast"
+                              element={
+                                <AccessGuard path="/forecast">
+                                  <ForecastPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/doc-qa"
+                              element={
+                                <AccessGuard path="/doc-qa">
+                                  <DocQAPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/pdf-tools"
+                              element={
+                                <AccessGuard path="/pdf-tools">
+                                  <PDFToolPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v10.1 新功能 */}
+                            <Route
+                              path="/web-search"
+                              element={
+                                <AccessGuard path="/web-search">
+                                  <WebSearchPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/batch-process"
+                              element={
+                                <AccessGuard path="/batch-process">
+                                  <BatchProcessPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/code-interpreter"
+                              element={
+                                <AccessGuard path="/code-interpreter">
+                                  <CodeSandboxPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/api-platform"
+                              element={
+                                <AccessGuard path="/api-platform">
+                                  <ApiDocsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/usage-analytics"
+                              element={
+                                <AccessGuard path="/usage-analytics">
+                                  <UsageAnalyticsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/scheduler"
+                              element={
+                                <AccessGuard path="/scheduler">
+                                  <SchedulerPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v10.0 社区与变现 */}
+                            <Route
+                              path="/gallery"
+                              element={
+                                <AccessGuard path="/gallery">
+                                  <GalleryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/templates"
+                              element={
+                                <AccessGuard path="/templates">
+                                  <TemplateMarketPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v11 全量修复：内容策略 / 竞品监控 / 收藏中心 */}
+                            <Route
+                              path="/strategy"
+                              element={
+                                <AccessGuard path="/strategy">
+                                  <ContentStrategyPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/monitor"
+                              element={
+                                <AccessGuard path="/monitor">
+                                  <CompetitorMonitorPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/favorites"
+                              element={
+                                <AccessGuard path="/favorites">
+                                  <FavoritesPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.0 Phase 4: 运营分析 */}
+                            <Route path="/dashboard" element={<DashboardPage />} />
+                            <Route path="/ab-testing" element={<ABTestingPage />} />
+                            {/* v9.0 办公效率 */}
+                            <Route
+                              path="/ppt-factory"
+                              element={
+                                <AccessGuard path="/ppt-factory">
+                                  <PPTFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/excel"
+                              element={
+                                <AccessGuard path="/excel">
+                                  <ExcelPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.0 效率工具箱 */}
+                            <Route path="/tool-hub" element={<ToolHubPage />} />
+                            <Route path="/tool/:toolId" element={<ToolRunPage />} />
+                            <Route
+                              path="/stock"
+                              element={
+                                <AccessGuard path="/stock">
+                                  <StockAnalysisPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v9.1 商业版 */}
+                            <Route
+                              path="/profile"
+                              element={<ProfilePage user={user} onUserUpdate={handleUserUpdate} />}
+                            />
+                            <Route path="/membership" element={<MembershipPage />} />
+                            <Route path="/admin" element={<AdminPage />} />
+                            <Route path="/help" element={<HelpPage />} />
+                            <Route path="/records" element={<RecordsPage />} />
+                            <Route path="/" element={<Navigate to="/home" replace />} />
+                            {/* 404 兜底：未匹配路由展示 NotFound，避免空白空壳 */}
+                            <Route path="*" element={<NotFoundPage />} />
+                          </Routes>
+                        </ErrorBoundary>
+                      </main>
+                      {/* 全局浮动机器人：登录后所有页面可用 */}
+                      <FloatingAssistant />
+                      {/* 移动端底部导航 */}
+                      <MobileBottomNav />
+                    </div>
+                  </div>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </Suspense>
       </ToastProvider>
     </Router>
   )

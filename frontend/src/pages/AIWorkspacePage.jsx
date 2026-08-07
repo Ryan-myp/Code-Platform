@@ -3,10 +3,35 @@ import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import CodeTreeView from '../components/CodeTreeView'
 import {
-  FileText, Code2, TestTube2, Send, Loader2, BookOpen, MessageSquare,
-  Copy, Sparkles, Bot, User, Edit2, Save, X, FolderGit2, ListTodo,
-  Download, Layers, ArrowRight, RefreshCw, ShieldCheck, Rocket, ExternalLink,
-  CheckCircle2, XCircle, GitBranch, Wrench, Undo2, SkipForward,
+  FileText,
+  Code2,
+  TestTube2,
+  Send,
+  Loader2,
+  BookOpen,
+  MessageSquare,
+  Copy,
+  Sparkles,
+  Bot,
+  User,
+  Edit2,
+  Save,
+  X,
+  FolderGit2,
+  ListTodo,
+  Download,
+  Layers,
+  ArrowRight,
+  RefreshCw,
+  ShieldCheck,
+  Rocket,
+  ExternalLink,
+  CheckCircle2,
+  XCircle,
+  GitBranch,
+  Wrench,
+  Undo2,
+  SkipForward,
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
@@ -27,22 +52,112 @@ const PIPELINE_STAGES = [
 ]
 
 const TABS = {
-  prd: { label: 'PRD 编写', icon: FileText, color: 'blue', next: 'review', nextLabel: '下一步: 审查' },
-  review: { label: 'PRD 审查', icon: BookOpen, color: 'emerald', next: 'td', nextLabel: '下一步: 技术方案' },
-  td: { label: '技术方案', icon: Code2, color: 'indigo', next: 'test', nextLabel: '下一步: 测试用例' },
-  test: { label: '测试用例', icon: TestTube2, color: 'green', next: 'code', nextLabel: '下一步: 代码生成' },
-  code: { label: '代码生成', icon: Layers, color: 'purple', next: 'review_code', nextLabel: '下一步: 代码审查' },
-  review_code: { label: '代码审查', icon: ShieldCheck, color: 'amber', next: 'code', nextLabel: '回到代码生成' },
+  prd: {
+    label: 'PRD 编写',
+    icon: FileText,
+    color: 'blue',
+    next: 'review',
+    nextLabel: '下一步: 审查',
+  },
+  review: {
+    label: 'PRD 审查',
+    icon: BookOpen,
+    color: 'emerald',
+    next: 'td',
+    nextLabel: '下一步: 技术方案',
+  },
+  td: {
+    label: '技术方案',
+    icon: Code2,
+    color: 'indigo',
+    next: 'test',
+    nextLabel: '下一步: 测试用例',
+  },
+  test: {
+    label: '测试用例',
+    icon: TestTube2,
+    color: 'green',
+    next: 'code',
+    nextLabel: '下一步: 代码生成',
+  },
+  code: {
+    label: '代码生成',
+    icon: Layers,
+    color: 'purple',
+    next: 'review_code',
+    nextLabel: '下一步: 代码审查',
+  },
+  review_code: {
+    label: '代码审查',
+    icon: ShieldCheck,
+    color: 'amber',
+    next: 'code',
+    nextLabel: '回到代码生成',
+  },
 }
 
 // 全静态 class 名，避免 Tailwind purge 丢失动态颜色
 const COLOR_MAP = {
-  blue: { from: 'from-blue-600', to: 'to-indigo-600', light: 'bg-blue-50', border: 'border-blue-100', text: 'text-blue-700', icon: 'text-blue-600', active: 'border-blue-600 text-blue-600', ring: 'focus:border-blue-500 focus:ring-blue-500/10' },
-  emerald: { from: 'from-emerald-600', to: 'to-emerald-600', light: 'bg-emerald-50', border: 'border-emerald-100', text: 'text-emerald-700', icon: 'text-emerald-600', active: 'border-emerald-600 text-emerald-600', ring: 'focus:border-emerald-500 focus:ring-emerald-500/10' },
-  indigo: { from: 'from-indigo-600', to: 'to-purple-600', light: 'bg-indigo-50', border: 'border-indigo-100', text: 'text-indigo-700', icon: 'text-indigo-600', active: 'border-indigo-600 text-indigo-600', ring: 'focus:border-indigo-500 focus:ring-indigo-500/10' },
-  green: { from: 'from-green-600', to: 'to-emerald-600', light: 'bg-green-50', border: 'border-green-100', text: 'text-green-700', icon: 'text-green-600', active: 'border-green-600 text-green-600', ring: 'focus:border-green-500 focus:ring-green-500/10' },
-  purple: { from: 'from-purple-600', to: 'to-indigo-600', light: 'bg-purple-50', border: 'border-purple-100', text: 'text-purple-700', icon: 'text-purple-600', active: 'border-purple-600 text-purple-600', ring: 'focus:border-purple-500 focus:ring-purple-500/10' },
-  amber: { from: 'from-amber-500', to: 'to-orange-600', light: 'bg-amber-50', border: 'border-amber-100', text: 'text-amber-700', icon: 'text-amber-600', active: 'border-amber-500 text-amber-600', ring: 'focus:border-amber-500 focus:ring-amber-500/10' },
+  blue: {
+    from: 'from-blue-600',
+    to: 'to-indigo-600',
+    light: 'bg-blue-50',
+    border: 'border-blue-100',
+    text: 'text-blue-700',
+    icon: 'text-blue-600',
+    active: 'border-blue-600 text-blue-600',
+    ring: 'focus:border-blue-500 focus:ring-blue-500/10',
+  },
+  emerald: {
+    from: 'from-emerald-600',
+    to: 'to-emerald-600',
+    light: 'bg-emerald-50',
+    border: 'border-emerald-100',
+    text: 'text-emerald-700',
+    icon: 'text-emerald-600',
+    active: 'border-emerald-600 text-emerald-600',
+    ring: 'focus:border-emerald-500 focus:ring-emerald-500/10',
+  },
+  indigo: {
+    from: 'from-indigo-600',
+    to: 'to-purple-600',
+    light: 'bg-indigo-50',
+    border: 'border-indigo-100',
+    text: 'text-indigo-700',
+    icon: 'text-indigo-600',
+    active: 'border-indigo-600 text-indigo-600',
+    ring: 'focus:border-indigo-500 focus:ring-indigo-500/10',
+  },
+  green: {
+    from: 'from-green-600',
+    to: 'to-emerald-600',
+    light: 'bg-green-50',
+    border: 'border-green-100',
+    text: 'text-green-700',
+    icon: 'text-green-600',
+    active: 'border-green-600 text-green-600',
+    ring: 'focus:border-green-500 focus:ring-green-500/10',
+  },
+  purple: {
+    from: 'from-purple-600',
+    to: 'to-indigo-600',
+    light: 'bg-purple-50',
+    border: 'border-purple-100',
+    text: 'text-purple-700',
+    icon: 'text-purple-600',
+    active: 'border-purple-600 text-purple-600',
+    ring: 'focus:border-purple-500 focus:ring-purple-500/10',
+  },
+  amber: {
+    from: 'from-amber-500',
+    to: 'to-orange-600',
+    light: 'bg-amber-50',
+    border: 'border-amber-100',
+    text: 'text-amber-700',
+    icon: 'text-amber-600',
+    active: 'border-amber-500 text-amber-600',
+    ring: 'focus:border-amber-500 focus:ring-amber-500/10',
+  },
 }
 
 function initState() {
@@ -96,7 +211,10 @@ function DeployModal({ info, onClose }) {
     }
     fetchRun()
     timer = setInterval(fetchRun, 3000)
-    return () => { alive = false; clearInterval(timer) }
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
   }, [info, trackingRunId])
 
   const status = run?.status || 'running'
@@ -136,7 +254,8 @@ function DeployModal({ info, onClose }) {
             </span>
           ) : autoFixing ? (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" /> AI 自动修复中{fixRound ? `（第 ${fixRound}/3 轮）` : ''}
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> AI 自动修复中
+              {fixRound ? `（第 ${fixRound}/3 轮）` : ''}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200">
@@ -144,7 +263,9 @@ function DeployModal({ info, onClose }) {
             </span>
           )}
           {autoFixing && (
-            <span className="text-xs text-amber-600">AI 正在分析日志、修改代码并重新部署，全程可关闭弹窗后在流水线页跟踪</span>
+            <span className="text-xs text-amber-600">
+              AI 正在分析日志、修改代码并重新部署，全程可关闭弹窗后在流水线页跟踪
+            </span>
           )}
         </div>
 
@@ -152,7 +273,9 @@ function DeployModal({ info, onClose }) {
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-medium text-emerald-800">服务已在沙箱容器中运行</p>
-              <p className="text-xs text-emerald-600 mt-0.5">可通过下方地址访问，也可在「CI/CD 流水线」「沙箱运行」中停止或管理</p>
+              <p className="text-xs text-emerald-600 mt-0.5">
+                可通过下方地址访问，也可在「CI/CD 流水线」「沙箱运行」中停止或管理
+              </p>
             </div>
             <a
               href={`http://localhost:${info.port}`}
@@ -168,26 +291,42 @@ function DeployModal({ info, onClose }) {
         {failed && (
           <div className="space-y-2">
             <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 leading-relaxed">
-              部署未成功。可点击「AI 诊断修复」自动分析日志、修改代码并重新部署（最多 3 轮），也可查看下方日志手动定位问题。
+              部署未成功。可点击「AI 诊断修复」自动分析日志、修改代码并重新部署（最多 3
+              轮），也可查看下方日志手动定位问题。
             </div>
             <button
               onClick={handleManualFix}
               disabled={fixing}
               className="inline-flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm disabled:opacity-60"
             >
-              {fixing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+              {fixing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Wrench className="w-3.5 h-3.5" />
+              )}
               {fixing ? '修复启动中…' : 'AI 诊断修复'}
             </button>
           </div>
         )}
 
         <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[45vh] whitespace-pre-wrap">
-          {loading ? '加载中…' : (run?.log || '（等待日志输出…）')}
+          {loading ? '加载中…' : run?.log || '（等待日志输出…）'}
         </pre>
 
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>关闭</Button>
-          <Button variant="gradient" icon={GitBranch} onClick={() => { onClose(); navigate('/pipelines') }}>去 CI/CD 流水线</Button>
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+          <Button
+            variant="gradient"
+            icon={GitBranch}
+            onClick={() => {
+              onClose()
+              navigate('/pipelines')
+            }}
+          >
+            去 CI/CD 流水线
+          </Button>
         </div>
       </div>
     </Modal>
@@ -230,7 +369,10 @@ function AutoRunModal({ open, onClose }) {
   }
 
   const startRun = async () => {
-    if (!desc.trim()) { toast.error('请先描述你想要做的功能'); return }
+    if (!desc.trim()) {
+      toast.error('请先描述你想要做的功能')
+      return
+    }
     setStarting(true)
     try {
       const res = await api.post('/api/auto-run', {
@@ -270,19 +412,31 @@ function AutoRunModal({ open, onClose }) {
         if (!alive) return
         setRun(res.data)
         if (['success', 'failed', 'stopped'].includes(res.data.status)) clearInterval(timer)
-      } catch { /* 轮询失败静默，下次重试 */ }
+      } catch {
+        /* 轮询失败静默，下次重试 */
+      }
     }
     fetchRun()
     timer = setInterval(fetchRun, 3000)
-    return () => { alive = false; clearInterval(timer) }
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
   }, [open, runId])
 
   // 每次打开时重置（关闭后重新开始新流程）
   useEffect(() => {
-    if (open) { setRunId(null); setRun(null) }
+    if (open) {
+      setRunId(null)
+      setRun(null)
+    }
   }, [open])
 
-  const close = () => { setRunId(null); setRun(null); onClose() }
+  const close = () => {
+    setRunId(null)
+    setRun(null)
+    onClose()
+  }
 
   return (
     <Modal open={open} onClose={close}>
@@ -300,7 +454,11 @@ function AutoRunModal({ open, onClose }) {
         {!runId ? (
           <>
             <div className="flex flex-wrap gap-1.5">
-              {['做一个待办事项网页应用，支持增删改查', '做一个天气查询小工具', '做一个记账本 API 服务'].map((ex) => (
+              {[
+                '做一个待办事项网页应用，支持增删改查',
+                '做一个天气查询小工具',
+                '做一个记账本 API 服务',
+              ].map((ex) => (
                 <button
                   key={ex}
                   onClick={() => setDesc(ex)}
@@ -336,11 +494,18 @@ function AutoRunModal({ open, onClose }) {
               </select>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-              <input type="checkbox" checked={deploy} onChange={(e) => setDeploy(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
+              <input
+                type="checkbox"
+                checked={deploy}
+                onChange={(e) => setDeploy(e.target.checked)}
+                className="w-4 h-4 accent-indigo-600"
+              />
               自动部署到沙箱（生成可访问的服务地址）
             </label>
             <div className="flex justify-end gap-2 pt-1">
-              <Button variant="secondary" onClick={close}>取消</Button>
+              <Button variant="secondary" onClick={close}>
+                取消
+              </Button>
               <Button variant="gradient" icon={Sparkles} onClick={startRun} disabled={starting}>
                 {starting ? '启动中…' : '开始全自动实现'}
               </Button>
@@ -354,21 +519,44 @@ function AutoRunModal({ open, onClose }) {
                 const stt = stageState(st.key)
                 return (
                   <div key={st.key} className="flex flex-col items-center gap-1.5">
-                    <span className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${
-                      stt === 'done' ? 'bg-emerald-500 border-emerald-500 text-white'
-                        : stt === 'running' ? 'bg-indigo-50 border-indigo-500 text-indigo-600'
-                        : stt === 'failed' ? 'bg-red-500 border-red-500 text-white'
-                        : stt === 'skipped' ? 'bg-gray-100 border-gray-300 text-gray-400'
-                        : 'bg-white border-gray-200 text-gray-300'
-                    }`}>
-                      {stt === 'done' ? <CheckCircle2 className="w-4 h-4" />
-                        : stt === 'running' ? <Loader2 className="w-4 h-4 animate-spin" />
-                        : stt === 'failed' ? <XCircle className="w-4 h-4" />
-                        : <span className="text-[10px] font-medium">{stt === 'skipped' ? '—' : '·'}</span>}
+                    <span
+                      className={`w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all ${
+                        stt === 'done'
+                          ? 'bg-emerald-500 border-emerald-500 text-white'
+                          : stt === 'running'
+                            ? 'bg-indigo-50 border-indigo-500 text-indigo-600'
+                            : stt === 'failed'
+                              ? 'bg-red-500 border-red-500 text-white'
+                              : stt === 'skipped'
+                                ? 'bg-gray-100 border-gray-300 text-gray-400'
+                                : 'bg-white border-gray-200 text-gray-300'
+                      }`}
+                    >
+                      {stt === 'done' ? (
+                        <CheckCircle2 className="w-4 h-4" />
+                      ) : stt === 'running' ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : stt === 'failed' ? (
+                        <XCircle className="w-4 h-4" />
+                      ) : (
+                        <span className="text-[10px] font-medium">
+                          {stt === 'skipped' ? '—' : '·'}
+                        </span>
+                      )}
                     </span>
-                    <span className={`text-[10px] text-center leading-tight ${
-                      stt === 'done' ? 'text-emerald-700 font-medium' : stt === 'running' ? 'text-indigo-700 font-medium' : stt === 'failed' ? 'text-red-600 font-medium' : 'text-gray-400'
-                    }`}>{st.label}</span>
+                    <span
+                      className={`text-[10px] text-center leading-tight ${
+                        stt === 'done'
+                          ? 'text-emerald-700 font-medium'
+                          : stt === 'running'
+                            ? 'text-indigo-700 font-medium'
+                            : stt === 'failed'
+                              ? 'text-red-600 font-medium'
+                              : 'text-gray-400'
+                      }`}
+                    >
+                      {st.label}
+                    </span>
                   </div>
                 )
               })}
@@ -382,8 +570,12 @@ function AutoRunModal({ open, onClose }) {
                     <CheckCircle2 className="w-4 h-4" /> 全流程完成！所有产物已保存到需求
                   </span>
                   {run.port > 0 && (
-                    <a href={`http://localhost:${run.port}`} target="_blank" rel="noreferrer"
-                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors">
+                    <a
+                      href={`http://localhost:${run.port}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+                    >
                       <ExternalLink className="w-3.5 h-3.5" /> 访问服务
                     </a>
                   )}
@@ -391,7 +583,10 @@ function AutoRunModal({ open, onClose }) {
               ) : run?.status === 'failed' ? (
                 <div className="text-sm text-red-700 flex items-start gap-1.5">
                   <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>流程失败：{run.error || '未知错误'}（已完成阶段产物已保存，可在 AI 工作台中手动继续）</span>
+                  <span>
+                    流程失败：{run.error || '未知错误'}（已完成阶段产物已保存，可在 AI
+                    工作台中手动继续）
+                  </span>
                 </div>
               ) : run?.status === 'stopped' ? (
                 <span className="text-sm font-medium text-amber-700 flex items-center gap-1.5">
@@ -400,7 +595,9 @@ function AutoRunModal({ open, onClose }) {
               ) : (
                 <span className="text-sm font-medium text-indigo-700 flex items-center gap-1.5">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  {run?.status === 'stopping' ? '正在停止…' : 'AI 正在全流程自动实现中，请稍候（约 2-5 分钟）…'}
+                  {run?.status === 'stopping'
+                    ? '正在停止…'
+                    : 'AI 正在全流程自动实现中，请稍候（约 2-5 分钟）…'}
                 </span>
               )}
             </div>
@@ -411,8 +608,14 @@ function AutoRunModal({ open, onClose }) {
             </pre>
 
             <div className="flex justify-end gap-2">
-              {isBusy && <Button variant="secondary" onClick={stopRun}>停止</Button>}
-              <Button variant="gradient" onClick={close}>关闭</Button>
+              {isBusy && (
+                <Button variant="secondary" onClick={stopRun}>
+                  停止
+                </Button>
+              )}
+              <Button variant="gradient" onClick={close}>
+                关闭
+              </Button>
             </div>
           </>
         )}
@@ -434,26 +637,43 @@ const ARTIFACT_FIELDS = [
 function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onRefreshTests }) {
   const [atab, setAtab] = useState('prd')
   const [copyOk, setCopyOk] = useState(false)
-  useEffect(() => { if (open) { setAtab('prd'); setCopyOk(false) } }, [open])
+  useEffect(() => {
+    if (open) {
+      setAtab('prd')
+      setCopyOk(false)
+    }
+  }, [open])
 
   const stage = ARTIFACT_FIELDS.find((s) => s.key === atab)
   const content = requirement?.[stage?.field] || ''
   // 用例执行结果总览：生成用例原文 × 最近一次有逐条结果的执行（旧记录可能无 cases）
-  const latestRun = testRuns?.find((r) => Array.isArray(r.cases) && r.cases.some((c) => c.case_id)) || null
+  const latestRun =
+    testRuns?.find((r) => Array.isArray(r.cases) && r.cases.some((c) => c.case_id)) || null
   const latestByCase = {}
-  ;(latestRun?.cases || []).forEach((c) => { if (c.case_id) latestByCase[c.case_id] = c })
+  ;(latestRun?.cases || []).forEach((c) => {
+    if (c.case_id) latestByCase[c.case_id] = c
+  })
   const caseRows = (requirement?.test_cases || '')
-    .split('\n').map((l) => l.trim())
+    .split('\n')
+    .map((l) => l.trim())
     .filter((l) => l.startsWith('|') && /TC-[\w-]+/.test(l))
     .map((l) => ({ id: (l.match(/TC-[\w-]+/) || [''])[0], raw: l }))
   const passedN = caseRows.filter((r) => latestByCase[r.id]?.status === 'passed').length
-  const failedN = caseRows.filter((r) => ['failed', 'error'].includes(latestByCase[r.id]?.status)).length
+  const failedN = caseRows.filter((r) =>
+    ['failed', 'error'].includes(latestByCase[r.id]?.status)
+  ).length
   const skippedN = caseRows.filter((r) => latestByCase[r.id]?.status === 'skipped').length
   const noneN = caseRows.length - passedN - failedN - skippedN
   const stageStatus = requirement?.pipeline_status
-    ? (typeof requirement.pipeline_status === 'string'
-      ? (() => { try { return JSON.parse(requirement.pipeline_status) } catch { return {} } })()
-      : requirement.pipeline_status)
+    ? typeof requirement.pipeline_status === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(requirement.pipeline_status)
+          } catch {
+            return {}
+          }
+        })()
+      : requirement.pipeline_status
     : {}
 
   const copyContent = async () => {
@@ -474,11 +694,15 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
               key={s.key}
               onClick={() => setAtab(s.key)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                atab === s.key ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+                atab === s.key
+                  ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
+                  : 'hover:bg-gray-50 text-gray-600'
               }`}
               title={st === 'stale' ? '上游已变更，建议重新生成' : has ? '已生成' : '未生成'}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${st === 'stale' ? 'bg-amber-500' : has ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${st === 'stale' ? 'bg-amber-500' : has ? 'bg-emerald-500' : 'bg-gray-300'}`}
+              />
               {s.label}
             </button>
           )
@@ -486,13 +710,17 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
         <button
           onClick={() => setAtab('tests')}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-            atab === 'tests' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+            atab === 'tests'
+              ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
+              : 'hover:bg-gray-50 text-gray-600'
           }`}
         >
           <span className="w-1.5 h-1.5 rounded-full bg-gray-300" />
           测试记录
           {testRuns?.length > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold">{testRuns.length}</span>
+            <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold">
+              {testRuns.length}
+            </span>
           )}
         </button>
       </div>
@@ -500,7 +728,9 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
       {atab === 'tests' ? (
         <div className="space-y-3 max-h-[55vh] overflow-y-auto">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-gray-500">自动化测试执行记录（部署流水线中的测试门禁与 AI 修复循环）</p>
+            <p className="text-xs text-gray-500">
+              自动化测试执行记录（部署流水线中的测试门禁与 AI 修复循环）
+            </p>
             <button
               onClick={onRefreshTests}
               disabled={testLoading}
@@ -517,19 +747,29 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
                   用例执行结果
                   <span className="text-gray-400 font-normal">· 生成用例 × 最新执行</span>
                   <span className="flex items-center gap-1">
-                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">✓ {passedN}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">
+                      ✓ {passedN}
+                    </span>
                     {failedN > 0 && (
-                      <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">✗ {failedN}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">
+                        ✗ {failedN}
+                      </span>
                     )}
                     {skippedN > 0 && (
-                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">⊘ {skippedN}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">
+                        ⊘ {skippedN}
+                      </span>
                     )}
                     {noneN > 0 && (
-                      <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 text-[10px] font-semibold">— {noneN}</span>
+                      <span className="px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 text-[10px] font-semibold">
+                        — {noneN}
+                      </span>
                     )}
                   </span>
                 </span>
-                <span className="text-[10px] text-gray-400">{latestRun?.created_at ? new Date(latestRun.created_at).toLocaleString() : ''}</span>
+                <span className="text-[10px] text-gray-400">
+                  {latestRun?.created_at ? new Date(latestRun.created_at).toLocaleString() : ''}
+                </span>
               </div>
               <div className="border-t border-gray-100 divide-y divide-gray-50 max-h-[36vh] overflow-y-auto">
                 {caseRows.map((row, i) => {
@@ -537,23 +777,39 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
                   const st = res?.status || 'none'
                   const fail = st === 'failed' || st === 'error'
                   return (
-                    <div key={`${row.id}-${i}`} className="px-3 py-2 flex items-start gap-2 hover:bg-gray-50">
+                    <div
+                      key={`${row.id}-${i}`}
+                      className="px-3 py-2 flex items-start gap-2 hover:bg-gray-50"
+                    >
                       <span className="w-5 flex-shrink-0 mt-0.5">
-                        {st === 'passed' ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          : st === 'skipped' ? <SkipForward className="w-4 h-4 text-gray-400" />
-                          : fail ? <XCircle className="w-4 h-4 text-red-500" />
-                          : <span className="w-3.5 h-3.5 rounded-full border border-gray-300 inline-block mt-0.5" />}
+                        {st === 'passed' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        ) : st === 'skipped' ? (
+                          <SkipForward className="w-4 h-4 text-gray-400" />
+                        ) : fail ? (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        ) : (
+                          <span className="w-3.5 h-3.5 rounded-full border border-gray-300 inline-block mt-0.5" />
+                        )}
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="text-xs text-gray-800 font-medium">{row.id}</div>
-                        <div className="text-[11px] text-gray-500 break-all leading-snug mt-0.5">{row.raw}</div>
+                        <div className="text-[11px] text-gray-500 break-all leading-snug mt-0.5">
+                          {row.raw}
+                        </div>
                       </div>
                       <div className="w-[32%] flex-shrink-0 pl-2 border-l border-gray-100">
                         {fail && res.message ? (
-                          <div className="text-[11px] text-red-600 break-all leading-snug">{res.message}</div>
+                          <div className="text-[11px] text-red-600 break-all leading-snug">
+                            {res.message}
+                          </div>
                         ) : (
                           <span className="text-[11px] text-gray-400">
-                            {st === 'passed' ? '✓ 执行通过' : st === 'skipped' ? '⊘ 已跳过' : '— 未执行'}
+                            {st === 'passed'
+                              ? '✓ 执行通过'
+                              : st === 'skipped'
+                                ? '⊘ 已跳过'
+                                : '— 未执行'}
                           </span>
                         )}
                       </div>
@@ -569,37 +825,52 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
             testRuns.map((r) => {
               const cases = Array.isArray(r.cases) ? r.cases : []
               const passed = cases.filter((c) => c.status === 'passed').length
-              const failed = cases.filter((c) => c.status === 'failed' || c.status === 'error').length
+              const failed = cases.filter(
+                (c) => c.status === 'failed' || c.status === 'error'
+              ).length
               const skipped = cases.filter((c) => c.status === 'skipped').length
               return (
                 <div key={r.id} className="rounded-xl border border-gray-200 overflow-hidden">
                   <div className="px-3 py-2 bg-gray-50 flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
-                      {r.status === 'passed'
-                        ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        : <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                      {r.status === 'passed' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <XCircle className="w-3.5 h-3.5 text-red-500" />
+                      )}
                       {r.status === 'passed' ? '通过' : '失败'}
                       <span className="text-gray-400 font-normal">· {r.summary || '—'}</span>
                       {cases.length > 0 && (
                         <span className="flex items-center gap-1">
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">✓ {passed}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-semibold">
+                            ✓ {passed}
+                          </span>
                           {failed > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">✗ {failed}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-semibold">
+                              ✗ {failed}
+                            </span>
                           )}
                           {skipped > 0 && (
-                            <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">⊘ {skipped}</span>
+                            <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-semibold">
+                              ⊘ {skipped}
+                            </span>
                           )}
                         </span>
                       )}
                     </span>
-                    <span className="text-[10px] text-gray-400">{r.created_at ? new Date(r.created_at).toLocaleString() : ''}</span>
+                    <span className="text-[10px] text-gray-400">
+                      {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
+                    </span>
                   </div>
                   {cases.length > 0 && (
                     <div className="border-t border-gray-100 divide-y divide-gray-50 max-h-[30vh] overflow-y-auto">
                       {cases.map((c, i) => {
                         const isFail = c.status === 'failed' || c.status === 'error'
                         return (
-                          <div key={`${c.path || c.name}-${i}`} className="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-50">
+                          <div
+                            key={`${c.path || c.name}-${i}`}
+                            className="px-3 py-1.5 flex items-start gap-2 hover:bg-gray-50"
+                          >
                             {c.status === 'passed' ? (
                               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
                             ) : c.status === 'skipped' ? (
@@ -608,24 +879,40 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
                               <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
                             )}
                             <div className="min-w-0 flex-1">
-                              {(c.case_id || c.case_title) ? (
+                              {c.case_id || c.case_title ? (
                                 <>
                                   <div className="text-xs text-gray-800 font-medium break-all">
                                     {[c.case_id, c.case_title].filter(Boolean).join(' ')}
                                   </div>
-                                  <div className="text-[10px] text-gray-400 font-mono break-all mt-0.5">{c.name || c.path}</div>
+                                  <div className="text-[10px] text-gray-400 font-mono break-all mt-0.5">
+                                    {c.name || c.path}
+                                  </div>
                                 </>
                               ) : (
-                                <div className="text-xs text-gray-700 font-mono break-all">{c.name || c.path}</div>
+                                <div className="text-xs text-gray-700 font-mono break-all">
+                                  {c.name || c.path}
+                                </div>
                               )}
                               {isFail && c.message && (
-                                <div className="text-[11px] text-red-600 mt-0.5 break-all leading-snug">{c.message}</div>
+                                <div className="text-[11px] text-red-600 mt-0.5 break-all leading-snug">
+                                  {c.message}
+                                </div>
                               )}
                             </div>
-                            <span className={`text-[10px] flex-shrink-0 mt-0.5 ${
-                              c.status === 'passed' ? 'text-emerald-600' : c.status === 'skipped' ? 'text-gray-400' : 'text-red-500'
-                            }`}>
-                              {c.status === 'passed' ? '通过' : c.status === 'skipped' ? '跳过' : '失败'}
+                            <span
+                              className={`text-[10px] flex-shrink-0 mt-0.5 ${
+                                c.status === 'passed'
+                                  ? 'text-emerald-600'
+                                  : c.status === 'skipped'
+                                    ? 'text-gray-400'
+                                    : 'text-red-500'
+                              }`}
+                            >
+                              {c.status === 'passed'
+                                ? '通过'
+                                : c.status === 'skipped'
+                                  ? '跳过'
+                                  : '失败'}
                             </span>
                           </div>
                         )
@@ -662,12 +949,18 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
       ) : (
         <>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400">{content.length} 字符 · 与需求关联保存的产物一致</span>
+            <span className="text-xs text-gray-400">
+              {content.length} 字符 · 与需求关联保存的产物一致
+            </span>
             <button
               onClick={copyContent}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
             >
-              {copyOk ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+              {copyOk ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
               {copyOk ? '已复制' : '复制全文'}
             </button>
           </div>
@@ -687,7 +980,14 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
 export default function AIWorkspacePage() {
   const toast = useToast()
   const [tab, setTab] = useState('prd')
-  const [state, setState] = useState(() => ({ prd: initState(), review: initState(), td: initState(), test: initState(), code: initState(), review_code: initState() }))
+  const [state, setState] = useState(() => ({
+    prd: initState(),
+    review: initState(),
+    td: initState(),
+    test: initState(),
+    code: initState(),
+    review_code: initState(),
+  }))
   const [requirements, setRequirements] = useState([])
   const [reqLoading, setReqLoading] = useState(true)
   const [reqError, setReqError] = useState(null)
@@ -704,7 +1004,9 @@ export default function AIWorkspacePage() {
   const tabInfo = TABS[tab]
   const c = COLOR_MAP[tabInfo.color]
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [s.messages, s.loading])
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [s.messages, s.loading])
 
   const fetchRequirements = useCallback(async () => {
     setReqLoading(true)
@@ -732,7 +1034,10 @@ export default function AIWorkspacePage() {
 
   // 加载需求的自动化测试执行记录
   const fetchTestRuns = useCallback(async () => {
-    if (!selectedReqId) { setTestRuns([]); return }
+    if (!selectedReqId) {
+      setTestRuns([])
+      return
+    }
     setTestLoading(true)
     try {
       const res = await api.get(`/api/requirements/${selectedReqId}/test-runs`)
@@ -753,7 +1058,13 @@ export default function AIWorkspacePage() {
   const stageStatus = (key) => {
     if (!selectedReq) return 'idle'
     let ps = selectedReq.pipeline_status || {}
-    if (typeof ps === 'string') { try { ps = JSON.parse(ps) } catch { ps = {} } }
+    if (typeof ps === 'string') {
+      try {
+        ps = JSON.parse(ps)
+      } catch {
+        ps = {}
+      }
+    }
     if (ps[key]?.status === 'stale') return 'stale'
     const stage = PIPELINE_STAGES.find((s) => s.key === key)
     return selectedReq[stage.field] ? 'done' : 'idle'
@@ -765,7 +1076,8 @@ export default function AIWorkspacePage() {
     const patch = {}
     if (key === 'prd' && !state.prd.userInput) patch.userInput = req.description || ''
     else if (key === 'review' && !state.review.prdText) patch.prdText = req.prd_text || ''
-    else if (key === 'td' && !state.td.prdText) patch.prdText = req.review_report || req.prd_text || ''
+    else if (key === 'td' && !state.td.prdText)
+      patch.prdText = req.review_report || req.prd_text || ''
     else if (key === 'test') {
       if (!state.test.prdText) patch.prdText = req.prd_text || ''
       if (!state.test.techDesign) patch.techDesign = req.tech_design || ''
@@ -791,7 +1103,10 @@ export default function AIWorkspacePage() {
   const saveToRequirement = async (stage, content) => {
     if (!selectedReqId) return null
     try {
-      const res = await api.post(`/api/requirements/${selectedReqId}/pipeline-output`, { stage, content })
+      const res = await api.post(`/api/requirements/${selectedReqId}/pipeline-output`, {
+        stage,
+        content,
+      })
       toast.success(`已保存到需求「${selectedReq?.name || selectedReqId}」`)
       return res.data
     } catch (e) {
@@ -800,9 +1115,12 @@ export default function AIWorkspacePage() {
     }
   }
 
-  const stripImages = (html) => html
-    ? html.replace(/<img[^>]*>/gi, '[图片已移除]').replace(/src="data:image\/[a-zA-Z]+;base64,[^"]*"/g, '')
-    : html
+  const stripImages = (html) =>
+    html
+      ? html
+          .replace(/<img[^>]*>/gi, '[图片已移除]')
+          .replace(/src="data:image\/[a-zA-Z]+;base64,[^"]*"/g, '')
+      : html
 
   const callApi = async (url, body) => {
     const res = await api.post(url, body)
@@ -815,7 +1133,10 @@ export default function AIWorkspacePage() {
       ...prev,
       [tab]: {
         ...prev[tab],
-        messages: [...prev[tab].messages, { role, content, timestamp: new Date().toISOString(), ...meta }],
+        messages: [
+          ...prev[tab].messages,
+          { role, content, timestamp: new Date().toISOString(), ...meta },
+        ],
       },
     }))
   }
@@ -825,39 +1146,79 @@ export default function AIWorkspacePage() {
     update({ loading: true })
     try {
       if (tab === 'prd') {
-        if (!s.userInput.trim()) { toast.error('请输入需求描述'); update({ loading: false }); return }
+        if (!s.userInput.trim()) {
+          toast.error('请输入需求描述')
+          update({ loading: false })
+          return
+        }
         const result = await callApi('/api/prd/generate', { prd_text: stripImages(s.userInput) })
         addMessage('user', s.userInput)
         addMessage('assistant', result)
         update({ userInput: '' })
         await saveToRequirement('prd', result)
       } else if (tab === 'review') {
-        if (!s.prdText.trim()) { toast.error('请输入 PRD 内容'); update({ loading: false }); return }
-        const result = await callApi('/api/prd/review', { prd_text: stripImages(s.prdText), repo_path: s.repoPath })
+        if (!s.prdText.trim()) {
+          toast.error('请输入 PRD 内容')
+          update({ loading: false })
+          return
+        }
+        const result = await callApi('/api/prd/review', {
+          prd_text: stripImages(s.prdText),
+          repo_path: s.repoPath,
+        })
         addMessage('user', s.prdText)
         addMessage('assistant', result)
         await saveToRequirement('review', result)
       } else if (tab === 'td') {
-        if (!s.prdText.trim()) { toast.error('请输入 PRD 内容'); update({ loading: false }); return }
-        const result = await callApi('/api/prd/technical-design', { prd_text: stripImages(s.prdText), repo_path: s.repoPath })
+        if (!s.prdText.trim()) {
+          toast.error('请输入 PRD 内容')
+          update({ loading: false })
+          return
+        }
+        const result = await callApi('/api/prd/technical-design', {
+          prd_text: stripImages(s.prdText),
+          repo_path: s.repoPath,
+        })
         addMessage('user', s.prdText)
         addMessage('assistant', result)
         await saveToRequirement('td', result)
       } else if (tab === 'test') {
-        if (!s.prdText.trim()) { toast.error('请输入 PRD 内容'); update({ loading: false }); return }
-        const result = await callApi('/api/prd/test-cases', { prd_text: stripImages(s.prdText), tech_design: stripImages(s.techDesign) })
+        if (!s.prdText.trim()) {
+          toast.error('请输入 PRD 内容')
+          update({ loading: false })
+          return
+        }
+        const result = await callApi('/api/prd/test-cases', {
+          prd_text: stripImages(s.prdText),
+          tech_design: stripImages(s.techDesign),
+        })
         addMessage('user', s.prdText + (s.techDesign ? '\n\n技术方案: ' + s.techDesign : ''))
         addMessage('assistant', result)
         await saveToRequirement('test', result)
       } else if (tab === 'code') {
-        if (!s.techDesign.trim()) { toast.error('请输入技术方案'); update({ loading: false }); return }
-        const result = await callApi('/api/prd/generate-code', { task_type: 'code', tech_design: stripImages(s.techDesign), language: s.language })
+        if (!s.techDesign.trim()) {
+          toast.error('请输入技术方案')
+          update({ loading: false })
+          return
+        }
+        const result = await callApi('/api/prd/generate-code', {
+          task_type: 'code',
+          tech_design: stripImages(s.techDesign),
+          language: s.language,
+        })
         addMessage('user', `语言: ${s.language}\n技术方案: ${s.techDesign}`)
         addMessage('assistant', result)
         await saveToRequirement('code', result)
       } else if (tab === 'review_code') {
-        if (!s.codeText.trim()) { toast.error('请输入要审查的代码'); update({ loading: false }); return }
-        const result = await callApi('/api/code/review', { language: s.language, code: stripImages(s.codeText) })
+        if (!s.codeText.trim()) {
+          toast.error('请输入要审查的代码')
+          update({ loading: false })
+          return
+        }
+        const result = await callApi('/api/code/review', {
+          language: s.language,
+          code: stripImages(s.codeText),
+        })
         addMessage('user', `语言: ${s.language}\n代码:\n${s.codeText}`)
         addMessage('assistant', result)
         update({ codeText: '' })
@@ -877,14 +1238,32 @@ export default function AIWorkspacePage() {
     update({ chatInput: '', loading: true })
     addMessage('user', text)
     try {
-      const historyText = s.messages.map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`).join('\n\n') + '\n\n用户最新指令: ' + text
+      const historyText =
+        s.messages
+          .map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`)
+          .join('\n\n') +
+        '\n\n用户最新指令: ' +
+        text
       let url, body
-      if (tab === 'prd') { url = '/api/prd/generate'; body = { prd_text: historyText } }
-      else if (tab === 'review') { url = '/api/prd/review'; body = { prd_text: historyText, repo_path: s.repoPath } }
-      else if (tab === 'td') { url = '/api/prd/technical-design'; body = { prd_text: historyText, repo_path: s.repoPath } }
-      else if (tab === 'test') { url = '/api/prd/test-cases'; body = { prd_text: historyText, tech_design: s.techDesign } }
-      else if (tab === 'review_code') { url = '/api/code/review'; body = { language: s.language, code: historyText } }
-      else { url = '/api/prd/code-chat'; body = { message: historyText, language: s.language } }
+      if (tab === 'prd') {
+        url = '/api/prd/generate'
+        body = { prd_text: historyText }
+      } else if (tab === 'review') {
+        url = '/api/prd/review'
+        body = { prd_text: historyText, repo_path: s.repoPath }
+      } else if (tab === 'td') {
+        url = '/api/prd/technical-design'
+        body = { prd_text: historyText, repo_path: s.repoPath }
+      } else if (tab === 'test') {
+        url = '/api/prd/test-cases'
+        body = { prd_text: historyText, tech_design: s.techDesign }
+      } else if (tab === 'review_code') {
+        url = '/api/code/review'
+        body = { language: s.language, code: historyText }
+      } else {
+        url = '/api/prd/code-chat'
+        body = { message: historyText, language: s.language }
+      }
       const result = await callApi(url, body)
       addMessage('assistant', result)
     } catch (e) {
@@ -919,11 +1298,18 @@ export default function AIWorkspacePage() {
   const handleImprove = async (reviewMsg) => {
     if (s.loading) return
     const code = extractReviewCode()
-    if (!code) { toast.error('未找到待修改的代码，请先在左侧粘贴代码'); return }
+    if (!code) {
+      toast.error('未找到待修改的代码，请先在左侧粘贴代码')
+      return
+    }
     update({ loading: true })
     try {
       addMessage('user', '请根据上面的审查意见修改代码')
-      const result = await callApi('/api/code/improve', { language: s.language, code, review: stripImages(reviewMsg.content) })
+      const result = await callApi('/api/code/improve', {
+        language: s.language,
+        code,
+        review: stripImages(reviewMsg.content),
+      })
       addMessage('assistant', result, { kind: 'improved' })
     } catch (e) {
       toast.error(`代码修改失败：${e.message}`)
@@ -934,8 +1320,14 @@ export default function AIWorkspacePage() {
 
   // 把审查后的改进代码带回「代码生成」，可继续追问优化或重新部署
   const handleBringToCode = async (improvedMsg) => {
-    const code = (improvedMsg.content || '').replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
-    if (!code) { toast.error('未解析到修改后的代码'); return }
+    const code = (improvedMsg.content || '')
+      .replace(/^```[a-zA-Z]*\s*\n?/, '')
+      .replace(/\n?```\s*$/, '')
+      .trim()
+    if (!code) {
+      toast.error('未解析到修改后的代码')
+      return
+    }
     setState((prev) => ({
       ...prev,
       code: {
@@ -970,7 +1362,14 @@ export default function AIWorkspacePage() {
   }
 
   const downloadCode = (text) => {
-    const ext = s.language === 'python' ? 'py' : s.language === 'java' ? 'java' : s.language === 'typescript' ? 'ts' : 'go'
+    const ext =
+      s.language === 'python'
+        ? 'py'
+        : s.language === 'java'
+          ? 'java'
+          : s.language === 'typescript'
+            ? 'ts'
+            : 'go'
     const blob = new Blob([text], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -986,12 +1385,16 @@ export default function AIWorkspacePage() {
       toast.error('当前沙箱部署仅支持 Python 服务（后续支持更多语言）')
       return
     }
-    const clean = (codeText || '').replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim()
+    const clean = (codeText || '')
+      .replace(/^```[a-zA-Z]*\s*\n?/, '')
+      .replace(/\n?```\s*$/, '')
+      .trim()
     if (!clean) {
       toast.error('无可部署代码，请先完成代码生成')
       return
     }
-    const base = (selectedReq?.name || 'ai-service').replace(/[^\w-]+/g, '-').slice(0, 20) || 'ai-service'
+    const base =
+      (selectedReq?.name || 'ai-service').replace(/[^\w-]+/g, '-').slice(0, 20) || 'ai-service'
     const name = `${base}-${Math.random().toString(36).slice(2, 6)}`
     try {
       const res = await api.post('/api/deployments', {
@@ -1000,14 +1403,27 @@ export default function AIWorkspacePage() {
         code: clean,
         requirement_id: selectedReqId || '',
       })
-      setDeployInfo({ open: true, pipelineId: res.data.pipeline_id, runId: res.data.run_id, port: res.data.port, name: res.data.name })
+      setDeployInfo({
+        open: true,
+        pipelineId: res.data.pipeline_id,
+        runId: res.data.run_id,
+        port: res.data.port,
+        name: res.data.name,
+      })
       toast.success('部署已启动，正在构建镜像…')
     } catch (e) {
       toast.error(`部署启动失败：${e.message}`)
     }
   }
 
-  const canGenerate = tab === 'prd' ? s.userInput.trim() : tab === 'code' ? s.techDesign.trim() : tab === 'review_code' ? s.codeText.trim() : s.prdText.trim()
+  const canGenerate =
+    tab === 'prd'
+      ? s.userInput.trim()
+      : tab === 'code'
+        ? s.techDesign.trim()
+        : tab === 'review_code'
+          ? s.codeText.trim()
+          : s.prdText.trim()
   const generateBtnText = getGenerateBtnText()
   const chatPlaceholder = getChatPlaceholder()
 
@@ -1026,7 +1442,8 @@ export default function AIWorkspacePage() {
             <Rocket className="w-5 h-5" /> 一句话全自动
           </h3>
           <p className="text-sm text-white/80 mt-1">
-            说出你想要的功能，AI 自动完成 PRD → 审查 → 技术方案 → 测试用例 → 代码 → 审查 → 部署 全流程，全程可视化跟踪
+            说出你想要的功能，AI 自动完成 PRD → 审查 → 技术方案 → 测试用例 → 代码 → 审查 → 部署
+            全流程，全程可视化跟踪
           </p>
         </div>
         <button
@@ -1050,20 +1467,38 @@ export default function AIWorkspacePage() {
               return (
                 <React.Fragment key={stage.key}>
                   {idx > 0 && (
-                    <div className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`} />
+                    <div
+                      className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`}
+                    />
                   )}
                   <button
                     onClick={() => handleTabChange(stage.key)}
-                    title={st === 'stale' ? '上游已变更，此阶段产物建议重新生成' : st === 'done' ? '已有产物，可查看或重新生成' : '尚未生成'}
+                    title={
+                      st === 'stale'
+                        ? '上游已变更，此阶段产物建议重新生成'
+                        : st === 'done'
+                          ? '已有产物，可查看或重新生成'
+                          : '尚未生成'
+                    }
                     className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                      active ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'
+                      active
+                        ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
+                        : 'hover:bg-gray-50 text-gray-600'
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${
-                      st === 'stale' ? 'bg-amber-500' : st === 'done' ? 'bg-emerald-500' : 'bg-gray-300'
-                    }`} />
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        st === 'stale'
+                          ? 'bg-amber-500'
+                          : st === 'done'
+                            ? 'bg-emerald-500'
+                            : 'bg-gray-300'
+                      }`}
+                    />
                     {stage.label}
-                    {st === 'stale' && <span className="text-[10px] text-amber-600 font-semibold">需更新</span>}
+                    {st === 'stale' && (
+                      <span className="text-[10px] text-amber-600 font-semibold">需更新</span>
+                    )}
                   </button>
                 </React.Fragment>
               )
@@ -1099,7 +1534,9 @@ export default function AIWorkspacePage() {
             >
               <t.icon className="w-4 h-4" /> {t.label}
               {stageStatus(key) === 'stale' && (
-                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">需更新</span>
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                  需更新
+                </span>
               )}
             </button>
           )
@@ -1110,7 +1547,10 @@ export default function AIWorkspacePage() {
       {reqError && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
           <span className="text-sm text-red-700">需求列表加载失败：{reqError.message}</span>
-          <button onClick={fetchRequirements} className="text-sm text-red-600 hover:underline flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={fetchRequirements}
+            className="text-sm text-red-600 hover:underline flex items-center gap-1 flex-shrink-0"
+          >
             <RefreshCw className="w-3.5 h-3.5" /> 重试
           </button>
         </div>
@@ -1152,7 +1592,9 @@ export default function AIWorkspacePage() {
                 >
                   <option value="">-- 选择关联需求（可选） --</option>
                   {requirements.map((r) => (
-                    <option key={r.id} value={r.id}>[{r.status}] {r.name}</option>
+                    <option key={r.id} value={r.id}>
+                      [{r.status}] {r.name}
+                    </option>
                   ))}
                 </select>
               )}
@@ -1172,9 +1614,15 @@ export default function AIWorkspacePage() {
                 disabled={s.loading || !canGenerate}
                 className={`flex-1 bg-gradient-to-r ${c.from} ${c.to} text-white py-2.5 px-4 rounded-xl hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center gap-2 text-sm`}
               >
-                {s.loading
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> 生成中…</>
-                  : <><Sparkles className="w-4 h-4" /> {generateBtnText}</>}
+                {s.loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> 生成中…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" /> {generateBtnText}
+                  </>
+                )}
               </button>
               {tabInfo.next && s.messages.length > 0 && (
                 <button
@@ -1202,10 +1650,17 @@ export default function AIWorkspacePage() {
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-purple-600" />
               <h2 className="text-base font-semibold text-gray-900">AI 对话</h2>
-              {s.messages.length > 0 && <span className="text-xs text-gray-400 ml-1">{s.messages.length} 条</span>}
+              {s.messages.length > 0 && (
+                <span className="text-xs text-gray-400 ml-1">{s.messages.length} 条</span>
+              )}
             </div>
             {s.messages.length > 0 && (
-              <button onClick={() => update({ messages: [] })} className="text-xs text-gray-400 hover:text-red-500">清空</button>
+              <button
+                onClick={() => update({ messages: [] })}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                清空
+              </button>
             )}
           </div>
 
@@ -1219,33 +1674,100 @@ export default function AIWorkspacePage() {
               />
             ) : (
               s.messages.map((msg, idx) => (
-                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`flex items-start gap-2 max-w-[88%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-purple-600' : 'bg-blue-600'}`}>
-                      {msg.role === 'user' ? <User className="w-3.5 h-3.5 text-white" /> : <Bot className="w-3.5 h-3.5 text-white" />}
+                <div
+                  key={idx}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`flex items-start gap-2 max-w-[88%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
+                  >
+                    <div
+                      className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-purple-600' : 'bg-blue-600'}`}
+                    >
+                      {msg.role === 'user' ? (
+                        <User className="w-3.5 h-3.5 text-white" />
+                      ) : (
+                        <Bot className="w-3.5 h-3.5 text-white" />
+                      )}
                     </div>
-                    <div className={`rounded-2xl px-3 py-2.5 ${msg.role === 'user' ? 'bg-purple-600 text-white' : msg.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-gray-100 text-gray-900'}`}>
-                      <div className={`flex items-center gap-1 mb-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>
-                        <button onClick={() => startEdit(idx)} title="编辑" className="p-0.5 hover:bg-black/10 rounded"><Edit2 className="w-3 h-3" /></button>
-                        <button onClick={() => handleCopy(msg.content)} title="复制" className="p-0.5 hover:bg-black/10 rounded"><Copy className="w-3 h-3" /></button>
+                    <div
+                      className={`rounded-2xl px-3 py-2.5 ${msg.role === 'user' ? 'bg-purple-600 text-white' : msg.error ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-gray-100 text-gray-900'}`}
+                    >
+                      <div
+                        className={`flex items-center gap-1 mb-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}
+                      >
+                        <button
+                          onClick={() => startEdit(idx)}
+                          title="编辑"
+                          className="p-0.5 hover:bg-black/10 rounded"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => handleCopy(msg.content)}
+                          title="复制"
+                          className="p-0.5 hover:bg-black/10 rounded"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
                         {tab === 'code' && msg.role === 'assistant' && (
-                          <button onClick={() => downloadCode(msg.content)} title="下载代码" className="p-0.5 hover:bg-black/10 rounded"><Download className="w-3 h-3" /></button>
+                          <button
+                            onClick={() => downloadCode(msg.content)}
+                            title="下载代码"
+                            className="p-0.5 hover:bg-black/10 rounded"
+                          >
+                            <Download className="w-3 h-3" />
+                          </button>
                         )}
                         {tab === 'code' && msg.role === 'assistant' && s.language === 'python' && (
-                          <button onClick={() => handleDeploy(msg.content)} title="部署到沙箱" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Rocket className="w-3 h-3" /></button>
+                          <button
+                            onClick={() => handleDeploy(msg.content)}
+                            title="部署到沙箱"
+                            className="p-0.5 hover:bg-black/10 rounded text-purple-500"
+                          >
+                            <Rocket className="w-3 h-3" />
+                          </button>
                         )}
-                        {tab === 'review_code' && msg.role === 'assistant' && msg.kind !== 'improved' && (
-                          <button onClick={() => handleImprove(msg)} title="按此审查意见修改代码" className="p-0.5 hover:bg-black/10 rounded text-amber-600"><Wrench className="w-3 h-3" /></button>
-                        )}
-                        {tab === 'review_code' && msg.role === 'assistant' && msg.kind === 'improved' && (
-                          <>
-                            <button onClick={() => downloadCode(msg.content)} title="下载代码" className="p-0.5 hover:bg-black/10 rounded"><Download className="w-3 h-3" /></button>
-                            {s.language === 'python' && (
-                              <button onClick={() => handleDeploy(msg.content)} title="部署到沙箱" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Rocket className="w-3 h-3" /></button>
-                            )}
-                            <button onClick={() => handleBringToCode(msg)} title="带回代码生成" className="p-0.5 hover:bg-black/10 rounded text-purple-500"><Undo2 className="w-3 h-3" /></button>
-                          </>
-                        )}
+                        {tab === 'review_code' &&
+                          msg.role === 'assistant' &&
+                          msg.kind !== 'improved' && (
+                            <button
+                              onClick={() => handleImprove(msg)}
+                              title="按此审查意见修改代码"
+                              className="p-0.5 hover:bg-black/10 rounded text-amber-600"
+                            >
+                              <Wrench className="w-3 h-3" />
+                            </button>
+                          )}
+                        {tab === 'review_code' &&
+                          msg.role === 'assistant' &&
+                          msg.kind === 'improved' && (
+                            <>
+                              <button
+                                onClick={() => downloadCode(msg.content)}
+                                title="下载代码"
+                                className="p-0.5 hover:bg-black/10 rounded"
+                              >
+                                <Download className="w-3 h-3" />
+                              </button>
+                              {s.language === 'python' && (
+                                <button
+                                  onClick={() => handleDeploy(msg.content)}
+                                  title="部署到沙箱"
+                                  className="p-0.5 hover:bg-black/10 rounded text-purple-500"
+                                >
+                                  <Rocket className="w-3 h-3" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleBringToCode(msg)}
+                                title="带回代码生成"
+                                className="p-0.5 hover:bg-black/10 rounded text-purple-500"
+                              >
+                                <Undo2 className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
                       </div>
                       {s.editingMsgIdx === idx ? (
                         <div className="space-y-1.5">
@@ -1256,18 +1778,36 @@ export default function AIWorkspacePage() {
                             rows={6}
                           />
                           <div className="flex gap-1.5">
-                            <button onClick={() => saveEdit(idx)} className="px-2 py-0.5 bg-green-500 text-white text-xs rounded hover:bg-green-600 flex items-center gap-0.5"><Save className="w-2.5 h-2.5 inline" />保存</button>
-                            <button onClick={cancelEdit} className="px-2 py-0.5 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 flex items-center gap-0.5"><X className="w-2.5 h-2.5 inline" />取消</button>
+                            <button
+                              onClick={() => saveEdit(idx)}
+                              className="px-2 py-0.5 bg-green-500 text-white text-xs rounded hover:bg-green-600 flex items-center gap-0.5"
+                            >
+                              <Save className="w-2.5 h-2.5 inline" />
+                              保存
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="px-2 py-0.5 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 flex items-center gap-0.5"
+                            >
+                              <X className="w-2.5 h-2.5 inline" />
+                              取消
+                            </button>
                           </div>
                         </div>
                       ) : (
-                        <div className={`text-sm leading-relaxed ${msg.role === 'user' ? 'whitespace-pre-wrap' : ''}`}>
-                          {msg.role === 'assistant'
-                            ? <MarkdownRenderer content={msg.content} />
-                            : msg.content}
+                        <div
+                          className={`text-sm leading-relaxed ${msg.role === 'user' ? 'whitespace-pre-wrap' : ''}`}
+                        >
+                          {msg.role === 'assistant' ? (
+                            <MarkdownRenderer content={msg.content} />
+                          ) : (
+                            msg.content
+                          )}
                         </div>
                       )}
-                      <div className={`text-xs mt-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}>
+                      <div
+                        className={`text-xs mt-1.5 ${msg.role === 'user' ? 'text-purple-200' : 'text-gray-400'}`}
+                      >
                         {formatRelativeTime(msg.timestamp)}
                       </div>
                       {tab === 'code' && msg.role === 'assistant' && s.language === 'python' && (
@@ -1280,24 +1820,26 @@ export default function AIWorkspacePage() {
                           </button>
                         </div>
                       )}
-                      {tab === 'review_code' && msg.role === 'assistant' && msg.kind === 'improved' && (
-                        <div className="mt-2.5 flex flex-wrap gap-2">
-                          {s.language === 'python' && (
+                      {tab === 'review_code' &&
+                        msg.role === 'assistant' &&
+                        msg.kind === 'improved' && (
+                          <div className="mt-2.5 flex flex-wrap gap-2">
+                            {s.language === 'python' && (
+                              <button
+                                onClick={() => handleDeploy(msg.content)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
+                              >
+                                <Rocket className="w-3.5 h-3.5" /> 部署改进后的代码
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleDeploy(msg.content)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
+                              onClick={() => handleBringToCode(msg)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
                             >
-                              <Rocket className="w-3.5 h-3.5" /> 部署改进后的代码
+                              <Undo2 className="w-3.5 h-3.5" /> 带回代码生成
                             </button>
-                          )}
-                          <button
-                            onClick={() => handleBringToCode(msg)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium rounded-lg hover:opacity-90 transition-all shadow-sm"
-                          >
-                            <Undo2 className="w-3.5 h-3.5" /> 带回代码生成
-                          </button>
-                        </div>
-                      )}
+                          </div>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -1317,12 +1859,24 @@ export default function AIWorkspacePage() {
               <textarea
                 value={s.chatInput}
                 onChange={(e) => update({ chatInput: e.target.value })}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend() } }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleChatSend()
+                  }
+                }}
                 placeholder={chatPlaceholder}
                 className="flex-1 p-2.5 border border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 resize-none text-sm bg-white outline-none"
                 rows={2}
               />
-              <Button variant="gradient" icon={Send} loading={s.loading} disabled={!s.chatInput.trim()} onClick={handleChatSend} className="self-end">
+              <Button
+                variant="gradient"
+                icon={Send}
+                loading={s.loading}
+                disabled={!s.chatInput.trim()}
+                onClick={handleChatSend}
+                className="self-end"
+              >
                 <span className="hidden sm:inline">发送</span>
               </Button>
             </div>
@@ -1339,12 +1893,23 @@ export default function AIWorkspacePage() {
           <RichTextEditor
             value={s.userInput}
             onChange={(v) => update({ userInput: v })}
-            placeholder={'请输入需求描述…\n\n例如：\n1. 新增素材分享功能\n2. 支持将创意素材分享给其他广告账户\n3. 分享时需要校验素材状态'}
+            placeholder={
+              '请输入需求描述…\n\n例如：\n1. 新增素材分享功能\n2. 支持将创意素材分享给其他广告账户\n3. 分享时需要校验素材状态'
+            }
             minHeight={180}
           />
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1"><FolderGit2 className="w-4 h-4 inline mr-1" />仓库路径（可选）</label>
-            <input type="text" className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`} value={s.repoPath} onChange={(e) => update({ repoPath: e.target.value })} placeholder="/path/to/repo" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              <FolderGit2 className="w-4 h-4 inline mr-1" />
+              仓库路径（可选）
+            </label>
+            <input
+              type="text"
+              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
+              value={s.repoPath}
+              onChange={(e) => update({ repoPath: e.target.value })}
+              placeholder="/path/to/repo"
+            />
           </div>
         </>
       )
@@ -1352,10 +1917,21 @@ export default function AIWorkspacePage() {
     if (tab === 'review') {
       return (
         <>
-          <RichTextEditor value={s.prdText} onChange={(v) => update({ prdText: v })} placeholder="请输入 PRD 内容…" minHeight={200} />
+          <RichTextEditor
+            value={s.prdText}
+            onChange={(v) => update({ prdText: v })}
+            placeholder="请输入 PRD 内容…"
+            minHeight={200}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">仓库路径（可选）</label>
-            <input type="text" className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`} value={s.repoPath} onChange={(e) => update({ repoPath: e.target.value })} placeholder="/path/to/repo" />
+            <input
+              type="text"
+              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
+              value={s.repoPath}
+              onChange={(e) => update({ repoPath: e.target.value })}
+              placeholder="/path/to/repo"
+            />
           </div>
         </>
       )
@@ -1363,10 +1939,21 @@ export default function AIWorkspacePage() {
     if (tab === 'td') {
       return (
         <>
-          <RichTextEditor value={s.prdText} onChange={(v) => update({ prdText: v })} placeholder="请输入 PRD 内容…" minHeight={180} />
+          <RichTextEditor
+            value={s.prdText}
+            onChange={(v) => update({ prdText: v })}
+            placeholder="请输入 PRD 内容…"
+            minHeight={180}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">仓库路径（可选）</label>
-            <input type="text" className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`} value={s.repoPath} onChange={(e) => update({ repoPath: e.target.value })} placeholder="/path/to/repo" />
+            <input
+              type="text"
+              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
+              value={s.repoPath}
+              onChange={(e) => update({ repoPath: e.target.value })}
+              placeholder="/path/to/repo"
+            />
           </div>
         </>
       )
@@ -1374,10 +1961,20 @@ export default function AIWorkspacePage() {
     if (tab === 'test') {
       return (
         <>
-          <RichTextEditor value={s.prdText} onChange={(v) => update({ prdText: v })} placeholder="请输入 PRD 内容…" minHeight={150} />
+          <RichTextEditor
+            value={s.prdText}
+            onChange={(v) => update({ prdText: v })}
+            placeholder="请输入 PRD 内容…"
+            minHeight={150}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">技术方案（可选）</label>
-            <RichTextEditor value={s.techDesign} onChange={(v) => update({ techDesign: v })} placeholder="粘贴技术方案内容，增强测试覆盖度…" minHeight={100} />
+            <RichTextEditor
+              value={s.techDesign}
+              onChange={(v) => update({ techDesign: v })}
+              placeholder="粘贴技术方案内容，增强测试覆盖度…"
+              minHeight={100}
+            />
           </div>
         </>
       )
@@ -1385,16 +1982,27 @@ export default function AIWorkspacePage() {
     if (tab === 'code') {
       return (
         <>
-          <RichTextEditor value={s.techDesign} onChange={(v) => update({ techDesign: v })} placeholder="粘贴或输入技术方案内容…" minHeight={180} />
+          <RichTextEditor
+            value={s.techDesign}
+            onChange={(v) => update({ techDesign: v })}
+            placeholder="粘贴或输入技术方案内容…"
+            minHeight={180}
+          />
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
-            <select className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`} value={s.language} onChange={(e) => update({ language: e.target.value })}>
+            <select
+              className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`}
+              value={s.language}
+              onChange={(e) => update({ language: e.target.value })}
+            >
               <option value="go">Go</option>
               <option value="python">Python</option>
               <option value="java">Java</option>
               <option value="typescript">TypeScript</option>
             </select>
-            <p className="text-xs text-gray-400 mt-1.5">生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行</p>
+            <p className="text-xs text-gray-400 mt-1.5">
+              生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行
+            </p>
           </div>
         </>
       )
@@ -1402,10 +2010,19 @@ export default function AIWorkspacePage() {
     // review_code：代码审查
     return (
       <>
-        <RichTextEditor value={s.codeText} onChange={(v) => update({ codeText: v })} placeholder="粘贴要审查的代码…" minHeight={200} />
+        <RichTextEditor
+          value={s.codeText}
+          onChange={(v) => update({ codeText: v })}
+          placeholder="粘贴要审查的代码…"
+          minHeight={200}
+        />
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
-          <select className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`} value={s.language} onChange={(e) => update({ language: e.target.value })}>
+          <select
+            className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`}
+            value={s.language}
+            onChange={(e) => update({ language: e.target.value })}
+          >
             <option value="go">Go</option>
             <option value="python">Python</option>
             <option value="java">Java</option>

@@ -83,6 +83,7 @@ BATCH_SUMMARY_SYSTEM = """你是一位资深信息架构师和文档摘要专家
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class BatchTextRequest(BaseModel):
     texts: list[str] = Field(..., min_length=1, max_length=20, description="待处理文本列表")
     target_lang: str = Field("en", description="目标语言")
@@ -94,6 +95,7 @@ class BatchProcessRequest(BaseModel):
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -120,24 +122,27 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ── 文本提取辅助 ──────────────────────────────────────────
 
+
 def extract_text(filepath: str, filename: str) -> str:
     """提取文件文本。"""
     ext = os.path.splitext(filename)[1].lower()
     try:
-        if ext in ('.txt', '.md', '.csv'):
-            with open(filepath, encoding='utf-8') as f:
+        if ext in (".txt", ".md", ".csv"):
+            with open(filepath, encoding="utf-8") as f:
                 return f.read()[:10000]
-        if ext == '.pdf':
+        if ext == ".pdf":
             try:
                 import PyPDF2
-                with open(filepath, 'rb') as f:
+
+                with open(filepath, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
                     return "\n".join(p.extract_text() or "" for p in reader.pages[:10])[:10000]
             except Exception:
                 return "[PDF提取失败]"
-        if ext in ('.docx', '.doc'):
+        if ext in (".docx", ".doc"):
             try:
                 import docx
+
                 doc = docx.Document(filepath)
                 return "\n".join(p.text for p in doc.paragraphs)[:10000]
             except Exception:
@@ -149,18 +154,20 @@ def extract_text(filepath: str, filename: str) -> str:
 
 # ── API ──────────────────────────────────────────────────
 
+
 @router.post("/translate")
-async def batch_translate(req: BatchTextRequest, sync: bool = Query(False),
-                        current_user: dict = require_auth()):
+async def batch_translate(req: BatchTextRequest, sync: bool = Query(False), current_user: dict = require_auth()):
     """批量翻译文本（异步任务：逐条处理 + 进度上报；sync=1 直接执行兼容旧调用）。"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     if sync is True:
         return await _batch_translate_worker(payload)
     task = create_task(
-        "batch_translate", payload,
+        "batch_translate",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -169,8 +176,9 @@ async def batch_translate(req: BatchTextRequest, sync: bool = Query(False),
 
 
 @router.post("/doc-summary")
-async def batch_doc_summary(files: list[UploadFile] = File(...), sync: bool = Query(False),
-                            current_user: dict = require_auth()):
+async def batch_doc_summary(
+    files: list[UploadFile] = File(...), sync: bool = Query(False), current_user: dict = require_auth()
+):
     """批量文档上传并生成摘要（异步任务；文件落盘后由 worker 逐份处理）。"""
     saved = []
     for file in files:
@@ -188,12 +196,14 @@ async def batch_doc_summary(files: list[UploadFile] = File(...), sync: bool = Qu
 
     payload = {
         "files": saved,
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     if sync is True:
         return await _batch_doc_summary_worker(payload)
     task = create_task(
-        "batch_doc_summary", payload,
+        "batch_doc_summary",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -202,8 +212,12 @@ async def batch_doc_summary(files: list[UploadFile] = File(...), sync: bool = Qu
 
 
 @router.post("/process")
-async def batch_process(files: list[UploadFile] = File(...), task: str = Form("summarize"),
-                        sync: bool = Query(False), current_user: dict = require_auth()):
+async def batch_process(
+    files: list[UploadFile] = File(...),
+    task: str = Form("summarize"),
+    sync: bool = Query(False),
+    current_user: dict = require_auth(),
+):
     """通用批量处理（异步任务）：上传多个文件 → 统一LLM处理。task: summarize/translate/keywords/sentiment"""
     saved = []
     for file in files:
@@ -222,12 +236,14 @@ async def batch_process(files: list[UploadFile] = File(...), task: str = Form("s
     payload = {
         "task": task,
         "files": saved,
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     if sync is True:
         return await _batch_process_worker(payload)
     task_obj = create_task(
-        "batch_process", payload,
+        "batch_process",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -237,8 +253,10 @@ async def batch_process(files: list[UploadFile] = File(...), task: str = Form("s
 
 # ── 异步任务：批量处理 worker（逐条/逐文件处理 + 进度上报）──
 
+
 async def _batch_translate_worker(payload: dict, progress: Callable | None = None) -> dict:
     """批量翻译 worker：逐条调用 LLM，按条上报进度。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -280,6 +298,7 @@ async def _batch_translate_worker(payload: dict, progress: Callable | None = Non
 
 async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = None) -> dict:
     """批量文档摘要 worker：逐文件提取文本 + LLM 摘要（容错解析），按文件上报进度。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -295,21 +314,36 @@ async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = N
         try:
             text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(BATCH_SUMMARY_SYSTEM, f"文档：{file['filename']}\n\n内容：{text[:5000]}",
-                               max_tokens=500, temperature=0.3, timeout=45)
+                raw = call_llm(
+                    BATCH_SUMMARY_SYSTEM,
+                    f"文档：{file['filename']}\n\n内容：{text[:5000]}",
+                    max_tokens=500,
+                    temperature=0.3,
+                    timeout=45,
+                )
                 summary_data = parse_llm_json(raw.strip())
             else:
                 summary_data = {"title": file["filename"], "summary": text or "提取失败", "key_points": []}
 
-            results.append({
-                "filename": file["filename"],
-                "size": file.get("size", 0),
-                "title": summary_data.get("title", file["filename"]),
-                "summary": summary_data.get("summary", ""),
-                "key_points": summary_data.get("key_points", []),
-            })
+            results.append(
+                {
+                    "filename": file["filename"],
+                    "size": file.get("size", 0),
+                    "title": summary_data.get("title", file["filename"]),
+                    "summary": summary_data.get("summary", ""),
+                    "key_points": summary_data.get("key_points", []),
+                }
+            )
         except Exception as e:
-            results.append({"filename": file["filename"], "title": file["filename"], "summary": "", "key_points": [], "error": str(e)})
+            results.append(
+                {
+                    "filename": file["filename"],
+                    "title": file["filename"],
+                    "summary": "",
+                    "key_points": [],
+                    "error": str(e),
+                }
+            )
         finally:
             try:
                 os.remove(file["path"])
@@ -332,6 +366,7 @@ async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = N
 
 async def _batch_process_worker(payload: dict, progress: Callable | None = None) -> dict:
     """通用批量处理 worker：逐文件提取文本 + 统一 LLM 处理，按文件上报进度。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -356,8 +391,13 @@ async def _batch_process_worker(payload: dict, progress: Callable | None = None)
         try:
             text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(task_prompt, f"文件：{file['filename']}\n\n{text[:4000]}",
-                               max_tokens=400, temperature=0.3, timeout=30)
+                raw = call_llm(
+                    task_prompt,
+                    f"文件：{file['filename']}\n\n{text[:4000]}",
+                    max_tokens=400,
+                    temperature=0.3,
+                    timeout=30,
+                )
                 result_text = raw.strip()
             else:
                 result_text = text or "处理失败"
@@ -391,7 +431,15 @@ def _save_job(job_id: str, task_type: str, file_count: int, result: dict, user_i
         with get_db_context() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO batch_jobs (id, task_type, file_count, results, status, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
-                (job_id, task_type, file_count, json.dumps(result, ensure_ascii=False), "done", user_id, datetime.now().isoformat()),
+                (
+                    job_id,
+                    task_type,
+                    file_count,
+                    json.dumps(result, ensure_ascii=False),
+                    "done",
+                    user_id,
+                    datetime.now().isoformat(),
+                ),
             )
     except Exception as e:
         logger.warning("save batch_jobs failed: %s", e)

@@ -43,7 +43,11 @@ export default function ExportButton({ content, title = '导出内容', classNam
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => `<pre style="background:#f5f5f5;padding:12px;border-radius:6px;font-family:Consolas,monospace;font-size:12px;">${code}</pre>`)
+      .replace(
+        /```(\w*)\n([\s\S]*?)```/g,
+        (_m, lang, code) =>
+          `<pre style="background:#f5f5f5;padding:12px;border-radius:6px;font-family:Consolas,monospace;font-size:12px;">${code}</pre>`
+      )
       .replace(/^### (.*)$/gm, '<h3>$1</h3>')
       .replace(/^## (.*)$/gm, '<h2>$1</h2>')
       .replace(/^# (.*)$/gm, '<h1>$1</h1>')

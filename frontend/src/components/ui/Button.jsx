@@ -2,12 +2,17 @@ import React from 'react'
 import { Loader2 } from 'lucide-react'
 
 const VARIANTS = {
-  primary: 'bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
-  secondary: 'bg-white hover:bg-ink-50 text-ink-700 border border-ink-200 shadow-soft hover:shadow-md-soft active:scale-[0.98]',
-  success: 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
-  danger: 'bg-red-500 hover:bg-red-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
+  primary:
+    'bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
+  secondary:
+    'bg-white hover:bg-ink-50 text-ink-700 border border-ink-200 shadow-soft hover:shadow-md-soft active:scale-[0.98]',
+  success:
+    'bg-emerald-500 hover:bg-emerald-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
+  danger:
+    'bg-red-500 hover:bg-red-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
   ghost: 'hover:bg-ink-100 text-ink-700 active:scale-[0.98]',
-  gradient: 'bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
+  gradient:
+    'bg-gradient-to-r from-brand-600 to-brand-500 hover:from-brand-700 hover:to-brand-600 text-white shadow-soft hover:shadow-md-soft active:scale-[0.98]',
 }
 
 const SIZES = {
@@ -35,9 +40,13 @@ export default function Button({
   const isDisabled = disabled || loading
   const content = (
     <>
-      {Icon && iconPosition === 'left' && <Icon className={`w-4 h-4 ${children ? 'mr-1.5' : ''}`} />}
+      {Icon && iconPosition === 'left' && (
+        <Icon className={`w-4 h-4 ${children ? 'mr-1.5' : ''}`} />
+      )}
       {children}
-      {Icon && iconPosition === 'right' && <Icon className={`w-4 h-4 ${children ? 'ml-1.5' : ''}`} />}
+      {Icon && iconPosition === 'right' && (
+        <Icon className={`w-4 h-4 ${children ? 'ml-1.5' : ''}`} />
+      )}
     </>
   )
 

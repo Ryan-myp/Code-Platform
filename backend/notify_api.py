@@ -8,10 +8,9 @@
 
 import logging
 import smtplib
-import json
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -100,10 +99,12 @@ def update_config(payload: dict, current_user: dict = Depends(require_auth)):
 
         old = {}
         if existing:
-            old = dict(conn.execute(
-                "SELECT * FROM notify_config WHERE user_id=?",
-                (current_user["user_id"],),
-            ).fetchone())
+            old = dict(
+                conn.execute(
+                    "SELECT * FROM notify_config WHERE user_id=?",
+                    (current_user["user_id"],),
+                ).fetchone()
+            )
 
         def _keep_secret(key: str) -> str:
             new_val = payload.get(key, "")
@@ -166,15 +167,17 @@ def test_email(current_user: dict = Depends(require_auth)):
         msg["Subject"] = "[小团智能平台] 测试邮件"
         msg["From"] = cfg["email_from"] or cfg["email_smtp_user"]
         msg["To"] = cfg["email_to"]
-        msg.attach(MIMEText(
-            f"""<html><body>
+        msg.attach(
+            MIMEText(
+                f"""<html><body>
             <h2>小团智能平台 - 通知测试</h2>
             <p>这是一封测试邮件，用于验证 SMTP 配置是否正确。</p>
-            <p>发送时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p>发送时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
             <hr><p style='color:#999;font-size:12px'>小团智能平台 · AI赋能智效未来</p>
             </body></html>""",
-            "html",
-        ))
+                "html",
+            )
+        )
 
         with smtplib.SMTP(cfg["email_smtp_host"], cfg["email_smtp_port"], timeout=15) as server:
             server.starttls()
@@ -182,12 +185,12 @@ def test_email(current_user: dict = Depends(require_auth)):
             server.sendmail(msg["From"], [cfg["email_to"]], msg.as_string())
 
         return {"message": "测试邮件发送成功"}
-    except smtplib.SMTPAuthenticationError:
-        raise HTTPException(400, "SMTP 认证失败，请检查用户名和密码")
-    except smtplib.SMTPConnectError:
-        raise HTTPException(400, "无法连接 SMTP 服务器，请检查地址和端口")
+    except smtplib.SMTPAuthenticationError as e:
+        raise HTTPException(400, "SMTP 认证失败，请检查用户名和密码") from e
+    except smtplib.SMTPConnectError as e:
+        raise HTTPException(400, "无法连接 SMTP 服务器，请检查地址和端口") from e
     except Exception as e:
-        raise HTTPException(500, f"发送失败：{str(e)}")
+        raise HTTPException(500, f"发送失败：{str(e)}") from e
 
 
 @router.post("/test-webhook")
@@ -220,7 +223,7 @@ async def test_webhook(current_user: dict = Depends(require_auth)):
         if 200 <= resp.status_code < 300:
             return {"message": f"Webhook 发送成功（HTTP {resp.status_code}）"}
         return {"message": f"Webhook 返回状态码 {resp.status_code}", "body": resp.text[:500]}
-    except httpx.ConnectError:
-        raise HTTPException(400, "无法连接 Webhook URL，请检查地址")
+    except httpx.ConnectError as e:
+        raise HTTPException(400, "无法连接 Webhook URL，请检查地址") from e
     except Exception as e:
-        raise HTTPException(500, f"发送失败：{str(e)}")
+        raise HTTPException(500, f"发送失败：{str(e)}") from e

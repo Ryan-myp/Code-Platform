@@ -104,14 +104,14 @@ from prd_engine import router as prd_engine_router  # noqa: E402
 from publishing import router as publishing_router  # noqa: E402
 from realtime import router as realtime_router  # noqa: E402
 from scheduler import router as scheduler_router  # noqa: E402
-from scheduler import start_scheduler, stop_scheduler
+from scheduler import start_scheduler, stop_scheduler  # noqa: E402
 from search_api import router as search_api_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
-from task_queue import router as task_queue_router  # noqa: E402
-from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
+from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
+from task_queue import router as task_queue_router  # noqa: E402
 from templates_market import router as templates_market_router  # noqa: E402
 from video_analyzer import router as video_analyzer_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
@@ -154,11 +154,13 @@ async def lifespan(app: FastAPI):
     start_scheduler()
     # 数字人：重启恢复中断的批量任务 + 存储保留期清理守护线程
     from digital_human import recover_interrupted_batches, start_storage_cleaner
+
     recover_interrupted_batches()
     start_storage_cleaner()
     # 通用异步任务框架（master-worker）：恢复中断任务 + 启动调度/工作线程
     # 注入主事件循环：worker 线程通过 realtime 向 WebSocket 任务频道广播进度
     import asyncio as _asyncio
+
     from realtime import set_loop as _realtime_set_loop
 
     _realtime_set_loop(_asyncio.get_running_loop())
@@ -188,6 +190,7 @@ app.mount("/api/image-factory/avatars", StaticFiles(directory=PORTRAIT_DIR), nam
 _WF_LAST_WRITE: dict[str, float] = {}
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 
 # ── 全局异常兜底：任何未捕获错误返回友好 JSON，不泄露堆栈 ──────
 @app.exception_handler(Exception)
@@ -224,6 +227,7 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
     logger.warning("Validation error %s %s: %s", request.method, request.url.path, exc)
     safe_errors = [_safe_serializable(e) for e in errors[:5]]
     return JSONResponse(status_code=422, content={"detail": hint, "errors": safe_errors})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -285,9 +289,7 @@ async def quota_middleware(request: Request, call_next):
                     if not result.get("allowed"):
                         return JSONResponse(
                             status_code=402,
-                            content={
-                                "detail": "今日免费额度已用完，升级会员可继续使用（剩余 0 次）"
-                            },
+                            content={"detail": "今日免费额度已用完，升级会员可继续使用（剩余 0 次）"},
                         )
             except HTTPException:
                 pass  # token 无效由端点鉴权兜底返回 401
@@ -301,6 +303,7 @@ async def health_check():
 
 
 # 分享访问埋点
+
 
 def _record_share_visit(share_id: str, source: str, referer: str) -> None:
     """写入分享访问埋点（渠道分析用）。"""
@@ -331,7 +334,7 @@ async def register(request: Request, req: RegisterRequest):
     try:
         return register_user(req.username, req.password, req.invite_code, req.share_ref)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, str(e)) from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -526,8 +529,14 @@ async def membership_plans():
     """会员套餐列表（公开，前端渲染套餐卡片）。"""
     from common.auth import MEMBERSHIP_PLANS, MEMBERSHIP_QUOTA
 
-    plans = {"free": {"name": "免费版", "price": 0, "daily_quota": MEMBERSHIP_QUOTA["free"],
-                      "features": ["每日 30 次生成额度", "全部工具基础使用", "标准响应速度"]}}
+    plans = {
+        "free": {
+            "name": "免费版",
+            "price": 0,
+            "daily_quota": MEMBERSHIP_QUOTA["free"],
+            "features": ["每日 30 次生成额度", "全部工具基础使用", "标准响应速度"],
+        }
+    }
     for key, info in MEMBERSHIP_PLANS.items():
         plans[key] = {**info, "daily_quota": info["daily_quota"]}
     return plans
@@ -860,7 +869,7 @@ def _parse_agent_template_file(skill_path: str) -> dict | None:
     instructions = ""
     idx = body.find("## Instructions")
     if idx >= 0:
-        rest = body[idx + len("## Instructions"):]
+        rest = body[idx + len("## Instructions") :]
         next_h2 = rest.find("\n## ")
         instructions = rest[:next_h2].strip() if next_h2 >= 0 else rest.strip()
     if not instructions:
@@ -955,7 +964,7 @@ async def list_workflows(current_user: dict = require_auth()):
 
 
 @app.get("/api/workflows/{workflow_id}")
-async def get_workflow(workflow_id: str, current_user: dict = require_auth()):
+async def get_workflow(workflow_id: str, current_user: dict = require_auth()):  # noqa: C901
     """获取工作流详情"""
     conn = get_db()
     row = conn.execute("SELECT * FROM workflows WHERE id=?", (workflow_id,)).fetchone()
@@ -1004,11 +1013,13 @@ async def get_workflow(workflow_id: str, current_user: dict = require_auth()):
         edge_from = e.get("from") or e.get("source")
         edge_to = e.get("to") or e.get("target")
         if edge_from and edge_to:
-            normalized_edges.append({
-                "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
-                "from": edge_from,
-                "to": edge_to,
-            })
+            normalized_edges.append(
+                {
+                    "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
+                    "from": edge_from,
+                    "to": edge_to,
+                }
+            )
 
     d["nodes"] = normalized_nodes
     d["definition"] = {"nodes": normalized_nodes, "edges": normalized_edges}
@@ -1124,6 +1135,7 @@ async def delete_workflow(workflow_id: str, current_user: dict = require_auth())
 
 # ── 会话管理 ──────────────────────────────────────────────────
 # 会话/消息/记忆 API 已迁移至 sessions.py router（/api/sessions/*）
+
 
 # ── Team 管理 ───────────────────────────────────────────────────
 @app.get("/api/teams")
@@ -1252,9 +1264,13 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
         skills_store.write_file(
             skill_id,
             "SKILL.md",
-            skills_store.render_skill_markdown({
-                "name": req.name, "description": req.description, "content": req.content,
-            }),
+            skills_store.render_skill_markdown(
+                {
+                    "name": req.name,
+                    "description": req.description,
+                    "content": req.content,
+                }
+            ),
         )
     except (ValueError, OSError) as e:
         raise HTTPException(500, f"初始化 Skill 目录失败：{e}") from e
@@ -1274,9 +1290,13 @@ def _sync_skill_meta_to_fs(skill_id: str, skill: dict, fields_updated: set) -> N
             body = skill.get("content") or ""
         else:
             body = skills_store.parse_skill_markdown(existing)["content"] if existing else (skill.get("content") or "")
-        md = skills_store.render_skill_markdown({
-            "name": skill["name"], "description": skill["description"], "content": body,
-        })
+        md = skills_store.render_skill_markdown(
+            {
+                "name": skill["name"],
+                "description": skill["description"],
+                "content": body,
+            }
+        )
         skills_store.write_file(skill_id, "SKILL.md", md)
     if "references" in fields_updated:
         refs = (skill.get("references") or "").strip()
@@ -1312,7 +1332,9 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
     if not row:
         raise HTTPException(404, "Skill 不存在")
     try:
-        _sync_skill_meta_to_fs(skill_id, dict(row), {u for u in updates if u in ("name", "description", "content", "references")})
+        _sync_skill_meta_to_fs(
+            skill_id, dict(row), {u for u in updates if u in ("name", "description", "content", "references")}
+        )
     except (ValueError, OSError) as e:
         raise HTTPException(500, f"同步 Skill 文件失败：{e}") from e
     return {"success": True, "id": skill_id}
@@ -1426,11 +1448,7 @@ async def export_skill_zip(skill_id: str, current_user: dict = require_auth()):
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-            )
-        },
+        headers={"Content-Disposition": (f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}")},
     )
 
 
@@ -1493,18 +1511,22 @@ def _kb_list_tables(cursor, engine: str) -> list[str]:
     """列出数据库中的表（最多 50 张）。"""
     try:
         if engine == "sqlite":
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
         elif engine == "mysql":
             cursor.execute("SHOW TABLES")
         else:
-            cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() ORDER BY table_name")
+            cursor.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() ORDER BY table_name"
+            )
         return [r[0] for r in cursor.fetchall()][:50]
     except Exception:
         return []
 
 
 @app.get("/api/knowledge-bases")
-async def list_knowledge_bases(current_user: dict = require_auth()):
+async def list_knowledge_bases(current_user: dict = require_auth()):  # noqa: C901
     """获取所有知识库（连接配置脱敏；file/db 类型附文档统计）"""
     conn = get_db()
     kbs = conn.execute("SELECT * FROM knowledge_bases ORDER BY created_at DESC").fetchall()
@@ -1672,7 +1694,7 @@ async def test_kb_connection(req: dict, current_user: dict = require_auth()):
 
 
 @app.post("/api/knowledge-bases/{kb_id}/test")
-async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()):
+async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()):  # noqa: C901
     """测试知识库：file 检查路径；url 检查可达性；db 测试连接并列出表。"""
     conn = get_db()
     row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
@@ -1717,7 +1739,7 @@ async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()):
 
 
 @app.get("/api/knowledge-bases/{kb_id}/search")
-async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):
+async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()
     if not q:
@@ -1773,7 +1795,7 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
                 hits.append(item)
             return {"ok": True, "hits": hits, "count": len(hits), "table": table}
         except Exception as e:
-            raise HTTPException(400, f"检索失败：{e}")
+            raise HTTPException(400, f"检索失败：{e}") from e
         finally:
             try:
                 db_conn.close()
@@ -1798,12 +1820,14 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
                 continue
             matched = [ln.strip() for ln in content.splitlines() if q.lower() in ln.lower()]
             if matched:
-                hits.append({
-                    "file": os.path.basename(fp),
-                    "path": fp,
-                    "matches": matched[:5],
-                    "match_count": len(matched),
-                })
+                hits.append(
+                    {
+                        "file": os.path.basename(fp),
+                        "path": fp,
+                        "matches": matched[:5],
+                        "match_count": len(matched),
+                    }
+                )
             if len(hits) >= limit:
                 break
         return {"ok": True, "hits": hits, "count": len(hits)}
@@ -1813,8 +1837,22 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
 # ── 知识库文档管理（上传 / 列表 / 删除）─────────────────────
 _KB_UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "kb")
 _KB_ALLOWED_EXT = {
-    ".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".html", ".htm",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".txt",
+    ".md",
+    ".csv",
+    ".log",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".html",
+    ".htm",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
 }
 _KB_MAX_UPLOAD = 20 * 1024 * 1024  # 20MB
 
@@ -1832,7 +1870,9 @@ async def upload_kb_document(file: UploadFile = File(...), current_user: dict = 
     os.makedirs(_KB_UPLOAD_DIR, exist_ok=True)
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in _KB_ALLOWED_EXT:
-        raise HTTPException(400, f"不支持的文件类型：{ext or '(无扩展名)'}（支持 {', '.join(sorted(_KB_ALLOWED_EXT))}）")
+        raise HTTPException(
+            400, f"不支持的文件类型：{ext or '(无扩展名)'}（支持 {', '.join(sorted(_KB_ALLOWED_EXT))}）"
+        )
     content = await file.read()
     if len(content) > _KB_MAX_UPLOAD:
         raise HTTPException(400, "文件过大，单个文件不能超过 20MB")
@@ -1853,7 +1893,7 @@ async def upload_kb_document(file: UploadFile = File(...), current_user: dict = 
 
 
 @app.get("/api/knowledge-bases/{kb_id}/documents")
-async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):
+async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):  # noqa: C901
     """列出知识库文档：file 类型扫描目录/文件；db 类型返回表信息；url 返回空。"""
     conn = get_db()
     row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
@@ -1870,14 +1910,26 @@ async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):
                 fp = os.path.join(p, fn)
                 if os.path.isfile(fp):
                     try:
-                        docs.append({"name": fn, "path": fp, "size": os.path.getsize(fp),
-                                     "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat()})
+                        docs.append(
+                            {
+                                "name": fn,
+                                "path": fp,
+                                "size": os.path.getsize(fp),
+                                "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
+                            }
+                        )
                     except OSError:
                         continue
         elif p and os.path.isfile(p):
             try:
-                docs.append({"name": os.path.basename(p), "path": p, "size": os.path.getsize(p),
-                             "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat()})
+                docs.append(
+                    {
+                        "name": os.path.basename(p),
+                        "path": p,
+                        "size": os.path.getsize(p),
+                        "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+                    }
+                )
             except OSError:
                 pass
     elif kb_type == "db":
@@ -1932,7 +1984,10 @@ def _mask_auth_config(auth_type: str, cfg: dict) -> dict:
         return {"username": cfg["username"], "password": "••••••"}
     if auth_type == "api_key" and cfg.get("key"):
         k = cfg["key"]
-        return {"header_name": cfg.get("header_name") or "X-API-Key", "key": (k[:6] + "••••••" + k[-4:]) if len(k) > 12 else "••••••••"}
+        return {
+            "header_name": cfg.get("header_name") or "X-API-Key",
+            "key": (k[:6] + "••••••" + k[-4:]) if len(k) > 12 else "••••••••",
+        }
     return dict(cfg)
 
 
@@ -2013,7 +2068,7 @@ async def create_mcp_server(req: MCPServerCreateRequest, current_user: dict = re
 
 
 @app.put("/api/mcp-servers/{server_id}")
-async def update_mcp_server(server_id: str, req: MCPServerUpdateRequest, current_user: dict = require_auth()):
+async def update_mcp_server(server_id: str, req: MCPServerUpdateRequest, current_user: dict = require_auth()):  # noqa: C901
     """更新 MCP Server（auth_config 传空字典 = 清空认证）"""
     conn = get_db()
     updates = []
@@ -2080,7 +2135,7 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
 
 
 @app.post("/api/mcp-servers/{server_id}/test")
-async def test_mcp_server(server_id: str, current_user: dict = require_auth()):
+async def test_mcp_server(server_id: str, current_user: dict = require_auth()):  # noqa: C901
     """测试 MCP 连接：stdio 检查命令可执行；SSE/HTTP 执行 JSON-RPC initialize 握手（自动注入认证头）。"""
     conn = get_db()
     row = conn.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone()
@@ -2110,15 +2165,23 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             init_payload = {
-                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05", "capabilities": {},
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
                     "clientInfo": {"name": "xiaotuan", "version": "1.0"},
                 },
             }
             resp = await client.post(
-                url, json=init_payload,
-                headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+                url,
+                json=init_payload,
+                headers={
+                    **headers,
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                },
             )
             if resp.status_code >= 400:
                 return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
@@ -2130,8 +2193,13 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()):
             tools = []
             try:
                 resp2 = await client.post(
-                    url, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-                    headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+                    url,
+                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                    headers={
+                        **headers,
+                        "Accept": "application/json, text/event-stream",
+                        "Content-Type": "application/json",
+                    },
                 )
                 data2 = _parse_mcp_response(resp2.text)
                 tools = [t.get("name", "?") for t in (data2.get("result", {}).get("tools", []) if data2 else [])]
@@ -2206,8 +2274,15 @@ async def sandbox_create_project(req: SandboxProjectCreateRequest, current_user:
     conn.execute(
         """INSERT INTO sandbox_projects (id, name, image, status, ports, config, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, req.name, config["image"], result.get("status", "created"),
-         json.dumps(config.get("ports", [])), json.dumps(config), datetime.now().isoformat()),
+        (
+            project_id,
+            req.name,
+            config["image"],
+            result.get("status", "created"),
+            json.dumps(config.get("ports", [])),
+            json.dumps(config),
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -2230,12 +2305,16 @@ async def sandbox_start_project(project_id: str, current_user: dict = require_au
     if project_id.startswith("deploy-"):
         import subprocess
         from datetime import datetime
-        container = f"sandbox-{project_id[len('deploy-'):]}"
+
+        container = f"sandbox-{project_id[len('deploy-') :]}"
         r = subprocess.run(["podman", "start", container], capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
-        conn.execute("UPDATE sandbox_projects SET status='running', updated_at=? WHERE id=?", (datetime.now().isoformat(), project_id))
+        conn.execute(
+            "UPDATE sandbox_projects SET status='running', updated_at=? WHERE id=?",
+            (datetime.now().isoformat(), project_id),
+        )
         conn.commit()
         conn.close()
         return {"status": "success", "container": container}
@@ -2251,12 +2330,16 @@ async def sandbox_stop_project(project_id: str, current_user: dict = require_aut
     if project_id.startswith("deploy-"):
         import subprocess
         from datetime import datetime
-        container = f"sandbox-{project_id[len('deploy-'):]}"
+
+        container = f"sandbox-{project_id[len('deploy-') :]}"
         r = subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
-        conn.execute("UPDATE sandbox_projects SET status='stopped', updated_at=? WHERE id=?", (datetime.now().isoformat(), project_id))
+        conn.execute(
+            "UPDATE sandbox_projects SET status='stopped', updated_at=? WHERE id=?",
+            (datetime.now().isoformat(), project_id),
+        )
         conn.commit()
         conn.close()
         return {"status": "success", "container": container}
@@ -2271,7 +2354,8 @@ async def sandbox_delete_project(project_id: str, current_user: dict = require_a
     # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
     if project_id.startswith("deploy-"):
         import subprocess
-        container = f"sandbox-{project_id[len('deploy-'):]}"
+
+        container = f"sandbox-{project_id[len('deploy-') :]}"
         subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
         subprocess.run(["podman", "rm", container], capture_output=True, text=True, timeout=30)
         conn = get_db()
@@ -2293,8 +2377,9 @@ async def sandbox_delete_project(project_id: str, current_user: dict = require_a
 async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: dict = require_auth()):
     """获取沙箱项目/部署容器日志（tail 默认 200 行）"""
     import subprocess as _sp
+
     if project_id.startswith("deploy-"):
-        container = f"sandbox-{project_id[len('deploy-'):]}"
+        container = f"sandbox-{project_id[len('deploy-') :]}"
         r = _sp.run(["podman", "logs", "--tail", str(tail), container], capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             return {"logs": [], "message": (r.stderr or "").strip() or f"容器 {container} 不存在或未启动"}
@@ -2310,18 +2395,73 @@ async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: d
 # 黑名单：危险操作 token（小写匹配）；白名单：允许 import 的模块。
 # 策略：宁误伤勿放过——沙箱仅服务“纯计算 + 白名单绘图/分析”场景。
 _SANDBOX_BLOCKED_TOKENS = [
-    "os.", "system(", "subprocess", "socket", "shutil", "ctypes", "importlib",
-    "__import__", "eval(", "exec(", "open(", "path(", "tempfile", "glob",
-    "urllib", "http.", "ftp", "pickle", "marshal", "pty", "popen", "fork(",
-    "environ", "getenv", "chmod", "chown", "remove(", "unlink(", "rmdir",
-    "sqlite3", "requests", "multiprocessing", "threading", "signal", "compile(", "input(",
+    "os.",
+    "system(",
+    "subprocess",
+    "socket",
+    "shutil",
+    "ctypes",
+    "importlib",
+    "__import__",
+    "eval(",
+    "exec(",
+    "open(",
+    "path(",
+    "tempfile",
+    "glob",
+    "urllib",
+    "http.",
+    "ftp",
+    "pickle",
+    "marshal",
+    "pty",
+    "popen",
+    "fork(",
+    "environ",
+    "getenv",
+    "chmod",
+    "chown",
+    "remove(",
+    "unlink(",
+    "rmdir",
+    "sqlite3",
+    "requests",
+    "multiprocessing",
+    "threading",
+    "signal",
+    "compile(",
+    "input(",
 ]
 _SANDBOX_ALLOWED_IMPORTS = {
-    "math", "random", "json", "time", "datetime", "statistics", "collections",
-    "itertools", "functools", "re", "base64", "io", "string", "decimal",
-    "fractions", "heapq", "bisect", "array", "textwrap", "unicodedata",
-    "operator", "types", "copy", "pprint", "traceback",
-    "matplotlib", "pandas", "numpy", "PIL",
+    "math",
+    "random",
+    "json",
+    "time",
+    "datetime",
+    "statistics",
+    "collections",
+    "itertools",
+    "functools",
+    "re",
+    "base64",
+    "io",
+    "string",
+    "decimal",
+    "fractions",
+    "heapq",
+    "bisect",
+    "array",
+    "textwrap",
+    "unicodedata",
+    "operator",
+    "types",
+    "copy",
+    "pprint",
+    "traceback",
+    "matplotlib",
+    "pandas",
+    "numpy",
+    "PIL",
 }
 
 
@@ -2449,22 +2589,22 @@ app.include_router(scheduler_router)
 app.include_router(notify_api_router)
 
 # v9.0: Platform API
-from platform_api import router as platform_api_router
+from platform_api import router as platform_api_router  # noqa: E402
 
 app.include_router(platform_api_router)
 
 # v9.0: Extended API (Phase 2-4 + Office)
-from extended_api import router as extended_api_router
+from extended_api import router as extended_api_router  # noqa: E402
 
 app.include_router(extended_api_router)
 
 # v9.0: Tool Hub API
-from tool_hub import router as tool_hub_router
+from tool_hub import router as tool_hub_router  # noqa: E402
 
 app.include_router(tool_hub_router)
 
 # v9.0: Stock Tools API
-from stock_tools import router as stock_tools_router
+from stock_tools import router as stock_tools_router  # noqa: E402
 
 app.include_router(stock_tools_router)
 

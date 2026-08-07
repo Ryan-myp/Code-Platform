@@ -37,12 +37,7 @@ export default function ConfirmDialog({
   }
 
   return (
-    <Modal
-      open={open}
-      onClose={loading ? undefined : onClose}
-      size="sm"
-      closeOnBackdrop={!loading}
-    >
+    <Modal open={open} onClose={loading ? undefined : onClose} size="sm" closeOnBackdrop={!loading}>
       <div className="text-center">
         <div
           className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-soft ${
@@ -57,7 +52,11 @@ export default function ConfirmDialog({
           <Button variant="secondary" onClick={onClose} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button variant={variant === 'danger' ? 'danger' : 'primary'} onClick={handleConfirm} loading={loading}>
+          <Button
+            variant={variant === 'danger' ? 'danger' : 'primary'}
+            onClick={handleConfirm}
+            loading={loading}
+          >
             {confirmLabel}
           </Button>
         </div>

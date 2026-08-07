@@ -102,7 +102,13 @@ export default function SchedulerPage() {
   }
 
   const resetForm = () => {
-    setForm({ name: '', description: '', job_type: 'report', cron_expression: '0 9 * * *', config: '{}' })
+    setForm({
+      name: '',
+      description: '',
+      job_type: 'report',
+      cron_expression: '0 9 * * *',
+      config: '{}',
+    })
   }
 
   return (
@@ -113,7 +119,14 @@ export default function SchedulerPage() {
         icon={Clock}
         iconColor="from-teal-500 to-cyan-600"
         actions={
-          <Button variant="primary" icon={Plus} onClick={() => { resetForm(); setShowCreate(true) }}>
+          <Button
+            variant="primary"
+            icon={Plus}
+            onClick={() => {
+              resetForm()
+              setShowCreate(true)
+            }}
+          >
             创建任务
           </Button>
         }
@@ -144,7 +157,9 @@ export default function SchedulerPage() {
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
                 >
                   {JOB_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -181,11 +196,17 @@ export default function SchedulerPage() {
                 placeholder="分 时 日 月 周"
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
               />
-              <p className="text-xs text-gray-400 mt-1">格式：分 时 日 月 周，例如 0 9 * * * 表示每天9:00</p>
+              <p className="text-xs text-gray-400 mt-1">
+                格式：分 时 日 月 周，例如 0 9 * * * 表示每天9:00
+              </p>
             </div>
             <div className="flex gap-2 justify-end">
-              <Button variant="ghost" onClick={() => setShowCreate(false)}>取消</Button>
-              <Button variant="primary" loading={loading} onClick={createJob}>创建</Button>
+              <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                取消
+              </Button>
+              <Button variant="primary" loading={loading} onClick={createJob}>
+                创建
+              </Button>
             </div>
           </div>
         </Card>
@@ -193,16 +214,22 @@ export default function SchedulerPage() {
 
       {/* 任务列表 */}
       {jobs.length === 0 ? (
-        <Empty icon={Clock} title="暂无定时任务" description="创建第一个定时任务，让AI自动完成重复工作" />
+        <Empty
+          icon={Clock}
+          title="暂无定时任务"
+          description="创建第一个定时任务，让AI自动完成重复工作"
+        />
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => {
             const typeInfo = JOB_TYPES.find((t) => t.value === job.job_type) || JOB_TYPES[0]
             return (
               <Card key={job.id} className="flex items-center gap-4">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  job.enabled ? 'bg-teal-50 text-teal-600' : 'bg-gray-100 text-gray-400'
-                }`}>
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    job.enabled ? 'bg-teal-50 text-teal-600' : 'bg-gray-100 text-gray-400'
+                  }`}
+                >
                   <typeInfo.icon className="w-5 h-5" />
                 </div>
                 <div className="flex-1 min-w-0">

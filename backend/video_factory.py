@@ -49,8 +49,7 @@ def generate_video_id() -> str:
     return f"video_{int(time.time() * 1000)}"
 
 
-def _save_artifact(filename: str, project_id: str, prompt: str, duration: float,
-                   extra_meta: dict | None = None) -> str:
+def _save_artifact(filename: str, project_id: str, prompt: str, duration: float, extra_meta: dict | None = None) -> str:
     """将视频产物登记到 artifacts 表（委托 common.artifacts.save_artifact），返回 artifact id。
 
     - type=video，media_url 指向 /api/video-factory/videos/{filename}
@@ -61,9 +60,13 @@ def _save_artifact(filename: str, project_id: str, prompt: str, duration: float,
     if extra_meta:
         meta.update(extra_meta)
     return save_artifact(
-        art_type="video", project_id=project_id, author="video_factory",
+        art_type="video",
+        project_id=project_id,
+        author="video_factory",
         media_url=f"/api/video-factory/videos/{filename}",
-        content={"filename": filename, "prompt": prompt}, metadata=meta, duration=duration,
+        content={"filename": filename, "prompt": prompt},
+        metadata=meta,
+        duration=duration,
     )
 
 
@@ -192,8 +195,13 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     filename = f"{video_id}.mp4"
     save_video(video_resp.content, filename)
     vid_duration = float(d.get("duration", 0) or 0)
-    art_id = _save_artifact(filename, project_id, d.get("prompt", ""), vid_duration,
-                            {"video_id": video_id, "width": d.get("width", 0), "height": d.get("height", 0)})
+    art_id = _save_artifact(
+        filename,
+        project_id,
+        d.get("prompt", ""),
+        vid_duration,
+        {"video_id": video_id, "width": d.get("width", 0), "height": d.get("height", 0)},
+    )
     _report(100, "视频已保存")
     return {
         "video_id": video_id,
@@ -231,16 +239,24 @@ async def create_video_task(
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
     payload = {
-        "prompt": prompt, "model": model, "width": width, "height": height,
-        "duration": duration, "mode": mode, "image": image,
-        "frame_rate": frame_rate, "project_id": project_id,
+        "prompt": prompt,
+        "model": model,
+        "width": width,
+        "height": height,
+        "duration": duration,
+        "mode": mode,
+        "image": image,
+        "frame_rate": frame_rate,
+        "project_id": project_id,
     }
     if sync:
         return await _video_generate_worker(payload)
     task = create_task("video_generate", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "视频生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "视频生成任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -279,9 +295,13 @@ async def get_video_result(video_id: str, project_id: str = ""):
             filename = f"{video_id}.mp4"
             save_video(video_resp.content, filename)
             vid_duration = float(data.get("duration", 0) or 0)
-            art_id = _save_artifact(filename, project_id, data.get("prompt", ""), vid_duration,
-                                    {"video_id": video_id, "width": data.get("width", 0),
-                                     "height": data.get("height", 0)})
+            art_id = _save_artifact(
+                filename,
+                project_id,
+                data.get("prompt", ""),
+                vid_duration,
+                {"video_id": video_id, "width": data.get("width", 0), "height": data.get("height", 0)},
+            )
 
             return {
                 "video_id": video_id,
@@ -324,11 +344,13 @@ async def get_video(filename: str):
 async def list_videos():
     videos = []
     for f in sorted(VIDEO_DIR.glob("*.mp4"), reverse=True):
-        videos.append({
-            "filename": f.name,
-            "url": f"/api/video-factory/videos/{f.name}",
-            "size": f.stat().st_size,
-        })
+        videos.append(
+            {
+                "filename": f.name,
+                "url": f"/api/video-factory/videos/{f.name}",
+                "size": f.stat().st_size,
+            }
+        )
     return {"videos": videos}
 
 

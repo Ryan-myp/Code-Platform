@@ -28,10 +28,13 @@ load_config()
 # Agent 执行
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/agents/{agent_id}/conversations")
 async def list_conversations(agent_id: str):
     conn = get_db()
-    rows = conn.execute("SELECT * FROM conversations WHERE agent_id=? AND active=1 ORDER BY updated_at DESC", (agent_id,)).fetchall()
+    rows = conn.execute(
+        "SELECT * FROM conversations WHERE agent_id=? AND active=1 ORDER BY updated_at DESC", (agent_id,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -64,9 +67,7 @@ async def delete_conversation(conv_id: str):
 async def get_conversation(conv_id: str):
     conn = get_db()
     row = conn.execute("SELECT * FROM conversations WHERE id=?", (conv_id,)).fetchone()
-    msgs = conn.execute(
-        "SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)
-    ).fetchall()
+    msgs = conn.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)).fetchall()
     conn.close()
     if not row:
         raise HTTPException(404, "对话不存在")
@@ -76,9 +77,7 @@ async def get_conversation(conv_id: str):
 @router.get("/api/conversations/{conv_id}/messages")
 async def get_conversation_messages(conv_id: str):
     conn = get_db()
-    msgs = conn.execute(
-        "SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)
-    ).fetchall()
+    msgs = conn.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY timestamp ASC", (conv_id,)).fetchall()
     conn.close()
     return [dict(m) for m in msgs]
 
@@ -148,8 +147,9 @@ async def run_agent(agent_id: str, req: dict):
 # Team / Workflow 执行
 # ══════════════════════════════════════════════════════════════
 
+
 @router.post("/api/teams/{team_id}/run")
-async def run_team(team_id: str, req: dict):
+async def run_team(team_id: str, req: dict):  # noqa: C901
     """运行 Team：按协作模式调度成员 Agent 执行，并汇总结果。
 
     - coordinate（协调）：所有成员并行执行 → 协调者汇总最终答案
@@ -259,7 +259,7 @@ def _wf_node_summary(res: dict) -> str:
 
 
 @router.post("/api/workflows/{workflow_id}/run")
-async def run_workflow(workflow_id: str, req: dict):
+async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
     """运行 Workflow - 若可用 executor 则用，否则简单执行"""
     message = (req.get("message") or "").strip()
     if not message:
@@ -307,12 +307,14 @@ async def run_workflow(workflow_id: str, req: dict):
                 continue  # 注入的输入数据不当作节点展示
             if not isinstance(res, dict):
                 res = {"status": "success", "result": str(res)}
-            node_results.append({
-                "node_id": nid,
-                "label": node_labels.get(nid, nid),
-                "status": res.get("status", "success"),
-                "summary": _wf_node_summary(res),
-            })
+            node_results.append(
+                {
+                    "node_id": nid,
+                    "label": node_labels.get(nid, nid),
+                    "status": res.get("status", "success"),
+                    "summary": _wf_node_summary(res),
+                }
+            )
 
         # 最终结果：优先输出节点，其次最后一个成功的节点，再退回错误信息
         final_result = None
@@ -518,10 +520,12 @@ async def execute_plugin(plugin_name: str, req: dict):
 # 会话记忆（复用 memories 表，session_id = conversation_id）
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/conversations/{conv_id}/memories")
 async def get_conversation_memories(conv_id: str):
     """获取会话记忆（按时间倒序）"""
     from sessions import get_memories
+
     return get_memories(conv_id)
 
 
@@ -529,6 +533,7 @@ async def get_conversation_memories(conv_id: str):
 async def add_conversation_memory(conv_id: str, req: dict):
     """添加会话记忆（如用户偏好、关键决定等，供后续对话引用）"""
     from sessions import add_memory
+
     content = (req.get("content") or "").strip()
     if not content:
         raise HTTPException(400, "记忆内容不能为空")

@@ -1,14 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  GitBranch, Plus, Play, Trash2, Clock, Edit2, Terminal, RefreshCw,
-  CheckCircle2, XCircle, CircleDashed, Rocket, FlaskConical, Package, Workflow,
-  Server, ExternalLink, Wrench, Loader2,
+  GitBranch,
+  Plus,
+  Play,
+  Trash2,
+  Clock,
+  Edit2,
+  Terminal,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  CircleDashed,
+  Rocket,
+  FlaskConical,
+  Package,
+  Workflow,
+  Server,
+  ExternalLink,
+  Wrench,
+  Loader2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, ColorBadge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  ColorBadge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const PIPELINE_TYPES = [
@@ -23,7 +46,11 @@ const PIPELINE_TYPES = [
 const typeMeta = (type) => PIPELINE_TYPES.find((t) => t.value === type) || PIPELINE_TYPES[0]
 
 const RUN_STATUS = {
-  success: { label: '运行成功', icon: CheckCircle2, cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  success: {
+    label: '运行成功',
+    icon: CheckCircle2,
+    cls: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+  },
   failed: { label: '运行失败', icon: XCircle, cls: 'bg-red-50 text-red-600 border-red-200' },
   running: { label: '运行中', icon: CircleDashed, cls: 'bg-blue-50 text-blue-600 border-blue-200' },
 }
@@ -31,12 +58,18 @@ const RUN_STATUS = {
 // 运行状态徽章
 function RunStatusBadge({ run }) {
   if (!run) {
-    return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-50 text-gray-400 border border-gray-200">未运行</span>
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-50 text-gray-400 border border-gray-200">
+        未运行
+      </span>
+    )
   }
   const meta = RUN_STATUS[run.status] || RUN_STATUS.running
   const Icon = meta.icon
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${meta.cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${meta.cls}`}
+    >
       <Icon className="w-3 h-3" />
       {meta.label}
     </span>
@@ -45,7 +78,13 @@ function RunStatusBadge({ run }) {
 
 // 新建/编辑弹窗
 function PipelineFormModal({ open, onClose, onSubmit, editing, loading }) {
-  const [form, setForm] = useState({ name: '', description: '', type: 'ci', repo: '', test_path: '' })
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    type: 'ci',
+    repo: '',
+    test_path: '',
+  })
   const [errors, setErrors] = useState({})
 
   useEffect(() => {
@@ -82,7 +121,9 @@ function PipelineFormModal({ open, onClose, onSubmit, editing, loading }) {
 
   const inputCls = (err) =>
     `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
-      err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'
+      err
+        ? 'border-red-300 focus:ring-red-500/20'
+        : 'border-gray-200 focus:ring-blue-500/20 focus:border-blue-500'
     }`
 
   return (
@@ -93,8 +134,12 @@ function PipelineFormModal({ open, onClose, onSubmit, editing, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
@@ -146,7 +191,9 @@ function PipelineFormModal({ open, onClose, onSubmit, editing, loading }) {
         </div>
 
         <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 space-y-3">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">执行配置（可选）</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            执行配置（可选）
+          </p>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">代码仓库地址</label>
             <input
@@ -191,7 +238,8 @@ function RunLogModal({ pipeline, onClose }) {
         setRuns(res.data)
         setSelected((prev) => prev || res.data[0] || null)
         // 所有运行均已结束则停止轮询（运行中时每 3s 刷新，实时展示部署进度）
-        if (res.data.length > 0 && res.data.every((r) => r.status !== 'running')) clearInterval(timer)
+        if (res.data.length > 0 && res.data.every((r) => r.status !== 'running'))
+          clearInterval(timer)
       } catch (e) {
         if (alive) toast.error(`加载运行历史失败：${e.message}`)
       } finally {
@@ -200,19 +248,34 @@ function RunLogModal({ pipeline, onClose }) {
     }
     fetchRuns()
     timer = setInterval(fetchRuns, 3000)
-    return () => { alive = false; clearInterval(timer) }
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
   }, [pipeline]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasSuccess = runs.some((r) => r.status === 'success')
 
   return (
-    <Modal open={!!pipeline} onClose={onClose} title={`运行日志 - ${pipeline?.name || ''}`} size="lg">
+    <Modal
+      open={!!pipeline}
+      onClose={onClose}
+      title={`运行日志 - ${pipeline?.name || ''}`}
+      size="lg"
+    >
       {/* deploy 流水线：展示沙箱服务访问地址 */}
       {pipeline?.type === 'deploy' && pipeline?.config?.port && (
-        <div className={`mb-4 px-4 py-3 rounded-xl border flex items-center justify-between gap-3 ${hasSuccess ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}>
+        <div
+          className={`mb-4 px-4 py-3 rounded-xl border flex items-center justify-between gap-3 ${hasSuccess ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200'}`}
+        >
           <span className="text-sm text-gray-600">沙箱服务访问地址</span>
           {hasSuccess ? (
-            <a href={`http://localhost:${pipeline.config.port}`} target="_blank" rel="noreferrer" className="text-sm font-medium text-emerald-600 hover:underline flex items-center gap-1">
+            <a
+              href={`http://localhost:${pipeline.config.port}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm font-medium text-emerald-600 hover:underline flex items-center gap-1"
+            >
               <ExternalLink className="w-3.5 h-3.5" /> http://localhost:{pipeline.config.port}
             </a>
           ) : (
@@ -223,7 +286,9 @@ function RunLogModal({ pipeline, onClose }) {
       {loading ? (
         <div className="py-12 text-center text-gray-400 text-sm">加载中…</div>
       ) : runs.length === 0 ? (
-        <div className="py-12 text-center text-gray-400 text-sm">暂无运行记录，点击卡片上的「运行」按钮开始</div>
+        <div className="py-12 text-center text-gray-400 text-sm">
+          暂无运行记录，点击卡片上的「运行」按钮开始
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-1 space-y-2 max-h-[50vh] overflow-y-auto pr-1">
@@ -232,7 +297,9 @@ function RunLogModal({ pipeline, onClose }) {
                 key={r.id}
                 onClick={() => setSelected(r)}
                 className={`w-full text-left p-3 rounded-xl border transition-all ${
-                  selected?.id === r.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'
+                  selected?.id === r.id
+                    ? 'border-blue-400 bg-blue-50'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-center justify-between mb-1">
@@ -282,7 +349,9 @@ export default function PipelinesPage() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+  }, [load])
 
   const handleSave = async (payload) => {
     setSaving(true)
@@ -346,15 +415,46 @@ export default function PipelinesPage() {
     }
   }
 
-  const openCreate = () => { setEditingItem(null); setShowForm(true) }
-  const openEdit = (p) => { setEditingItem(p); setShowForm(true) }
+  const openCreate = () => {
+    setEditingItem(null)
+    setShowForm(true)
+  }
+  const openEdit = (p) => {
+    setEditingItem(p)
+    setShowForm(true)
+  }
 
   const stats = [
-    { label: '流水线总数', value: items.length, icon: GitBranch, color: 'from-blue-500 to-indigo-600' },
-    { label: 'CI 集成', value: items.filter((i) => i.type === 'ci').length, icon: Workflow, color: 'from-cyan-500 to-blue-600' },
-    { label: 'CD 部署', value: items.filter((i) => i.type === 'cd').length, icon: Rocket, color: 'from-emerald-500 to-green-600' },
-    { label: '测试/构建', value: items.filter((i) => i.type === 'test' || i.type === 'build').length, icon: FlaskConical, color: 'from-amber-500 to-orange-600' },
-    { label: '运行成功', value: items.filter((i) => i.last_run?.status === 'success').length, icon: CheckCircle2, color: 'from-rose-500 to-pink-600' },
+    {
+      label: '流水线总数',
+      value: items.length,
+      icon: GitBranch,
+      color: 'from-blue-500 to-indigo-600',
+    },
+    {
+      label: 'CI 集成',
+      value: items.filter((i) => i.type === 'ci').length,
+      icon: Workflow,
+      color: 'from-cyan-500 to-blue-600',
+    },
+    {
+      label: 'CD 部署',
+      value: items.filter((i) => i.type === 'cd').length,
+      icon: Rocket,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: '测试/构建',
+      value: items.filter((i) => i.type === 'test' || i.type === 'build').length,
+      icon: FlaskConical,
+      color: 'from-amber-500 to-orange-600',
+    },
+    {
+      label: '运行成功',
+      value: items.filter((i) => i.last_run?.status === 'success').length,
+      icon: CheckCircle2,
+      color: 'from-rose-500 to-pink-600',
+    },
   ]
 
   return (
@@ -365,7 +465,9 @@ export default function PipelinesPage() {
         icon={GitBranch}
         iconColor="from-blue-500 to-indigo-600"
         actions={
-          <Button variant="primary" icon={Plus} onClick={openCreate}>新建流水线</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建流水线
+          </Button>
         }
       />
 
@@ -378,7 +480,9 @@ export default function PipelinesPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -406,15 +510,22 @@ export default function PipelinesPage() {
           {items.map((p) => {
             const meta = typeMeta(p.type)
             return (
-              <div key={p.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 flex flex-col">
+              <div
+                key={p.id}
+                className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 flex flex-col"
+              >
                 <div className="flex items-start justify-between mb-3">
-                  <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${meta.color === 'blue' ? 'from-blue-500 to-indigo-600' : meta.color === 'green' ? 'from-emerald-500 to-green-600' : meta.color === 'purple' ? 'from-purple-500 to-violet-600' : 'from-amber-500 to-orange-600'} flex items-center justify-center text-white shadow-lg`}>
+                  <div
+                    className={`w-11 h-11 rounded-xl bg-gradient-to-br ${meta.color === 'blue' ? 'from-blue-500 to-indigo-600' : meta.color === 'green' ? 'from-emerald-500 to-green-600' : meta.color === 'purple' ? 'from-purple-500 to-violet-600' : 'from-amber-500 to-orange-600'} flex items-center justify-center text-white shadow-lg`}
+                  >
                     <meta.icon className="w-5 h-5" />
                   </div>
                   <ColorBadge color={meta.badge}>{meta.label}</ColorBadge>
                 </div>
                 <h3 className="font-semibold text-gray-900 mb-1">{p.name}</h3>
-                {p.description && <p className="text-sm text-gray-500 line-clamp-2 mb-2">{p.description}</p>}
+                {p.description && (
+                  <p className="text-sm text-gray-500 line-clamp-2 mb-2">{p.description}</p>
+                )}
                 <div className="flex items-center gap-2 mb-3">
                   <RunStatusBadge run={p.last_run} />
                   {p.last_run && (
@@ -425,7 +536,12 @@ export default function PipelinesPage() {
                   )}
                 </div>
                 {p.type === 'deploy' && p.last_run?.status === 'success' && p.config?.port && (
-                  <a href={`http://localhost:${p.config.port}`} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 hover:underline flex items-center gap-1 mb-3">
+                  <a
+                    href={`http://localhost:${p.config.port}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-emerald-600 hover:underline flex items-center gap-1 mb-3"
+                  >
                     <ExternalLink className="w-3 h-3" /> http://localhost:{p.config.port}
                   </a>
                 )}
@@ -434,8 +550,12 @@ export default function PipelinesPage() {
                     <p className="font-medium text-amber-700 flex items-center gap-1.5">
                       <Package className="w-3.5 h-3.5" /> 部署项目: {p.config.service_name}
                     </p>
-                    <p className="text-gray-500 flex items-center gap-1.5 truncate" title={p.config.project_dir}>
-                      <GitBranch className="w-3 h-3 flex-shrink-0" /> 代码目录: {p.config.project_dir?.split('/').slice(-2).join('/')}
+                    <p
+                      className="text-gray-500 flex items-center gap-1.5 truncate"
+                      title={p.config.project_dir}
+                    >
+                      <GitBranch className="w-3 h-3 flex-shrink-0" /> 代码目录:{' '}
+                      {p.config.project_dir?.split('/').slice(-2).join('/')}
                     </p>
                     <p className="text-gray-500 flex items-center gap-1.5">
                       <Server className="w-3 h-3 flex-shrink-0" /> 服务端口: {p.config.port}
@@ -456,7 +576,11 @@ export default function PipelinesPage() {
                         className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium hover:opacity-90 transition-colors flex items-center gap-1 disabled:opacity-60"
                         title="AI 诊断修复：分析日志、修改代码并重新部署"
                       >
-                        {fixingId === p.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                        {fixingId === p.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Wrench className="w-3.5 h-3.5" />
+                        )}
                         AI 修复
                       </button>
                     )}
@@ -466,7 +590,11 @@ export default function PipelinesPage() {
                       className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors flex items-center gap-1 disabled:opacity-60"
                       title="运行流水线"
                     >
-                      {runningId === p.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      {runningId === p.id ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5" />
+                      )}
                       运行
                     </button>
                     <button
@@ -500,7 +628,10 @@ export default function PipelinesPage() {
 
       <PipelineFormModal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingItem(null) }}
+        onClose={() => {
+          setShowForm(false)
+          setEditingItem(null)
+        }}
         onSubmit={handleSave}
         editing={editingItem}
         loading={saving}
@@ -513,7 +644,13 @@ export default function PipelinesPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="确认删除流水线"
-        message={<>确定要删除流水线「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？运行历史将一并清除。</>}
+        message={
+          <>
+            确定要删除流水线「
+            <span className="font-medium text-gray-700">{deleteTarget?.name}</span>
+            」吗？运行历史将一并清除。
+          </>
+        }
         confirmLabel="确认删除"
       />
     </div>

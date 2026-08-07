@@ -4,9 +4,20 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
-  Search, TrendingUp, TrendingDown, DollarSign, BarChart3,
-  LineChart, Activity, PieChart, Play, Pause, RefreshCw,
-  ArrowUpRight, ArrowDownRight, Minus
+  Search,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  BarChart3,
+  LineChart,
+  Activity,
+  PieChart,
+  Play,
+  Pause,
+  RefreshCw,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus,
 } from 'lucide-react'
 import {
   LineChart as RechartsLine,
@@ -19,7 +30,7 @@ import {
   Area,
   AreaChart,
   BarChart,
-  Bar
+  Bar,
 } from 'recharts'
 
 export default function StockAnalysisPage() {
@@ -122,13 +133,14 @@ export default function StockAnalysisPage() {
     return num.toFixed(2)
   }
 
-  const chartData = stockData?.data_points?.map(d => ({
-    date: d.date,
-    price: d.close,
-    volume: d.volume,
-    ma5: d.ma5,
-    ma20: d.ma20,
-  })) || []
+  const chartData =
+    stockData?.data_points?.map((d) => ({
+      date: d.date,
+      price: d.close,
+      volume: d.volume,
+      ma5: d.ma5,
+      ma20: d.ma20,
+    })) || []
 
   return (
     <div className="flex-1 overflow-auto bg-gray-50">
@@ -192,19 +204,28 @@ export default function StockAnalysisPage() {
                     <div className="text-3xl font-bold text-gray-900">
                       ${stockData.current_price?.toFixed(2)}
                     </div>
-                    <div className={`flex items-center gap-1 justify-end text-sm ${
-                      (stockData.current_price - stockData.previous_close) >= 0 
-                        ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {(stockData.current_price - stockData.previous_close) >= 0 
-                        ? <ArrowUpRight className="w-4 h-4" />
-                        : <ArrowDownRight className="w-4 h-4" />
-                      }
-                      {((stockData.current_price - stockData.previous_close) / stockData.previous_close * 100)?.toFixed(2)}%
+                    <div
+                      className={`flex items-center gap-1 justify-end text-sm ${
+                        stockData.current_price - stockData.previous_close >= 0
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                      }`}
+                    >
+                      {stockData.current_price - stockData.previous_close >= 0 ? (
+                        <ArrowUpRight className="w-4 h-4" />
+                      ) : (
+                        <ArrowDownRight className="w-4 h-4" />
+                      )}
+                      {(
+                        ((stockData.current_price - stockData.previous_close) /
+                          stockData.previous_close) *
+                        100
+                      )?.toFixed(2)}
+                      %
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-4 gap-4 pt-4 border-t border-gray-100">
                   <div>
                     <div className="text-xs text-gray-500">开盘</div>
@@ -292,18 +313,26 @@ export default function StockAnalysisPage() {
                   <div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500">RSI (14)</span>
-                      <span className={`font-medium ${
-                        stockData.indicators?.rsi > 70 ? 'text-red-600' :
-                        stockData.indicators?.rsi < 30 ? 'text-green-600' : 'text-gray-900'
-                      }`}>
+                      <span
+                        className={`font-medium ${
+                          stockData.indicators?.rsi > 70
+                            ? 'text-red-600'
+                            : stockData.indicators?.rsi < 30
+                              ? 'text-green-600'
+                              : 'text-gray-900'
+                        }`}
+                      >
                         {stockData.indicators?.rsi?.toFixed(2) || 'N/A'}
                       </span>
                     </div>
                     <div className="mt-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                       <div
                         className={`h-full ${
-                          stockData.indicators?.rsi > 70 ? 'bg-red-500' :
-                          stockData.indicators?.rsi < 30 ? 'bg-green-500' : 'bg-blue-500'
+                          stockData.indicators?.rsi > 70
+                            ? 'bg-red-500'
+                            : stockData.indicators?.rsi < 30
+                              ? 'bg-green-500'
+                              : 'bg-blue-500'
                         }`}
                         style={{ width: `${Math.min(100, stockData.indicators?.rsi || 0)}%` }}
                       />
@@ -312,9 +341,11 @@ export default function StockAnalysisPage() {
                   <div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500">MACD</span>
-                      <span className={`font-medium ${
-                        stockData.indicators?.macd > 0 ? 'text-green-600' : 'text-red-600'
-                      }`}>
+                      <span
+                        className={`font-medium ${
+                          stockData.indicators?.macd > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}
+                      >
                         {stockData.indicators?.macd?.toFixed(4) || 'N/A'}
                       </span>
                     </div>
@@ -324,15 +355,21 @@ export default function StockAnalysisPage() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-blue-600">MA5</span>
-                        <span className="text-sm font-medium">${stockData.indicators?.ma5?.toFixed(2)}</span>
+                        <span className="text-sm font-medium">
+                          ${stockData.indicators?.ma5?.toFixed(2)}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-purple-600">MA20</span>
-                        <span className="text-sm font-medium">${stockData.indicators?.ma20?.toFixed(2)}</span>
+                        <span className="text-sm font-medium">
+                          ${stockData.indicators?.ma20?.toFixed(2)}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-orange-600">MA60</span>
-                        <span className="text-sm font-medium">${stockData.indicators?.ma60?.toFixed(2)}</span>
+                        <span className="text-sm font-medium">
+                          ${stockData.indicators?.ma60?.toFixed(2)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -348,8 +385,8 @@ export default function StockAnalysisPage() {
                   <AreaChart data={chartData}>
                     <defs>
                       <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -364,8 +401,22 @@ export default function StockAnalysisPage() {
                       fill="url(#colorPrice)"
                       name="价格"
                     />
-                    <Line type="monotone" dataKey="ma5" stroke="#3b82f6" strokeWidth={1} dot={false} name="MA5" />
-                    <Line type="monotone" dataKey="ma20" stroke="#a855f7" strokeWidth={1} dot={false} name="MA20" />
+                    <Line
+                      type="monotone"
+                      dataKey="ma5"
+                      stroke="#3b82f6"
+                      strokeWidth={1}
+                      dot={false}
+                      name="MA5"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="ma20"
+                      stroke="#a855f7"
+                      strokeWidth={1}
+                      dot={false}
+                      name="MA20"
+                    />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -432,7 +483,10 @@ export default function StockAnalysisPage() {
             {portfolio?.positions?.length > 0 ? (
               <div className="space-y-3">
                 {portfolio.positions.map((pos, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                  >
                     <div>
                       <div className="font-medium">{pos.symbol}</div>
                       <div className="text-xs text-gray-500">
@@ -441,8 +495,11 @@ export default function StockAnalysisPage() {
                     </div>
                     <div className="text-right">
                       <div className="font-medium">${pos.market_value?.toFixed(2)}</div>
-                      <div className={`text-xs ${pos.profit_loss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {pos.profit_loss >= 0 ? '+' : ''}{pos.profit_loss?.toFixed(2)} ({pos.profit_loss_pct?.toFixed(2)}%)
+                      <div
+                        className={`text-xs ${pos.profit_loss >= 0 ? 'text-green-600' : 'text-red-600'}`}
+                      >
+                        {pos.profit_loss >= 0 ? '+' : ''}
+                        {pos.profit_loss?.toFixed(2)} ({pos.profit_loss_pct?.toFixed(2)}%)
                       </div>
                     </div>
                   </div>

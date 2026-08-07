@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  ListTodo, FolderKanban, FileText, Code2, Plus, RefreshCw,
-  Search, Eye, MessageSquare, CheckCircle2, Clock, ArrowRight,
-  Edit2, Trash2,
+  ListTodo,
+  FolderKanban,
+  FileText,
+  Code2,
+  Plus,
+  RefreshCw,
+  Search,
+  Eye,
+  MessageSquare,
+  CheckCircle2,
+  Clock,
+  ArrowRight,
+  Edit2,
+  Trash2,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -10,7 +21,15 @@ import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, ColorBadge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  ColorBadge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 import RichTextEditor from '../components/RichTextEditor'
 
@@ -57,13 +76,25 @@ function RequirementCard({ req, projects, onView, onEdit, onDelete, onPipeline }
           <h3 className="font-medium text-gray-900 truncate">{req.name}</h3>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button onClick={() => onView(req)} className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors" title="查看详情">
+          <button
+            onClick={() => onView(req)}
+            className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"
+            title="查看详情"
+          >
             <Eye className="w-4 h-4" />
           </button>
-          <button onClick={() => onEdit(req)} className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(req)}
+            className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(req)} className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(req)}
+            className="p-1 text-gray-400 hover:text-red-600 rounded transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -71,12 +102,12 @@ function RequirementCard({ req, projects, onView, onEdit, onDelete, onPipeline }
 
       <div
         className="text-sm text-gray-500 line-clamp-2 mb-3 prose prose-sm max-w-none"
-        dangerouslySetInnerHTML={{ __html: req.description || '<span class="text-gray-400">暂无描述</span>' }}
+        dangerouslySetInnerHTML={{
+          __html: req.description || '<span class="text-gray-400">暂无描述</span>',
+        }}
       />
 
-      {projectName && (
-        <div className="text-xs text-gray-400 mb-2">关联项目：{projectName}</div>
-      )}
+      {projectName && <div className="text-xs text-gray-400 mb-2">关联项目：{projectName}</div>}
 
       {/* Pipeline stages */}
       <div className="flex items-center gap-0.5 mt-auto pt-3 border-t border-gray-100 flex-wrap">
@@ -144,14 +175,20 @@ function RequirementFormModal({ open, onClose, onSubmit, editing, projects, load
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">需求名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            需求名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -193,7 +230,11 @@ function RequirementFormModal({ open, onClose, onSubmit, editing, projects, load
               className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all"
             >
               <option value="">无</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -211,26 +252,36 @@ function RequirementDetailModal({ req, onClose }) {
       onClose={onClose}
       title={req.name}
       size="lg"
-      footer={<Button variant="secondary" onClick={onClose}>关闭</Button>}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          关闭
+        </Button>
+      }
     >
       <div className="space-y-4">
         <div className="flex items-center gap-2">
           <PriorityBadge priority={req.priority} />
           <Badge status={req.status || 'draft'} customMap={REQ_STATUS_MAP} />
           {req.updated_at && (
-            <span className="text-xs text-gray-400 ml-auto">{formatRelativeTime(req.updated_at)}</span>
+            <span className="text-xs text-gray-400 ml-auto">
+              {formatRelativeTime(req.updated_at)}
+            </span>
           )}
         </div>
         <div>
           <label className="text-sm font-medium text-gray-700 mb-1 block">描述</label>
           <div
             className="prose prose-sm max-w-none p-3 bg-gray-50 rounded-lg border border-gray-200"
-            dangerouslySetInnerHTML={{ __html: req.description || '<span class="text-gray-400">暂无描述</span>' }}
+            dangerouslySetInnerHTML={{
+              __html: req.description || '<span class="text-gray-400">暂无描述</span>',
+            }}
           />
         </div>
         {req.prd_text && (
           <details>
-            <summary className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">查看 PRD</summary>
+            <summary className="cursor-pointer text-sm font-medium text-indigo-600 hover:text-indigo-700">
+              查看 PRD
+            </summary>
             <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
               <MarkdownRenderer content={req.prd_text} />
             </div>
@@ -238,7 +289,9 @@ function RequirementDetailModal({ req, onClose }) {
         )}
         {req.review_report && (
           <details>
-            <summary className="cursor-pointer text-sm font-medium text-emerald-600 hover:text-emerald-700">查看审查报告</summary>
+            <summary className="cursor-pointer text-sm font-medium text-emerald-600 hover:text-emerald-700">
+              查看审查报告
+            </summary>
             <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
               <MarkdownRenderer content={req.review_report} />
             </div>
@@ -283,14 +336,20 @@ function ProjectFormModal({ open, onClose, onSubmit, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>创建</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            创建
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">项目名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            项目名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -336,26 +395,29 @@ export default function ReqBoardPage() {
   const [showProjForm, setShowProjForm] = useState(false)
   const [savingProj, setSavingProj] = useState(false)
 
-  const fetchAll = useCallback(async (initial = false) => {
-    if (initial) {
-      setLoading(true)
-      setError(null)
-    }
-    try {
-      const [reqRes, projRes] = await Promise.all([
-        api.get('/api/requirements'),
-        api.get('/api/projects'),
-      ])
-      setRequirements(reqRes.data)
-      setProjects(projRes.data)
-      if (initial) setError(null)
-    } catch (e) {
-      if (initial) setError(e)
-      else toast.error(`刷新失败：${e.message}`)
-    } finally {
-      if (initial) setLoading(false)
-    }
-  }, [toast])
+  const fetchAll = useCallback(
+    async (initial = false) => {
+      if (initial) {
+        setLoading(true)
+        setError(null)
+      }
+      try {
+        const [reqRes, projRes] = await Promise.all([
+          api.get('/api/requirements'),
+          api.get('/api/projects'),
+        ])
+        setRequirements(reqRes.data)
+        setProjects(projRes.data)
+        if (initial) setError(null)
+      } catch (e) {
+        if (initial) setError(e)
+        else toast.error(`刷新失败：${e.message}`)
+      } finally {
+        if (initial) setLoading(false)
+      }
+    },
+    [toast]
+  )
 
   useEffect(() => {
     fetchAll(true)
@@ -428,7 +490,8 @@ export default function ReqBoardPage() {
   }
 
   const filtered = requirements.filter((r) => {
-    const matchSearch = !searchTerm ||
+    const matchSearch =
+      !searchTerm ||
       r.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (r.description || '').toLowerCase().includes(searchTerm.toLowerCase())
     const matchStatus = !filterStatus || r.status === filterStatus
@@ -449,11 +512,22 @@ export default function ReqBoardPage() {
         iconColor="from-indigo-500 to-purple-600"
         actions={
           <>
-            <Button variant="secondary" icon={RefreshCw} onClick={handleRefresh} loading={refreshing}>刷新</Button>
+            <Button
+              variant="secondary"
+              icon={RefreshCw}
+              onClick={handleRefresh}
+              loading={refreshing}
+            >
+              刷新
+            </Button>
             {activeTab === 'requirements' ? (
-              <Button variant="primary" icon={Plus} onClick={openCreateReq}>新建需求</Button>
+              <Button variant="primary" icon={Plus} onClick={openCreateReq}>
+                新建需求
+              </Button>
             ) : (
-              <Button variant="primary" icon={Plus} onClick={() => setShowProjForm(true)}>新建项目</Button>
+              <Button variant="primary" icon={Plus} onClick={() => setShowProjForm(true)}>
+                新建项目
+              </Button>
             )}
           </>
         }
@@ -511,7 +585,11 @@ export default function ReqBoardPage() {
               <Empty
                 icon={ListTodo}
                 title={searchTerm || filterStatus ? '没有匹配的需求' : '暂无需求'}
-                description={searchTerm || filterStatus ? '尝试调整搜索或筛选条件' : '点击「新建需求」开始你的第一个需求'}
+                description={
+                  searchTerm || filterStatus
+                    ? '尝试调整搜索或筛选条件'
+                    : '点击「新建需求」开始你的第一个需求'
+                }
                 actionLabel={searchTerm || filterStatus ? undefined : '新建需求'}
                 onAction={searchTerm || filterStatus ? undefined : openCreateReq}
               />
@@ -554,7 +632,10 @@ export default function ReqBoardPage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {projects.map((proj) => (
-                <div key={proj.id} className="p-5 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-shadow">
+                <div
+                  key={proj.id}
+                  className="p-5 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-shadow"
+                >
                   <div className="flex items-center justify-between mb-2">
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
                       <FolderKanban className="w-5 h-5 text-white" />
@@ -562,14 +643,19 @@ export default function ReqBoardPage() {
                     <Badge status={proj.status || 'planning'} customMap={PROJECT_STATUS_MAP} />
                   </div>
                   <h3 className="font-semibold text-gray-900">{proj.name}</h3>
-                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">{proj.description || '暂无描述'}</p>
+                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+                    {proj.description || '暂无描述'}
+                  </p>
                   <div className="mt-3 flex items-center gap-4 text-sm text-gray-400">
                     <span>任务: {proj.task_count || 0}</span>
                     <span>完成: {proj.done_count || 0}</span>
                     <span>进度: {proj.progress || 0}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-                    <div className="bg-indigo-600 h-1.5 rounded-full transition-all" style={{ width: `${proj.progress || 0}%` }} />
+                    <div
+                      className="bg-indigo-600 h-1.5 rounded-full transition-all"
+                      style={{ width: `${proj.progress || 0}%` }}
+                    />
                   </div>
                 </div>
               ))}
@@ -580,7 +666,10 @@ export default function ReqBoardPage() {
 
       <RequirementFormModal
         open={showReqForm}
-        onClose={() => { setShowReqForm(false); setEditingReq(null) }}
+        onClose={() => {
+          setShowReqForm(false)
+          setEditingReq(null)
+        }}
         onSubmit={handleSaveReq}
         editing={editingReq}
         projects={projects}

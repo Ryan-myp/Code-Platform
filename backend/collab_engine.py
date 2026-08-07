@@ -21,6 +21,7 @@ router = APIRouter(tags=["协作评论"])
 # 评论系统
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/comments/thread")
 async def get_comment_thread(target_type: str, target_id: str, user_id: str = ""):
     """获取评论线程（含回复树 + 点赞统计）"""
@@ -34,9 +35,15 @@ async def get_comment_thread(target_type: str, target_id: str, user_id: str = ""
     for c in comments:
         cnt = conn.execute("SELECT COUNT(*) c FROM comment_likes WHERE comment_id=?", (c["id"],)).fetchone()["c"]
         c["likes"] = cnt
-        c["liked"] = bool(conn.execute(
-            "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
-        ).fetchone()) if user_id else False
+        c["liked"] = (
+            bool(
+                conn.execute(
+                    "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
+                ).fetchone()
+            )
+            if user_id
+            else False
+        )
     conn.close()
     # 构建树结构
     by_id = {}
@@ -68,9 +75,15 @@ async def list_comments(target_type: str = None, target_id: str = None, user_id:
     for r in rows:
         c = dict(r)
         c["likes"] = conn.execute("SELECT COUNT(*) c FROM comment_likes WHERE comment_id=?", (c["id"],)).fetchone()["c"]
-        c["liked"] = bool(conn.execute(
-            "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
-        ).fetchone()) if user_id else False
+        c["liked"] = (
+            bool(
+                conn.execute(
+                    "SELECT 1 FROM comment_likes WHERE comment_id=? AND user_id=?", (c["id"], user_id)
+                ).fetchone()
+            )
+            if user_id
+            else False
+        )
         result.append(c)
     conn.close()
     return result
@@ -90,8 +103,7 @@ async def create_comment(req: CommentCreateRequest):
     conn.execute(
         """INSERT INTO comments (id, content, author_id, parent_comment_id, target_type, target_id, created_at, updated_at, active)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-        (comment_id, req.content, req.author_id, req.parent_comment_id,
-         req.target_type, req.target_id, now, now),
+        (comment_id, req.content, req.author_id, req.parent_comment_id, req.target_type, req.target_id, now, now),
     )
     conn.commit()
     conn.close()
@@ -137,6 +149,7 @@ async def like_comment(comment_id: str, req: CommentLikeRequest = None):
 # ══════════════════════════════════════════════════════════════
 # Skills 文件接口（文件系统语义）
 # ══════════════════════════════════════════════════════════════
+
 
 def _normalize_rel(raw: str) -> str:
     """规范化相对路径：拒绝绝对路径（/ 开头），交给 resolve_path 做防穿越校验。"""
@@ -250,6 +263,3 @@ async def upload_skill_file(
         return skills_store.write_file(skill_id, rel, content)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-
-
-

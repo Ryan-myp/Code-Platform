@@ -1,10 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Upload, BarChart3, TrendingUp, Download, Trash2, Clock, Sparkles, FileText, Eye } from 'lucide-react'
+import {
+  Upload,
+  BarChart3,
+  TrendingUp,
+  Download,
+  Trash2,
+  Clock,
+  Sparkles,
+  FileText,
+  Eye,
+} from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts'
 
 export default function ForecastPage() {
   const toast = useToast()
@@ -19,39 +38,69 @@ export default function ForecastPage() {
   const [targetColumn, setTargetColumn] = useState('')
   const [periods, setPeriods] = useState(3)
 
-  useEffect(() => { loadRecords() }, [])
+  useEffect(() => {
+    loadRecords()
+  }, [])
 
   const loadRecords = async () => {
-    try { const res = await api.get('/api/forecast/records'); setRecords(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
+    try {
+      const res = await api.get('/api/forecast/records')
+      setRecords(res.data || [])
+    } catch {
+      /* 静默失败，不阻塞 UI */
+    }
   }
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setUploading(true); setResult(null)
+    setUploading(true)
+    setResult(null)
     try {
-      const form = new FormData(); form.append('file', file)
+      const form = new FormData()
+      form.append('file', file)
       const res = await api.post('/api/forecast/upload', form)
       setDataInfo(res.data)
       toast.success(`解析成功，${res.data.row_count} 行数据`)
-    } catch (err) { toast.error(`上传失败：${err.response?.data?.detail || err.message}`) }
+    } catch (err) {
+      toast.error(`上传失败：${err.response?.data?.detail || err.message}`)
+    }
     setUploading(false)
   }
 
   const handleAnalyze = async () => {
     if (!dataInfo?.data_id || task) return
-    await submitTask('/api/forecast/analyze', {
-      data_id: dataInfo.data_id, target_column: targetColumn, forecast_periods: periods,
-    }, {
-      onUpdate: (t) => setTask(t),
-      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('预测分析完成') },
-      onError: (err) => { setTask(null); toast.error(`分析失败：${err.message}`) },
-    })
+    await submitTask(
+      '/api/forecast/analyze',
+      {
+        data_id: dataInfo.data_id,
+        target_column: targetColumn,
+        forecast_periods: periods,
+      },
+      {
+        onUpdate: (t) => setTask(t),
+        onSuccess: (data) => {
+          setResult(data)
+          setTask(null)
+          loadRecords()
+          toast.success('预测分析完成')
+        },
+        onError: (err) => {
+          setTask(null)
+          toast.error(`分析失败：${err.message}`)
+        },
+      }
+    )
   }
 
   const deleteRecord = async (id) => {
-    try { await api.delete(`/api/forecast/records/${id}`); loadRecords(); toast.success('已删除') }
-    catch (err) { toast.error(err.message) }
+    try {
+      await api.delete(`/api/forecast/records/${id}`)
+      loadRecords()
+      toast.success('已删除')
+    } catch (err) {
+      toast.error(err.message)
+    }
   }
 
   return (
@@ -70,34 +119,67 @@ export default function ForecastPage() {
             <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <Upload className="w-4 h-4 text-emerald-500" /> 上传数据
             </h3>
-            <input ref={fileRef} type="file" accept=".csv" onChange={handleUpload} className="hidden" />
-            <button onClick={() => fileRef.current?.click()} disabled={uploading}
-              className="w-full py-12 border-2 border-dashed border-gray-300 rounded-xl hover:border-emerald-400 hover:bg-emerald-50/30 transition-all flex flex-col items-center gap-3">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              onChange={handleUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="w-full py-12 border-2 border-dashed border-gray-300 rounded-xl hover:border-emerald-400 hover:bg-emerald-50/30 transition-all flex flex-col items-center gap-3"
+            >
               <BarChart3 className="w-10 h-10 text-gray-400" />
-              <div className="text-sm text-gray-500">{uploading ? '解析中...' : '点击上传 CSV 文件'}</div>
+              <div className="text-sm text-gray-500">
+                {uploading ? '解析中...' : '点击上传 CSV 文件'}
+              </div>
               <div className="text-xs text-gray-400">支持 .csv 格式</div>
             </button>
 
             {dataInfo && (
               <div className="mt-4 p-3 bg-emerald-50 rounded-lg space-y-2 text-sm">
                 <div className="font-medium text-emerald-800">{dataInfo.filename}</div>
-                <div className="text-xs text-emerald-600">{dataInfo.row_count} 行 · {dataInfo.columns?.length} 列</div>
+                <div className="text-xs text-emerald-600">
+                  {dataInfo.row_count} 行 · {dataInfo.columns?.length} 列
+                </div>
                 {dataInfo.numeric_columns?.length > 0 && (
                   <div>
                     <label className="text-xs text-gray-500">预测目标列：</label>
-                    <select value={targetColumn} onChange={(e) => setTargetColumn(e.target.value)}
-                      className="w-full mt-1 px-2 py-1.5 border border-emerald-200 rounded-lg text-xs">
+                    <select
+                      value={targetColumn}
+                      onChange={(e) => setTargetColumn(e.target.value)}
+                      className="w-full mt-1 px-2 py-1.5 border border-emerald-200 rounded-lg text-xs"
+                    >
                       <option value="">自动选择</option>
-                      {dataInfo.numeric_columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                      {dataInfo.numeric_columns.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 )}
                 <div>
                   <label className="text-xs text-gray-500">预测期数：{periods} 期</label>
-                  <input type="range" min={1} max={12} value={periods}
-                    onChange={(e) => setPeriods(Number(e.target.value))} className="w-full mt-1 accent-emerald-500" />
+                  <input
+                    type="range"
+                    min={1}
+                    max={12}
+                    value={periods}
+                    onChange={(e) => setPeriods(Number(e.target.value))}
+                    className="w-full mt-1 accent-emerald-500"
+                  />
                 </div>
-                <Button variant="primary" size="sm" icon={Sparkles} loading={!!task} onClick={() => handleAnalyze()} className="w-full mt-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Sparkles}
+                  loading={!!task}
+                  onClick={() => handleAnalyze()}
+                  className="w-full mt-2"
+                >
                   开始预测分析
                 </Button>
                 {task && (
@@ -107,8 +189,10 @@ export default function ForecastPage() {
                       <span>{task.progress || 0}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-300"
-                        style={{ width: `${task.progress || 0}%` }} />
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-300"
+                        style={{ width: `${task.progress || 0}%` }}
+                      />
                     </div>
                   </div>
                 )}
@@ -124,11 +208,26 @@ export default function ForecastPage() {
               <div className="overflow-x-auto max-h-60">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr>{dataInfo.columns?.slice(0, 5).map((c) => <th key={c} className="px-2 py-1 text-left bg-gray-50 font-medium text-gray-600 border-b">{c}</th>)}</tr>
+                    <tr>
+                      {dataInfo.columns?.slice(0, 5).map((c) => (
+                        <th
+                          key={c}
+                          className="px-2 py-1 text-left bg-gray-50 font-medium text-gray-600 border-b"
+                        >
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
                   </thead>
                   <tbody>
                     {dataInfo.sample.slice(0, 5).map((row, i) => (
-                      <tr key={i}>{dataInfo.columns?.slice(0, 5).map((c) => <td key={c} className="px-2 py-1 border-b border-gray-50 text-gray-500">{row[c]}</td>)}</tr>
+                      <tr key={i}>
+                        {dataInfo.columns?.slice(0, 5).map((c) => (
+                          <td key={c} className="px-2 py-1 border-b border-gray-50 text-gray-500">
+                            {row[c]}
+                          </td>
+                        ))}
+                      </tr>
                     ))}
                   </tbody>
                 </table>
@@ -143,23 +242,33 @@ export default function ForecastPage() {
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {records.length === 0 ? (
                 <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
-              ) : records.map((r) => (
-                <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs">
-                  <div>
-                    <div className="font-medium text-gray-700">{r.filename}</div>
-                    <div className="text-gray-400">{r.row_count}行 · {r.created_at?.slice(0,10)}</div>
+              ) : (
+                records.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
+                  >
+                    <div>
+                      <div className="font-medium text-gray-700">{r.filename}</div>
+                      <div className="text-gray-400">
+                        {r.row_count}行 · {r.created_at?.slice(0, 10)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge color={r.status === 'done' ? 'green' : 'gray'}>
+                        {r.status === 'done' ? '已分析' : '已上传'}
+                      </Badge>
+                      <button
+                        onClick={() => deleteRecord(r.id)}
+                        className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                        title="删除记录"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge color={r.status === 'done' ? 'green' : 'gray'}>{r.status === 'done' ? '已分析' : '已上传'}</Badge>
-                    <button
-                      onClick={() => deleteRecord(r.id)}
-                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                      title="删除记录">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
         </div>
@@ -175,7 +284,11 @@ export default function ForecastPage() {
               </div>
             </Card>
           ) : !result ? (
-            <Empty icon={TrendingUp} title="等待分析" description="上传CSV数据后点击「开始预测分析」" />
+            <Empty
+              icon={TrendingUp}
+              title="等待分析"
+              description="上传CSV数据后点击「开始预测分析」"
+            />
           ) : (
             <>
               <Card className="border-emerald-200">
@@ -184,19 +297,27 @@ export default function ForecastPage() {
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   <div className="p-3 bg-emerald-50 rounded-lg text-center">
-                    <div className="text-2xl font-bold text-emerald-600">{result.overview?.record_count}</div>
+                    <div className="text-2xl font-bold text-emerald-600">
+                      {result.overview?.record_count}
+                    </div>
                     <div className="text-xs text-gray-500 mt-1">记录数</div>
                   </div>
                   <div className="p-3 bg-blue-50 rounded-lg text-center">
-                    <div className="text-lg font-bold text-blue-600">{result.overview?.columns?.length || '-'}</div>
+                    <div className="text-lg font-bold text-blue-600">
+                      {result.overview?.columns?.length || '-'}
+                    </div>
                     <div className="text-xs text-gray-500 mt-1">列数</div>
                   </div>
                   <div className="p-3 bg-amber-50 rounded-lg text-center">
-                    <div className="text-lg font-bold text-amber-600">{result.predictions?.method || '-'}</div>
+                    <div className="text-lg font-bold text-amber-600">
+                      {result.predictions?.method || '-'}
+                    </div>
                     <div className="text-xs text-gray-500 mt-1">预测方法</div>
                   </div>
                   <div className="p-3 bg-purple-50 rounded-lg text-center">
-                    <div className="text-lg font-bold text-purple-600">{result.overview?.data_quality || '-'}</div>
+                    <div className="text-lg font-bold text-purple-600">
+                      {result.overview?.data_quality || '-'}
+                    </div>
                     <div className="text-xs text-gray-500 mt-1">数据质量</div>
                   </div>
                 </div>
@@ -224,9 +345,32 @@ export default function ForecastPage() {
                       <YAxis tick={{ fontSize: 12 }} />
                       <Tooltip />
                       <Legend />
-                      <Line type="monotone" dataKey="实际值" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} connectNulls={false} />
-                      <Line type="monotone" dataKey="预测值" stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 4 }} connectNulls={false} />
-                      <Line type="monotone" dataKey="趋势线" stroke="#6366f1" strokeWidth={1.5} strokeDasharray="3 3" dot={false} connectNulls={false} />
+                      <Line
+                        type="monotone"
+                        dataKey="实际值"
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        dot={{ r: 4 }}
+                        connectNulls={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="预测值"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        strokeDasharray="6 3"
+                        dot={{ r: 4 }}
+                        connectNulls={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="趋势线"
+                        stroke="#6366f1"
+                        strokeWidth={1.5}
+                        strokeDasharray="3 3"
+                        dot={false}
+                        connectNulls={false}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </Card>
@@ -240,11 +384,13 @@ export default function ForecastPage() {
                   </h3>
                   <div className="space-y-3">
                     <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-                      <strong>整体趋势：</strong>{result.trend_analysis.overall_trend}
+                      <strong>整体趋势：</strong>
+                      {result.trend_analysis.overall_trend}
                     </div>
                     {result.trend_analysis.seasonal_patterns && (
                       <div className="text-sm text-gray-600">
-                        <strong>季节性：</strong>{result.trend_analysis.seasonal_patterns}
+                        <strong>季节性：</strong>
+                        {result.trend_analysis.seasonal_patterns}
                       </div>
                     )}
                     {result.trend_analysis.key_findings?.length > 0 && (
@@ -269,9 +415,14 @@ export default function ForecastPage() {
                   </h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     {result.predictions.forecast_values.map((fv, i) => (
-                      <div key={i} className="p-3 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-xl text-center border border-amber-200">
+                      <div
+                        key={i}
+                        className="p-3 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-xl text-center border border-amber-200"
+                      >
                         <div className="text-xs text-gray-500 mb-1">{fv.period}</div>
-                        <div className="text-xl font-bold text-amber-700">{fv.value?.toLocaleString?.() || fv.value}</div>
+                        <div className="text-xl font-bold text-amber-700">
+                          {fv.value?.toLocaleString?.() || fv.value}
+                        </div>
                         <div className="text-[10px] text-gray-400 mt-0.5">
                           {fv.low} ~ {fv.high}
                         </div>
@@ -279,10 +430,19 @@ export default function ForecastPage() {
                     ))}
                   </div>
                   <div className="mt-3 text-sm text-gray-600">
-                    <strong>短期预测：</strong>{typeof result.predictions.short_term === 'string' ? result.predictions.short_term : result.predictions.short_term?.description}
-                    {result.predictions.short_term?.confidence && `（置信度：${result.predictions.short_term.confidence}）`}<br />
-                    <strong>中期预测：</strong>{typeof result.predictions.medium_term === 'string' ? result.predictions.medium_term : result.predictions.medium_term?.description}
-                    {result.predictions.medium_term?.confidence && `（置信度：${result.predictions.medium_term.confidence}）`}
+                    <strong>短期预测：</strong>
+                    {typeof result.predictions.short_term === 'string'
+                      ? result.predictions.short_term
+                      : result.predictions.short_term?.description}
+                    {result.predictions.short_term?.confidence &&
+                      `（置信度：${result.predictions.short_term.confidence}）`}
+                    <br />
+                    <strong>中期预测：</strong>
+                    {typeof result.predictions.medium_term === 'string'
+                      ? result.predictions.medium_term
+                      : result.predictions.medium_term?.description}
+                    {result.predictions.medium_term?.confidence &&
+                      `（置信度：${result.predictions.medium_term.confidence}）`}
                   </div>
                 </Card>
               )}
@@ -295,14 +455,25 @@ export default function ForecastPage() {
                   </h3>
                   <div className="space-y-2">
                     {result.recommendations.map((r, i) => (
-                      <div key={i} className={`p-3 rounded-lg text-sm ${
-                        (r.level === '紧急' || r.priority === 1) ? 'bg-red-50 text-red-800' :
-                        (r.level === '重要' || r.priority === 2) ? 'bg-amber-50 text-amber-800' :
-                        'bg-gray-50 text-gray-700'
-                      }`}>
+                      <div
+                        key={i}
+                        className={`p-3 rounded-lg text-sm ${
+                          r.level === '紧急' || r.priority === 1
+                            ? 'bg-red-50 text-red-800'
+                            : r.level === '重要' || r.priority === 2
+                              ? 'bg-amber-50 text-amber-800'
+                              : 'bg-gray-50 text-gray-700'
+                        }`}
+                      >
                         <strong>[{r.level || r.priority}]</strong> {r.action}
-                        {r.expected_impact && <div className="text-xs mt-0.5 opacity-70">预期效果：{r.expected_impact}</div>}
-                        {r.timeline && <div className="text-xs mt-0.5 opacity-50">建议时间：{r.timeline}</div>}
+                        {r.expected_impact && (
+                          <div className="text-xs mt-0.5 opacity-70">
+                            预期效果：{r.expected_impact}
+                          </div>
+                        )}
+                        {r.timeline && (
+                          <div className="text-xs mt-0.5 opacity-50">建议时间：{r.timeline}</div>
+                        )}
                       </div>
                     ))}
                   </div>

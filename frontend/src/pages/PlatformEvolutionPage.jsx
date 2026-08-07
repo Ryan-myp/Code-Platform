@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Brain, TrendingUp, Zap, AlertCircle, RefreshCw, Lightbulb,
-  Code, FileText, Settings, Clock,
+  Brain,
+  TrendingUp,
+  Zap,
+  AlertCircle,
+  RefreshCw,
+  Lightbulb,
+  Code,
+  FileText,
+  Settings,
+  Clock,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime, formatRelativeTime } from '../lib/format'
 import {
-  Button, Empty, SkeletonGrid, ErrorState,
-  Badge, PageHeader, ConfirmDialog,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const TABS = [
@@ -50,7 +63,9 @@ export default function PlatformEvolutionPage() {
     }
   }, [loadStats, loadOptimizations])
 
-  useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => {
+    loadAll()
+  }, [loadAll])
 
   const triggerOptimization = async () => {
     setOptimizing(true)
@@ -58,7 +73,14 @@ export default function PlatformEvolutionPage() {
       const res = await api.post('/api/evolution/optimize-prompts', { target: 'all' })
       // 后端返回 {result: string}
       const resultText = res.data.result || res.data.action || '优化完成'
-      setOptimizations([{ type: 'all', priority: 'medium', reason: '基于近期使用数据自动生成', suggestion: resultText }])
+      setOptimizations([
+        {
+          type: 'all',
+          priority: 'medium',
+          reason: '基于近期使用数据自动生成',
+          suggestion: resultText,
+        },
+      ])
       toast.success('优化已完成，已生成新的 Prompt 版本')
       // 刷新数据
       await Promise.all([loadStats(), loadOptimizations()])
@@ -73,16 +95,36 @@ export default function PlatformEvolutionPage() {
   const totalRequests = stats?.total_calls || 0
   const successRate = stats?.success_rate ?? 0
   const avgTime = stats?.avg_response_time ?? 0
-  const errorRate = totalRequests ? (100 - successRate) : 0
+  const errorRate = totalRequests ? 100 - successRate : 0
   const byType = stats?.by_type || []
   const recent = stats?.recent || []
   const maxTypeCount = Math.max(1, ...byType.map((t) => t.c || 0))
 
   const statsCards = [
-    { label: '总请求数', value: totalRequests, icon: TrendingUp, color: 'from-purple-500 to-indigo-600' },
-    { label: '平均响应时间', value: `${avgTime}s`, icon: Zap, color: 'from-amber-500 to-orange-600' },
-    { label: '错误率', value: `${errorRate.toFixed(1)}%`, icon: AlertCircle, color: 'from-red-500 to-rose-600' },
-    { label: 'Prompt 版本', value: promptHistory.length, icon: Lightbulb, color: 'from-blue-500 to-cyan-600' },
+    {
+      label: '总请求数',
+      value: totalRequests,
+      icon: TrendingUp,
+      color: 'from-purple-500 to-indigo-600',
+    },
+    {
+      label: '平均响应时间',
+      value: `${avgTime}s`,
+      icon: Zap,
+      color: 'from-amber-500 to-orange-600',
+    },
+    {
+      label: '错误率',
+      value: `${errorRate.toFixed(1)}%`,
+      icon: AlertCircle,
+      color: 'from-red-500 to-rose-600',
+    },
+    {
+      label: 'Prompt 版本',
+      value: promptHistory.length,
+      icon: Lightbulb,
+      color: 'from-blue-500 to-cyan-600',
+    },
   ]
 
   return (
@@ -144,7 +186,9 @@ export default function PlatformEvolutionPage() {
                     <div key={idx} className="bg-white rounded-2xl border border-gray-200 p-5">
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="text-sm font-medium text-gray-500">{card.label}</h3>
-                        <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center`}>
+                        <div
+                          className={`w-9 h-9 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center`}
+                        >
                           <Icon className="w-4 h-4 text-white" />
                         </div>
                       </div>
@@ -164,13 +208,21 @@ export default function PlatformEvolutionPage() {
                 </div>
                 <div className="p-6">
                   {byType.length === 0 ? (
-                    <Empty icon={Code} title="暂无任务类型数据" description="使用平台功能后，将在此展示分布情况" />
+                    <Empty
+                      icon={Code}
+                      title="暂无任务类型数据"
+                      description="使用平台功能后，将在此展示分布情况"
+                    />
                   ) : (
                     byType.map((t) => (
                       <div key={t.task_type} className="mb-4 last:mb-0">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-gray-700 capitalize">{t.task_type || '未知'}</span>
-                          <span className="text-sm text-gray-500">{t.c} 次 · 均 {Number(t.a || 0).toFixed(2)}s</span>
+                          <span className="text-sm font-medium text-gray-700 capitalize">
+                            {t.task_type || '未知'}
+                          </span>
+                          <span className="text-sm text-gray-500">
+                            {t.c} 次 · 均 {Number(t.a || 0).toFixed(2)}s
+                          </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
@@ -198,10 +250,15 @@ export default function PlatformEvolutionPage() {
                   ) : (
                     <div className="space-y-2">
                       {recent.map((r, idx) => (
-                        <div key={idx} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0"
+                        >
                           <div className="flex items-center gap-2 min-w-0">
                             <Badge status={r.success ? 'success' : 'failed'} dot />
-                            <span className="text-sm text-gray-700 capitalize">{r.task_type || '未知'}</span>
+                            <span className="text-sm text-gray-700 capitalize">
+                              {r.task_type || '未知'}
+                            </span>
                           </div>
                           <div className="flex items-center gap-3 text-xs text-gray-400">
                             <span>{Number(r.response_time || 0).toFixed(2)}s</span>
@@ -224,7 +281,13 @@ export default function PlatformEvolutionPage() {
                   <Zap className="w-5 h-5 text-amber-500 mr-2" />
                   最新优化建议
                 </h2>
-                <Button variant="ghost" size="sm" icon={RefreshCw} loading={optimizing} onClick={() => setConfirmOptimize(true)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={RefreshCw}
+                  loading={optimizing}
+                  onClick={() => setConfirmOptimize(true)}
+                >
                   重新优化
                 </Button>
               </div>
@@ -247,7 +310,9 @@ export default function PlatformEvolutionPage() {
                               status={opt.priority === 'high' ? 'failed' : 'pending'}
                               label={opt.priority === 'high' ? '高优先级' : '中优先级'}
                             />
-                            <span className="text-sm font-medium text-gray-900 capitalize">{opt.type}</span>
+                            <span className="text-sm font-medium text-gray-900 capitalize">
+                              {opt.type}
+                            </span>
                           </div>
                         </div>
                         {opt.reason && <p className="text-sm text-gray-600 mb-2">{opt.reason}</p>}
@@ -275,14 +340,20 @@ export default function PlatformEvolutionPage() {
               </div>
               <div className="p-6">
                 {promptHistory.length === 0 ? (
-                  <Empty icon={Settings} title="暂无 Prompt 历史记录" description="触发优化后，新版本将记录在此" />
+                  <Empty
+                    icon={Settings}
+                    title="暂无 Prompt 历史记录"
+                    description="触发优化后，新版本将记录在此"
+                  />
                 ) : (
                   <div className="space-y-4">
                     {promptHistory.map((prompt, idx) => (
                       <div key={idx} className="border border-gray-200 rounded-xl p-4">
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-gray-900 capitalize">{prompt.module || prompt.key || '未知模块'}</span>
+                            <span className="text-sm font-medium text-gray-900 capitalize">
+                              {prompt.module || prompt.key || '未知模块'}
+                            </span>
                             <Badge status="inactive" label={`v${prompt.version ?? '?'}`} />
                           </div>
                           <span className="text-xs text-gray-500 flex items-center gap-1">
@@ -290,7 +361,9 @@ export default function PlatformEvolutionPage() {
                             {prompt.optimized_at ? formatDateTime(prompt.optimized_at) : '从未'}
                           </span>
                         </div>
-                        <p className="text-sm text-gray-600 mb-2 line-clamp-3 whitespace-pre-wrap">{prompt.instructions || '（无内容）'}</p>
+                        <p className="text-sm text-gray-600 mb-2 line-clamp-3 whitespace-pre-wrap">
+                          {prompt.instructions || '（无内容）'}
+                        </p>
                         {prompt.created_by && (
                           <div className="text-xs text-gray-400">来源：{prompt.created_by}</div>
                         )}

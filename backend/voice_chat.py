@@ -52,6 +52,7 @@ VOICE_CHAT_SYSTEM = """你是「小团智能平台」的AI语音助手，名叫"
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class TranscribeRequest(BaseModel):
     audio_base64: str = Field(..., description="Base64编码的音频数据")
     format: str = Field("webm", description="音频格式: webm/wav/mp3")
@@ -59,7 +60,9 @@ class TranscribeRequest(BaseModel):
 
 class RespondRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
-    history: list[dict] = Field(default_factory=list, description="对话历史 [{\"role\":\"user/assistant\",\"content\":\"...\"}]")
+    history: list[dict] = Field(
+        default_factory=list, description='对话历史 [{"role":"user/assistant","content":"..."}]'
+    )
 
 
 class TTSRequest(BaseModel):
@@ -72,6 +75,7 @@ class ChatRequest(BaseModel):
 
 
 # ── API ──────────────────────────────────────────────────
+
 
 @router.post("/respond")
 async def voice_respond(req: RespondRequest, current_user: dict = require_auth()):
@@ -90,7 +94,7 @@ async def voice_respond(req: RespondRequest, current_user: dict = require_auth()
         reply = raw.strip()
     except Exception as e:
         logger.exception("voice respond failed")
-        raise HTTPException(500, f"AI回复失败：{e}")
+        raise HTTPException(500, f"AI回复失败：{e}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("voice_respond", len(req.message), len(reply), elapsed)
@@ -112,8 +116,9 @@ async def text_to_speech(req: TTSRequest, current_user: dict = require_auth()):
 
     try:
         from voice_factory import _tts_one
+
         audio_bytes = _tts_one(req.text, req.voice_id, speed=1.0)
-        filename = f"tts_{int(datetime.now().timestamp()*1000)}.mp3"
+        filename = f"tts_{int(datetime.now().timestamp() * 1000)}.mp3"
         filepath = os.path.join(tts_dir, filename)
         with open(filepath, "wb") as f:
             f.write(audio_bytes)
@@ -130,5 +135,3 @@ async def text_to_speech(req: TTSRequest, current_user: dict = require_auth()):
         "text": req.text,
         "voice_id": req.voice_id,
     }
-
-

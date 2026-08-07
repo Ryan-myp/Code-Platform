@@ -1,15 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import {
-  Puzzle, RefreshCw, Play, Star, Search,
-  CheckCircle, XCircle, Power,
-} from 'lucide-react'
+import { Puzzle, RefreshCw, Play, Star, Search, CheckCircle, XCircle, Power } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState,
-  Badge, PageHeader,
-} from '../components/ui'
+import { Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader } from '../components/ui'
 
 const CATEGORY_COLORS = {
   prd: 'from-blue-500 to-cyan-600',
@@ -25,7 +19,9 @@ function PluginCard({ plugin, enabled, onExecute, onToggle, isExecuting }) {
     <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all flex flex-col">
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center flex-shrink-0`}>
+          <div
+            className={`w-10 h-10 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center flex-shrink-0`}
+          >
             <Puzzle className="w-5 h-5 text-white" />
           </div>
           <div className="min-w-0">
@@ -110,7 +106,9 @@ export default function PluginsPage() {
     }
   }, [])
 
-  useEffect(() => { fetchPlugins() }, [fetchPlugins])
+  useEffect(() => {
+    fetchPlugins()
+  }, [fetchPlugins])
 
   const handleExecute = async (pluginName) => {
     setExecuting(pluginName)
@@ -144,7 +142,8 @@ export default function PluginsPage() {
   const filteredPlugins = plugins.filter((p) => {
     const matchCat = selectedCategory === 'all' || p.category === selectedCategory
     const q = searchTerm.toLowerCase()
-    const matchSearch = !q || p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q)
+    const matchSearch =
+      !q || p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q)
     return matchCat && matchSearch
   })
 
@@ -156,7 +155,9 @@ export default function PluginsPage() {
         icon={Puzzle}
         iconColor="from-blue-500 to-indigo-600"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={fetchPlugins}>刷新</Button>
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchPlugins}>
+            刷新
+          </Button>
         }
       />
 
@@ -204,7 +205,11 @@ export default function PluginsPage() {
           <Empty
             icon={Puzzle}
             title={searchTerm || selectedCategory !== 'all' ? '未找到匹配的插件' : '暂无插件'}
-            description={searchTerm || selectedCategory !== 'all' ? '尝试调整搜索或筛选条件' : '当前没有已注册的插件'}
+            description={
+              searchTerm || selectedCategory !== 'all'
+                ? '尝试调整搜索或筛选条件'
+                : '当前没有已注册的插件'
+            }
           />
         </div>
       ) : (
@@ -228,10 +233,14 @@ export default function PluginsPage() {
         onClose={() => setShowResult(null)}
         title={showResult ? `测试结果：${showResult}` : ''}
         size="lg"
-        footer={<Button variant="primary" onClick={() => setShowResult(null)}>关闭</Button>}
+        footer={
+          <Button variant="primary" onClick={() => setShowResult(null)}>
+            关闭
+          </Button>
+        }
       >
-        {testResult && (
-          testResult.status === 'success' ? (
+        {testResult &&
+          (testResult.status === 'success' ? (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
               <div className="flex items-center gap-2 text-emerald-700 font-medium mb-3">
                 <CheckCircle className="w-5 h-5" />
@@ -254,8 +263,7 @@ export default function PluginsPage() {
               </div>
               <p className="text-sm text-gray-700 break-all">{testResult.error}</p>
             </div>
-          )
-        )}
+          ))}
       </Modal>
     </div>
   )

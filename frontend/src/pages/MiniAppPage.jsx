@@ -1,8 +1,25 @@
 import React, { useState, useEffect } from 'react'
 import {
-  Smartphone, Sparkles, FolderOpen, FileCode2, Braces, FileText, Paintbrush,
-  Copy, Check, Download, Trash2, Eye, Rocket, FolderTree, Loader2, Plus,
-  MonitorPlay, Maximize2, Code2, Smartphone as PhoneIcon,
+  Smartphone,
+  Sparkles,
+  FolderOpen,
+  FileCode2,
+  Braces,
+  FileText,
+  Paintbrush,
+  Copy,
+  Check,
+  Download,
+  Trash2,
+  Eye,
+  Rocket,
+  FolderTree,
+  Loader2,
+  Plus,
+  MonitorPlay,
+  Maximize2,
+  Code2,
+  Smartphone as PhoneIcon,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -11,12 +28,48 @@ import { wxmlToHtml } from '../lib/wxml-preview'
 import useAsyncTask from '../hooks/useAsyncTask'
 
 const TEMPLATES = [
-  { id: 'shop', name: '电商购物', icon: '🛍️', color: 'from-pink-500 to-rose-600', description: '商品列表 / 详情 / 购物车 / 结算' },
-  { id: 'booking', name: '预约服务', icon: '📅', color: 'from-blue-500 to-cyan-600', description: '服务列表 / 预约表单 / 我的预约' },
-  { id: 'showcase', name: '作品展示', icon: '🎨', color: 'from-violet-500 to-purple-600', description: '首页 / 作品集 / 关于我们' },
-  { id: 'tool', name: '效率工具', icon: '🧰', color: 'from-amber-500 to-orange-600', description: '记事本 / 计算器 / 打卡' },
-  { id: 'news', name: '资讯阅读', icon: '📰', color: 'from-emerald-500 to-green-600', description: '文章列表 / 详情 / 分类' },
-  { id: 'custom', name: '自定义', icon: '✨', color: 'from-gray-500 to-gray-700', description: '自由发挥，AI 自行设计页面结构' },
+  {
+    id: 'shop',
+    name: '电商购物',
+    icon: '🛍️',
+    color: 'from-pink-500 to-rose-600',
+    description: '商品列表 / 详情 / 购物车 / 结算',
+  },
+  {
+    id: 'booking',
+    name: '预约服务',
+    icon: '📅',
+    color: 'from-blue-500 to-cyan-600',
+    description: '服务列表 / 预约表单 / 我的预约',
+  },
+  {
+    id: 'showcase',
+    name: '作品展示',
+    icon: '🎨',
+    color: 'from-violet-500 to-purple-600',
+    description: '首页 / 作品集 / 关于我们',
+  },
+  {
+    id: 'tool',
+    name: '效率工具',
+    icon: '🧰',
+    color: 'from-amber-500 to-orange-600',
+    description: '记事本 / 计算器 / 打卡',
+  },
+  {
+    id: 'news',
+    name: '资讯阅读',
+    icon: '📰',
+    color: 'from-emerald-500 to-green-600',
+    description: '文章列表 / 详情 / 分类',
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    icon: '✨',
+    color: 'from-gray-500 to-gray-700',
+    description: '自由发挥，AI 自行设计页面结构',
+  },
 ]
 
 function fileIcon(path) {
@@ -38,7 +91,12 @@ function fileTree(paths) {
       const isFile = i === parts.length - 1
       let child = node.children.find((c) => c.name === part)
       if (!child) {
-        child = { name: part, type: isFile ? 'file' : 'dir', path: acc, children: isFile ? null : [] }
+        child = {
+          name: part,
+          type: isFile ? 'file' : 'dir',
+          path: acc,
+          children: isFile ? null : [],
+        }
         node.children.push(child)
       }
       node = child
@@ -67,19 +125,31 @@ export default function MiniAppPage() {
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
 
-  useEffect(() => { loadProjects() }, [])
   useEffect(() => {
-    api.get('/api/miniapp/templates').then((res) => {
-      if (res.data?.length) {
-        const merged = TEMPLATES.map((t) => res.data.find((r) => r.id === t.id) || t)
-        const extra = res.data.filter((r) => !TEMPLATES.some((t) => t.id === r.id)).map((r) => ({ ...r, color: 'from-gray-500 to-gray-700' }))
-        setTemplates([...merged, ...extra])
-      }
-    }).catch(() => {})
+    loadProjects()
+  }, [])
+  useEffect(() => {
+    api
+      .get('/api/miniapp/templates')
+      .then((res) => {
+        if (res.data?.length) {
+          const merged = TEMPLATES.map((t) => res.data.find((r) => r.id === t.id) || t)
+          const extra = res.data
+            .filter((r) => !TEMPLATES.some((t) => t.id === r.id))
+            .map((r) => ({ ...r, color: 'from-gray-500 to-gray-700' }))
+          setTemplates([...merged, ...extra])
+        }
+      })
+      .catch(() => {})
   }, [])
 
   const loadProjects = async () => {
-    try { const res = await api.get('/api/miniapp/projects'); setProjects(res.data || []) } catch {/* 静默失败，不阻塞 UI */}
+    try {
+      const res = await api.get('/api/miniapp/projects')
+      setProjects(res.data || [])
+    } catch {
+      /* 静默失败，不阻塞 UI */
+    }
   }
 
   const buildPreview = (files) => {
@@ -97,25 +167,38 @@ export default function MiniAppPage() {
   }
 
   const generate = async () => {
-    if (!name.trim()) { toast.error('请输入项目名称'); return }
-    if (requirement.trim().length < 2) { toast.error('请描述你的功能需求'); return }
+    if (!name.trim()) {
+      toast.error('请输入项目名称')
+      return
+    }
+    if (requirement.trim().length < 2) {
+      toast.error('请描述你的功能需求')
+      return
+    }
     setGenerating(true)
     setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
-    await submitTask('/api/miniapp/generate', { name: name.trim(), template, requirement }, {
-      onUpdate: (t) => setGenTask(t),
-      onSuccess: (data) => {
-        const files = data.files || {}
-        setViewing({ id: data.id, name: data.name, files })
-        setViewMode('preview')
-        buildPreview(files)
-        const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
-        setSelectedFile(wxmlFiles[0] || '')
-        loadProjects()
-        setGenerating(false)
-        toast.success(`生成成功：${data.file_count} 个文件`)
-      },
-      onError: (e) => { setGenerating(false); toast.error(`生成失败：${e.message}`) },
-    })
+    await submitTask(
+      '/api/miniapp/generate',
+      { name: name.trim(), template, requirement },
+      {
+        onUpdate: (t) => setGenTask(t),
+        onSuccess: (data) => {
+          const files = data.files || {}
+          setViewing({ id: data.id, name: data.name, files })
+          setViewMode('preview')
+          buildPreview(files)
+          const wxmlFiles = Object.keys(files).filter((k) => k.endsWith('.wxml'))
+          setSelectedFile(wxmlFiles[0] || '')
+          loadProjects()
+          setGenerating(false)
+          toast.success(`生成成功：${data.file_count} 个文件`)
+        },
+        onError: (e) => {
+          setGenerating(false)
+          toast.error(`生成失败：${e.message}`)
+        },
+      }
+    )
   }
 
   const openProject = async (p) => {
@@ -125,15 +208,22 @@ export default function MiniAppPage() {
       setViewing({ id: p.id, name: p.name, files })
       setViewMode('preview')
       buildPreview(files)
-      const wxmlFiles = Object.keys(files).filter(k => k.endsWith('.wxml'))
+      const wxmlFiles = Object.keys(files).filter((k) => k.endsWith('.wxml'))
       setSelectedFile(wxmlFiles[0] || '')
-    } catch (e) { toast.error(e.message) }
+    } catch (e) {
+      toast.error(e.message)
+    }
   }
 
   const removeProject = async (p, e) => {
     e.stopPropagation()
-    try { await api.delete(`/api/miniapp/${p.id}`); loadProjects(); toast.success('项目已删除') }
-    catch (err) { toast.error(err.message) }
+    try {
+      await api.delete(`/api/miniapp/${p.id}`)
+      loadProjects()
+      toast.success('项目已删除')
+    } catch (err) {
+      toast.error(err.message)
+    }
   }
 
   const downloadZip = async () => {
@@ -149,25 +239,35 @@ export default function MiniAppPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
       toast.success('ZIP 包已下载，导入微信开发者工具即可运行')
-    } catch (e) { toast.error(`下载失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`下载失败：${e.message}`)
+    }
   }
 
   const copyFile = async () => {
     try {
       await navigator.clipboard.writeText(viewing.files[selectedFile] || '')
-      setCopied(true); setTimeout(() => setCopied(false), 1500)
-    } catch { toast.error('复制失败') }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      toast.error('复制失败')
+    }
   }
 
   const loadGuide = async () => {
-    try { const res = await api.get('/api/miniapp/deploy-guide'); setGuide(res.data); setShowGuide(true) }
-    catch (e) { toast.error(e.message) }
+    try {
+      const res = await api.get('/api/miniapp/deploy-guide')
+      setGuide(res.data)
+      setShowGuide(true)
+    } catch (e) {
+      toast.error(e.message)
+    }
   }
 
   const tree = viewing ? fileTree(Object.keys(viewing.files)) : []
   const current = viewing?.files[selectedFile] || ''
   const tpl = templates.find((t) => t.id === template)
-  const wxmlPages = viewing ? Object.keys(viewing.files).filter(k => k.endsWith('.wxml')) : []
+  const wxmlPages = viewing ? Object.keys(viewing.files).filter((k) => k.endsWith('.wxml')) : []
 
   return (
     <div className="space-y-6">
@@ -187,11 +287,20 @@ export default function MiniAppPage() {
             </h3>
             <div className="grid grid-cols-2 gap-2">
               {templates.map((t) => (
-                <button key={t.id} onClick={() => setTemplate(t.id)}
+                <button
+                  key={t.id}
+                  onClick={() => setTemplate(t.id)}
                   className={`flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border transition-all ${
-                    template === t.id ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20' : 'border-gray-200 hover:bg-gray-50'
-                  }`}>
-                  <span className={`w-9 h-9 rounded-lg bg-gradient-to-br ${t.color} flex items-center justify-center text-lg`}>{t.icon}</span>
+                    template === t.id
+                      ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/20'
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <span
+                    className={`w-9 h-9 rounded-lg bg-gradient-to-br ${t.color} flex items-center justify-center text-lg`}
+                  >
+                    {t.icon}
+                  </span>
                   <span className="text-xs font-medium text-gray-700">{t.name}</span>
                 </button>
               ))}
@@ -206,17 +315,32 @@ export default function MiniAppPage() {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">项目名称 *</label>
-                <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   placeholder="如：我的咖啡店小程序"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">功能需求 *</label>
-                <textarea value={requirement} onChange={(e) => setRequirement(e.target.value)}
+                <textarea
+                  value={requirement}
+                  onChange={(e) => setRequirement(e.target.value)}
                   placeholder="描述你要做的功能，如：一个咖啡店点单小程序，展示菜单、支持加购物车、提交订单，要有会员积分功能…"
-                  rows={6} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" />
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
               </div>
-              <Button variant="gradient" size="lg" icon={Smartphone} loading={generating} onClick={generate} className="w-full">
+              <Button
+                variant="gradient"
+                size="lg"
+                icon={Smartphone}
+                loading={generating}
+                onClick={generate}
+                className="w-full"
+              >
                 {generating ? '生成任务执行中（后台）…' : '生成小程序项目'}
               </Button>
               {generating && genTask && (
@@ -227,9 +351,14 @@ export default function MiniAppPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-indigo-500 to-violet-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-indigo-500 to-violet-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
             </div>
@@ -240,11 +369,28 @@ export default function MiniAppPage() {
               <Rocket className="w-4 h-4 text-emerald-500" /> 三步上线
             </h3>
             <ol className="space-y-2 text-sm text-gray-600">
-              <li className="flex gap-2"><span className="text-emerald-500 font-bold">1.</span> 选择模板 + 描述需求，AI 生成完整项目</li>
-              <li className="flex gap-2"><span className="text-emerald-500 font-bold">2.</span> 下载 ZIP → 微信开发者工具「导入项目」</li>
-              <li className="flex gap-2"><span className="text-emerald-500 font-bold">3.</span> 上传代码 → 提交审核 → 发布上线</li>
+              <li className="flex gap-2">
+                <span className="text-emerald-500 font-bold">1.</span> 选择模板 + 描述需求，AI
+                生成完整项目
+              </li>
+              <li className="flex gap-2">
+                <span className="text-emerald-500 font-bold">2.</span> 下载 ZIP →
+                微信开发者工具「导入项目」
+              </li>
+              <li className="flex gap-2">
+                <span className="text-emerald-500 font-bold">3.</span> 上传代码 → 提交审核 →
+                发布上线
+              </li>
             </ol>
-            <Button variant="ghost" size="sm" icon={Rocket} onClick={loadGuide} className="mt-2 w-full justify-center">查看详细部署指引</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={Rocket}
+              onClick={loadGuide}
+              className="mt-2 w-full justify-center"
+            >
+              查看详细部署指引
+            </Button>
           </Card>
         </div>
 
@@ -255,15 +401,24 @@ export default function MiniAppPage() {
               <FolderTree className="w-4 h-4 text-gray-400" /> 我的项目（{projects.length}）
             </h3>
             {projects.length === 0 ? (
-              <Empty icon={Smartphone} title="还没有小程序项目" description="选择模板、填写需求后点击「生成小程序项目」" />
+              <Empty
+                icon={Smartphone}
+                title="还没有小程序项目"
+                description="选择模板、填写需求后点击「生成小程序项目」"
+              />
             ) : (
               <div className="space-y-2">
                 {projects.map((p) => {
                   const t = templates.find((x) => x.id === p.template)
                   return (
-                    <div key={p.id} onClick={() => openProject(p)}
-                      className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all cursor-pointer">
-                      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0`}>
+                    <div
+                      key={p.id}
+                      onClick={() => openProject(p)}
+                      className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all cursor-pointer"
+                    >
+                      <div
+                        className={`w-10 h-10 rounded-lg bg-gradient-to-br ${t?.color || 'from-gray-500 to-gray-700'} flex items-center justify-center text-lg flex-shrink-0`}
+                      >
                         {t?.icon || '📱'}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -272,9 +427,26 @@ export default function MiniAppPage() {
                           {t?.name || p.template || '自定义'} · {p.requirement?.slice(0, 60)}
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">{p.created_at?.slice(0, 16).replace('T', ' ')}</span>
-                      <Button variant="secondary" size="sm" icon={Eye} onClick={(e) => { e.stopPropagation(); openProject(p) }}>查看</Button>
-                      <button onClick={(e) => removeProject(p, e)} className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                      <span className="text-xs text-gray-400 flex-shrink-0">
+                        {p.created_at?.slice(0, 16).replace('T', ' ')}
+                      </span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={Eye}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openProject(p)
+                        }}
+                      >
+                        查看
+                      </Button>
+                      <button
+                        onClick={(e) => removeProject(p, e)}
+                        className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   )
                 })}
@@ -307,28 +479,58 @@ export default function MiniAppPage() {
       </div>
 
       {/* ── 项目查看 Modal ── */}
-      <Modal open={!!viewing} onClose={() => { setViewing(null); setViewMode('preview') }} title={viewing ? `项目：${viewing.name}` : ''} size="2xl"
+      <Modal
+        open={!!viewing}
+        onClose={() => {
+          setViewing(null)
+          setViewMode('preview')
+        }}
+        title={viewing ? `项目：${viewing.name}` : ''}
+        size="2xl"
         footer={
           <>
-            <Button variant="secondary" icon={Rocket} onClick={loadGuide}>部署指引</Button>
-            <Button variant="secondary" icon={Download} onClick={downloadZip}>下载 ZIP</Button>
-            <Button variant="primary" icon={Smartphone} onClick={() => { setViewing(null); toast.success('在微信开发者工具中导入解压后的目录即可运行') }}>完成</Button>
+            <Button variant="secondary" icon={Rocket} onClick={loadGuide}>
+              部署指引
+            </Button>
+            <Button variant="secondary" icon={Download} onClick={downloadZip}>
+              下载 ZIP
+            </Button>
+            <Button
+              variant="primary"
+              icon={Smartphone}
+              onClick={() => {
+                setViewing(null)
+                toast.success('在微信开发者工具中导入解压后的目录即可运行')
+              }}
+            >
+              完成
+            </Button>
           </>
-        }>
+        }
+      >
         {/* ── 模式切换 Tab ── */}
         <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl mb-4 w-fit">
           <button
-            onClick={() => { setViewMode('preview'); if (viewing) buildPreview(viewing.files) }}
+            onClick={() => {
+              setViewMode('preview')
+              if (viewing) buildPreview(viewing.files)
+            }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              viewMode === 'preview' ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
+              viewMode === 'preview'
+                ? 'bg-white text-indigo-700 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
             <MonitorPlay className="w-3.5 h-3.5" /> 可视化预览
           </button>
           <button
             onClick={() => setViewMode('code')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              viewMode === 'code' ? 'bg-white text-gray-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
+              viewMode === 'code'
+                ? 'bg-white text-gray-700 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
             <Code2 className="w-3.5 h-3.5" /> 代码查看
           </button>
         </div>
@@ -339,17 +541,25 @@ export default function MiniAppPage() {
             {/* 页面选择器 */}
             {wxmlPages.length > 1 && (
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-gray-400 flex items-center gap-1"><PhoneIcon className="w-3 h-3" /> 页面切换：</span>
+                <span className="text-xs text-gray-400 flex items-center gap-1">
+                  <PhoneIcon className="w-3 h-3" /> 页面切换：
+                </span>
                 {wxmlPages.map((p) => {
-                  const label = p.replace('pages/', '').replace('/index.wxml', '').replace('.wxml', '')
+                  const label = p
+                    .replace('pages/', '')
+                    .replace('/index.wxml', '')
+                    .replace('.wxml', '')
                   const isActive = previewPage === p
                   return (
                     <button
                       key={p}
                       onClick={() => switchPreviewPage(p)}
                       className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                        isActive ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                      }`}>
+                        isActive
+                          ? 'bg-indigo-100 text-indigo-700'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
                       {label}
                     </button>
                   )
@@ -389,11 +599,18 @@ export default function MiniAppPage() {
             {/* 文件树 */}
             <div className="md:w-64 flex-shrink-0 border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto bg-gray-50/50">
               <div className="px-3 py-2 bg-gray-100/80 border-b border-gray-200 text-xs font-medium text-gray-500 flex items-center gap-1.5">
-                <FolderTree className="w-3.5 h-3.5" /> {Object.keys(viewing?.files || {}).length} 个文件
+                <FolderTree className="w-3.5 h-3.5" /> {Object.keys(viewing?.files || {}).length}{' '}
+                个文件
               </div>
               <div className="p-2 space-y-0.5">
                 {tree.map((node) => (
-                  <TreeNode key={node.path} node={node} depth={0} selected={selectedFile} onSelect={setSelectedFile} />
+                  <TreeNode
+                    key={node.path}
+                    node={node}
+                    depth={0}
+                    selected={selectedFile}
+                    onSelect={setSelectedFile}
+                  />
                 ))}
               </div>
             </div>
@@ -401,10 +618,15 @@ export default function MiniAppPage() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-700 truncate flex items-center gap-1.5">
-                  {(() => { const { Icon, color } = fileIcon(selectedFile); return <Icon className={`w-4 h-4 ${color} flex-shrink-0`} /> })()}
+                  {(() => {
+                    const { Icon, color } = fileIcon(selectedFile)
+                    return <Icon className={`w-4 h-4 ${color} flex-shrink-0`} />
+                  })()}
                   {selectedFile}
                 </span>
-                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyFile}>{copied ? '已复制' : '复制'}</Button>
+                <Button variant="ghost" size="sm" icon={copied ? Check : Copy} onClick={copyFile}>
+                  {copied ? '已复制' : '复制'}
+                </Button>
               </div>
               <pre className="bg-gray-900 text-gray-100 text-xs leading-relaxed p-4 rounded-xl overflow-auto max-h-[52vh] font-mono whitespace-pre">
                 {current}
@@ -420,7 +642,9 @@ export default function MiniAppPage() {
           <ol className="space-y-2.5">
             {guide.steps.map((s, i) => (
               <li key={i} className="flex gap-3 text-sm text-gray-700">
-                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center flex-shrink-0">
+                  {i + 1}
+                </span>
                 <span className="pt-0.5">{s}</span>
               </li>
             ))}
@@ -442,20 +666,35 @@ function TreeNode({ node, depth, selected, onSelect }) {
   if (node.type === 'dir') {
     return (
       <div>
-        <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 font-medium" style={{ paddingLeft: 8 + depth * 14 }}>
+        <div
+          className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 font-medium"
+          style={{ paddingLeft: 8 + depth * 14 }}
+        >
           <FolderOpen className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" /> {node.name}
         </div>
-        {node.children.map((c) => <TreeNode key={c.path} node={c} depth={depth + 1} selected={selected} onSelect={onSelect} />)}
+        {node.children.map((c) => (
+          <TreeNode
+            key={c.path}
+            node={c}
+            depth={depth + 1}
+            selected={selected}
+            onSelect={onSelect}
+          />
+        ))}
       </div>
     )
   }
   const { Icon, color } = fileIcon(node.path)
   return (
-    <button onClick={() => onSelect(node.path)}
+    <button
+      onClick={() => onSelect(node.path)}
       className={`w-full flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors text-left ${
-        selected === node.path ? 'bg-indigo-100 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-100'
+        selected === node.path
+          ? 'bg-indigo-100 text-indigo-700 font-medium'
+          : 'text-gray-600 hover:bg-gray-100'
       }`}
-      style={{ paddingLeft: 8 + depth * 14 }}>
+      style={{ paddingLeft: 8 + depth * 14 }}
+    >
       <Icon className={`w-3.5 h-3.5 ${color} flex-shrink-0`} /> {node.name}
     </button>
   )

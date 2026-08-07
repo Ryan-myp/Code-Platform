@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from common.auth import require_auth
@@ -20,6 +20,7 @@ router = APIRouter()
 # ══════════════════════════════════════════════════════════════
 # 数据模型
 # ══════════════════════════════════════════════════════════════
+
 
 class StockSearchRequest(BaseModel):
     symbol: str
@@ -61,10 +62,17 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
         if hist.empty:
             # 尝试提供可能的替代建议
             suggestions = {
-                "GOOGLE": "GOOGL 或 GOOG", "APPLE": "AAPL", "AMAZON": "AMZN",
-                "MICROSOFT": "MSFT", "FACEBOOK": "META", "TESLA": "TSLA",
-                "NETFLIX": "NFLX", "ALIBABA": "BABA", "TENCENT": "0700.HK",
-                "BYD": "1211.HK", "PINGDUODUO": "PDD",
+                "GOOGLE": "GOOGL 或 GOOG",
+                "APPLE": "AAPL",
+                "AMAZON": "AMZN",
+                "MICROSOFT": "MSFT",
+                "FACEBOOK": "META",
+                "TESLA": "TSLA",
+                "NETFLIX": "NFLX",
+                "ALIBABA": "BABA",
+                "TENCENT": "0700.HK",
+                "BYD": "1211.HK",
+                "PINGDUODUO": "PDD",
             }
             hint = suggestions.get(symbol.upper(), "")
             msg = f"找不到股票数据: {symbol}"
@@ -79,45 +87,47 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
 
         # 计算技术指标
         df = hist.copy()
-        df['MA5'] = df['Close'].rolling(window=5).mean()
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['MA60'] = df['Close'].rolling(window=60).mean()
+        df["MA5"] = df["Close"].rolling(window=5).mean()
+        df["MA20"] = df["Close"].rolling(window=20).mean()
+        df["MA60"] = df["Close"].rolling(window=60).mean()
 
         # RSI
-        delta = df['Close'].diff()
+        delta = df["Close"].diff()
         gain = delta.where(delta > 0, 0).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
+        df["RSI"] = 100 - (100 / (1 + rs))
 
         # MACD
-        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        exp1 = df["Close"].ewm(span=12, adjust=False).mean()
+        exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+        df["MACD"] = exp1 - exp2
+        df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
         # 布林带
-        df['BB_middle'] = df['Close'].rolling(window=20).mean()
-        df['BB_upper'] = df['BB_middle'] + 2 * df['Close'].rolling(window=20).std()
-        df['BB_lower'] = df['BB_middle'] - 2 * df['Close'].rolling(window=20).std()
+        df["BB_middle"] = df["Close"].rolling(window=20).mean()
+        df["BB_upper"] = df["BB_middle"] + 2 * df["Close"].rolling(window=20).std()
+        df["BB_lower"] = df["BB_middle"] - 2 * df["Close"].rolling(window=20).std()
 
         # 转换为 JSON 格式
         data_points = []
         for idx, row in df.iterrows():
-            data_points.append({
-                "date": idx.strftime("%Y-%m-%d"),
-                "open": round(float(row['Open']), 2),
-                "high": round(float(row['High']), 2),
-                "low": round(float(row['Low']), 2),
-                "close": round(float(row['Close']), 2),
-                "volume": int(row['Volume']),
-                "ma5": round(float(row['MA5']), 2) if pd.notna(row['MA5']) else None,
-                "ma20": round(float(row['MA20']), 2) if pd.notna(row['MA20']) else None,
-                "ma60": round(float(row['MA60']), 2) if pd.notna(row['MA60']) else None,
-                "rsi": round(float(row['RSI']), 2) if pd.notna(row['RSI']) else None,
-                "macd": round(float(row['MACD']), 4) if pd.notna(row['MACD']) else None,
-                "signal": round(float(row['Signal']), 4) if pd.notna(row['Signal']) else None,
-            })
+            data_points.append(
+                {
+                    "date": idx.strftime("%Y-%m-%d"),
+                    "open": round(float(row["Open"]), 2),
+                    "high": round(float(row["High"]), 2),
+                    "low": round(float(row["Low"]), 2),
+                    "close": round(float(row["Close"]), 2),
+                    "volume": int(row["Volume"]),
+                    "ma5": round(float(row["MA5"]), 2) if pd.notna(row["MA5"]) else None,
+                    "ma20": round(float(row["MA20"]), 2) if pd.notna(row["MA20"]) else None,
+                    "ma60": round(float(row["MA60"]), 2) if pd.notna(row["MA60"]) else None,
+                    "rsi": round(float(row["RSI"]), 2) if pd.notna(row["RSI"]) else None,
+                    "macd": round(float(row["MACD"]), 4) if pd.notna(row["MACD"]) else None,
+                    "signal": round(float(row["Signal"]), 4) if pd.notna(row["Signal"]) else None,
+                }
+            )
 
         # 最新数据
         latest = data_points[-1] if data_points else {}
@@ -148,14 +158,14 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
                 "ma5": latest.get("ma5"),
                 "ma20": latest.get("ma20"),
                 "ma60": latest.get("ma60"),
-            }
+            },
         }
         _STOCK_CACHE[cache_key] = (time.time(), result)
         return result
     except HTTPException:
         raise  # 不要吞掉 HTTPException
     except Exception as e:
-        raise HTTPException(503, f"行情数据服务暂时不可用（网络或上游限制），请稍后重试。详情: {str(e)[:150]}")
+        raise HTTPException(503, f"行情数据服务暂时不可用（网络或上游限制），请稍后重试。详情: {str(e)[:150]}") from e
 
 
 def analyze_stock_trend(data: dict) -> str:
@@ -166,7 +176,6 @@ def analyze_stock_trend(data: dict) -> str:
     ma5 = indicators.get("ma5")
     ma20 = indicators.get("ma20")
     ma60 = indicators.get("ma60")
-    current = data.get("current_price", 0)
 
     signals = []
 
@@ -206,6 +215,7 @@ def analyze_stock_trend(data: dict) -> str:
 # API 端点
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/stock/{symbol}")
 async def get_stock(symbol: str, period: str = "3mo", current_user: dict = require_auth()):
     """获取股票详细数据"""
@@ -244,7 +254,6 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 5. 操作建议（买入/持有/卖出/观望）
 
 注意：仅供参考，不构成投资建议。""",
-
         "fundamental": """你是一个专业的股票基本面分析师。请根据以下公司信息，给出基本面分析。
 
 ## 公司信息
@@ -264,7 +273,6 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 5. 长期投资价值评估
 
 注意：仅供参考，不构成投资建议。""",
-
         "comprehensive": """你是一个资深的股票分析师。请综合技术面和基本面，给出全面的股票分析。
 
 ## 股票信息
@@ -288,7 +296,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
 6. 操作策略建议
 7. 风险提示
 
-⚠️ 免责声明：本分析仅供参考，不构成任何投资建议。投资有风险，入市需谨慎。"""
+⚠️ 免责声明：本分析仅供参考，不构成任何投资建议。投资有风险，入市需谨慎。""",
     }
 
     prompt_template = analysis_prompts.get(req.analysis_type, analysis_prompts["comprehensive"])
@@ -313,10 +321,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
     )
 
     try:
-        result = call_llm(
-            "你是一个专业的股票分析师，请基于数据给出客观、专业的分析。",
-            prompt
-        )
+        result = call_llm("你是一个专业的股票分析师，请基于数据给出客观、专业的分析。", prompt)
 
         # 保存分析记录
         conn = get_db()
@@ -325,7 +330,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
             conn.execute(
                 """INSERT INTO stock_analyses (id, symbol, analysis_type, period, result, created_at)
                    VALUES (?,?,?,?,?,?)""",
-                (record_id, req.symbol, req.analysis_type, req.period, result, datetime.now().isoformat())
+                (record_id, req.symbol, req.analysis_type, req.period, result, datetime.now().isoformat()),
             )
             conn.commit()
         finally:
@@ -340,15 +345,16 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
             "data_summary": {
                 "current_price": data.get("current_price"),
                 "trend_analysis": data.get("trend_analysis"),
-            }
+            },
         }
     except Exception as e:
-        raise HTTPException(500, f"分析失败: {str(e)}")
+        raise HTTPException(500, f"分析失败: {str(e)}") from e
 
 
 # ══════════════════════════════════════════════════════════════
 # 模拟交易
 # ══════════════════════════════════════════════════════════════
+
 
 @router.get("/api/trading/portfolio")
 async def get_portfolio(current_user: dict = require_auth()):
@@ -357,9 +363,7 @@ async def get_portfolio(current_user: dict = require_auth()):
     conn = get_db()
     try:
         # 获取账户信息
-        account = conn.execute(
-            "SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)
-        ).fetchone()
+        account = conn.execute("SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)).fetchone()
 
         if not account:
             # 创建默认账户
@@ -367,7 +371,7 @@ async def get_portfolio(current_user: dict = require_auth()):
             conn.execute(
                 """INSERT INTO trading_accounts (id, user_id, cash, created_at)
                    VALUES (?,?,1000000,?)""",
-                (account_id, user_id, datetime.now().isoformat())
+                (account_id, user_id, datetime.now().isoformat()),
             )
             conn.commit()
             account = {"id": account_id, "cash": 1000000, "total_value": 1000000}
@@ -376,9 +380,7 @@ async def get_portfolio(current_user: dict = require_auth()):
 
         # 获取持仓
         positions = []
-        for row in conn.execute(
-            "SELECT * FROM trading_positions WHERE account_id=?", (account["id"],)
-        ).fetchall():
+        for row in conn.execute("SELECT * FROM trading_positions WHERE account_id=?", (account["id"],)).fetchall():
             pos = dict(row)
             # 获取当前价格
             try:
@@ -386,8 +388,10 @@ async def get_portfolio(current_user: dict = require_auth()):
                 pos["current_price"] = data.get("current_price", 0)
                 pos["market_value"] = pos["current_price"] * pos["quantity"]
                 pos["profit_loss"] = (pos["current_price"] - pos["avg_cost"]) * pos["quantity"]
-                pos["profit_loss_pct"] = ((pos["current_price"] - pos["avg_cost"]) / pos["avg_cost"] * 100) if pos["avg_cost"] > 0 else 0
-            except:
+                pos["profit_loss_pct"] = (
+                    ((pos["current_price"] - pos["avg_cost"]) / pos["avg_cost"] * 100) if pos["avg_cost"] > 0 else 0
+                )
+            except Exception:
                 pos["current_price"] = pos["avg_cost"]
                 pos["market_value"] = pos["avg_cost"] * pos["quantity"]
                 pos["profit_loss"] = 0
@@ -397,8 +401,7 @@ async def get_portfolio(current_user: dict = require_auth()):
         # 获取交易历史
         trades = []
         for row in conn.execute(
-            "SELECT * FROM trading_history WHERE account_id=? ORDER BY created_at DESC LIMIT 50",
-            (account["id"],)
+            "SELECT * FROM trading_history WHERE account_id=? ORDER BY created_at DESC LIMIT 50", (account["id"],)
         ).fetchall():
             trades.append(dict(row))
 
@@ -428,9 +431,7 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
     conn = get_db()
     try:
         # 获取账户
-        account = conn.execute(
-            "SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)
-        ).fetchone()
+        account = conn.execute("SELECT * FROM trading_accounts WHERE user_id=?", (user_id,)).fetchone()
 
         if not account:
             raise HTTPException(400, "请先创建交易账户")
@@ -445,14 +446,12 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
 
             # 更新现金
             conn.execute(
-                "UPDATE trading_accounts SET cash=? WHERE id=?",
-                (account["cash"] - trade_amount, account["id"])
+                "UPDATE trading_accounts SET cash=? WHERE id=?", (account["cash"] - trade_amount, account["id"])
             )
 
             # 更新或创建持仓
             existing = conn.execute(
-                "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?",
-                (account["id"], req.symbol)
+                "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?", (account["id"], req.symbol)
             ).fetchone()
 
             if existing:
@@ -460,22 +459,20 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
                 new_qty = existing["quantity"] + req.quantity
                 new_avg = (existing["avg_cost"] * existing["quantity"] + price * req.quantity) / new_qty
                 conn.execute(
-                    "UPDATE trading_positions SET quantity=?, avg_cost=? WHERE id=?",
-                    (new_qty, new_avg, existing["id"])
+                    "UPDATE trading_positions SET quantity=?, avg_cost=? WHERE id=?", (new_qty, new_avg, existing["id"])
                 )
             else:
                 pos_id = f"pos_{uuid.uuid4().hex[:12]}"
                 conn.execute(
                     """INSERT INTO trading_positions (id, account_id, symbol, quantity, avg_cost, created_at)
                        VALUES (?,?,?,?,?,?)""",
-                    (pos_id, account["id"], req.symbol, req.quantity, price, datetime.now().isoformat())
+                    (pos_id, account["id"], req.symbol, req.quantity, price, datetime.now().isoformat()),
                 )
 
         elif req.action == "sell":
             # 卖出检查
             existing = conn.execute(
-                "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?",
-                (account["id"], req.symbol)
+                "SELECT * FROM trading_positions WHERE account_id=? AND symbol=?", (account["id"], req.symbol)
             ).fetchone()
 
             if not existing or existing["quantity"] < req.quantity:
@@ -485,29 +482,31 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
 
             # 更新现金
             conn.execute(
-                "UPDATE trading_accounts SET cash=? WHERE id=?",
-                (account["cash"] + trade_amount, account["id"])
+                "UPDATE trading_accounts SET cash=? WHERE id=?", (account["cash"] + trade_amount, account["id"])
             )
 
             # 更新持仓
             new_qty = existing["quantity"] - req.quantity
             if new_qty > 0:
-                conn.execute(
-                    "UPDATE trading_positions SET quantity=? WHERE id=?",
-                    (new_qty, existing["id"])
-                )
+                conn.execute("UPDATE trading_positions SET quantity=? WHERE id=?", (new_qty, existing["id"]))
             else:
-                conn.execute(
-                    "DELETE FROM trading_positions WHERE id=?",
-                    (existing["id"],)
-                )
+                conn.execute("DELETE FROM trading_positions WHERE id=?", (existing["id"],))
 
         # 记录交易
         trade_id = f"trade_{uuid.uuid4().hex[:12]}"
         conn.execute(
             """INSERT INTO trading_history (id, account_id, symbol, action, quantity, price, amount, created_at)
                VALUES (?,?,?,?,?,?,?,?)""",
-            (trade_id, account["id"], req.symbol, req.action, req.quantity, price, trade_amount, datetime.now().isoformat())
+            (
+                trade_id,
+                account["id"],
+                req.symbol,
+                req.action,
+                req.quantity,
+                price,
+                trade_amount,
+                datetime.now().isoformat(),
+            ),
         )
 
         conn.commit()
@@ -532,9 +531,7 @@ async def reset_portfolio(current_user: dict = require_auth()):
     conn = get_db()
     try:
         # 删除旧账户和关联数据
-        account = conn.execute(
-            "SELECT id FROM trading_accounts WHERE user_id=?", (user_id,)
-        ).fetchone()
+        account = conn.execute("SELECT id FROM trading_accounts WHERE user_id=?", (user_id,)).fetchone()
 
         if account:
             conn.execute("DELETE FROM trading_positions WHERE account_id=?", (account["id"],))
@@ -546,7 +543,7 @@ async def reset_portfolio(current_user: dict = require_auth()):
         conn.execute(
             """INSERT INTO trading_accounts (id, user_id, cash, created_at)
                VALUES (?,?,1000000,?)""",
-            (account_id, user_id, datetime.now().isoformat())
+            (account_id, user_id, datetime.now().isoformat()),
         )
         conn.commit()
 

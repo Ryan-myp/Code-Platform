@@ -1,16 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Bot, Send, Plus, Trash2, ArrowLeft, Sparkles,
-  Database, Wrench, FileText, Menu, Cpu, MessageSquare,
+  Bot,
+  Send,
+  Plus,
+  Trash2,
+  ArrowLeft,
+  Sparkles,
+  Database,
+  Wrench,
+  FileText,
+  Menu,
+  Cpu,
+  MessageSquare,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatDateTime } from '../lib/format'
-import {
-  Button, Empty, PageLoading, ErrorState, ConfirmDialog,
-} from '../components/ui'
+import { Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
 
 /** 安全解析 JSON 字段 */
 function safeParseArray(val) {
@@ -346,8 +354,8 @@ export default function AgentExecutePage() {
                           msg.role === 'user'
                             ? 'bg-purple-600 text-white rounded-br-sm'
                             : msg.error
-                            ? 'bg-red-50 border border-red-200 text-red-700 rounded-bl-sm'
-                            : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm'
+                              ? 'bg-red-50 border border-red-200 text-red-700 rounded-bl-sm'
+                              : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm'
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-1.5">
@@ -374,9 +382,18 @@ export default function AgentExecutePage() {
                       <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-sm">
                         <div className="flex items-center gap-2">
                           <div className="flex gap-1">
-                            <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                            <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                            <span className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                            <span
+                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
+                              style={{ animationDelay: '0ms' }}
+                            />
+                            <span
+                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
+                              style={{ animationDelay: '150ms' }}
+                            />
+                            <span
+                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
+                              style={{ animationDelay: '300ms' }}
+                            />
                           </div>
                           <span className="text-sm text-gray-500">{agent.name} 正在思考…</span>
                         </div>
@@ -438,7 +455,9 @@ export default function AgentExecutePage() {
             <div className="flex items-center gap-2">
               <Cpu className="w-4 h-4 text-gray-400 flex-shrink-0" />
               <span className="text-gray-500">模型</span>
-              <span className="text-gray-900 ml-auto font-medium">{agent.model || 'agnes-2.5-flash'}</span>
+              <span className="text-gray-900 ml-auto font-medium">
+                {agent.model || 'agnes-2.5-flash'}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Wrench className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -464,7 +483,10 @@ export default function AgentExecutePage() {
                   <p className="text-xs font-medium text-gray-500 mb-1.5">已绑定工具</p>
                   <div className="flex flex-wrap gap-1.5">
                     {tools.slice(0, 8).map((t, i) => (
-                      <span key={i} className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
+                      <span
+                        key={i}
+                        className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded"
+                      >
                         {typeof t === 'string' ? t : t?.name || t?.id || '工具'}
                       </span>
                     ))}

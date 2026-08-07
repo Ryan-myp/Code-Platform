@@ -74,12 +74,14 @@ SEARCH_SUMMARY_SYSTEM = """你是资深信息研究分析师，拥有10年+跨�
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class WebSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="搜索关键词")
     num_results: int = Field(5, ge=1, le=10, description="返回结果数量")
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -129,6 +131,7 @@ init_db()
 
 # ── DuckDuckGo 搜索 ────────────────────────────────────────
 
+
 def _search_ddg(query: str, num: int = 5) -> list[dict]:
     """调用 DuckDuckGo Instant Answer API（免费，无需Key）。"""
     try:
@@ -141,22 +144,26 @@ def _search_ddg(query: str, num: int = 5) -> list[dict]:
 
         # Abstract / Instant Answer
         if data.get("AbstractText"):
-            results.append({
-                "title": data.get("Heading", query),
-                "snippet": data["AbstractText"],
-                "url": data.get("AbstractURL", ""),
-                "source": data.get("AbstractSource", "DuckDuckGo"),
-            })
+            results.append(
+                {
+                    "title": data.get("Heading", query),
+                    "snippet": data["AbstractText"],
+                    "url": data.get("AbstractURL", ""),
+                    "source": data.get("AbstractSource", "DuckDuckGo"),
+                }
+            )
 
         # Related Topics
         for topic in data.get("RelatedTopics", [])[:num]:
             if isinstance(topic, dict) and topic.get("Text"):
-                results.append({
-                    "title": topic.get("FirstURL", "").split("/")[-1].replace("_", " "),
-                    "snippet": topic["Text"],
-                    "url": topic.get("FirstURL", ""),
-                    "source": "DuckDuckGo",
-                })
+                results.append(
+                    {
+                        "title": topic.get("FirstURL", "").split("/")[-1].replace("_", " "),
+                        "snippet": topic["Text"],
+                        "url": topic.get("FirstURL", ""),
+                        "source": "DuckDuckGo",
+                    }
+                )
 
         return results[:num]
     except Exception as e:
@@ -178,12 +185,14 @@ def _search_fallback(query: str, num: int = 5) -> list[dict]:
         urls = data[3] if len(data) > 3 else []
 
         for i in range(min(len(titles), num)):
-            results.append({
-                "title": titles[i],
-                "snippet": snippets[i] if i < len(snippets) else "",
-                "url": urls[i] if i < len(urls) else "",
-                "source": "Wikipedia",
-            })
+            results.append(
+                {
+                    "title": titles[i],
+                    "snippet": snippets[i] if i < len(snippets) else "",
+                    "url": urls[i] if i < len(urls) else "",
+                    "source": "Wikipedia",
+                }
+            )
 
         return results
     except Exception as e:
@@ -195,8 +204,10 @@ def _search_fallback(query: str, num: int = 5) -> list[dict]:
 
 # ── 异步任务：联网搜索（进度/自动重试/并发控制）──
 
+
 async def _web_search_worker(payload: dict, progress: Callable | None = None) -> dict:
     """联网搜索 worker：多源搜索 → LLM 整合摘要 → 历史入库（带用户归属）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -216,7 +227,9 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
         raw = call_llm(
             "你是一个知识渊博的助手。用户问了一个问题，但搜索引擎没有返回结果。请基于你的知识回答。如果不知道就说不知道。",
             f"问题：{query}",
-            max_tokens=800, temperature=0.3, timeout=30,
+            max_tokens=800,
+            temperature=0.3,
+            timeout=30,
         )
         log_usage("web_search_noresults", len(query), len(raw), 0)
         _report(100, "完成")
@@ -224,7 +237,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
 
     search_context = ""
     for i, r in enumerate(results):
-        search_context += f"\n[来源{i+1}] {r['title']}\n{r['snippet']}\nURL: {r['url']}\n"
+        search_context += f"\n[来源{i + 1}] {r['title']}\n{r['snippet']}\nURL: {r['url']}\n"
 
     _report(45, "AI 整合摘要中")
     system_prompt = SEARCH_SUMMARY_SYSTEM.replace("{search_results}", search_context)
@@ -237,8 +250,13 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO search_history (id, query, results, user_id, created_at) VALUES (?,?,?,?,?)",
-            (sid, query, json.dumps({"summary": summary, "sources": results}, ensure_ascii=False),
-             payload.get("user_id", ""), datetime.now().isoformat()),
+            (
+                sid,
+                query,
+                json.dumps({"summary": summary, "sources": results}, ensure_ascii=False),
+                payload.get("user_id", ""),
+                datetime.now().isoformat(),
+            ),
         )
     _report(100, "完成")
     return {
@@ -260,10 +278,12 @@ async def web_search(req: WebSearchRequest, current_user: dict = require_auth())
     """AI联网搜索（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "web_search_query", payload,
+        "web_search_query",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),

@@ -19,13 +19,13 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import datetime
 from io import BytesIO
-from typing import Callable
 
 import requests
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from common.artifacts import save_artifact
@@ -59,9 +59,12 @@ def _save_artifact(filename: str, project_id: str, prompt: str, extra_meta: dict
     if extra_meta:
         meta.update(extra_meta)
     return save_artifact(
-        art_type="image", project_id=project_id, author="image_factory",
+        art_type="image",
+        project_id=project_id,
+        author="image_factory",
         media_url=f"/api/image-factory/images/{filename}",
-        content={"filename": filename, "prompt": prompt}, metadata=meta,
+        content={"filename": filename, "prompt": prompt},
+        metadata=meta,
     )
 
 
@@ -101,7 +104,7 @@ def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",          # Linux：文泉驿（简体）
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",  # Linux：文泉驿（简体）
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux：Noto CJK
     ]
     for fp in font_paths:
@@ -183,7 +186,7 @@ def _read_file_field(payload: dict, key: str) -> bytes | None:
     if not val:
         return None
     if isinstance(val, str) and val.startswith(_TMP_PREFIX):
-        path = val[len(_TMP_PREFIX):]
+        path = val[len(_TMP_PREFIX) :]
         try:
             with open(path, "rb") as f:
                 return f.read()
@@ -205,7 +208,7 @@ async def _write_file_field(content: bytes) -> str:
 
 
 # ── 文生图 API ────────────────────────────────────────────────
-async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文生图（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
@@ -257,11 +260,14 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
                         img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
                         img = Image.open(io.BytesIO(img_resp.content))
                         filename = save_image(img)
-                        art_id = _save_artifact(filename, project_id, prompt,
-                                                {"size": size_str, "model": model})
+                        art_id = _save_artifact(filename, project_id, prompt, {"size": size_str, "model": model})
                         results.append(
-                            {"id": filename, "artifact_id": art_id,
-                             "url": f"/api/image-factory/images/{filename}", "prompt": prompt}
+                            {
+                                "id": filename,
+                                "artifact_id": art_id,
+                                "url": f"/api/image-factory/images/{filename}",
+                                "prompt": prompt,
+                            }
                         )
             else:
                 results.append({"error": f"生成失败：{data}", "prompt": prompt})
@@ -300,14 +306,22 @@ async def text_to_image(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt, "size": size, "model": model,
-               "batch_size": batch_size, "n": n, "project_id": project_id}
+    payload = {
+        "prompt": prompt,
+        "size": size,
+        "model": model,
+        "batch_size": batch_size,
+        "n": n,
+        "project_id": project_id,
+    }
     if sync:
         return await _image_t2i_worker(payload)
     task = create_task("image_t2i", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "文生图任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "文生图任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -349,12 +363,17 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
                 img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
                 result_img = Image.open(io.BytesIO(img_resp.content))
                 filename = save_image(result_img)
-                art_id = _save_artifact(filename, project_id, prompt,
-                                        {"size": size, "model": model, "strength": strength})
+                art_id = _save_artifact(
+                    filename, project_id, prompt, {"size": size, "model": model, "strength": strength}
+                )
                 _report(100, "生成完成")
-                return {"id": filename, "artifact_id": art_id,
-                        "url": f"/api/image-factory/images/{filename}", "prompt": prompt,
-                        "project_id": project_id}
+                return {
+                    "id": filename,
+                    "artifact_id": art_id,
+                    "url": f"/api/image-factory/images/{filename}",
+                    "prompt": prompt,
+                    "project_id": project_id,
+                }
         raise HTTPException(500, f"生成失败: {data}")
     except HTTPException:
         raise
@@ -390,8 +409,10 @@ async def image_to_image(
     payload["image"] = await _write_file_field(image_content)
     task = create_task("image_i2i", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "图生图任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "图生图任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -700,8 +721,9 @@ async def create_template(req: dict):
     return template
 
 
-async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """渲染模板生成图片（同步/异步任务共用执行体）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             try:
@@ -782,8 +804,10 @@ async def render_template(
         return await _image_template_worker(req)
     task = create_task("image_template", req, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "模板渲染任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "模板渲染任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -869,8 +893,9 @@ async def person_segmentation(image: UploadFile = File(...)):
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
-async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """虚拟试衣（同步/异步任务共用执行体，异步时回报进度）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             try:
@@ -912,6 +937,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         clothing_description = description
         try:
             from common.config import MODEL_NAME
+
             clothing_data_uri_desc = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
             analyze_payload = {
                 "model": MODEL_NAME,
@@ -1029,8 +1055,9 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             raise HTTPException(500, f"生成失败: {data}")
 
         filename = save_image(result_img)
-        art_id = _save_artifact(filename, project_id, prompt,
-                                {"style": style, "background": background, "feature": "try-on"})
+        art_id = _save_artifact(
+            filename, project_id, prompt, {"style": style, "background": background, "feature": "try-on"}
+        )
         _report(100, "试穿效果已生成")
         return {
             "id": filename,
@@ -1073,8 +1100,7 @@ async def virtual_try_on(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"description": description, "style": style,
-               "background": background, "project_id": project_id}
+    payload = {"description": description, "style": style, "background": background, "project_id": project_id}
     if sync:
         payload["person_image"] = base64.b64encode(person_content).decode()
         payload["clothing_image"] = base64.b64encode(clothing_content).decode()
@@ -1083,8 +1109,10 @@ async def virtual_try_on(
     payload["clothing_image"] = await _write_file_field(clothing_content)
     task = create_task("image_tryon", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "虚拟试衣任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "虚拟试衣任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 

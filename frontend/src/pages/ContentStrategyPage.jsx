@@ -1,12 +1,35 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Flame, Lightbulb, ShieldCheck, Clock, FolderOpen, Plus, Trash2, Pencil,
-  Target, BarChart3, ExternalLink, Loader2, TrendingUp, CheckCircle2, AlertTriangle,
+  Flame,
+  Lightbulb,
+  ShieldCheck,
+  Clock,
+  FolderOpen,
+  Plus,
+  Trash2,
+  Pencil,
+  Target,
+  BarChart3,
+  ExternalLink,
+  Loader2,
+  TrendingUp,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
-import { Button, PageHeader, Card, Empty, PageLoading, ErrorState, Badge, ConfirmDialog, Modal } from '../components/ui'
+import {
+  Button,
+  PageHeader,
+  Card,
+  Empty,
+  PageLoading,
+  ErrorState,
+  Badge,
+  ConfirmDialog,
+  Modal,
+} from '../components/ui'
 
 const SOURCE_LABELS = { weibo: '微博热搜', zhihu: '知乎热榜', '36kr': '36氪' }
 const PLATFORMS = [
@@ -20,7 +43,10 @@ export default function ContentStrategyPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="内容策略" description="热点追踪 · AI 选题 · 合规预检 · 最佳发布时间 · 内容系列" />
+      <PageHeader
+        title="内容策略"
+        description="热点追踪 · AI 选题 · 合规预检 · 最佳发布时间 · 内容系列"
+      />
       <div className="flex gap-2 flex-wrap">
         {[
           { key: 'hotspots', label: '热点追踪', icon: Flame },
@@ -32,7 +58,9 @@ export default function ContentStrategyPage() {
             key={t.key}
             onClick={() => setTab(t.key)}
             className={`px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-1.5 transition-all ${
-              tab === t.key ? 'bg-brand-500 text-white shadow-soft' : 'bg-white border border-ink-200 text-ink-600 hover:border-brand-300 hover:text-brand-600'
+              tab === t.key
+                ? 'bg-brand-500 text-white shadow-soft'
+                : 'bg-white border border-ink-200 text-ink-600 hover:border-brand-300 hover:text-brand-600'
             }`}
           >
             <t.icon className="w-4 h-4" /> {t.label}
@@ -71,7 +99,9 @@ function HotspotsTab() {
     }
   }, [source])
 
-  useEffect(() => { fetchHotspots() }, [fetchHotspots])
+  useEffect(() => {
+    fetchHotspots()
+  }, [fetchHotspots])
 
   const handleSuggest = async (hotspot) => {
     setSuggesting(hotspot.title)
@@ -100,12 +130,17 @@ function HotspotsTab() {
             <Badge color="rose">{hotspots.length}</Badge>
           </h3>
           <div className="flex gap-1.5">
-            {[{ key: '', label: '全部' }, ...Object.entries(SOURCE_LABELS).map(([k, v]) => ({ key: k, label: v }))].map((s) => (
+            {[
+              { key: '', label: '全部' },
+              ...Object.entries(SOURCE_LABELS).map(([k, v]) => ({ key: k, label: v })),
+            ].map((s) => (
               <button
                 key={s.key || 'all'}
                 onClick={() => setSource(s.key)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                  source === s.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  source === s.key
+                    ? 'bg-brand-500 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
                 {s.label}
@@ -113,20 +148,41 @@ function HotspotsTab() {
             ))}
           </div>
         </div>
-        {loading ? <PageLoading /> : error ? <ErrorState message={error} onRetry={fetchHotspots} /> : hotspots.length === 0 ? (
+        {loading ? (
+          <PageLoading />
+        ) : error ? (
+          <ErrorState message={error} onRetry={fetchHotspots} />
+        ) : hotspots.length === 0 ? (
           <Empty icon={Flame} title="暂无热点" />
         ) : (
           <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
             {hotspots.map((h) => (
-              <div key={`${h.source}-${h.rank}`} className="group flex items-center gap-3 p-2.5 rounded-xl hover:bg-brand-50/40 border border-transparent hover:border-brand-100 transition-all">
-                <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
-                  h.rank <= 3 ? 'bg-gradient-to-br from-rose-500 to-orange-400 text-white' : 'bg-gray-100 text-gray-500'
-                }`}>{h.rank}</span>
+              <div
+                key={`${h.source}-${h.rank}`}
+                className="group flex items-center gap-3 p-2.5 rounded-xl hover:bg-brand-50/40 border border-transparent hover:border-brand-100 transition-all"
+              >
+                <span
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                    h.rank <= 3
+                      ? 'bg-gradient-to-br from-rose-500 to-orange-400 text-white'
+                      : 'bg-gray-100 text-gray-500'
+                  }`}
+                >
+                  {h.rank}
+                </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-ink-800 truncate">{h.title}</p>
-                  <p className="text-[11px] text-ink-400">{SOURCE_LABELS[h.source] || h.source} · 热度 {(h.heat / 10000).toFixed(1)}万</p>
+                  <p className="text-[11px] text-ink-400">
+                    {SOURCE_LABELS[h.source] || h.source} · 热度 {(h.heat / 10000).toFixed(1)}万
+                  </p>
                 </div>
-                <Button size="sm" variant="ghost" icon={Lightbulb} loading={suggesting === h.title} onClick={() => handleSuggest(h)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={Lightbulb}
+                  loading={suggesting === h.title}
+                  onClick={() => handleSuggest(h)}
+                >
                   选题
                 </Button>
               </div>
@@ -148,7 +204,9 @@ function HotspotsTab() {
                   key={p.key}
                   onClick={() => setPlatform(p.key)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    platform === p.key ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    platform === p.key
+                      ? 'bg-brand-500 text-white shadow-soft'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   {p.label}
@@ -157,21 +215,31 @@ function HotspotsTab() {
             </div>
           </div>
           {!suggestions ? (
-            <Empty icon={Lightbulb} title="选择左侧热点，生成选题角度" description="AI 将基于热点 × 平台 × 受众生成 3-5 个差异化选题" />
+            <Empty
+              icon={Lightbulb}
+              title="选择左侧热点，生成选题角度"
+              description="AI 将基于热点 × 平台 × 受众生成 3-5 个差异化选题"
+            />
           ) : (
             <div className="space-y-2.5">
               <p className="text-xs text-ink-500">
                 热点：<span className="text-ink-800 font-medium">{suggestions.hotspot}</span>
-                <span className="ml-2 text-ink-300">→ {PLATFORMS.find((p) => p.key === suggestions.platform)?.label}</span>
+                <span className="ml-2 text-ink-300">
+                  → {PLATFORMS.find((p) => p.key === suggestions.platform)?.label}
+                </span>
               </p>
               {(suggestions.suggestions || []).map((s, i) => (
                 <div key={i} className="p-3.5 rounded-xl border border-brand-100 bg-brand-50/40">
                   <p className="text-sm font-medium text-brand-800 flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-brand-500 text-white text-[10px] flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                    <span className="w-5 h-5 rounded-full bg-brand-500 text-white text-[10px] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      {i + 1}
+                    </span>
                     {s.title_direction || s.title}
                   </p>
                   {s.angle && <p className="text-xs text-ink-600 mt-1.5 ml-7">{s.angle}</p>}
-                  {s.audience && <p className="text-[11px] text-ink-400 mt-1 ml-7">目标受众：{s.audience}</p>}
+                  {s.audience && (
+                    <p className="text-[11px] text-ink-400 mt-1 ml-7">目标受众：{s.audience}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -191,7 +259,10 @@ function ComplianceTab() {
   const [result, setResult] = useState(null)
 
   const handleCheck = async () => {
-    if (!title.trim() && !content.trim()) { toast.error('请输入标题或正文'); return }
+    if (!title.trim() && !content.trim()) {
+      toast.error('请输入标题或正文')
+      return
+    }
     setChecking(true)
     try {
       const res = await api.post('/api/strategy/compliance-check', { title, content })
@@ -236,7 +307,13 @@ function ComplianceTab() {
               className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm resize-none"
             />
           </div>
-          <Button variant="primary" icon={ShieldCheck} loading={checking} onClick={handleCheck} className="w-full justify-center">
+          <Button
+            variant="primary"
+            icon={ShieldCheck}
+            loading={checking}
+            onClick={handleCheck}
+            className="w-full justify-center"
+          >
             开始扫描
           </Button>
         </div>
@@ -252,7 +329,11 @@ function ComplianceTab() {
           <div className="space-y-4">
             <div className={`p-4 rounded-xl border ${riskStyle[result.risk] || riskStyle.low}`}>
               <div className="flex items-center gap-2">
-                {result.risk === 'high' ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                {result.risk === 'high' ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
                 <span className="font-semibold">{result.risk_label}</span>
                 {result.total_hits > 0 && <Badge color="rose">{result.total_hits} 处</Badge>}
               </div>
@@ -264,10 +345,17 @@ function ComplianceTab() {
                 <p className="text-xs font-medium text-ink-500 mb-2">命中明细</p>
                 <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
                   {result.hits.map((h, i) => (
-                    <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm">
-                      <Badge color={h.level === 'high' ? 'red' : 'amber'}>{h.level === 'high' ? '高' : '中'}</Badge>
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 p-2.5 rounded-lg bg-gray-50 border border-gray-100 text-sm"
+                    >
+                      <Badge color={h.level === 'high' ? 'red' : 'amber'}>
+                        {h.level === 'high' ? '高' : '中'}
+                      </Badge>
                       <span className="font-mono text-rose-600">{h.word}</span>
-                      <span className="text-[11px] text-ink-400 truncate flex-1">{h.context || ''}</span>
+                      <span className="text-[11px] text-ink-400 truncate flex-1">
+                        {h.context || ''}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -279,7 +367,10 @@ function ComplianceTab() {
                 <p className="text-xs font-medium text-ink-500 mb-2">替换建议</p>
                 <div className="space-y-1.5">
                   {result.suggestions.map((s, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm p-2.5 rounded-lg bg-brand-50 border border-brand-100">
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 text-sm p-2.5 rounded-lg bg-brand-50 border border-brand-100"
+                    >
                       <span className="text-rose-500 line-through font-mono">{s.original}</span>
                       <span className="text-ink-300">→</span>
                       <span className="text-emerald-600 font-mono">{s.suggest}</span>
@@ -315,7 +406,9 @@ function BestTimeTab() {
     }
   }, [platform])
 
-  useEffect(() => { fetchBestTime() }, [fetchBestTime])
+  useEffect(() => {
+    fetchBestTime()
+  }, [fetchBestTime])
 
   return (
     <Card>
@@ -324,12 +417,19 @@ function BestTimeTab() {
           <Clock className="w-4 h-4 text-sky-500" /> 最佳发布时间
         </h3>
         <div className="flex gap-1.5">
-          {[{ key: '', label: '全平台' }, { key: 'wechat', label: '公众号' }, { key: 'douyin', label: '抖音' }, { key: 'xhs', label: '小红书' }].map((p) => (
+          {[
+            { key: '', label: '全平台' },
+            { key: 'wechat', label: '公众号' },
+            { key: 'douyin', label: '抖音' },
+            { key: 'xhs', label: '小红书' },
+          ].map((p) => (
             <button
               key={p.key}
               onClick={() => setPlatform(p.key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                platform === p.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                platform === p.key
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
               {p.label}
@@ -337,22 +437,36 @@ function BestTimeTab() {
           ))}
         </div>
       </div>
-      {loading ? <PageLoading /> : error ? <ErrorState message={error} onRetry={fetchBestTime} /> : (
+      {loading ? (
+        <PageLoading />
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchBestTime} />
+      ) : (
         <div>
           <p className="text-xs text-ink-400 mb-4">{data?.note}</p>
           <div className="grid sm:grid-cols-3 gap-3">
             {(data?.top_slots || []).map((s, i) => (
-              <div key={i} className={`p-4 rounded-2xl border text-center ${i === 0 ? 'border-amber-200 bg-gradient-to-b from-amber-50 to-orange-50' : 'border-ink-100 bg-white'}`}>
-                <p className="text-[11px] text-ink-400 mb-1">{i === 0 ? '🏆 最佳时段' : `TOP${i + 1}`}</p>
+              <div
+                key={i}
+                className={`p-4 rounded-2xl border text-center ${i === 0 ? 'border-amber-200 bg-gradient-to-b from-amber-50 to-orange-50' : 'border-ink-100 bg-white'}`}
+              >
+                <p className="text-[11px] text-ink-400 mb-1">
+                  {i === 0 ? '🏆 最佳时段' : `TOP${i + 1}`}
+                </p>
                 <p className="text-lg font-bold text-ink-900">{s.label || s.weekday}</p>
                 <p className="text-xs text-ink-500 mt-1">{s.reason || `平均阅读 ${s.avg_views}`}</p>
-                {s.avg_views > 0 && <p className="text-[11px] text-ink-400 mt-1">平均 {s.avg_views} 阅读 · {s.sample_count} 条样本</p>}
+                {s.avg_views > 0 && (
+                  <p className="text-[11px] text-ink-400 mt-1">
+                    平均 {s.avg_views} 阅读 · {s.sample_count} 条样本
+                  </p>
+                )}
               </div>
             ))}
           </div>
           {data?.data_points === 0 && (
             <p className="text-xs text-amber-600 mt-4 flex items-center gap-1.5">
-              <AlertTriangle className="w-3.5 h-3.5" /> 发布更多内容并录入效果数据后，将基于真实数据推荐
+              <AlertTriangle className="w-3.5 h-3.5" />{' '}
+              发布更多内容并录入效果数据后，将基于真实数据推荐
             </p>
           )}
         </div>
@@ -388,10 +502,15 @@ function SeriesTab() {
     }
   }, [])
 
-  useEffect(() => { fetchSeries() }, [fetchSeries])
+  useEffect(() => {
+    fetchSeries()
+  }, [fetchSeries])
 
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('请填写系列名称'); return }
+    if (!form.name.trim()) {
+      toast.error('请填写系列名称')
+      return
+    }
     setSaving(true)
     try {
       if (editing) {
@@ -440,23 +559,51 @@ function SeriesTab() {
           <FolderOpen className="w-4 h-4 text-brand-500" /> 内容系列 / 专栏
           <Badge color="brand">{series.length}</Badge>
         </h3>
-        <Button variant="primary" size="sm" icon={Plus} onClick={() => { setEditing(null); setForm({ name: '', description: '', platform: '' }); setCreateOpen(true) }}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={Plus}
+          onClick={() => {
+            setEditing(null)
+            setForm({ name: '', description: '', platform: '' })
+            setCreateOpen(true)
+          }}
+        >
           新建系列
         </Button>
       </div>
-      {loading ? <PageLoading /> : error ? <ErrorState message={error} onRetry={fetchSeries} /> : series.length === 0 ? (
-        <Empty icon={FolderOpen} title="还没有内容系列" description="将同主题的发布记录归入系列，沉淀栏目 IP" />
+      {loading ? (
+        <PageLoading />
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchSeries} />
+      ) : series.length === 0 ? (
+        <Empty
+          icon={FolderOpen}
+          title="还没有内容系列"
+          description="将同主题的发布记录归入系列，沉淀栏目 IP"
+        />
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {series.map((s) => (
-            <div key={s.id} className="group bg-white rounded-2xl border border-ink-100 p-4 hover:shadow-soft hover:border-brand-200 transition-all">
+            <div
+              key={s.id}
+              className="group bg-white rounded-2xl border border-ink-100 p-4 hover:shadow-soft hover:border-brand-200 transition-all"
+            >
               <div className="flex items-start justify-between">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center text-white font-bold">
                   {s.name?.[0] || '系'}
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
-                    onClick={() => { setEditing(s.id); setForm({ name: s.name, description: s.description || '', platform: s.platform || '' }); setCreateOpen(true) }}
+                    onClick={() => {
+                      setEditing(s.id)
+                      setForm({
+                        name: s.name,
+                        description: s.description || '',
+                        platform: s.platform || '',
+                      })
+                      setCreateOpen(true)
+                    }}
                     className="p-1.5 rounded-lg text-ink-300 hover:text-brand-500 hover:bg-brand-50 transition-colors"
                     title="编辑"
                   >
@@ -472,10 +619,16 @@ function SeriesTab() {
                 </div>
               </div>
               <p className="font-medium text-ink-900 mt-3 truncate">{s.name}</p>
-              <p className="text-xs text-ink-400 mt-1 line-clamp-2 min-h-[32px]">{s.description || '暂无描述'}</p>
+              <p className="text-xs text-ink-400 mt-1 line-clamp-2 min-h-[32px]">
+                {s.description || '暂无描述'}
+              </p>
               <div className="flex items-center justify-between mt-3">
-                <span className="text-[11px] text-ink-400">{s.platform || '全平台'} · {s.item_count || 0} 篇</span>
-                <Button size="sm" variant="ghost" icon={BarChart3} onClick={() => openStats(s.id)}>效果</Button>
+                <span className="text-[11px] text-ink-400">
+                  {s.platform || '全平台'} · {s.item_count || 0} 篇
+                </span>
+                <Button size="sm" variant="ghost" icon={BarChart3} onClick={() => openStats(s.id)}>
+                  效果
+                </Button>
               </div>
             </div>
           ))}
@@ -483,7 +636,11 @@ function SeriesTab() {
       )}
 
       {/* 新建/编辑系列 */}
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={editing ? '编辑系列' : '新建系列'}>
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title={editing ? '编辑系列' : '新建系列'}
+      >
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">系列名称 *</label>
@@ -512,7 +669,9 @@ function SeriesTab() {
                   key={p || 'all'}
                   onClick={() => setForm({ ...form, platform: p })}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    form.platform === p ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    form.platform === p
+                      ? 'bg-brand-500 text-white shadow-soft'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   {p === '' ? '全平台' : PLATFORMS.find((x) => x.key === p)?.label}
@@ -522,8 +681,15 @@ function SeriesTab() {
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-6">
-          <Button variant="ghost" onClick={() => setCreateOpen(false)}>取消</Button>
-          <Button variant="primary" icon={editing ? Pencil : Plus} loading={saving} onClick={handleSave}>
+          <Button variant="ghost" onClick={() => setCreateOpen(false)}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            icon={editing ? Pencil : Plus}
+            loading={saving}
+            onClick={handleSave}
+          >
             {editing ? '保存修改' : '创建'}
           </Button>
         </div>
@@ -539,22 +705,36 @@ function SeriesTab() {
                 { label: '总阅读', value: stats.total_views || 0 },
                 { label: '总互动', value: (stats.total_likes || 0) + (stats.total_comments || 0) },
               ].map((s, i) => (
-                <div key={i} className="p-4 rounded-2xl bg-gradient-to-br from-brand-50 to-indigo-50 border border-brand-100 text-center">
+                <div
+                  key={i}
+                  className="p-4 rounded-2xl bg-gradient-to-br from-brand-50 to-indigo-50 border border-brand-100 text-center"
+                >
                   <p className="text-2xl font-bold text-brand-700">{s.value}</p>
                   <p className="text-xs text-ink-500 mt-1">{s.label}</p>
                 </div>
               ))}
             </div>
             {(stats.items || []).length === 0 ? (
-              <Empty icon={BarChart3} title="系列暂无内容" description="在发布中心将记录加入系列即可统计" />
+              <Empty
+                icon={BarChart3}
+                title="系列暂无内容"
+                description="在发布中心将记录加入系列即可统计"
+              />
             ) : (
               <div className="space-y-2">
                 {(stats.items || []).map((it, i) => (
-                  <div key={it.id || i} className="flex items-center gap-3 p-3 rounded-xl border border-ink-100 text-sm">
-                    <span className="w-6 h-6 rounded-lg bg-gray-100 text-gray-500 text-xs flex items-center justify-center flex-shrink-0">{it.seq || i + 1}</span>
+                  <div
+                    key={it.id || i}
+                    className="flex items-center gap-3 p-3 rounded-xl border border-ink-100 text-sm"
+                  >
+                    <span className="w-6 h-6 rounded-lg bg-gray-100 text-gray-500 text-xs flex items-center justify-center flex-shrink-0">
+                      {it.seq || i + 1}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <p className="truncate text-ink-800">{it.title || it.record_id}</p>
-                      <p className="text-[11px] text-ink-400">{it.platform || '—'} · {it.pub_at ? formatDateTime(it.pub_at) : ''}</p>
+                      <p className="text-[11px] text-ink-400">
+                        {it.platform || '—'} · {it.pub_at ? formatDateTime(it.pub_at) : ''}
+                      </p>
                     </div>
                     <div className="text-xs text-ink-400 flex gap-3 flex-shrink-0">
                       <span>👁 {it.views || 0}</span>
@@ -566,7 +746,9 @@ function SeriesTab() {
               </div>
             )}
           </div>
-        ) : <PageLoading />}
+        ) : (
+          <PageLoading />
+        )}
       </Modal>
 
       <ConfirmDialog

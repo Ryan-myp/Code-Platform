@@ -4,8 +4,8 @@
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import requests
 from fastapi import APIRouter, Form, HTTPException, Query
@@ -30,7 +30,7 @@ MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 LYRICS_EXAMPLES = {
     "love": "[Verse 1]\n阳光透过窗帘洒在你脸上\n你笑着问我今天怎么样\n咖啡的香气弥漫在空气\n这一刻时间仿佛静止\n\n[Chorus]\n你是我最美的遇见\n像星光照亮我的夜\n每一秒都想和你在一起\n这份爱永远不会变\n\n[Verse 2]\n手牵着手走在夕阳下\n影子被拉得好长好远\n你说我们的故事才刚开始\n未来还有很多美好要分享",
     "nature": "[Verse 1]\n山峦叠翠云雾缭绕\n溪水潺潺流淌过高桥\n鸟儿在枝头歌唱\n大自然是最美的诗行\n\n[Chorus]\n让我走进你的怀抱\n感受清风和阳光\n每一片叶每一朵花\n都在诉说着生命的魔法",
-    "dream": "[Verse 1]\n夜晚的星空如此明亮\n我望着远方静静想\n梦想就像那流星划过\n带着希望飞向远方\n\n[Chorus]\n追逐梦的脚步不停歇\n哪怕前路有多曲折\n心中有光就不怕黑夜\n梦想终会实现的那一刻"
+    "dream": "[Verse 1]\n夜晚的星空如此明亮\n我望着远方静静想\n梦想就像那流星划过\n带着希望飞向远方\n\n[Chorus]\n追逐梦的脚步不停歇\n哪怕前路有多曲折\n心中有光就不怕黑夜\n梦想终会实现的那一刻",
 }
 
 
@@ -44,8 +44,9 @@ def generate_music_id() -> str:
     return f"music_{int(time.time() * 1000)}"
 
 
-def _save_artifact(filename: str, project_id: str, art_type: str, content: str,
-                   duration: float = 0.0, extra_meta: dict | None = None) -> str:
+def _save_artifact(
+    filename: str, project_id: str, art_type: str, content: str, duration: float = 0.0, extra_meta: dict | None = None
+) -> str:
     """将音乐/歌词产物登记到 artifacts 表（委托 common.artifacts.save_artifact），返回 artifact id。
 
     - art_type: 'lyrics' 或 'audio'
@@ -56,11 +57,17 @@ def _save_artifact(filename: str, project_id: str, art_type: str, content: str,
     meta = {"filename": filename, "type": art_type}
     if extra_meta:
         meta.update(extra_meta)
-    media_url = (f"/api/music-factory/audios/{filename}" if art_type == "audio"
-                 else f"/api/music-factory/lyrics/{filename}")
+    media_url = (
+        f"/api/music-factory/audios/{filename}" if art_type == "audio" else f"/api/music-factory/lyrics/{filename}"
+    )
     return save_artifact(
-        art_type=art_type, project_id=project_id, author="music_factory",
-        media_url=media_url, content=content, metadata=meta, duration=duration,
+        art_type=art_type,
+        project_id=project_id,
+        author="music_factory",
+        media_url=media_url,
+        content=content,
+        metadata=meta,
+        duration=duration,
     )
 
 
@@ -126,12 +133,12 @@ async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) 
         "long": "3到5分钟的长篇歌曲，包含多个段落和变奏",
     }
 
-    prompt = f"""创作一首{lang_prompts.get(language, '中文')}{style_prompts.get(style, '流行')}的歌词：
+    prompt = f"""创作一首{lang_prompts.get(language, "中文")}{style_prompts.get(style, "流行")}的歌词：
 
 主题：{theme}
-情感基调：{mood_prompts.get(mood, '欢快')}
-风格：{style_prompts.get(style, '流行')}
-长度要求：{length_prompts.get(length, '中歌')}
+情感基调：{mood_prompts.get(mood, "欢快")}
+风格：{style_prompts.get(style, "流行")}
+长度要求：{length_prompts.get(length, "中歌")}
 
 要求：
 - 歌词要富有诗意和感染力
@@ -175,9 +182,14 @@ async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) 
     lyrics_filename = f"{generate_music_id()}.txt"
     lyrics_path = MUSIC_DIR / lyrics_filename
     lyrics_path.write_text(lyrics, encoding="utf-8")
-    art_id = _save_artifact(lyrics_filename, project_id, "lyrics", lyrics, 0.0,
-                            {"theme": theme, "style": style, "language": language,
-                             "length": length, "mood": mood})
+    art_id = _save_artifact(
+        lyrics_filename,
+        project_id,
+        "lyrics",
+        lyrics,
+        0.0,
+        {"theme": theme, "style": style, "language": language, "length": length, "mood": mood},
+    )
     _report(100, "歌词已生成")
     return {
         "lyrics": lyrics,
@@ -209,14 +221,22 @@ async def generate_lyrics(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"theme": theme, "style": style, "language": language,
-               "length": length, "mood": mood, "project_id": project_id}
+    payload = {
+        "theme": theme,
+        "style": style,
+        "language": language,
+        "length": length,
+        "mood": mood,
+        "project_id": project_id,
+    }
     if sync:
         return await _music_lyrics_worker(payload)
     task = create_task("music_lyrics", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "歌词生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "歌词生成任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -294,8 +314,14 @@ async def _music_sing_worker(payload: dict, progress: Callable | None = None) ->
             filename = f"{generate_music_id()}.mp3"
             save_music(response.content, filename)
             duration = len(lyrics) / 15
-            art_id = _save_artifact(filename, project_id, "audio", lyrics[:500], duration,
-                                    {"voice": voice, "style": style, "tts_voice": tts_voice})
+            art_id = _save_artifact(
+                filename,
+                project_id,
+                "audio",
+                lyrics[:500],
+                duration,
+                {"voice": voice, "style": style, "tts_voice": tts_voice},
+            )
             _report(100, "人声已生成")
             return {
                 "audio_id": filename,
@@ -334,8 +360,10 @@ async def generate_vocal(
         return await _music_sing_worker(payload)
     task = create_task("music_sing", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "人声合成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "人声合成任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -369,13 +397,17 @@ async def list_audios():
         if f.is_file():
             ext = f.suffix.lower()
             item_type = "audio" if ext in [".mp3", ".wav", ".ogg"] else "lyrics"
-            items.append({
-                "filename": f.name,
-                "url": f"/api/music-factory/audios/{f.name}" if ext in [".mp3", ".wav", ".ogg"] else f"/api/music-factory/lyrics/{f.name}",
-                "size": f.stat().st_size,
-                "type": item_type,
-                "ext": ext,
-            })
+            items.append(
+                {
+                    "filename": f.name,
+                    "url": f"/api/music-factory/audios/{f.name}"
+                    if ext in [".mp3", ".wav", ".ogg"]
+                    else f"/api/music-factory/lyrics/{f.name}",
+                    "size": f.stat().st_size,
+                    "type": item_type,
+                    "ext": ext,
+                }
+            )
     return {"items": items, "count": len(items)}
 
 
@@ -387,13 +419,3 @@ async def get_lyrics_file(filename: str):
         raise HTTPException(404, "歌词文件不存在")
     content = lyrics_path.read_text(encoding="utf-8")
     return {"filename": filename, "content": content}
-
-
-@router.delete("/delete/{filename}")
-async def delete_item(filename: str):
-    """删除文件"""
-    file_path = MUSIC_DIR / filename
-    if not file_path.exists():
-        raise HTTPException(404, "文件不存在")
-    file_path.unlink()
-    return {"success": True}

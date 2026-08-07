@@ -87,12 +87,14 @@ VIDEO_ANALYZE_SYSTEM = """你是一位资深视频内容策略专家，拥有8�
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class AnalyzeRequest(BaseModel):
     video_id: str = Field(..., description="上传后返回的视频ID")
     description: str = Field("", max_length=500, description="用户对视频内容的描述（可选，帮助AI理解）")
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -118,18 +120,30 @@ def init_db():
                 pass
         conn.commit()
 
+
 init_db()
 
 # ── API ──────────────────────────────────────────────────
+
 
 def _probe_video_meta(filepath: str, vid: str) -> tuple:
     """探测视频时长并提取 3 帧缩略图（前/中/后）。纯同步函数，由线程池执行避免阻塞事件循环。"""
     duration = None
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", filepath],
-            capture_output=True, text=True, timeout=15
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                filepath,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode == 0:
             duration = round(float(result.stdout.strip()), 1)
@@ -143,14 +157,30 @@ def _probe_video_meta(filepath: str, vid: str) -> tuple:
             frame_file = os.path.join(FRAME_DIR, f"{vid}_frame{idx}.jpg")
             try:
                 subprocess.run(
-                    ["ffmpeg", "-y", "-ss", str(seek_time), "-i", filepath,
-                     "-vframes", "1", "-q:v", "2", "-s", "640x360", frame_file],
-                    capture_output=True, timeout=20
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-ss",
+                        str(seek_time),
+                        "-i",
+                        filepath,
+                        "-vframes",
+                        "1",
+                        "-q:v",
+                        "2",
+                        "-s",
+                        "640x360",
+                        frame_file,
+                    ],
+                    capture_output=True,
+                    timeout=20,
                 )
             except Exception:
                 continue
             if os.path.exists(frame_file):
-                frames.append({"index": idx, "time": round(seek_time, 1), "url": f"/uploads/video_frames/{vid}_frame{idx}.jpg"})
+                frames.append(
+                    {"index": idx, "time": round(seek_time, 1), "url": f"/uploads/video_frames/{vid}_frame{idx}.jpg"}
+                )
     return duration, frames
 
 
@@ -161,11 +191,11 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
         raise HTTPException(400, "未选择文件")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    allowed = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv'}
+    allowed = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".flv", ".wmv"}
     if ext not in allowed:
         raise HTTPException(400, f"不支持的视频格式：{ext}，支持 {', '.join(allowed)}")
 
-    vid = f"vid_{int(datetime.now().timestamp()*1000)}"
+    vid = f"vid_{int(datetime.now().timestamp() * 1000)}"
     save_path = os.path.join(UPLOAD_DIR, f"{vid}{ext}")
 
     content = await file.read()
@@ -175,7 +205,15 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO video_records (id, filename, filepath, file_size, status, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
-            (vid, file.filename, save_path, len(content), "uploaded", str(current_user.get("user_id", "")), datetime.now().isoformat()),
+            (
+                vid,
+                file.filename,
+                save_path,
+                len(content),
+                "uploaded",
+                str(current_user.get("user_id", "")),
+                datetime.now().isoformat(),
+            ),
         )
 
     return {
@@ -191,8 +229,10 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
 
 # ── 异步任务：视频分析（进度/自动重试/并发控制）──
 
+
 async def _video_analyze_worker(payload: dict, progress: Callable | None = None) -> dict:
     """视频分析 worker：元数据 → AI 摘要/场景/字幕 → 记录落库。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -260,10 +300,12 @@ async def analyze_video(req: AnalyzeRequest, current_user: dict = require_auth()
     """分析视频内容（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "video_analyze", payload,
+        "video_analyze",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -289,8 +331,12 @@ async def list_records(current_user: dict = require_auth()):
 
     return [
         {
-            "id": r[0], "filename": r[1], "file_size": r[2],
-            "description": r[3], "status": r[4], "created_at": r[5],
+            "id": r[0],
+            "filename": r[1],
+            "file_size": r[2],
+            "description": r[3],
+            "status": r[4],
+            "created_at": r[5],
         }
         for r in rows
     ]
@@ -302,9 +348,7 @@ def _can_access(conn, record_id: str, current_user: dict) -> bool:
     uid = str(current_user.get("user_id", ""))
     if role in ("admin", "super_admin"):
         return True
-    row = conn.execute(
-        "SELECT user_id FROM video_records WHERE id=?", (record_id,)
-    ).fetchone()
+    row = conn.execute("SELECT user_id FROM video_records WHERE id=?", (record_id,)).fetchone()
     return bool(row) and str(row[0] or "") == uid
 
 

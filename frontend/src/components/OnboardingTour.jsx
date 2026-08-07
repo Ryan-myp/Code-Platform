@@ -1,8 +1,18 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, ArrowRight, Check, Home, LayoutDashboard, Sparkles,
-  UserCircle, Wrench, X, Zap, PartyPopper, Rocket,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Home,
+  LayoutDashboard,
+  Sparkles,
+  UserCircle,
+  Wrench,
+  X,
+  Zap,
+  PartyPopper,
+  Rocket,
 } from 'lucide-react'
 
 /**
@@ -91,10 +101,15 @@ export default function OnboardingTour({ isAuthenticated }) {
 
         <div className="p-8">
           <div className="flex items-start justify-between mb-6">
-            <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${current.color} flex items-center justify-center shadow-glow`}>
+            <div
+              className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${current.color} flex items-center justify-center shadow-glow`}
+            >
               <current.icon className="w-7 h-7 text-white" />
             </div>
-            <button onClick={close} className="p-1.5 hover:bg-ink-50 rounded-lg text-ink-400 hover:text-ink-600 transition-colors">
+            <button
+              onClick={close}
+              className="p-1.5 hover:bg-ink-50 rounded-lg text-ink-400 hover:text-ink-600 transition-colors"
+            >
               <X className="w-5 h-5" />
             </button>
           </div>

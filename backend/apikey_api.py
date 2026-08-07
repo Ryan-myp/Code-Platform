@@ -7,8 +7,8 @@
 """
 
 import hashlib
-import secrets
 import logging
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
@@ -23,8 +23,10 @@ router = APIRouter(prefix="/api", tags=["API密钥"])
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class ApiKeyCreateRequest(BaseModel):
     label: str = Field("", max_length=100, description="备注标签（可选）")
+
 
 # ── API文档定义 ─────────────────────────────────────────────
 # 注意：web_search.py/batch_api.py/favorites_api.py 的 init_db() 已初始化 api_keys 表
@@ -78,6 +80,7 @@ API_DOCS = {
 
 # ── API ──────────────────────────────────────────────────
 
+
 @router.post("/api-keys")
 async def create_api_key(req: ApiKeyCreateRequest, current_user: dict = require_auth()):
     """创建个人API Key（完整Key仅返回一次，请妥善保存）。"""
@@ -86,7 +89,7 @@ async def create_api_key(req: ApiKeyCreateRequest, current_user: dict = require_
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     key_prefix = raw_key[:12]
 
-    kid = f"apikey_{int(datetime.now().timestamp()*1000)}"
+    kid = f"apikey_{int(datetime.now().timestamp() * 1000)}"
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO api_keys (id, user_id, key_hash, key_prefix, label, created_at) VALUES (?,?,?,?,?,?)",

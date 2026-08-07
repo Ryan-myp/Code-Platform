@@ -1,17 +1,47 @@
 import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  ArrowLeft, Camera, Copy, Crown, Flame, Gauge, Gift, Loader2, Lock, Save,
-  Sparkles, TrendingUp, User as UserIcon, Zap,
+  ArrowLeft,
+  Camera,
+  Copy,
+  Crown,
+  Flame,
+  Gauge,
+  Gift,
+  Loader2,
+  Lock,
+  Save,
+  Sparkles,
+  TrendingUp,
+  User as UserIcon,
+  Zap,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 
 // 会员等级元信息
 const MEMBERSHIP_META = {
-  free: { label: '免费版', desc: '每日 30 次调用', color: 'from-gray-500 to-gray-600', badge: 'bg-gray-100 text-gray-600', quota: 30 },
-  pro: { label: '专业版', desc: '每日 200 次调用', color: 'from-blue-500 to-indigo-600', badge: 'bg-blue-50 text-blue-600', quota: 200 },
-  vip: { label: '至尊版', desc: '无限调用', color: 'from-amber-500 to-orange-600', badge: 'bg-amber-50 text-amber-600', quota: 9999 },
+  free: {
+    label: '免费版',
+    desc: '每日 30 次调用',
+    color: 'from-gray-500 to-gray-600',
+    badge: 'bg-gray-100 text-gray-600',
+    quota: 30,
+  },
+  pro: {
+    label: '专业版',
+    desc: '每日 200 次调用',
+    color: 'from-blue-500 to-indigo-600',
+    badge: 'bg-blue-50 text-blue-600',
+    quota: 200,
+  },
+  vip: {
+    label: '至尊版',
+    desc: '无限调用',
+    color: 'from-amber-500 to-orange-600',
+    badge: 'bg-amber-50 text-amber-600',
+    quota: 9999,
+  },
 }
 
 export default function ProfilePage({ user, onUserUpdate }) {
@@ -83,7 +113,8 @@ export default function ProfilePage({ user, onUserUpdate }) {
       })
       setProfile(res.data)
       // 同步全局用户信息
-      if (onUserUpdate) onUserUpdate({ ...user, nickname: res.data.nickname, avatar: res.data.avatar })
+      if (onUserUpdate)
+        onUserUpdate({ ...user, nickname: res.data.nickname, avatar: res.data.avatar })
       toast.success('个人资料已更新')
     } catch (err) {
       toast.error(err.message || '保存失败')
@@ -129,7 +160,8 @@ export default function ProfilePage({ user, onUserUpdate }) {
   const dailyQuota = profile?.daily_quota || meta.quota
   const usedToday = profile?.used_today || 0
   const remaining = profile?.remaining_today ?? Math.max(0, dailyQuota - usedToday)
-  const usagePercent = dailyQuota >= 9999 ? 0 : Math.min(100, Math.round((usedToday / dailyQuota) * 100))
+  const usagePercent =
+    dailyQuota >= 9999 ? 0 : Math.min(100, Math.round((usedToday / dailyQuota) * 100))
   const displayName = profile?.nickname || profile?.username || user?.username || '未命名用户'
   const avatarUrl = profile?.avatar || ''
 
@@ -162,13 +194,17 @@ export default function ProfilePage({ user, onUserUpdate }) {
               />
             ) : (
               <div className="w-20 h-20 bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl flex items-center justify-center mx-auto shadow-glow">
-                <span className="text-white text-2xl font-bold">{displayName[0]?.toUpperCase()}</span>
+                <span className="text-white text-2xl font-bold">
+                  {displayName[0]?.toUpperCase()}
+                </span>
               </div>
             )}
             <h2 className="text-lg font-bold text-ink-900 mt-3">{displayName}</h2>
             <p className="text-sm text-ink-500">@{profile?.username}</p>
             <div className="flex items-center justify-center gap-2 mt-3">
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${meta.badge}`}>{meta.label}</span>
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${meta.badge}`}>
+                {meta.label}
+              </span>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-ink-100 text-ink-600 capitalize">
                 {profile?.role}
               </span>
@@ -188,7 +224,9 @@ export default function ProfilePage({ user, onUserUpdate }) {
                 <Gauge className="w-4 h-4 text-brand-500" />
                 今日额度
               </h3>
-              <span className={`text-xs font-medium px-2 py-0.5 rounded-full bg-gradient-to-r ${meta.color} text-white`}>
+              <span
+                className={`text-xs font-medium px-2 py-0.5 rounded-full bg-gradient-to-r ${meta.color} text-white`}
+              >
                 {meta.label}
               </span>
             </div>
@@ -250,7 +288,9 @@ export default function ProfilePage({ user, onUserUpdate }) {
             <div className="mt-4 pt-4 border-t border-brand-100 flex items-center justify-between gap-2">
               <span className="text-xs text-ink-500">
                 当前：{meta.label}
-                {profile?.membership_expires ? ` · 至 ${profile.membership_expires.slice(0, 10)}` : ''}
+                {profile?.membership_expires
+                  ? ` · 至 ${profile.membership_expires.slice(0, 10)}`
+                  : ''}
               </span>
               <Link
                 to="/membership"
@@ -268,7 +308,8 @@ export default function ProfilePage({ user, onUserUpdate }) {
               邀请有礼
             </h3>
             <p className="text-xs text-ink-500 mt-2">
-              邀请好友注册，双方各得 <span className="font-semibold text-brand-600">5 次</span> 一次性额度（不随每日重置）
+              邀请好友注册，双方各得 <span className="font-semibold text-brand-600">5 次</span>{' '}
+              一次性额度（不随每日重置）
             </p>
             {invite ? (
               <div className="mt-3 space-y-2.5">
@@ -283,7 +324,9 @@ export default function ProfilePage({ user, onUserUpdate }) {
                     <Copy className="w-3.5 h-3.5" /> 复制链接
                   </button>
                 </div>
-                <p className="text-xs text-ink-400">已邀请 {invite.invited_count} 人 · 每邀请 1 人奖励 5 次</p>
+                <p className="text-xs text-ink-400">
+                  已邀请 {invite.invited_count} 人 · 每邀请 1 人奖励 5 次
+                </p>
               </div>
             ) : (
               <p className="text-xs text-ink-400 mt-3">加载中…</p>
@@ -313,8 +356,15 @@ export default function ProfilePage({ user, onUserUpdate }) {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-ink-700 mb-1.5">用户名（不可修改）</label>
-                  <input type="text" value={profile?.username || ''} disabled className={`${inputCls} bg-ink-50 text-ink-400`} />
+                  <label className="block text-sm font-medium text-ink-700 mb-1.5">
+                    用户名（不可修改）
+                  </label>
+                  <input
+                    type="text"
+                    value={profile?.username || ''}
+                    disabled
+                    className={`${inputCls} bg-ink-50 text-ink-400`}
+                  />
                 </div>
               </div>
               <div>
@@ -336,7 +386,11 @@ export default function ProfilePage({ user, onUserUpdate }) {
                   disabled={saving}
                   className="px-5 py-2.5 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl font-medium hover:from-brand-600 hover:to-brand-700 disabled:opacity-60 transition-all shadow-soft flex items-center gap-2"
                 >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {saving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
                   保存资料
                 </button>
               </div>
@@ -374,7 +428,9 @@ export default function ProfilePage({ user, onUserUpdate }) {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-ink-700 mb-1.5">确认新密码</label>
+                  <label className="block text-sm font-medium text-ink-700 mb-1.5">
+                    确认新密码
+                  </label>
                   <input
                     type="password"
                     value={confirmPwd}
@@ -391,7 +447,11 @@ export default function ProfilePage({ user, onUserUpdate }) {
                   disabled={changingPwd || !oldPwd || !newPwd}
                   className="px-5 py-2.5 bg-ink-800 text-white rounded-xl font-medium hover:bg-ink-900 disabled:opacity-50 transition-all flex items-center gap-2"
                 >
-                  {changingPwd ? <Loader2 className="w-4 h-4 animate-spin" /> : <Flame className="w-4 h-4" />}
+                  {changingPwd ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Flame className="w-4 h-4" />
+                  )}
                   修改密码
                 </button>
               </div>

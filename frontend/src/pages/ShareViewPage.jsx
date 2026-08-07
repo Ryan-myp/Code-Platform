@@ -109,7 +109,9 @@ export default function ShareViewPage() {
           <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden border border-white/60">
             {/* 内容头部 */}
             <div className="px-8 pt-8 pb-6 border-b border-gray-100">
-              <h2 className="text-2xl font-bold text-gray-900 leading-snug">{share.title || '分享内容'}</h2>
+              <h2 className="text-2xl font-bold text-gray-900 leading-snug">
+                {share.title || '分享内容'}
+              </h2>
               <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
                 <span className="flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5" />
@@ -119,7 +121,9 @@ export default function ShareViewPage() {
                   <Eye className="w-3.5 h-3.5" />
                   {share.views} 次浏览
                 </span>
-                <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full">{share.content_type}</span>
+                <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full">
+                  {share.content_type}
+                </span>
               </div>
             </div>
 
@@ -133,7 +137,9 @@ export default function ShareViewPage() {
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div>
                   <p className="text-sm font-semibold text-gray-800">这份内容是用 AI 生成的？</p>
-                  <p className="text-xs text-gray-500 mt-0.5">小团智能平台 · 30+ 效率工具免费体验</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    小团智能平台 · 30+ 效率工具免费体验
+                  </p>
                 </div>
                 <Link
                   to={`/login?share=${shareCode}`}

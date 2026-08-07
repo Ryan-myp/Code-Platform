@@ -1,15 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Server, Plus, Trash2, Edit2, Search,
-  Terminal, Globe, RefreshCw, Play, Square,
-  Wifi, WifiOff, LayoutGrid, List as ListIcon,
-  KeyRound, User, Cable, Loader2,
+  Server,
+  Plus,
+  Trash2,
+  Edit2,
+  Search,
+  Terminal,
+  Globe,
+  RefreshCw,
+  Play,
+  Square,
+  Wifi,
+  WifiOff,
+  LayoutGrid,
+  List as ListIcon,
+  KeyRound,
+  User,
+  Cable,
+  Loader2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const TRANSPORTS = [
@@ -53,7 +74,16 @@ function parseArgs(str) {
 const AUTH_LABELS = { bearer: 'Bearer', basic: 'Basic', api_key: 'API Key' }
 
 // MCP 服务器卡片
-function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, toggling, viewMode }) {
+function MCPServerCard({
+  server,
+  onEdit,
+  onDelete,
+  onToggle,
+  onTest,
+  testing,
+  toggling,
+  viewMode,
+}) {
   const isActive = server.status === 'active'
   const transport = server.transport || server.transport_type || 'stdio'
   const authType = server.auth_type || 'none'
@@ -61,9 +91,11 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
   if (viewMode === 'list') {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow flex items-center gap-4">
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white flex-shrink-0 bg-gradient-to-br ${
-          isActive ? 'from-emerald-500 to-green-600' : 'from-gray-400 to-gray-500'
-        }`}>
+        <div
+          className={`w-10 h-10 rounded-lg flex items-center justify-center text-white flex-shrink-0 bg-gradient-to-br ${
+            isActive ? 'from-emerald-500 to-green-600' : 'from-gray-400 to-gray-500'
+          }`}
+        >
           <Server className="w-5 h-5" />
         </div>
         <div className="flex-1 min-w-0">
@@ -72,18 +104,28 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
             <Badge status={isActive ? 'active' : 'inactive'} dot />
           </div>
           <p className="text-sm text-gray-500 truncate font-mono text-xs">
-            {transport === 'stdio' ? (server.command || '-') : (server.url || '-')}
+            {transport === 'stdio' ? server.command || '-' : server.url || '-'}
           </p>
         </div>
         <div className="hidden sm:flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
-          <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-mono">{transport}</span>
+          <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-mono">
+            {transport}
+          </span>
           {authType !== 'none' && (
-            <span className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg flex items-center gap-1" title="已配置授权验证">
-              <KeyRound className="w-3 h-3" />{AUTH_LABELS[authType] || authType}
+            <span
+              className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg flex items-center gap-1"
+              title="已配置授权验证"
+            >
+              <KeyRound className="w-3 h-3" />
+              {AUTH_LABELS[authType] || authType}
             </span>
           )}
           <span className="flex items-center gap-1">
-            {isActive ? <Wifi className="w-3.5 h-3.5 text-emerald-500" /> : <WifiOff className="w-3.5 h-3.5 text-gray-400" />}
+            {isActive ? (
+              <Wifi className="w-3.5 h-3.5 text-emerald-500" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5 text-gray-400" />
+            )}
           </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -93,22 +135,42 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
             className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
             title="测试连接"
           >
-            {testing === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cable className="w-4 h-4" />}
+            {testing === server.id ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Cable className="w-4 h-4" />
+            )}
           </button>
           <button
             onClick={() => onToggle(server)}
             disabled={toggling === server.id}
             className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              isActive ? 'hover:bg-red-50 text-gray-400 hover:text-red-600' : 'hover:bg-emerald-50 text-gray-400 hover:text-emerald-600'
+              isActive
+                ? 'hover:bg-red-50 text-gray-400 hover:text-red-600'
+                : 'hover:bg-emerald-50 text-gray-400 hover:text-emerald-600'
             }`}
             title={isActive ? '停止' : '启动'}
           >
-            {toggling === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : isActive ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            {toggling === server.id ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : isActive ? (
+              <Square className="w-4 h-4" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
           </button>
-          <button onClick={() => onEdit(server)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(server)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(server)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(server)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -117,19 +179,25 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
   }
 
   return (
-    <div className={`bg-white rounded-2xl border p-5 transition-all duration-200 hover:shadow-lg flex flex-col ${
-      isActive ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'
-    }`}>
+    <div
+      className={`bg-white rounded-2xl border p-5 transition-all duration-200 hover:shadow-lg flex flex-col ${
+        isActive ? 'border-emerald-200 bg-emerald-50/30' : 'border-gray-200'
+      }`}
+    >
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white flex-shrink-0 shadow-lg bg-gradient-to-br ${
-            isActive ? 'from-emerald-500 to-green-600' : 'from-gray-400 to-gray-500'
-          }`}>
+          <div
+            className={`w-12 h-12 rounded-xl flex items-center justify-center text-white flex-shrink-0 shadow-lg bg-gradient-to-br ${
+              isActive ? 'from-emerald-500 to-green-600' : 'from-gray-400 to-gray-500'
+            }`}
+          >
             <Server className="w-6 h-6" />
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{server.name}</h3>
-            <span className={`inline-flex items-center gap-1 text-xs ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+            <span
+              className={`inline-flex items-center gap-1 text-xs ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}
+            >
               {isActive ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
               {isActive ? '已连接' : '未连接'}
             </span>
@@ -139,8 +207,12 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
           {transport}
         </span>
         {authType !== 'none' && (
-          <span className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-xs font-mono flex-shrink-0 flex items-center gap-1" title="已配置授权验证">
-            <KeyRound className="w-3 h-3" />{AUTH_LABELS[authType] || authType}
+          <span
+            className="px-2 py-1 bg-orange-50 text-orange-600 rounded-lg text-xs font-mono flex-shrink-0 flex items-center gap-1"
+            title="已配置授权验证"
+          >
+            <KeyRound className="w-3 h-3" />
+            {AUTH_LABELS[authType] || authType}
           </span>
         )}
       </div>
@@ -159,7 +231,9 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
             </p>
             {argsToString(server.args) && (
               <p className="flex items-center gap-2 min-w-0 pl-6">
-                <span className="text-xs truncate font-mono text-gray-400">{argsToString(server.args)}</span>
+                <span className="text-xs truncate font-mono text-gray-400">
+                  {argsToString(server.args)}
+                </span>
               </p>
             )}
           </>
@@ -175,21 +249,35 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
             className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
             title="测试连接"
           >
-            {testing === server.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cable className="w-4 h-4" />}
+            {testing === server.id ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Cable className="w-4 h-4" />
+            )}
           </button>
           <button
             onClick={() => onToggle(server)}
             className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              isActive ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+              isActive
+                ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
             }`}
           >
             {isActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             {isActive ? '停止' : '启动'}
           </button>
-          <button onClick={() => onEdit(server)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(server)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(server)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(server)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -201,9 +289,18 @@ function MCPServerCard({ server, onEdit, onDelete, onToggle, onTest, testing, to
 // 创建/编辑表单
 function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
   const [form, setForm] = useState({
-    name: '', transport_type: 'stdio', command: '', args: '', url: '',
-    auth_type: 'none', auth_token: '', auth_username: '', auth_password: '',
-    auth_header: 'X-API-Key', auth_key: '', env: '',
+    name: '',
+    transport_type: 'stdio',
+    command: '',
+    args: '',
+    url: '',
+    auth_type: 'none',
+    auth_token: '',
+    auth_username: '',
+    auth_password: '',
+    auth_header: 'X-API-Key',
+    auth_key: '',
+    env: '',
   })
   const [errors, setErrors] = useState({})
 
@@ -212,9 +309,12 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
     if (editing) {
       // auth_config 为后端脱敏值：凭证留空 = 保持不变
       const ac = editing.auth_config || {}
-      const envStr = editing.env && typeof editing.env === 'object'
-        ? Object.entries(editing.env).map(([k, v]) => `${k}=${v}`).join('\n')
-        : ''
+      const envStr =
+        editing.env && typeof editing.env === 'object'
+          ? Object.entries(editing.env)
+              .map(([k, v]) => `${k}=${v}`)
+              .join('\n')
+          : ''
       setForm({
         name: editing.name || '',
         transport_type: editing.transport_type || editing.transport || 'stdio',
@@ -231,9 +331,18 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
       })
     } else {
       setForm({
-        name: '', transport_type: 'stdio', command: '', args: '', url: '',
-        auth_type: 'none', auth_token: '', auth_username: '', auth_password: '',
-        auth_header: 'X-API-Key', auth_key: '', env: '',
+        name: '',
+        transport_type: 'stdio',
+        command: '',
+        args: '',
+        url: '',
+        auth_type: 'none',
+        auth_token: '',
+        auth_username: '',
+        auth_password: '',
+        auth_header: 'X-API-Key',
+        auth_key: '',
+        env: '',
       })
     }
     setErrors({})
@@ -269,7 +378,10 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
     } else if (form.auth_type === 'basic') {
       authConfig = { username: form.auth_username.trim(), password: form.auth_password }
     } else {
-      authConfig = { header_name: form.auth_header.trim() || 'X-API-Key', key: form.auth_key.trim() }
+      authConfig = {
+        header_name: form.auth_header.trim() || 'X-API-Key',
+        key: form.auth_key.trim(),
+      }
     }
     // env 多行 key=value 解析
     const env = {}
@@ -292,7 +404,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
 
   const inputCls = (err) =>
     `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
-      err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-orange-500/20 focus:border-orange-500'
+      err
+        ? 'border-red-300 focus:ring-red-500/20'
+        : 'border-gray-200 focus:ring-orange-500/20 focus:border-orange-500'
     }`
 
   const maskedPlaceholder = (val) => (editing && val ? `${val}（留空不修改）` : '')
@@ -305,8 +419,12 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button variant="primary" onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button variant="primary" onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
@@ -333,7 +451,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
             className={inputCls(false)}
           >
             {TRANSPORTS.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
             ))}
           </select>
         </div>
@@ -354,7 +474,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
               {errors.command && <p className="text-xs text-red-500 mt-1">{errors.command}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">参数（空格分隔）</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                参数（空格分隔）
+              </label>
               <input
                 type="text"
                 value={form.args}
@@ -394,7 +516,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
               className={inputCls(false)}
             >
               {AUTH_TYPES.map((a) => (
-                <option key={a.value} value={a.value}>{a.label}</option>
+                <option key={a.value} value={a.value}>
+                  {a.label}
+                </option>
               ))}
             </select>
           </div>
@@ -409,7 +533,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
                 placeholder={maskedPlaceholder(editing?.auth_config?.token) || 'sk-xxx'}
                 className={inputCls(errors.auth_token)}
               />
-              {errors.auth_token && <p className="text-xs text-red-500 mt-1">{errors.auth_token}</p>}
+              {errors.auth_token && (
+                <p className="text-xs text-red-500 mt-1">{errors.auth_token}</p>
+              )}
             </div>
           )}
 
@@ -424,7 +550,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
                   placeholder="admin"
                   className={inputCls(errors.auth_username)}
                 />
-                {errors.auth_username && <p className="text-xs text-red-500 mt-1">{errors.auth_username}</p>}
+                {errors.auth_username && (
+                  <p className="text-xs text-red-500 mt-1">{errors.auth_username}</p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">密码</label>
@@ -473,7 +601,9 @@ function MCPFormModal({ open, onClose, onSubmit, editing, loading }) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">环境变量（每行 KEY=value）</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            环境变量（每行 KEY=value）
+          </label>
           <textarea
             value={form.env}
             onChange={(e) => setField('env', e.target.value)}
@@ -520,7 +650,8 @@ export default function MCPServersPage() {
 
   const filteredItems = items.filter((item) => {
     const q = searchTerm.toLowerCase()
-    const matchSearch = !q ||
+    const matchSearch =
+      !q ||
       item.name?.toLowerCase().includes(q) ||
       item.command?.toLowerCase().includes(q) ||
       item.url?.toLowerCase().includes(q)
@@ -564,7 +695,11 @@ export default function MCPServersPage() {
       const res = await api.post(`/api/mcp-servers/${server.id}/test`)
       const d = res.data
       if (d.ok) {
-        toast.success(d.tools?.length ? `${d.detail}，工具：${d.tools.slice(0, 5).join('、')}` : (d.detail || '连接正常'))
+        toast.success(
+          d.tools?.length
+            ? `${d.detail}，工具：${d.tools.slice(0, 5).join('、')}`
+            : d.detail || '连接正常'
+        )
       } else {
         toast.error(d.error || '连接失败')
       }
@@ -607,11 +742,36 @@ export default function MCPServersPage() {
 
   const stats = [
     { label: '总服务器', value: items.length, icon: Server, color: 'from-orange-500 to-red-600' },
-    { label: '已连接', value: items.filter((s) => s.status === 'active').length, icon: Wifi, color: 'from-emerald-500 to-green-600' },
-    { label: 'stdio 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'stdio').length, icon: Terminal, color: 'from-blue-500 to-cyan-600' },
-    { label: 'SSE 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'sse').length, icon: Globe, color: 'from-purple-500 to-pink-600' },
-    { label: '已启用认证', value: items.filter((s) => (s.auth_type || 'none') !== 'none').length, icon: KeyRound, color: 'from-orange-500 to-amber-600' },
-    { label: 'HTTP 类型', value: items.filter((s) => (s.transport || s.transport_type) === 'http').length, icon: Globe, color: 'from-rose-500 to-red-600' },
+    {
+      label: '已连接',
+      value: items.filter((s) => s.status === 'active').length,
+      icon: Wifi,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: 'stdio 类型',
+      value: items.filter((s) => (s.transport || s.transport_type) === 'stdio').length,
+      icon: Terminal,
+      color: 'from-blue-500 to-cyan-600',
+    },
+    {
+      label: 'SSE 类型',
+      value: items.filter((s) => (s.transport || s.transport_type) === 'sse').length,
+      icon: Globe,
+      color: 'from-purple-500 to-pink-600',
+    },
+    {
+      label: '已启用认证',
+      value: items.filter((s) => (s.auth_type || 'none') !== 'none').length,
+      icon: KeyRound,
+      color: 'from-orange-500 to-amber-600',
+    },
+    {
+      label: 'HTTP 类型',
+      value: items.filter((s) => (s.transport || s.transport_type) === 'http').length,
+      icon: Globe,
+      color: 'from-rose-500 to-red-600',
+    },
   ]
 
   return (
@@ -622,7 +782,9 @@ export default function MCPServersPage() {
         icon={Server}
         iconColor="from-orange-500 to-red-600"
         actions={
-          <Button variant="primary" icon={Plus} onClick={openCreate}>新建 MCP</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建 MCP
+          </Button>
         }
       />
 
@@ -635,7 +797,9 @@ export default function MCPServersPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -697,8 +861,16 @@ export default function MCPServersPage() {
         <div className="bg-white rounded-2xl border border-gray-200">
           <Empty
             icon={Server}
-            title={searchTerm || transportFilter !== 'all' ? '未找到匹配的 MCP 服务器' : '暂无 MCP 服务器'}
-            description={searchTerm || transportFilter !== 'all' ? '尝试调整搜索或筛选条件' : '点击「新建 MCP」创建你的第一个 MCP 服务器'}
+            title={
+              searchTerm || transportFilter !== 'all'
+                ? '未找到匹配的 MCP 服务器'
+                : '暂无 MCP 服务器'
+            }
+            description={
+              searchTerm || transportFilter !== 'all'
+                ? '尝试调整搜索或筛选条件'
+                : '点击「新建 MCP」创建你的第一个 MCP 服务器'
+            }
             actionLabel={searchTerm || transportFilter !== 'all' ? undefined : '新建 MCP'}
             onAction={searchTerm || transportFilter !== 'all' ? undefined : openCreate}
           />
@@ -739,7 +911,10 @@ export default function MCPServersPage() {
 
       <MCPFormModal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingItem(null) }}
+        onClose={() => {
+          setShowForm(false)
+          setEditingItem(null)
+        }}
         onSubmit={handleSave}
         editing={editingItem}
         loading={saving}
@@ -750,7 +925,13 @@ export default function MCPServersPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="确认删除 MCP 服务器"
-        message={<>确定要删除 MCP 服务器「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。</>}
+        message={
+          <>
+            确定要删除 MCP 服务器「
+            <span className="font-medium text-gray-700">{deleteTarget?.name}</span>
+            」吗？此操作不可撤销。
+          </>
+        }
         confirmLabel="确认删除"
       />
     </div>

@@ -8,30 +8,70 @@ import useQuota from '../hooks/useQuota'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
 import {
-  ArrowLeft, Play, Copy, Check, Clock, History, Sparkles,
-  FileText, ClipboardList, Mail, Target, Users,
-  Heart, Video, Calendar,
-  GraduationCap, BookOpen, GitBranch, Layers,
-  Search, UserCircle, Megaphone, TrendingUp, BarChart,
-  Settings, ChevronDown, Upload, X, Download, Zap, Lock, Crown
+  ArrowLeft,
+  Play,
+  Copy,
+  Check,
+  Clock,
+  History,
+  Sparkles,
+  FileText,
+  ClipboardList,
+  Mail,
+  Target,
+  Users,
+  Heart,
+  Video,
+  Calendar,
+  GraduationCap,
+  BookOpen,
+  GitBranch,
+  Layers,
+  Search,
+  UserCircle,
+  Megaphone,
+  TrendingUp,
+  BarChart,
+  Settings,
+  ChevronDown,
+  Upload,
+  X,
+  Download,
+  Zap,
+  Lock,
+  Crown,
 } from 'lucide-react'
 
 const ICON_MAP = {
-  FileText, ClipboardList, Mail, Target, Users,
-  Sparkles, Heart, Video, Calendar,
-  GraduationCap, BookOpen, GitBranch, Layers,
-  Search, UserCircle, Megaphone, TrendingUp, BarChart
+  FileText,
+  ClipboardList,
+  Mail,
+  Target,
+  Users,
+  Sparkles,
+  Heart,
+  Video,
+  Calendar,
+  GraduationCap,
+  BookOpen,
+  GitBranch,
+  Layers,
+  Search,
+  UserCircle,
+  Megaphone,
+  TrendingUp,
+  BarChart,
 }
 
 const CATEGORY_COLORS = {
-  '职场办公': 'from-blue-500 to-indigo-600',
-  '自媒体创作': 'from-pink-500 to-rose-600',
-  '学习研究': 'from-cyan-500 to-teal-600',
+  职场办公: 'from-blue-500 to-indigo-600',
+  自媒体创作: 'from-pink-500 to-rose-600',
+  学习研究: 'from-cyan-500 to-teal-600',
   '产品/营销': 'from-purple-500 to-violet-600',
-  '互联网行业': 'from-blue-500 to-cyan-600',
-  '传统行业': 'from-amber-500 to-orange-600',
-  '通用办公': 'from-gray-500 to-slate-600',
-  '专业工具': 'from-orange-500 to-red-600',
+  互联网行业: 'from-blue-500 to-cyan-600',
+  传统行业: 'from-amber-500 to-orange-600',
+  通用办公: 'from-gray-500 to-slate-600',
+  专业工具: 'from-orange-500 to-red-600',
 }
 
 export default function ToolRunPage() {
@@ -39,7 +79,7 @@ export default function ToolRunPage() {
   const navigate = useNavigate()
   const toast = useToast()
   const { quota } = useQuota()
-  
+
   const [tool, setTool] = useState(null)
   const [input, setInput] = useState('')
   const [result, setResult] = useState('')
@@ -122,7 +162,7 @@ export default function ToolRunPage() {
   const handleUseHistory = (item) => {
     setInput(item.input_text || item.input)
     if (item.params) {
-      setParams(prev => ({ ...prev, ...item.params }))
+      setParams((prev) => ({ ...prev, ...item.params }))
     }
     setResult(item.result)
     setShowHistory(false)
@@ -136,21 +176,21 @@ export default function ToolRunPage() {
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    
+
     const maxSize = 10 * 1024 * 1024 // 10MB
     if (file.size > maxSize) {
       toast.error('文件大小不能超过 10MB')
       return
     }
-    
+
     setUploadedFile(file)
-    
+
     const formData = new FormData()
     formData.append('file', file)
-    
+
     try {
       const res = await api.post('/api/tools/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
       })
       setFileContent(res.data.content)
       toast.success(`已上传: ${file.name}`)
@@ -169,7 +209,7 @@ export default function ToolRunPage() {
   }
 
   const handleParamChange = (key, value) => {
-    setParams(prev => ({ ...prev, [key]: value }))
+    setParams((prev) => ({ ...prev, [key]: value }))
   }
 
   if (!tool) {
@@ -189,7 +229,9 @@ export default function ToolRunPage() {
           <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-glow">
             <Lock className="w-8 h-8 text-white" />
           </div>
-          <h2 className="text-xl font-semibold text-ink-900 mb-2">「{tool.name}」为{label}专属</h2>
+          <h2 className="text-xl font-semibold text-ink-900 mb-2">
+            「{tool.name}」为{label}专属
+          </h2>
           <p className="text-sm text-ink-500 mb-8 leading-relaxed">
             开通会员即可使用该工具，同时解锁全部会员权益与更高额度。
           </p>
@@ -224,7 +266,9 @@ export default function ToolRunPage() {
           >
             <ArrowLeft className="w-5 h-5 text-gray-600" />
           </button>
-          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${categoryColor} flex items-center justify-center`}>
+          <div
+            className={`w-12 h-12 rounded-xl bg-gradient-to-br ${categoryColor} flex items-center justify-center`}
+          >
             <Icon className="w-6 h-6 text-white" />
           </div>
           <div className="flex-1">
@@ -270,7 +314,7 @@ export default function ToolRunPage() {
                   快速模板
                 </h3>
                 <div className="flex flex-wrap gap-2">
-                  {templates.map(t => (
+                  {templates.map((t) => (
                     <button
                       key={t.id}
                       onClick={() => handleUseTemplate(t)}
@@ -298,7 +342,9 @@ export default function ToolRunPage() {
                     <Settings className="w-4 h-4" />
                     高级选项
                   </span>
-                  <ChevronDown className={`w-4 h-4 transition-transform ${showParams ? 'rotate-180' : ''}`} />
+                  <ChevronDown
+                    className={`w-4 h-4 transition-transform ${showParams ? 'rotate-180' : ''}`}
+                  />
                 </button>
                 {showParams && (
                   <div className="mt-4 space-y-3">
@@ -310,8 +356,10 @@ export default function ToolRunPage() {
                           onChange={(e) => handleParamChange(key, e.target.value)}
                           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                         >
-                          {config.options.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
+                          {config.options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
                           ))}
                         </select>
                       </div>
@@ -329,7 +377,7 @@ export default function ToolRunPage() {
                   使用历史
                 </h3>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {history.slice(0, 10).map(item => (
+                  {history.slice(0, 10).map((item) => (
                     <div
                       key={item.id}
                       onClick={() => handleUseHistory(item)}
@@ -343,11 +391,16 @@ export default function ToolRunPage() {
                       </div>
                       {item.params && Object.keys(item.params).length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {Object.entries(item.params).slice(0, 3).map(([k, v]) => (
-                            <span key={k} className="px-1.5 py-0.5 text-[10px] bg-gray-200 text-gray-600 rounded">
-                              {v}
-                            </span>
-                          ))}
+                          {Object.entries(item.params)
+                            .slice(0, 3)
+                            .map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="px-1.5 py-0.5 text-[10px] bg-gray-200 text-gray-600 rounded"
+                              >
+                                {v}
+                              </span>
+                            ))}
                         </div>
                       )}
                     </div>
@@ -373,7 +426,9 @@ export default function ToolRunPage() {
                 {uploadedFile ? (
                   <div className="flex items-center gap-2 px-3 py-2 bg-brand-50 rounded-lg">
                     <FileText className="w-4 h-4 text-brand-600" />
-                    <span className="flex-1 text-sm text-gray-700 truncate">{uploadedFile.name}</span>
+                    <span className="flex-1 text-sm text-gray-700 truncate">
+                      {uploadedFile.name}
+                    </span>
                     <button onClick={handleRemoveFile} className="text-gray-400 hover:text-red-500">
                       <X className="w-4 h-4" />
                     </button>
@@ -391,12 +446,7 @@ export default function ToolRunPage() {
                     />
                   </label>
                 )}
-                <Button
-                  onClick={handleRun}
-                  loading={loading}
-                  className="w-full"
-                  size="lg"
-                >
+                <Button onClick={handleRun} loading={loading} className="w-full" size="lg">
                   <Play className="w-4 h-4 mr-2" />
                   {loading ? '生成中...' : '开始生成'}
                 </Button>
@@ -412,7 +462,10 @@ export default function ToolRunPage() {
                 {result && (
                   <div className="flex items-center gap-2">
                     <ShareButton content={result} title={`${tool.name} 生成结果`} />
-                    <ExportButton content={result} title={`${tool.name}-${new Date().toISOString().slice(0, 10)}`} />
+                    <ExportButton
+                      content={result}
+                      title={`${tool.name}-${new Date().toISOString().slice(0, 10)}`}
+                    />
                     <button
                       onClick={handleCopy}
                       className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-brand-600 hover:bg-gray-100 rounded transition-colors"

@@ -87,6 +87,7 @@ DOC_EXTRACT_SYSTEM = """你是文档结构化学者，擅长从文本中提炼�
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class AskRequest(BaseModel):
     doc_id: str = Field(..., description="文档ID")
     question: str = Field(..., min_length=1, max_length=500)
@@ -94,6 +95,7 @@ class AskRequest(BaseModel):
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -126,19 +128,21 @@ init_db()
 
 # ── 文本提取 ──────────────────────────────────────────────
 
-def extract_text(filepath: str, filename: str) -> str:
+
+def extract_text(filepath: str, filename: str) -> str:  # noqa: C901
     """从文件提取文本。"""
     ext = os.path.splitext(filename)[1].lower()
 
-    if ext == '.txt':
-        with open(filepath, encoding='utf-8') as f:
+    if ext == ".txt":
+        with open(filepath, encoding="utf-8") as f:
             return f.read()[:MAX_DOC_CHARS]
 
-    if ext == '.pdf':
+    if ext == ".pdf":
         try:
             import PyPDF2
+
             text = ""
-            with open(filepath, 'rb') as f:
+            with open(filepath, "rb") as f:
                 reader = PyPDF2.PdfReader(f)
                 for page in reader.pages[:30]:  # 最多30页
                     t = page.extract_text()
@@ -153,9 +157,10 @@ def extract_text(filepath: str, filename: str) -> str:
             logger.warning(f"PDF extraction failed: {e}")
             return "[PDF文本提取失败，请确认文件是否为可读PDF]"
 
-    if ext in ('.docx', '.doc'):
+    if ext in (".docx", ".doc"):
         try:
             import docx
+
             doc = docx.Document(filepath)
             text = "\n".join([p.text for p in doc.paragraphs])
             return text[:MAX_DOC_CHARS]
@@ -170,6 +175,7 @@ def extract_text(filepath: str, filename: str) -> str:
 
 # ── API ──────────────────────────────────────────────────
 
+
 @router.post("/upload")
 async def upload_doc(file: UploadFile = File(...), current_user: dict = require_auth()):
     """上传文档，自动提取文本并生成摘要。"""
@@ -177,11 +183,11 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
         raise HTTPException(400, "未选择文件")
 
     ext = os.path.splitext(file.filename)[1].lower()
-    allowed = {'.txt', '.pdf', '.docx', '.doc', '.md', '.csv'}
+    allowed = {".txt", ".pdf", ".docx", ".doc", ".md", ".csv"}
     if ext not in allowed:
         raise HTTPException(400, f"不支持的文件格式：{ext}，支持 {', '.join(allowed)}")
 
-    did = f"doc_{int(datetime.now().timestamp()*1000)}"
+    did = f"doc_{int(datetime.now().timestamp() * 1000)}"
     save_path = os.path.join(UPLOAD_DIR, f"{did}{ext}")
 
     content = await file.read()
@@ -198,7 +204,9 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
             raw = call_llm(
                 DOC_EXTRACT_SYSTEM,
                 f"文档文本（前3000字）：\n{text[:3000]}",
-                max_tokens=1000, temperature=0.3, timeout=60,
+                max_tokens=1000,
+                temperature=0.3,
+                timeout=60,
             )
             raw = raw.strip()
             if raw.startswith("```"):
@@ -212,7 +220,18 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO doc_qa_records (id, filename, filepath, file_size, text_content, text_length, summary, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (did, file.filename, save_path, len(content), text, len(text), json.dumps(summary, ensure_ascii=False), "ready", str(current_user.get("user_id", "")), datetime.now().isoformat()),
+            (
+                did,
+                file.filename,
+                save_path,
+                len(content),
+                text,
+                len(text),
+                json.dumps(summary, ensure_ascii=False),
+                "ready",
+                str(current_user.get("user_id", "")),
+                datetime.now().isoformat(),
+            ),
         )
 
     return {
@@ -228,8 +247,10 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
 
 # ── 异步任务：文档问答（进度/自动重试/并发控制）──
 
+
 async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> dict:
     """文档问答 worker：RAG 上下文 → LLM 回答。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -260,7 +281,13 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
     _report(90, "记录用量")
     log_usage("doc_qa", len(user_prompt), len(answer), 0)
     _report(100, "完成")
-    return {"doc_id": doc_id, "question": payload.get("question", ""), "answer": answer, "source": filename, "confidence": "基于文档内容"}
+    return {
+        "doc_id": doc_id,
+        "question": payload.get("question", ""),
+        "answer": answer,
+        "source": filename,
+        "confidence": "基于文档内容",
+    }
 
 
 async def _docqa_ask_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
@@ -273,10 +300,12 @@ async def ask_document(req: AskRequest, current_user: dict = require_auth()):
     """基于文档内容智能问答（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "docqa_ask", payload,
+        "docqa_ask",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -300,7 +329,10 @@ async def list_records(current_user: dict = require_auth()):
                 (uid,),
             ).fetchall()
 
-    return [{"id": r[0], "filename": r[1], "file_size": r[2], "text_length": r[3], "status": r[4], "created_at": r[5]} for r in rows]
+    return [
+        {"id": r[0], "filename": r[1], "file_size": r[2], "text_length": r[3], "status": r[4], "created_at": r[5]}
+        for r in rows
+    ]
 
 
 def _can_access(conn, record_id: str, current_user: dict) -> bool:
@@ -309,9 +341,7 @@ def _can_access(conn, record_id: str, current_user: dict) -> bool:
     uid = str(current_user.get("user_id", ""))
     if role in ("admin", "super_admin"):
         return True
-    row = conn.execute(
-        "SELECT user_id FROM doc_qa_records WHERE id=?", (record_id,)
-    ).fetchone()
+    row = conn.execute("SELECT user_id FROM doc_qa_records WHERE id=?", (record_id,)).fetchone()
     return bool(row) and str(row[0] or "") == uid
 
 

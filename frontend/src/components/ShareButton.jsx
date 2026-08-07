@@ -6,7 +6,13 @@ import { useToast } from '../lib/toast'
 /**
  * 分享按钮：将内容发布为公开分享链接，弹窗展示链接 + 二维码。
  */
-export default function ShareButton({ content, title = '', contentType = 'text', className = '', disabled = false }) {
+export default function ShareButton({
+  content,
+  title = '',
+  contentType = 'text',
+  className = '',
+  disabled = false,
+}) {
   const toast = useToast()
   const [sharing, setSharing] = useState(false)
   const [shared, setShared] = useState(false)
@@ -56,7 +62,9 @@ export default function ShareButton({ content, title = '', contentType = 'text',
         onClick={handleShare}
         disabled={sharing || disabled}
         className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-colors disabled:opacity-50 ${
-          shared ? 'bg-emerald-50 text-emerald-600' : 'text-gray-500 hover:text-brand-600 hover:bg-gray-100'
+          shared
+            ? 'bg-emerald-50 text-emerald-600'
+            : 'text-gray-500 hover:text-brand-600 hover:bg-gray-100'
         } ${className}`}
         title="生成分享链接"
       >
@@ -70,7 +78,10 @@ export default function ShareButton({ content, title = '', contentType = 'text',
 
       {shareUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShareUrl('')} />
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setShareUrl('')}
+          />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
             <button
               onClick={() => setShareUrl('')}

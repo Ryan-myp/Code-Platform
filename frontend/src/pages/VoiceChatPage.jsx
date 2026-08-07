@@ -67,41 +67,53 @@ export default function VoiceChatPage() {
   }, [listening, toast])
 
   // ── 发送消息 ──
-  const handleSend = useCallback(async (text) => {
-    const msg = text || input.trim()
-    if (!msg && !text) return
+  const handleSend = useCallback(
+    async (text) => {
+      const msg = text || input.trim()
+      if (!msg && !text) return
 
-    const userMsg = { role: 'user', content: msg, time: new Date().toISOString() }
-    setMessages((prev) => [...prev, userMsg])
-    setInput('')
-    setTranscript('')
-    setLoading(true)
+      const userMsg = { role: 'user', content: msg, time: new Date().toISOString() }
+      setMessages((prev) => [...prev, userMsg])
+      setInput('')
+      setTranscript('')
+      setLoading(true)
 
-    try {
-      const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
-      const res = await api.post('/api/voice-chat/respond', { message: msg, history })
-      const aiMsg = { role: 'assistant', content: res.data.reply, time: new Date().toISOString() }
-      setMessages((prev) => [...prev, aiMsg])
-
-      // TTS 语音合成（如果后端支持）
       try {
-        const ttsRes = await api.post('/api/voice-chat/tts', { text: res.data.reply, voice_id: 'zh-CN-XiaoxiaoNeural' })
-        if (ttsRes.data.audio_url) {
-          const audio = new Audio(ttsRes.data.audio_url.startsWith('http') ? ttsRes.data.audio_url : `${API_BASE}${ttsRes.data.audio_url}`)
-          audio.play().catch(() => {})
+        const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
+        const res = await api.post('/api/voice-chat/respond', { message: msg, history })
+        const aiMsg = { role: 'assistant', content: res.data.reply, time: new Date().toISOString() }
+        setMessages((prev) => [...prev, aiMsg])
+
+        // TTS 语音合成（如果后端支持）
+        try {
+          const ttsRes = await api.post('/api/voice-chat/tts', {
+            text: res.data.reply,
+            voice_id: 'zh-CN-XiaoxiaoNeural',
+          })
+          if (ttsRes.data.audio_url) {
+            const audio = new Audio(
+              ttsRes.data.audio_url.startsWith('http')
+                ? ttsRes.data.audio_url
+                : `${API_BASE}${ttsRes.data.audio_url}`
+            )
+            audio.play().catch(() => {})
+          }
+        } catch {
+          // TTS 可选，失败不影响
         }
-      } catch {
-        // TTS 可选，失败不影响
+      } catch (e) {
+        toast.error(`对话失败：${e.message}`)
       }
-    } catch (e) {
-      toast.error(`对话失败：${e.message}`)
-    }
-    setLoading(false)
-  }, [input, messages, toast])
+      setLoading(false)
+    },
+    [input, messages, toast]
+  )
 
   // 语音识别回调通过 ref 转发到最新的 handleSend（避免识别 effect 捕获旧闭包）
   const handleSendRef = useRef(null)
-  useEffect(() => { handleSendRef.current = handleSend }, [handleSend])
+  useEffect(() => {
+    handleSendRef.current = handleSend
+  }, [handleSend])
 
   const clearChat = () => setMessages([])
 
@@ -165,7 +177,11 @@ export default function VoiceChatPage() {
             {/* 消息列表 */}
             <div className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-[500px] pr-2">
               {messages.length === 0 ? (
-                <Empty icon={Mic} title="开始语音对话" description="点击下方麦克风按钮开始说话，或输入文字后发送" />
+                <Empty
+                  icon={Mic}
+                  title="开始语音对话"
+                  description="点击下方麦克风按钮开始说话，或输入文字后发送"
+                />
               ) : (
                 messages.map((m, i) => (
                   <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''}`}>
@@ -174,14 +190,21 @@ export default function VoiceChatPage() {
                         <Bot className="w-4 h-4 text-white" />
                       </div>
                     )}
-                    <div className={`max-w-[75%] p-3 rounded-2xl ${
-                      m.role === 'user'
-                        ? 'bg-violet-500 text-white rounded-br-md'
-                        : 'bg-gray-100 text-gray-800 rounded-bl-md'
-                    }`}>
+                    <div
+                      className={`max-w-[75%] p-3 rounded-2xl ${
+                        m.role === 'user'
+                          ? 'bg-violet-500 text-white rounded-br-md'
+                          : 'bg-gray-100 text-gray-800 rounded-bl-md'
+                      }`}
+                    >
                       <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                      <p className={`text-[10px] mt-1 ${m.role === 'user' ? 'text-white/60' : 'text-gray-400'}`}>
-                        {new Date(m.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                      <p
+                        className={`text-[10px] mt-1 ${m.role === 'user' ? 'text-white/60' : 'text-gray-400'}`}
+                      >
+                        {new Date(m.time).toLocaleTimeString('zh-CN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
                       </p>
                     </div>
                     {m.role === 'user' && (
@@ -199,9 +222,18 @@ export default function VoiceChatPage() {
                   </div>
                   <div className="p-3 rounded-2xl bg-gray-100">
                     <div className="flex gap-1">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      <div
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: '0ms' }}
+                      />
+                      <div
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: '150ms' }}
+                      />
+                      <div
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
+                        style={{ animationDelay: '300ms' }}
+                      />
                     </div>
                   </div>
                 </div>
@@ -242,7 +274,10 @@ export default function VoiceChatPage() {
                   <Send className="w-5 h-5" />
                 </button>
                 {messages.length > 0 && (
-                  <button onClick={clearChat} className="p-3 rounded-xl bg-gray-100 text-gray-400 hover:text-red-500 transition-colors">
+                  <button
+                    onClick={clearChat}
+                    className="p-3 rounded-xl bg-gray-100 text-gray-400 hover:text-red-500 transition-colors"
+                  >
                     <Trash2 className="w-5 h-5" />
                   </button>
                 )}

@@ -139,7 +139,7 @@ async def batch_generate(req: BatchGenerateRequest, current_user: dict = require
             raise ValueError("LLM 返回的不是数组")
     except Exception as e:
         logger.exception("batch generate LLM failed")
-        raise HTTPException(502, f"变体生成失败（AI 服务可能暂时不可用）：{e}")
+        raise HTTPException(502, f"变体生成失败（AI 服务可能暂时不可用）：{e}") from e
 
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     conn = get_db()
@@ -153,7 +153,10 @@ async def batch_generate(req: BatchGenerateRequest, current_user: dict = require
                topics, cover_style, selected, created_at)
                VALUES (?,?,?,?,?,?,?,?,1,?)""",
             (
-                vid, user, req.theme, req.platform,
+                vid,
+                user,
+                req.theme,
+                req.platform,
                 str(v.get("title", ""))[:200],
                 str(v.get("content", ""))[:20000],
                 json.dumps([str(t) for t in v.get("topics", [])], ensure_ascii=False),
@@ -161,12 +164,19 @@ async def batch_generate(req: BatchGenerateRequest, current_user: dict = require
                 now,
             ),
         )
-        saved.append({
-            "id": vid, "theme": req.theme, "platform": req.platform,
-            "title": v.get("title", ""), "content": v.get("content", ""),
-            "topics": v.get("topics", []), "cover_style": v.get("cover_style", ""),
-            "selected": True, "created_at": now,
-        })
+        saved.append(
+            {
+                "id": vid,
+                "theme": req.theme,
+                "platform": req.platform,
+                "title": v.get("title", ""),
+                "content": v.get("content", ""),
+                "topics": v.get("topics", []),
+                "cover_style": v.get("cover_style", ""),
+                "selected": True,
+                "created_at": now,
+            }
+        )
     conn.commit()
     conn.close()
     log_usage("growth_batch", len(req.theme), len(saved), 0)
@@ -259,9 +269,9 @@ async def batch_schedule_variants(req: BatchScheduleRequest, current_user: dict 
     if req.start_at:
         try:
             start_dt = datetime.fromisoformat(req.start_at.replace("Z", "+00:00"))
-        except ValueError:
+        except ValueError as e:
             conn.close()
-            raise HTTPException(400, "开始时间格式不正确，应为 YYYY-MM-DDTHH:MM")
+            raise HTTPException(400, "开始时间格式不正确，应为 YYYY-MM-DDTHH:MM") from e
     else:
         start_dt = datetime.now() + timedelta(minutes=5)
 
@@ -277,9 +287,17 @@ async def batch_schedule_variants(req: BatchScheduleRequest, current_user: dict 
                topics, asset_urls, account_id, scheduled_at, status, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                sched_id, user, r["platform"], "article",
-                r["title"], r["content"],
-                r["topics"], "[]", "", sched_at, "pending",
+                sched_id,
+                user,
+                r["platform"],
+                "article",
+                r["title"],
+                r["content"],
+                r["topics"],
+                "[]",
+                "",
+                sched_at,
+                "pending",
                 datetime.now().isoformat(),
             ),
         )
@@ -301,6 +319,7 @@ async def batch_schedule_variants(req: BatchScheduleRequest, current_user: dict 
 # ══════════════════════════════════════════════════════════════
 # 阶段 3：发布效果追踪 + AI 复盘
 # ══════════════════════════════════════════════════════════════
+
 
 def _ensure_metrics_columns(conn) -> None:
     """幂等建表 + 补列：publish_metrics。"""
@@ -341,9 +360,16 @@ async def get_metrics(record_id: str, current_user: dict = require_auth()):
     ).fetchone()
     conn.close()
     if not row:
-        return {"record_id": record_id, "views": 0, "likes": 0, "comments": 0,
-                "shares": 0, "followers_gained": 0, "source": "none",
-                "note": "暂无效果数据，可手动录入或等待平台 API 自动拉取"}
+        return {
+            "record_id": record_id,
+            "views": 0,
+            "likes": 0,
+            "comments": 0,
+            "shares": 0,
+            "followers_gained": 0,
+            "source": "none",
+            "note": "暂无效果数据，可手动录入或等待平台 API 自动拉取",
+        }
     return dict(row)
 
 
@@ -367,8 +393,7 @@ async def upsert_metrics(record_id: str, req: MetricsUpsertRequest, current_user
             """UPDATE publish_metrics SET views=?, likes=?, comments=?, shares=?,
                followers_gained=?, fetched_at=?, source='manual'
                WHERE id=?""",
-            (req.views, req.likes, req.comments, req.shares,
-             req.followers_gained, now, existing["id"]),
+            (req.views, req.likes, req.comments, req.shares, req.followers_gained, now, existing["id"]),
         )
     else:
         mid = f"pm_{uuid.uuid4().hex[:10]}"
@@ -376,13 +401,23 @@ async def upsert_metrics(record_id: str, req: MetricsUpsertRequest, current_user
             """INSERT INTO publish_metrics (id, record_id, platform, views, likes,
                comments, shares, followers_gained, source, fetched_at, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (mid, record_id, platform, req.views, req.likes, req.comments,
-             req.shares, req.followers_gained, "manual", now, now),
+            (
+                mid,
+                record_id,
+                platform,
+                req.views,
+                req.likes,
+                req.comments,
+                req.shares,
+                req.followers_gained,
+                "manual",
+                now,
+                now,
+            ),
         )
     conn.commit()
     conn.close()
-    return {"success": True, "record_id": record_id,
-            "views": req.views, "likes": req.likes, "comments": req.comments}
+    return {"success": True, "record_id": record_id, "views": req.views, "likes": req.likes, "comments": req.comments}
 
 
 @router.get("/metrics-dashboard")
@@ -401,12 +436,12 @@ async def metrics_dashboard(
         where = "WHERE m.platform=?"
         params = [platform]
 
-    total_views = conn.execute(
-        f"SELECT COALESCE(SUM(views),0) AS n FROM publish_metrics m {where}", params
-    ).fetchone()["n"]
-    total_likes = conn.execute(
-        f"SELECT COALESCE(SUM(likes),0) AS n FROM publish_metrics m {where}", params
-    ).fetchone()["n"]
+    total_views = conn.execute(f"SELECT COALESCE(SUM(views),0) AS n FROM publish_metrics m {where}", params).fetchone()[
+        "n"
+    ]
+    total_likes = conn.execute(f"SELECT COALESCE(SUM(likes),0) AS n FROM publish_metrics m {where}", params).fetchone()[
+        "n"
+    ]
     total_comments = conn.execute(
         f"SELECT COALESCE(SUM(comments),0) AS n FROM publish_metrics m {where}", params
     ).fetchone()["n"]
@@ -432,8 +467,7 @@ async def metrics_dashboard(
         "SELECT m.record_id, m.views, m.likes, m.comments, m.shares, m.followers_gained, "
         "r.title, r.platform "
         "FROM publish_metrics m LEFT JOIN publish_records r ON m.record_id=r.id "
-        + (where.replace("m.", "m.").replace("WHERE", "WHERE" if not where else "AND")
-           if where else "")
+        + (where.replace("m.", "m.").replace("WHERE", "WHERE" if not where else "AND") if where else "")
         + " ORDER BY m.views DESC LIMIT 20"
     )
     for r in conn.execute(sql_top, params).fetchall():
@@ -540,13 +574,19 @@ async def ai_review(
         report = f"AI 复盘生成失败（{e}），请稍后重试。以下是原始数据摘要：\n\n{user_prompt}"
 
     log_usage("growth_review", len(user_prompt), len(report), 0)
-    return {"report": report, "data_points": len(rows),
-            "total_views": total_v, "total_likes": total_l, "total_followers": total_f}
+    return {
+        "report": report,
+        "data_points": len(rows),
+        "total_views": total_v,
+        "total_likes": total_l,
+        "total_followers": total_f,
+    }
 
 
 # ══════════════════════════════════════════════════════════════
 # 阶段 3 补充：评论互动聚合 + AI 回复
 # ══════════════════════════════════════════════════════════════
+
 
 def _ensure_comments_table(conn) -> None:
     conn.execute(
@@ -611,8 +651,7 @@ async def add_comment(req: CommentAddRequest, current_user: dict = require_auth(
     conn.execute(
         """INSERT INTO publish_comments (id, record_id, platform, author, content,
            likes, replied, source, created_at) VALUES (?,?,?,?,?,?,0,?,?)""",
-        (cid, req.record_id, platform, req.author, req.content,
-         req.likes, "manual", datetime.now().isoformat()),
+        (cid, req.record_id, platform, req.author, req.content, req.likes, "manual", datetime.now().isoformat()),
     )
     conn.commit()
     conn.close()

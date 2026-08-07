@@ -155,6 +155,7 @@ class PublishRequest(BaseModel):
 # 账号配置
 # ══════════════════════════════════════════════════════════════
 
+
 def _mask_account(a: dict) -> dict:
     a = dict(a)
     if a.get("app_secret"):
@@ -168,9 +169,7 @@ def _mask_account(a: dict) -> dict:
 async def list_accounts(current_user: dict = require_auth()):
     conn = get_db()
     _ensure_account_columns(conn)
-    rows = conn.execute(
-        "SELECT * FROM publish_accounts WHERE active=1 ORDER BY platform, created_at"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM publish_accounts WHERE active=1 ORDER BY platform, created_at").fetchall()
     result = []
     for r in rows:
         d = dict(r)
@@ -187,9 +186,7 @@ async def upsert_account(req: AccountRequest, current_user: dict = require_auth(
         raise HTTPException(400, f"未知平台: {req.platform}")
     now = datetime.now().isoformat()
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM publish_accounts WHERE platform=? AND active=1", (req.platform,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM publish_accounts WHERE platform=? AND active=1", (req.platform,)).fetchone()
     if row:
         # 保留原 secret（前端脱敏回传时避免覆盖）
         secret = req.app_secret if req.app_secret and "•" not in req.app_secret else row["app_secret"]
@@ -257,10 +254,13 @@ async def test_account(acc_id: str, current_user: dict = require_auth()):
             conn.commit()
             conn.close()
             return {"success": True, "message": "连接成功，微信 access_token 已获取"}
-        raise HTTPException(400, (
-            f"{PLATFORM_LABELS[acc['platform']]} 的 AppID/Secret 需先在开放平台完成应用创建与审核，"
-            "凭据通过后即可自动发布。审核前请使用「引导式发布」（零配置）"
-        ))
+        raise HTTPException(
+            400,
+            (
+                f"{PLATFORM_LABELS[acc['platform']]} 的 AppID/Secret 需先在开放平台完成应用创建与审核，"
+                "凭据通过后即可自动发布。审核前请使用「引导式发布」（零配置）"
+            ),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -270,6 +270,7 @@ async def test_account(acc_id: str, current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 # 可发布素材聚合
 # ══════════════════════════════════════════════════════════════
+
 
 @router.get("/assets")
 async def list_assets(current_user: dict = require_auth()):
@@ -289,8 +290,11 @@ async def list_assets(current_user: dict = require_auth()):
             {
                 **dict(r),
                 "url": r["media_url"],
-                "prompt": (json.loads(r["content"]) if isinstance(r["content"], str) and r["content"].startswith("{") else {})
-                          .get("prompt", "") if r["content"] else "",
+                "prompt": (
+                    json.loads(r["content"]) if isinstance(r["content"], str) and r["content"].startswith("{") else {}
+                ).get("prompt", "")
+                if r["content"]
+                else "",
             }
             for r in media
         ],
@@ -300,6 +304,7 @@ async def list_assets(current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 # 发布执行（引导式 / 自动发布）
 # ══════════════════════════════════════════════════════════════
+
 
 async def _fetch_asset_bytes(url: str) -> bytes:
     """下载素材（支持相对路径与绝对 URL）。"""
@@ -318,6 +323,7 @@ def _asset_filename(url: str) -> str:
 # ══════════════════════════════════════════════════════════════
 # 账号矩阵：配额控制 / 批量导入 / 失败换号
 # ══════════════════════════════════════════════════════════════
+
 
 def _ensure_account_columns(conn) -> None:
     """幂等补列：publish_accounts.daily_limit（每账号每日发布上限）。"""
@@ -447,7 +453,7 @@ def _extract_json_loose(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
         raise ValueError("输出中未找到 JSON 对象")
-    return json.loads(text[start:end + 1])
+    return json.loads(text[start : end + 1])
 
 
 def _crop_cover(data: bytes, target: tuple[int, int], out_path: str) -> bool:
@@ -554,15 +560,17 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
             raise HTTPException(502, f"微信封面上传失败: {data.get('errmsg', data)}")
         thumb_media_id = data["media_id"]
         # 2. 保存草稿
-        articles = [{
-            "title": req.title or "未命名",
-            "author": acc.get("name") or "",
-            "digest": (req.content or "")[:120],
-            "content": (req.content or "").replace("\n", "<br>"),
-            "thumb_media_id": thumb_media_id,
-            "need_open_comment": 1,
-            "only_fans_can_comment": 0,
-        }]
+        articles = [
+            {
+                "title": req.title or "未命名",
+                "author": acc.get("name") or "",
+                "digest": (req.content or "")[:120],
+                "content": (req.content or "").replace("\n", "<br>"),
+                "thumb_media_id": thumb_media_id,
+                "need_open_comment": 1,
+                "only_fans_can_comment": 0,
+            }
+        ]
         resp = await client.post(
             "https://api.weixin.qq.com/cgi-bin/draft/add",
             params={"access_token": token},
@@ -585,7 +593,7 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
 
 
 # ── 抖音：素材上传 + 发布 ────────────────────────────────────
-async def _publish_douyin(acc: dict, req: PublishRequest) -> str:
+async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
         raise HTTPException(400, "请选择要发布的图片/视频素材")
     # 1. client_credential 获取 access_token（需开放平台已审核通过）
@@ -663,7 +671,7 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:
 
 
 # ── 快手：素材上传 + 发布 ────────────────────────────────────
-async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:
+async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
         raise HTTPException(400, "请选择要发布的图片/视频素材")
     async with httpx.AsyncClient(timeout=120) as client:
@@ -759,7 +767,7 @@ def _ensure_publish_columns(conn) -> None:
 
 
 @router.post("/submit")
-async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):
+async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):  # noqa: C901
     """一键发布（增长引擎版）。
 
     - 多平台自动适配：封面按平台规格裁切、正文按平台调性改写、话题标签生成
@@ -790,9 +798,23 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
             """INSERT INTO publish_records (id, user_id, platform, content_type, title, content,
                topics, asset_urls, account_id, mode, status, platform_post_id, error, adapted, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (record_id, user, req.platform, req.content_type, adapted["title"], adapted["content"],
-             topics_json, assets_json, req.account_id, mode, status, post_id, error, adapted_json,
-             datetime.now().isoformat()),
+            (
+                record_id,
+                user,
+                req.platform,
+                req.content_type,
+                adapted["title"],
+                adapted["content"],
+                topics_json,
+                assets_json,
+                req.account_id,
+                mode,
+                status,
+                post_id,
+                error,
+                adapted_json,
+                datetime.now().isoformat(),
+            ),
         )
         c.commit()
         c.close()
@@ -833,8 +855,9 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
         "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at",
         (req.platform,),
     ).fetchall():
-        if all(c["id"] != r["id"] for c in candidates) and \
-           _count_today_published(conn2, r["id"]) < int(r.get("daily_limit") or 10):
+        if all(c["id"] != r["id"] for c in candidates) and _count_today_published(conn2, r["id"]) < int(
+            r.get("daily_limit") or 10
+        ):
             candidates.append(dict(r))
     conn2.close()
 
@@ -860,7 +883,9 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
                 "platform": req.platform,
                 "platform_post_id": post_id,
                 "account_id": acc_try["id"],
-                "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功（账号：{acc_try.get('name') or '默认'}" + ("，已换号重试" if acc_try["id"] != (acc or {}).get("id") else "") + "）",
+                "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功（账号：{acc_try.get('name') or '默认'}"
+                + ("，已换号重试" if acc_try["id"] != (acc or {}).get("id") else "")
+                + "）",
             }
         except HTTPException as e:
             last_err = str(e.detail)
@@ -917,23 +942,33 @@ async def cross_post(req: CrossPostRequest, current_user: dict = require_auth())
             continue
         try:
             sub_req = PublishRequest(
-                platform=p, content_type=req.content_type,
-                title=req.title, content=req.content,
-                topics=req.topics, asset_urls=req.asset_urls,
+                platform=p,
+                content_type=req.content_type,
+                title=req.title,
+                content=req.content,
+                topics=req.topics,
+                asset_urls=req.asset_urls,
             )
             r = await submit_publish(sub_req, current_user)
-            results.append({
-                "platform": p, "status": r.get("status", "pending"),
-                "mode": r.get("mode", "guide"),
-                "record_id": r.get("record_id", ""),
-                "message": r.get("message", ""),
-                "adapted": r.get("adapted"),
-            })
+            results.append(
+                {
+                    "platform": p,
+                    "status": r.get("status", "pending"),
+                    "mode": r.get("mode", "guide"),
+                    "record_id": r.get("record_id", ""),
+                    "message": r.get("message", ""),
+                    "adapted": r.get("adapted"),
+                }
+            )
         except Exception as e:
             results.append({"platform": p, "status": "error", "message": str(e)})
     success_count = sum(1 for r in results if r["status"] in ("success", "pending"))
-    return {"total": len(req.platforms), "success": success_count, "results": results,
-            "message": f"已向{success_count}/{len(req.platforms)}个平台提交发布"}
+    return {
+        "total": len(req.platforms),
+        "success": success_count,
+        "results": results,
+        "message": f"已向{success_count}/{len(req.platforms)}个平台提交发布",
+    }
 
 
 @router.get("/records")
@@ -1037,13 +1072,14 @@ async def download_package(record_id: str, current_user: dict = require_auth()):
     return StreamingResponse(
         io.BytesIO(buf.getvalue()),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(fname)}'},
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname)}"},
     )
 
 
 # ══════════════════════════════════════════════════════════════
 # 发布排期（内容运营日历）
 # ══════════════════════════════════════════════════════════════
+
 
 def _ensure_schedule_columns(conn) -> None:
     """幂等补列：publish_schedules.attempts（自动执行重试计数）。"""
@@ -1073,9 +1109,13 @@ async def _run_due_schedules():
                 s = dict(row)
                 try:
                     req = PublishRequest(
-                        platform=s["platform"], content_type=s["content_type"], title=s["title"],
-                        content=s["content"], topics=json.loads(s["topics"] or "[]"),
-                        asset_urls=json.loads(s["asset_urls"] or "[]"), account_id=s["account_id"] or "",
+                        platform=s["platform"],
+                        content_type=s["content_type"],
+                        title=s["title"],
+                        content=s["content"],
+                        topics=json.loads(s["topics"] or "[]"),
+                        asset_urls=json.loads(s["asset_urls"] or "[]"),
+                        account_id=s["account_id"] or "",
                     )
                     result = await submit_publish(req, {"username": s.get("user_id", "")})
                     conn = get_db()
@@ -1103,8 +1143,10 @@ async def _run_due_schedules():
                         _ensure_schedule_columns(conn)
                         attempts = int(s.get("attempts") or 0) + 1
                         if attempts >= 3:
-                            conn.execute("UPDATE publish_schedules SET status='failed', attempts=? WHERE id=?",
-                                         (attempts, s["id"]))
+                            conn.execute(
+                                "UPDATE publish_schedules SET status='failed', attempts=? WHERE id=?",
+                                (attempts, s["id"]),
+                            )
                         else:
                             conn.execute("UPDATE publish_schedules SET attempts=? WHERE id=?", (attempts, s["id"]))
                         conn.commit()
@@ -1127,9 +1169,10 @@ async def create_schedule(req: ScheduleRequest, current_user: dict = require_aut
         raise HTTPException(400, f"未知平台: {req.platform}")
     try:
         from datetime import datetime as _dt
+
         _dt.fromisoformat(req.scheduled_at.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(400, "计划时间格式不正确，应为 YYYY-MM-DDTHH:MM")
+    except ValueError as e:
+        raise HTTPException(400, "计划时间格式不正确，应为 YYYY-MM-DDTHH:MM") from e
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     sched_id = f"sched_{uuid.uuid4().hex[:12]}"
     conn = get_db()
@@ -1138,10 +1181,20 @@ async def create_schedule(req: ScheduleRequest, current_user: dict = require_aut
         """INSERT INTO publish_schedules (id, user_id, platform, content_type, title, content,
            topics, asset_urls, account_id, scheduled_at, status, created_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (sched_id, user, req.platform, req.content_type, req.title, req.content,
-         json.dumps(req.topics, ensure_ascii=False),
-         json.dumps(req.asset_urls, ensure_ascii=False),
-         req.account_id, req.scheduled_at, "pending", datetime.now().isoformat()),
+        (
+            sched_id,
+            user,
+            req.platform,
+            req.content_type,
+            req.title,
+            req.content,
+            json.dumps(req.topics, ensure_ascii=False),
+            json.dumps(req.asset_urls, ensure_ascii=False),
+            req.account_id,
+            req.scheduled_at,
+            "pending",
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -1154,13 +1207,12 @@ async def list_schedules(month: str = "", current_user: dict = require_auth()):
     conn = get_db()
     if month:
         rows = conn.execute(
-            "SELECT * FROM publish_schedules WHERE substr(scheduled_at,1,7)=? "
-            "ORDER BY scheduled_at", (month,),
+            "SELECT * FROM publish_schedules WHERE substr(scheduled_at,1,7)=? ORDER BY scheduled_at",
+            (month,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM publish_schedules WHERE status!='cancelled' "
-            "ORDER BY scheduled_at DESC LIMIT 100"
+            "SELECT * FROM publish_schedules WHERE status!='cancelled' ORDER BY scheduled_at DESC LIMIT 100"
         ).fetchall()
     conn.close()
     result = []
@@ -1220,16 +1272,19 @@ async def execute_schedule(sched_id: str, current_user: dict = require_auth()):
         raise HTTPException(400, f"排期当前状态为 {s['status']}，无法执行")
     conn.close()
     req = PublishRequest(
-        platform=s["platform"], content_type=s["content_type"], title=s["title"],
-        content=s["content"], topics=json.loads(s["topics"] or "[]"),
-        asset_urls=json.loads(s["asset_urls"] or "[]"), account_id=s["account_id"] or "",
+        platform=s["platform"],
+        content_type=s["content_type"],
+        title=s["title"],
+        content=s["content"],
+        topics=json.loads(s["topics"] or "[]"),
+        asset_urls=json.loads(s["asset_urls"] or "[]"),
+        account_id=s["account_id"] or "",
     )
     result = await submit_publish(req, current_user)
     conn = get_db()
     conn.execute(
         "UPDATE publish_schedules SET status=?, published_record_id=? WHERE id=?",
-        ("published" if result.get("status") == "success" else "pending",
-         result.get("record_id", ""), sched_id),
+        ("published" if result.get("status") == "success" else "pending", result.get("record_id", ""), sched_id),
     )
     conn.commit()
     conn.close()
@@ -1239,6 +1294,7 @@ async def execute_schedule(sched_id: str, current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 # 团队审核流
 # ══════════════════════════════════════════════════════════════
+
 
 class ReviewRequest(BaseModel):
     action: str = Field(..., description="approve / reject / reset")
@@ -1294,31 +1350,30 @@ async def review_record(record_id: str, req: ReviewRequest, current_user: dict =
     conn.commit()
     conn.close()
     label = {"approve": "已通过", "reject": "已驳回", "reset": "已重置为草稿"}
-    return {"success": True, "record_id": record_id, "status": status_map[req.action],
-            "message": f"审核{label[req.action]}"}
+    return {
+        "success": True,
+        "record_id": record_id,
+        "status": status_map[req.action],
+        "message": f"审核{label[req.action]}",
+    }
 
 
 # ══════════════════════════════════════════════════════════════
 # 发布数据统计（运营看板）
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/stats")
 async def publish_stats(current_user: dict = require_auth()):
     """运营看板统计：总量 / 平台分布 / 状态分布 / 近 30 天趋势 / 排期概览。"""
     conn = get_db()
     total = conn.execute("SELECT COUNT(*) AS n FROM publish_records").fetchone()["n"]
-    success = conn.execute(
-        "SELECT COUNT(*) AS n FROM publish_records WHERE status='success'"
-    ).fetchone()["n"]
+    success = conn.execute("SELECT COUNT(*) AS n FROM publish_records WHERE status='success'").fetchone()["n"]
     by_platform = {}
-    for r in conn.execute(
-        "SELECT platform, COUNT(*) AS n FROM publish_records GROUP BY platform"
-    ).fetchall():
+    for r in conn.execute("SELECT platform, COUNT(*) AS n FROM publish_records GROUP BY platform").fetchall():
         by_platform[r["platform"]] = r["n"]
     by_status = {}
-    for r in conn.execute(
-        "SELECT status, COUNT(*) AS n FROM publish_records GROUP BY status"
-    ).fetchall():
+    for r in conn.execute("SELECT status, COUNT(*) AS n FROM publish_records GROUP BY status").fetchall():
         by_status[r["status"]] = r["n"]
     # 近 30 天趋势（SQLite date 函数按本地日期聚合）
     trend = []
@@ -1329,6 +1384,7 @@ async def publish_stats(current_user: dict = require_auth()):
     ).fetchall()
     day_map = {r["day"]: r["n"] for r in rows}
     from datetime import timedelta
+
     today = datetime.now().date()
     for i in range(29, -1, -1):
         d = (today - timedelta(days=i)).isoformat()
@@ -1339,8 +1395,7 @@ async def publish_stats(current_user: dict = require_auth()):
         "AND scheduled_at >= datetime('now','-1 day')"
     ).fetchone()["n"]
     overdue = conn.execute(
-        "SELECT COUNT(*) AS n FROM publish_schedules WHERE status='pending' "
-        "AND scheduled_at < datetime('now')"
+        "SELECT COUNT(*) AS n FROM publish_schedules WHERE status='pending' AND scheduled_at < datetime('now')"
     ).fetchone()["n"]
     conn.close()
     return {

@@ -101,8 +101,7 @@ async def save_draft(req: DraftSaveRequest, current_user: dict = require_auth())
         draft_id = f"draft_{uuid.uuid4().hex[:12]}"
         conn.execute(
             "INSERT INTO drafts (id, user_id, tool_id, title, content, updated_at) VALUES (?,?,?,?,?,?)",
-            (draft_id, user_id, req.tool_id, req.title,
-             json.dumps(req.content, ensure_ascii=False), now),
+            (draft_id, user_id, req.tool_id, req.title, json.dumps(req.content, ensure_ascii=False), now),
         )
     conn.commit()
     conn.close()

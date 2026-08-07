@@ -1,17 +1,60 @@
 import React, { useState, useEffect } from 'react'
 import {
-  BarChart3, Bot, Layers, FolderKanban, CheckCircle2, GitBranch, Code2, Languages,
-  FileText, TrendingUp, Search, Sparkles, Send, Brain, Upload, Eye, Clock,
-  BarChart as BarChartIcon, PieChart, TrendingUp as TrendingUpIcon, Activity,
-  Save, FolderOpen, Trash2, ListRestart,
+  BarChart3,
+  Bot,
+  Layers,
+  FolderKanban,
+  CheckCircle2,
+  GitBranch,
+  Code2,
+  Languages,
+  FileText,
+  TrendingUp,
+  Search,
+  Sparkles,
+  Send,
+  Brain,
+  Upload,
+  Eye,
+  Clock,
+  BarChart as BarChartIcon,
+  PieChart,
+  TrendingUp as TrendingUpIcon,
+  Activity,
+  Save,
+  FolderOpen,
+  Trash2,
+  ListRestart,
 } from 'lucide-react'
-import { BarChart, Bar, PieChart as RPieChart, Pie, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts'
+import {
+  BarChart,
+  Bar,
+  PieChart as RPieChart,
+  Pie,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  Cell,
+} from 'recharts'
 import { Card, Button, PageHeader, Badge, SkeletonGrid, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
-const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#f97316', '#84cc16']
+const COLORS = [
+  '#6366f1',
+  '#8b5cf6',
+  '#ec4899',
+  '#f59e0b',
+  '#10b981',
+  '#06b6d4',
+  '#f97316',
+  '#84cc16',
+]
 
 function ChartRenderer({ chartType, option, title, insight }) {
   if (!option) return null
@@ -22,13 +65,13 @@ function ChartRenderer({ chartType, option, title, insight }) {
   // Build data array from xAxis/yAxis/series
   const data = xData.map((label, i) => {
     const item = { name: label }
-    series.forEach(s => {
+    series.forEach((s) => {
       item[s.name || 'value'] = s.data?.[i] ?? 0
     })
     return item
   })
 
-  const dataKeys = series.map(s => s.name || 'value')
+  const dataKeys = series.map((s) => s.name || 'value')
 
   return (
     <div className="space-y-3">
@@ -64,7 +107,14 @@ function ChartRenderer({ chartType, option, title, insight }) {
             <Tooltip />
             <Legend />
             {dataKeys.map((k, i) => (
-              <Line key={k} type="monotone" dataKey={k} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={{ r: 4 }} />
+              <Line
+                key={k}
+                type="monotone"
+                dataKey={k}
+                stroke={COLORS[i % COLORS.length]}
+                strokeWidth={2}
+                dot={{ r: 4 }}
+              />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -73,8 +123,15 @@ function ChartRenderer({ chartType, option, title, insight }) {
       {chartType === 'pie' && (
         <ResponsiveContainer width="100%" height={320}>
           <RPieChart>
-            <Pie data={data} dataKey={dataKeys[0]} nameKey="name" cx="50%" cy="50%" outerRadius={120}
-              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+            <Pie
+              data={data}
+              dataKey={dataKeys[0]}
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              outerRadius={120}
+              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+            >
               {data.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} />
               ))}
@@ -122,7 +179,9 @@ export default function DashboardPage() {
   const [savingDash, setSavingDash] = useState(false)
   const [deletingDash, setDeletingDash] = useState(null)
 
-  useEffect(() => { loadStats() }, [])
+  useEffect(() => {
+    loadStats()
+  }, [])
 
   const loadStats = async () => {
     try {
@@ -132,25 +191,77 @@ export default function DashboardPage() {
       ])
       setStats({ ...statsRes.data, ...overviewRes.data })
       setError(null)
-    } catch (e) { setError(e) }
-    finally { setLoading(false) }
+    } catch (e) {
+      setError(e)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const cards = [
-    { label: 'Agent 总数', value: stats?.agents || 0, icon: Bot, color: 'from-emerald-500 to-teal-600' },
-    { label: 'Workflow 总数', value: stats?.workflows || 0, icon: Layers, color: 'from-blue-500 to-indigo-600' },
-    { label: '项目总数', value: stats?.projects || 0, icon: FolderKanban, color: 'from-violet-500 to-purple-600' },
-    { label: '任务总数', value: stats?.tasks || 0, icon: CheckCircle2, color: 'from-amber-500 to-orange-600' },
-    { label: '已完成任务', value: stats?.tasks_completed || stats?.completed_tasks || 0, icon: TrendingUp, color: 'from-green-500 to-emerald-600' },
-    { label: '流水线', value: stats?.pipelines || 0, icon: GitBranch, color: 'from-cyan-500 to-blue-600' },
-    { label: '代码生成次数', value: stats?.code_generations || stats?.total_code_gens || 0, icon: Code2, color: 'from-pink-500 to-rose-600' },
-    { label: '翻译次数', value: stats?.translations || stats?.total_translations || 0, icon: Languages, color: 'from-indigo-500 to-violet-600' },
-    { label: '成果总数', value: stats?.artifacts || stats?.total_artifacts || 0, icon: FileText, color: 'from-teal-500 to-cyan-600' },
+    {
+      label: 'Agent 总数',
+      value: stats?.agents || 0,
+      icon: Bot,
+      color: 'from-emerald-500 to-teal-600',
+    },
+    {
+      label: 'Workflow 总数',
+      value: stats?.workflows || 0,
+      icon: Layers,
+      color: 'from-blue-500 to-indigo-600',
+    },
+    {
+      label: '项目总数',
+      value: stats?.projects || 0,
+      icon: FolderKanban,
+      color: 'from-violet-500 to-purple-600',
+    },
+    {
+      label: '任务总数',
+      value: stats?.tasks || 0,
+      icon: CheckCircle2,
+      color: 'from-amber-500 to-orange-600',
+    },
+    {
+      label: '已完成任务',
+      value: stats?.tasks_completed || stats?.completed_tasks || 0,
+      icon: TrendingUp,
+      color: 'from-green-500 to-emerald-600',
+    },
+    {
+      label: '流水线',
+      value: stats?.pipelines || 0,
+      icon: GitBranch,
+      color: 'from-cyan-500 to-blue-600',
+    },
+    {
+      label: '代码生成次数',
+      value: stats?.code_generations || stats?.total_code_gens || 0,
+      icon: Code2,
+      color: 'from-pink-500 to-rose-600',
+    },
+    {
+      label: '翻译次数',
+      value: stats?.translations || stats?.total_translations || 0,
+      icon: Languages,
+      color: 'from-indigo-500 to-violet-600',
+    },
+    {
+      label: '成果总数',
+      value: stats?.artifacts || stats?.total_artifacts || 0,
+      icon: FileText,
+      color: 'from-teal-500 to-cyan-600',
+    },
   ]
 
   const doNLQuery = async () => {
-    if (!nlQuery.trim()) { toast.error('请输入查询内容'); return }
-    setQuerying(true); setChartResult(null)
+    if (!nlQuery.trim()) {
+      toast.error('请输入查询内容')
+      return
+    }
+    setQuerying(true)
+    setChartResult(null)
     try {
       const res = await api.post('/api/dashboard/nl-query', {
         query: nlQuery.trim(),
@@ -158,9 +269,15 @@ export default function DashboardPage() {
         csv_filename: csvPreview?.filename || '',
       })
       setChartResult(res.data)
-      setQueryHistory(prev => [{ query: nlQuery, time: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)])
-    } catch (e) { toast.error(`查询失败：${e.message}`) }
-    finally { setQuerying(false) }
+      setQueryHistory((prev) => [
+        { query: nlQuery, time: new Date().toLocaleTimeString() },
+        ...prev.slice(0, 9),
+      ])
+    } catch (e) {
+      toast.error(`查询失败：${e.message}`)
+    } finally {
+      setQuerying(false)
+    }
   }
 
   const loadSaved = async () => {
@@ -168,12 +285,22 @@ export default function DashboardPage() {
     try {
       const res = await api.get('/api/dashboard/saved')
       setSavedDashboards(res.data || [])
-    } catch { /* 静默 */ } finally { setSavedLoading(false) }
+    } catch {
+      /* 静默 */
+    } finally {
+      setSavedLoading(false)
+    }
   }
 
   const saveDashboard = async () => {
-    if (!dashForm.title.trim()) { toast.error('请输入看板名称'); return }
-    if (!chartResult) { toast.error('请先生成一张图表再保存'); return }
+    if (!dashForm.title.trim()) {
+      toast.error('请输入看板名称')
+      return
+    }
+    if (!chartResult) {
+      toast.error('请先生成一张图表再保存')
+      return
+    }
     setSavingDash(true)
     try {
       await api.post('/api/dashboard/save', {
@@ -187,7 +314,11 @@ export default function DashboardPage() {
       setSaveModal(false)
       setDashForm({ title: '', description: '' })
       loadSaved()
-    } catch (e) { toast.error(`保存失败：${e.message}`) } finally { setSavingDash(false) }
+    } catch (e) {
+      toast.error(`保存失败：${e.message}`)
+    } finally {
+      setSavingDash(false)
+    }
   }
 
   const restoreDashboard = (d) => {
@@ -208,34 +339,59 @@ export default function DashboardPage() {
       toast.success('看板已删除')
       setDeletingDash(null)
       loadSaved()
-    } catch (e) { toast.error(`删除失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`删除失败：${e.message}`)
+    }
   }
 
   const uploadCsv = async (e) => {
-    const f = e.target.files?.[0]; if (!f) return
+    const f = e.target.files?.[0]
+    if (!f) return
     setCsvFile(f)
-    const form = new FormData(); form.append('file', f)
+    const form = new FormData()
+    form.append('file', f)
     try {
       const res = await api.post('/api/dashboard/upload-csv', form)
       setCsvPreview(res.data)
       setCsvData(res.data.csv_data || '')
       toast.success(`CSV加载完成：${res.data.row_count} 行, ${res.data.columns?.length} 列`)
-    } catch (err) { toast.error(`CSV上传失败：${err.message}`) }
+    } catch (err) {
+      toast.error(`CSV上传失败：${err.message}`)
+    }
   }
 
-  if (loading) return (
-    <div className="space-y-6">
-      <PageHeader title="数据仪表盘" description="平台全局数据概览 + 自然语言智能图表查询" icon={BarChart3} iconColor="from-blue-500 to-indigo-600" />
-      <SkeletonGrid count={6} />
-    </div>
-  )
+  if (loading)
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="数据仪表盘"
+          description="平台全局数据概览 + 自然语言智能图表查询"
+          icon={BarChart3}
+          iconColor="from-blue-500 to-indigo-600"
+        />
+        <SkeletonGrid count={6} />
+      </div>
+    )
 
-  if (error && !stats) return (
-    <div className="space-y-6">
-      <PageHeader title="数据仪表盘" description="平台全局数据概览 + 自然语言智能图表查询" icon={BarChart3} iconColor="from-blue-500 to-indigo-600" />
-      <ErrorState error={error} onRetry={() => { setLoading(true); setError(null); loadStats() }} />
-    </div>
-  )
+  if (error && !stats)
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="数据仪表盘"
+          description="平台全局数据概览 + 自然语言智能图表查询"
+          icon={BarChart3}
+          iconColor="from-blue-500 to-indigo-600"
+        />
+        <ErrorState
+          error={error}
+          onRetry={() => {
+            setLoading(true)
+            setError(null)
+            loadStats()
+          }}
+        />
+      </div>
+    )
 
   return (
     <div className="space-y-6">
@@ -251,11 +407,16 @@ export default function DashboardPage() {
         {[
           { id: 'overview', label: '数据概览', icon: BarChartIcon },
           { id: 'smart', label: '智能查询', icon: Brain },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}>
+              tab === t.id
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
             <t.icon className="w-4 h-4" /> {t.label}
           </button>
         ))}
@@ -265,10 +426,12 @@ export default function DashboardPage() {
       {tab === 'overview' && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
-            {cards.map(card => (
+            {cards.map((card) => (
               <Card key={card.label}>
                 <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center shadow-sm`}>
+                  <div
+                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${card.color} flex items-center justify-center shadow-sm`}
+                  >
                     <card.icon className="w-6 h-6 text-white" />
                   </div>
                   <div>
@@ -299,11 +462,21 @@ export default function DashboardPage() {
               <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                 <Search className="w-4 h-4 text-violet-500" /> 自然语言查询
               </h3>
-              <textarea value={nlQuery} onChange={(e) => setNlQuery(e.target.value)}
+              <textarea
+                value={nlQuery}
+                onChange={(e) => setNlQuery(e.target.value)}
                 placeholder="用自然语言描述你想看的数据分析…&#10;&#10;示例：&#10;- 过去7天每天的内容发布量趋势&#10;- 各类型内容的占比&#10;- 本周互动量TOP5的文章&#10;- 各Agent的任务完成率对比"
                 rows={5}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none" />
-              <Button variant="primary" size="sm" icon={Send} loading={querying} onClick={doNLQuery} className="mt-2 w-full">
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none"
+              />
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Send}
+                loading={querying}
+                onClick={doNLQuery}
+                className="mt-2 w-full"
+              >
                 {querying ? 'AI 分析中…' : '智能生成图表'}
               </Button>
             </Card>
@@ -317,12 +490,14 @@ export default function DashboardPage() {
               </div>
               <label className="flex flex-col items-center gap-2 p-6 border-2 border-dashed border-gray-200 rounded-xl hover:border-emerald-400 cursor-pointer transition-colors">
                 <Upload className="w-6 h-6 text-gray-300" />
-                <span className="text-sm text-gray-400">{csvFile ? csvFile.name : '点击上传CSV文件（可选）'}</span>
+                <span className="text-sm text-gray-400">
+                  {csvFile ? csvFile.name : '点击上传CSV文件（可选）'}
+                </span>
                 <input type="file" accept=".csv" onChange={uploadCsv} className="hidden" />
               </label>
               {csvPreview && (
                 <div className="mt-2 p-2 rounded-lg bg-gray-50 text-xs text-gray-500">
-                  列：{csvPreview.columns?.map(c => `${c.name}(${c.type})`).join(', ')}
+                  列：{csvPreview.columns?.map((c) => `${c.name}(${c.type})`).join(', ')}
                 </div>
               )}
             </Card>
@@ -335,8 +510,11 @@ export default function DashboardPage() {
                 </h3>
                 <div className="space-y-1">
                   {queryHistory.map((h, i) => (
-                    <button key={i} onClick={() => setNlQuery(h.query)}
-                      className="w-full text-left text-xs text-gray-600 hover:text-violet-600 px-2 py-1 rounded hover:bg-violet-50 transition-colors">
+                    <button
+                      key={i}
+                      onClick={() => setNlQuery(h.query)}
+                      className="w-full text-left text-xs text-gray-600 hover:text-violet-600 px-2 py-1 rounded hover:bg-violet-50 transition-colors"
+                    >
                       {h.query} <span className="text-gray-300 ml-1">{h.time}</span>
                     </button>
                   ))}
@@ -351,10 +529,30 @@ export default function DashboardPage() {
                   <Save className="w-4 h-4 text-blue-500" /> 我的看板
                   <Badge color="blue">{savedDashboards.length}</Badge>
                 </h3>
-                <Button size="sm" variant="ghost" icon={FolderOpen} onClick={loadSaved} loading={savedLoading}>刷新</Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={FolderOpen}
+                  onClick={loadSaved}
+                  loading={savedLoading}
+                >
+                  刷新
+                </Button>
               </div>
-              <Button size="sm" variant="primary" icon={Save} className="w-full mb-3 justify-center"
-                disabled={!chartResult} onClick={() => { setDashForm({ title: chartResult?.title ? `看板：${chartResult.title}` : '', description: '' }); setSaveModal(true) }}>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={Save}
+                className="w-full mb-3 justify-center"
+                disabled={!chartResult}
+                onClick={() => {
+                  setDashForm({
+                    title: chartResult?.title ? `看板：${chartResult.title}` : '',
+                    description: '',
+                  })
+                  setSaveModal(true)
+                }}
+              >
                 保存当前图表
               </Button>
               {savedDashboards.length === 0 ? (
@@ -362,14 +560,24 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                   {savedDashboards.map((d) => (
-                    <div key={d.id} className="group flex items-center gap-2 p-2 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition-all">
-                      <button onClick={() => restoreDashboard(d)} className="flex-1 text-left min-w-0">
+                    <div
+                      key={d.id}
+                      className="group flex items-center gap-2 p-2 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50/40 transition-all"
+                    >
+                      <button
+                        onClick={() => restoreDashboard(d)}
+                        className="flex-1 text-left min-w-0"
+                      >
                         <p className="text-xs font-medium text-gray-800 truncate">{d.title}</p>
-                        <p className="text-[10px] text-gray-400 truncate">{d.description || d.updated_at?.slice(0, 16).replace('T', ' ')}</p>
+                        <p className="text-[10px] text-gray-400 truncate">
+                          {d.description || d.updated_at?.slice(0, 16).replace('T', ' ')}
+                        </p>
                       </button>
-                      <button onClick={() => setDeletingDash(d.id)}
+                      <button
+                        onClick={() => setDeletingDash(d.id)}
                         className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-all"
-                        title="删除看板">
+                        title="删除看板"
+                      >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -399,8 +607,14 @@ export default function DashboardPage() {
 
       {/* 保存看板弹窗 */}
       {saveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setSaveModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setSaveModal(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-page-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
               <Save className="w-4 h-4 text-blue-500" /> 保存看板
             </h3>
@@ -427,8 +641,12 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">
-              <Button variant="ghost" onClick={() => setSaveModal(false)}>取消</Button>
-              <Button variant="primary" icon={Save} loading={savingDash} onClick={saveDashboard}>保存</Button>
+              <Button variant="ghost" onClick={() => setSaveModal(false)}>
+                取消
+              </Button>
+              <Button variant="primary" icon={Save} loading={savingDash} onClick={saveDashboard}>
+                保存
+              </Button>
             </div>
           </div>
         </div>
@@ -436,13 +654,23 @@ export default function DashboardPage() {
 
       {/* 删除看板确认 */}
       {deletingDash && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setDeletingDash(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-page-in" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+          onClick={() => setDeletingDash(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-page-in"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="font-semibold text-gray-900 mb-2">删除看板？</h3>
             <p className="text-sm text-gray-500">删除后无法恢复，图表数据仅保存在服务端。</p>
             <div className="flex justify-end gap-2 mt-6">
-              <Button variant="ghost" onClick={() => setDeletingDash(null)}>取消</Button>
-              <Button variant="danger" icon={Trash2} onClick={deleteDashboard}>删除</Button>
+              <Button variant="ghost" onClick={() => setDeletingDash(null)}>
+                取消
+              </Button>
+              <Button variant="danger" icon={Trash2} onClick={deleteDashboard}>
+                删除
+              </Button>
             </div>
           </div>
         </div>
@@ -450,4 +678,3 @@ export default function DashboardPage() {
     </div>
   )
 }
-

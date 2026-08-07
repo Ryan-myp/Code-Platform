@@ -2,25 +2,25 @@
 """效率工具箱 API v2 - 专业级工具平台"""
 
 import json
-import uuid
 import os
+import uuid
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Any
 
-from common.db import get_db
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
+
 from common.auth import require_auth
+from common.db import get_db
 from common.llm import call_llm
 from permissions import access_status, get_visibility_map, load_user_ctx
 
 router = APIRouter()
 
 
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 # 工具定义 v2 - 支持高级参数、模板、导出
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 
 TOOL_DEFINITIONS = {
     # ── 职场办公 ──────────────────────────────────────────
@@ -112,17 +112,57 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf"],
         "templates": [
-            {"id": "standup", "name": "每日站会", "content": "【日期】\n【参会人】\n\n## 昨日完成\n- \n\n## 今日计划\n- \n\n## 遇到的问题\n- \n\n## 需要的支持\n- "},
-            {"id": "review", "name": "评审会议", "content": "【评审对象】\n【评审时间】\n【参会评审人】\n\n## 评审标准\n- \n\n## 评审意见\n### 优点\n- \n\n### 问题点\n- \n\n### 改进建议\n- \n\n## 评审结论\n□ 通过  □ 有条件通过  □ 不通过\n\n## 修改要求\n- "},
-            {"id": "retro", "name": "复盘会议", "content": "【复盘项目】\n【复盘周期】\n【参会人】\n\n## 目标回顾\n原定目标：\n实际结果：\n\n## 亮点总结\n- \n\n## 不足分析\n| 问题 | 根本原因 | 改进措施 |\n|------|----------|----------|\n\n## 经验教训\n### 继续保持\n- \n\n### 需要改进\n- \n\n## 行动计划\n- "},
-            {"id": "brainstorm", "name": "头脑风暴", "content": "【主题】\n【参会人】\n【时间】\n\n## 背景说明\n\n## 创意收集\n### 创意1：\n提出人：\n描述：\n可行性：\n\n### 创意2：\n\n## 创意评估\n| 创意 | 创新性 | 可行性 | 成本 | 综合评分 |\n|------|--------|--------|------|----------|\n\n## 选定方案\n\n## 下一步"},
-            {"id": "one-on-one", "name": "1对1沟通", "content": "【沟通对象】\n【沟通时间】\n【沟通目的】\n\n## 对方反馈\n\n## 讨论要点\n\n## 达成共识\n\n## 后续跟进\n- "},
+            {
+                "id": "standup",
+                "name": "每日站会",
+                "content": "【日期】\n【参会人】\n\n## 昨日完成\n- \n\n## 今日计划\n- \n\n## 遇到的问题\n- \n\n## 需要的支持\n- ",
+            },
+            {
+                "id": "review",
+                "name": "评审会议",
+                "content": "【评审对象】\n【评审时间】\n【参会评审人】\n\n## 评审标准\n- \n\n## 评审意见\n### 优点\n- \n\n### 问题点\n- \n\n### 改进建议\n- \n\n## 评审结论\n□ 通过  □ 有条件通过  □ 不通过\n\n## 修改要求\n- ",
+            },
+            {
+                "id": "retro",
+                "name": "复盘会议",
+                "content": "【复盘项目】\n【复盘周期】\n【参会人】\n\n## 目标回顾\n原定目标：\n实际结果：\n\n## 亮点总结\n- \n\n## 不足分析\n| 问题 | 根本原因 | 改进措施 |\n|------|----------|----------|\n\n## 经验教训\n### 继续保持\n- \n\n### 需要改进\n- \n\n## 行动计划\n- ",
+            },
+            {
+                "id": "brainstorm",
+                "name": "头脑风暴",
+                "content": "【主题】\n【参会人】\n【时间】\n\n## 背景说明\n\n## 创意收集\n### 创意1：\n提出人：\n描述：\n可行性：\n\n### 创意2：\n\n## 创意评估\n| 创意 | 创新性 | 可行性 | 成本 | 综合评分 |\n|------|--------|--------|------|----------|\n\n## 选定方案\n\n## 下一步",
+            },
+            {
+                "id": "one-on-one",
+                "name": "1对1沟通",
+                "content": "【沟通对象】\n【沟通时间】\n【沟通目的】\n\n## 对方反馈\n\n## 讨论要点\n\n## 达成共识\n\n## 后续跟进\n- ",
+            },
         ],
         "params": {
-            "tone": {"type": "select", "label": "语言风格", "options": ["正式公文", "简洁商务", "详细记录", "轻松内部"], "default": "正式公文"},
-            "detail_level": {"type": "select", "label": "详细程度", "options": ["精简版(1页)", "标准版(2-3页)", "详细版(完整记录)"], "default": "标准版(2-3页)"},
-            "language": {"type": "select", "label": "输出语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
-            "meeting_type": {"type": "select", "label": "会议类型", "options": ["决策会议", "讨论会议", "信息同步", "头脑风暴", "复盘会议"], "default": "决策会议"},
+            "tone": {
+                "type": "select",
+                "label": "语言风格",
+                "options": ["正式公文", "简洁商务", "详细记录", "轻松内部"],
+                "default": "正式公文",
+            },
+            "detail_level": {
+                "type": "select",
+                "label": "详细程度",
+                "options": ["精简版(1页)", "标准版(2-3页)", "详细版(完整记录)"],
+                "default": "标准版(2-3页)",
+            },
+            "language": {
+                "type": "select",
+                "label": "输出语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
+            "meeting_type": {
+                "type": "select",
+                "label": "会议类型",
+                "options": ["决策会议", "讨论会议", "信息同步", "头脑风暴", "复盘会议"],
+                "default": "决策会议",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -223,17 +263,52 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "dev", "name": "研发周报", "content": "【本周完成】\n- 功能开发：\n- Bug修复：\n- 技术优化：\n\n【遇到的问题】\n- \n\n【下周计划】\n- \n\n【技术成长】\n- "},
-            {"id": "pm", "name": "产品周报", "content": "【产品迭代】\n- 需求评审：\n- 上线功能：\n\n【数据表现】\n- DAU：\n- 转化率：\n\n【用户反馈】\n- \n\n【下周计划】\n- "},
-            {"id": "ops", "name": "运营周报", "content": "【运营数据】\n- 新增用户：\n- 活跃用户：\n- 转化率：\n\n【活动效果】\n- \n\n【内容运营】\n- \n\n【下周计划】\n- "},
-            {"id": "sales", "name": "销售周报", "content": "【业绩数据】\n- 签约金额：\n- 新客户：\n- 跟进中：\n\n【重点客户】\n- \n\n【下周目标】\n- "},
-            {"id": "design", "name": "设计周报", "content": "【设计产出】\n- 完成页面：\n- 设计稿数量：\n\n【设计优化】\n- \n\n【设计评审】\n- \n\n【下周计划】\n- "},
+            {
+                "id": "dev",
+                "name": "研发周报",
+                "content": "【本周完成】\n- 功能开发：\n- Bug修复：\n- 技术优化：\n\n【遇到的问题】\n- \n\n【下周计划】\n- \n\n【技术成长】\n- ",
+            },
+            {
+                "id": "pm",
+                "name": "产品周报",
+                "content": "【产品迭代】\n- 需求评审：\n- 上线功能：\n\n【数据表现】\n- DAU：\n- 转化率：\n\n【用户反馈】\n- \n\n【下周计划】\n- ",
+            },
+            {
+                "id": "ops",
+                "name": "运营周报",
+                "content": "【运营数据】\n- 新增用户：\n- 活跃用户：\n- 转化率：\n\n【活动效果】\n- \n\n【内容运营】\n- \n\n【下周计划】\n- ",
+            },
+            {
+                "id": "sales",
+                "name": "销售周报",
+                "content": "【业绩数据】\n- 签约金额：\n- 新客户：\n- 跟进中：\n\n【重点客户】\n- \n\n【下周目标】\n- ",
+            },
+            {
+                "id": "design",
+                "name": "设计周报",
+                "content": "【设计产出】\n- 完成页面：\n- 设计稿数量：\n\n【设计优化】\n- \n\n【设计评审】\n- \n\n【下周计划】\n- ",
+            },
         ],
         "params": {
-            "report_type": {"type": "select", "label": "报告类型", "options": ["周报", "日报", "月报", "季度总结"], "default": "周报"},
-            "tone": {"type": "select", "label": "语言风格", "options": ["数据驱动", "成果导向", "简洁务实", "详细全面"], "default": "数据驱动"},
+            "report_type": {
+                "type": "select",
+                "label": "报告类型",
+                "options": ["周报", "日报", "月报", "季度总结"],
+                "default": "周报",
+            },
+            "tone": {
+                "type": "select",
+                "label": "语言风格",
+                "options": ["数据驱动", "成果导向", "简洁务实", "详细全面"],
+                "default": "数据驱动",
+            },
             "language": {"type": "select", "label": "输出语言", "options": ["中文", "English"], "default": "中文"},
-            "role": {"type": "select", "label": "岗位角色", "options": ["研发工程师", "产品经理", "运营", "设计师", "销售", "通用"], "default": "通用"},
+            "role": {
+                "type": "select",
+                "label": "岗位角色",
+                "options": ["研发工程师", "产品经理", "运营", "设计师", "销售", "通用"],
+                "default": "通用",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -307,19 +382,68 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "meeting", "name": "会议邀请", "content": "【会议主题】\n【会议时间】\n【会议地点/链接】\n【参会人员】\n\n【会议议程】\n1. \n2. \n3. \n\n【会前准备】\n- \n\n【期望产出】\n- "},
-            {"id": "follow", "name": "跟进邮件", "content": "【上次沟通时间】\n【上次沟通内容摘要】\n\n【需要跟进的事项】\n1. \n2. \n\n【当前进展】\n- \n\n【期望对方】\n- "},
-            {"id": "thank", "name": "感谢邮件", "content": "【感谢对象】\n【感谢原因】\n\n【具体帮助】\n- \n\n【带来的价值】\n- \n\n【期望表达】\n- "},
-            {"id": "apology", "name": "道歉/解释", "content": "【问题描述】\n【影响范围】\n\n【原因分析】\n- \n\n【解决方案】\n- \n\n【预防措施】\n- \n\n【补偿方案（如有）】\n- "},
-            {"id": "cold-email", "name": "陌生开发", "content": "【目标公司】\n【目标联系人】\n【我的身份】\n\n【价值主张】\n- \n\n【成功案例】\n- \n\n【期望行动】\n- "},
-            {"id": "negotiation", "name": "商务谈判", "content": "【谈判背景】\n【我方立场】\n【对方立场】\n\n【核心诉求】\n- \n\n【可让步点】\n- \n\n【底线】\n- "},
+            {
+                "id": "meeting",
+                "name": "会议邀请",
+                "content": "【会议主题】\n【会议时间】\n【会议地点/链接】\n【参会人员】\n\n【会议议程】\n1. \n2. \n3. \n\n【会前准备】\n- \n\n【期望产出】\n- ",
+            },
+            {
+                "id": "follow",
+                "name": "跟进邮件",
+                "content": "【上次沟通时间】\n【上次沟通内容摘要】\n\n【需要跟进的事项】\n1. \n2. \n\n【当前进展】\n- \n\n【期望对方】\n- ",
+            },
+            {
+                "id": "thank",
+                "name": "感谢邮件",
+                "content": "【感谢对象】\n【感谢原因】\n\n【具体帮助】\n- \n\n【带来的价值】\n- \n\n【期望表达】\n- ",
+            },
+            {
+                "id": "apology",
+                "name": "道歉/解释",
+                "content": "【问题描述】\n【影响范围】\n\n【原因分析】\n- \n\n【解决方案】\n- \n\n【预防措施】\n- \n\n【补偿方案（如有）】\n- ",
+            },
+            {
+                "id": "cold-email",
+                "name": "陌生开发",
+                "content": "【目标公司】\n【目标联系人】\n【我的身份】\n\n【价值主张】\n- \n\n【成功案例】\n- \n\n【期望行动】\n- ",
+            },
+            {
+                "id": "negotiation",
+                "name": "商务谈判",
+                "content": "【谈判背景】\n【我方立场】\n【对方立场】\n\n【核心诉求】\n- \n\n【可让步点】\n- \n\n【底线】\n- ",
+            },
         ],
         "params": {
-            "recipient_type": {"type": "select", "label": "收件人", "options": ["客户/甲方", "上级领导", "平级同事", "下属团队", "合作伙伴", "陌生人/冷启动"], "default": "客户/甲方"},
-            "tone": {"type": "select", "label": "语气", "options": ["正式严谨", "友好亲切", "紧急简洁", "委婉礼貌", "坚定有力"], "default": "正式严谨"},
-            "length": {"type": "select", "label": "长度", "options": ["简短(100字内)", "标准(200-300字)", "详细(500字+)"], "default": "标准(200-300字)"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
-            "email_type": {"type": "select", "label": "邮件类型", "options": ["请求/审批", "通知/告知", "邀请/约见", "感谢/表扬", "道歉/解释", "谈判/协商"], "default": "请求/审批"},
+            "recipient_type": {
+                "type": "select",
+                "label": "收件人",
+                "options": ["客户/甲方", "上级领导", "平级同事", "下属团队", "合作伙伴", "陌生人/冷启动"],
+                "default": "客户/甲方",
+            },
+            "tone": {
+                "type": "select",
+                "label": "语气",
+                "options": ["正式严谨", "友好亲切", "紧急简洁", "委婉礼貌", "坚定有力"],
+                "default": "正式严谨",
+            },
+            "length": {
+                "type": "select",
+                "label": "长度",
+                "options": ["简短(100字内)", "标准(200-300字)", "详细(500字+)"],
+                "default": "标准(200-300字)",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
+            "email_type": {
+                "type": "select",
+                "label": "邮件类型",
+                "options": ["请求/审批", "通知/告知", "邀请/约见", "感谢/表扬", "道歉/解释", "谈判/协商"],
+                "default": "请求/审批",
+            },
         },
         "export_formats": ["md", "txt"],
     },
@@ -501,16 +625,47 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf", "xlsx"],
         "templates": [
-            {"id": "feature", "name": "新功能", "content": "【功能名称】\n【目标用户】\n【核心场景】\n【用户痛点】\n【期望效果】\n【成功指标】"},
-            {"id": "optimize", "name": "优化改进", "content": "【现有问题】\n【数据表现】\n【优化目标】\n【改进方案】\n【成功指标】"},
-            {"id": "new", "name": "新产品", "content": "【产品定位】\n【目标市场】\n【目标用户】\n【核心功能】\n【商业模式】\n【竞品参考】"},
-            {"id": "mvp", "name": "MVP版本", "content": "【MVP目标】\n【核心功能】\n【砍掉的功能】\n【验证假设】\n【成功标准】"},
+            {
+                "id": "feature",
+                "name": "新功能",
+                "content": "【功能名称】\n【目标用户】\n【核心场景】\n【用户痛点】\n【期望效果】\n【成功指标】",
+            },
+            {
+                "id": "optimize",
+                "name": "优化改进",
+                "content": "【现有问题】\n【数据表现】\n【优化目标】\n【改进方案】\n【成功指标】",
+            },
+            {
+                "id": "new",
+                "name": "新产品",
+                "content": "【产品定位】\n【目标市场】\n【目标用户】\n【核心功能】\n【商业模式】\n【竞品参考】",
+            },
+            {
+                "id": "mvp",
+                "name": "MVP版本",
+                "content": "【MVP目标】\n【核心功能】\n【砍掉的功能】\n【验证假设】\n【成功标准】",
+            },
         ],
         "params": {
-            "product_type": {"type": "select", "label": "产品类型", "options": ["Web应用", "移动App", "小程序", "后台系统", "API服务", "SaaS产品"], "default": "Web应用"},
-            "detail_level": {"type": "select", "label": "详细程度", "options": ["概要版(2页)", "标准版(5-8页)", "详细版(10页+)"], "default": "标准版(5-8页)"},
+            "product_type": {
+                "type": "select",
+                "label": "产品类型",
+                "options": ["Web应用", "移动App", "小程序", "后台系统", "API服务", "SaaS产品"],
+                "default": "Web应用",
+            },
+            "detail_level": {
+                "type": "select",
+                "label": "详细程度",
+                "options": ["概要版(2页)", "标准版(5-8页)", "详细版(10页+)"],
+                "default": "标准版(5-8页)",
+            },
             "language": {"type": "select", "label": "输出语言", "options": ["中文", "English"], "default": "中文"},
-            "agile": {"type": "select", "label": "开发模式", "options": ["敏捷开发", "瀑布模式", "混合模式"], "default": "敏捷开发"},
+            "agile": {
+                "type": "select",
+                "label": "开发模式",
+                "options": ["敏捷开发", "瀑布模式", "混合模式"],
+                "default": "敏捷开发",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -596,19 +751,59 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "jpg", "png"],
         "templates": [
-            {"id": "product", "name": "产品种草", "content": "【产品名称】\n【产品价格】\n【使用场景】\n【使用感受】\n【推荐原因】\n【适合人群】"},
-            {"id": "tutorial", "name": "教程分享", "content": "【教程主题】\n【适合人群】\n【准备工具】\n【步骤概述】\n【关键技巧】\n【效果展示】"},
-            {"id": "review", "name": "测评体验", "content": "【测评对象】\n【使用时长】\n【优点】\n【缺点】\n【适合人群】\n【总结建议】"},
+            {
+                "id": "product",
+                "name": "产品种草",
+                "content": "【产品名称】\n【产品价格】\n【使用场景】\n【使用感受】\n【推荐原因】\n【适合人群】",
+            },
+            {
+                "id": "tutorial",
+                "name": "教程分享",
+                "content": "【教程主题】\n【适合人群】\n【准备工具】\n【步骤概述】\n【关键技巧】\n【效果展示】",
+            },
+            {
+                "id": "review",
+                "name": "测评体验",
+                "content": "【测评对象】\n【使用时长】\n【优点】\n【缺点】\n【适合人群】\n【总结建议】",
+            },
             {"id": "daily", "name": "日常分享", "content": "【分享主题】\n【场景描述】\n【心情感受】\n【想说的话】"},
-            {"id": "food", "name": "美食探店", "content": "【店铺名称】\n【店铺地址】\n【推荐菜品】\n【人均消费】\n【用餐感受】\n【推荐指数】"},
-            {"id": "travel", "name": "旅行攻略", "content": "【目的地】\n【行程天数】\n【必去景点】\n【美食推荐】\n【住宿推荐】\n【花费预算】\n【避坑指南】"},
+            {
+                "id": "food",
+                "name": "美食探店",
+                "content": "【店铺名称】\n【店铺地址】\n【推荐菜品】\n【人均消费】\n【用餐感受】\n【推荐指数】",
+            },
+            {
+                "id": "travel",
+                "name": "旅行攻略",
+                "content": "【目的地】\n【行程天数】\n【必去景点】\n【美食推荐】\n【住宿推荐】\n【花费预算】\n【避坑指南】",
+            },
         ],
         "params": {
-            "content_type": {"type": "select", "label": "内容类型", "options": ["产品种草", "教程分享", "测评体验", "日常分享", "美食探店", "旅行攻略"], "default": "产品种草"},
-            "tone": {"type": "select", "label": "语气风格", "options": ["活泼可爱", "专业可信", "真实朴素", "搞怪幽默", "温暖治愈"], "default": "活泼可爱"},
-            "word_count": {"type": "select", "label": "字数", "options": ["300字左右", "500字左右", "800字以上", "1000字长文"], "default": "500字左右"},
+            "content_type": {
+                "type": "select",
+                "label": "内容类型",
+                "options": ["产品种草", "教程分享", "测评体验", "日常分享", "美食探店", "旅行攻略"],
+                "default": "产品种草",
+            },
+            "tone": {
+                "type": "select",
+                "label": "语气风格",
+                "options": ["活泼可爱", "专业可信", "真实朴素", "搞怪幽默", "温暖治愈"],
+                "default": "活泼可爱",
+            },
+            "word_count": {
+                "type": "select",
+                "label": "字数",
+                "options": ["300字左右", "500字左右", "800字以上", "1000字长文"],
+                "default": "500字左右",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文"], "default": "中文"},
-            "target_audience": {"type": "select", "label": "目标人群", "options": ["学生党", "上班族", "宝妈", "美妆爱好者", "通用"], "default": "通用"},
+            "target_audience": {
+                "type": "select",
+                "label": "目标人群",
+                "options": ["学生党", "上班族", "宝妈", "美妆爱好者", "通用"],
+                "default": "通用",
+            },
         },
         "export_formats": ["md", "txt"],
     },
@@ -682,11 +877,25 @@ TOOL_DEFINITIONS = {
             {"id": "story", "name": "故事经历", "content": "【故事背景】\n【转折点】\n【收获感悟】"},
             {"id": "list", "name": "清单盘点", "content": "【清单主题】\n【盘点数量】\n【每个要点】"},
         ],
-
         "params": {
-            "platform": {"type": "select", "label": "目标平台", "options": ["小红书", "公众号", "抖音", "视频号", "知乎", "全平台"], "default": "全平台"},
-            "content_type": {"type": "select", "label": "内容类型", "options": ["种草", "教程", "测评", "观点", "故事"], "default": "种草"},
-            "style": {"type": "select", "label": "标题风格", "options": ["吸引眼球", "专业可信", "情感共鸣", "实用导向"], "default": "吸引眼球"},
+            "platform": {
+                "type": "select",
+                "label": "目标平台",
+                "options": ["小红书", "公众号", "抖音", "视频号", "知乎", "全平台"],
+                "default": "全平台",
+            },
+            "content_type": {
+                "type": "select",
+                "label": "内容类型",
+                "options": ["种草", "教程", "测评", "观点", "故事"],
+                "default": "种草",
+            },
+            "style": {
+                "type": "select",
+                "label": "标题风格",
+                "options": ["吸引眼球", "专业可信", "情感共鸣", "实用导向"],
+                "default": "吸引眼球",
+            },
             "count": {"type": "select", "label": "生成数量", "options": ["5个", "10个", "15个"], "default": "10个"},
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
@@ -803,14 +1012,27 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "pdf"],
         "templates": [
-            {"id": "empirical", "name": "实证研究", "content": "【论文标题】\n【研究假设】\n【实验设计】\n【样本量】\n【核心发现】"},
+            {
+                "id": "empirical",
+                "name": "实证研究",
+                "content": "【论文标题】\n【研究假设】\n【实验设计】\n【样本量】\n【核心发现】",
+            },
             {"id": "survey", "name": "综述论文", "content": "【综述主题】\n【覆盖领域】\n【主要结论】\n【研究空白】"},
             {"id": "method", "name": "方法论", "content": "【提出方法】\n【对比基线】\n【改进点】\n【实验结果】"},
         ],
-
         "params": {
-            "depth": {"type": "select", "label": "分析深度", "options": ["快速浏览(1页)", "标准分析(2-3页)", "深度解读(5页+)"], "default": "标准分析(2-3页)"},
-            "language": {"type": "select", "label": "输出语言", "options": ["中文", "English", "双语对照"], "default": "中文"},
+            "depth": {
+                "type": "select",
+                "label": "分析深度",
+                "options": ["快速浏览(1页)", "标准分析(2-3页)", "深度解读(5页+)"],
+                "default": "标准分析(2-3页)",
+            },
+            "language": {
+                "type": "select",
+                "label": "输出语言",
+                "options": ["中文", "English", "双语对照"],
+                "default": "中文",
+            },
         },
         "export_formats": ["md", "pdf"],
     },
@@ -886,10 +1108,25 @@ TOOL_DEFINITIONS = {
             {"id": "project", "name": "项目规划", "content": "项目名称：\n目标：\n主要模块：\n关键节点："},
         ],
         "params": {
-            "map_type": {"type": "select", "label": "导图类型", "options": ["知识梳理", "读书笔记", "项目规划", "问题分析", "决策分析"], "default": "知识梳理"},
+            "map_type": {
+                "type": "select",
+                "label": "导图类型",
+                "options": ["知识梳理", "读书笔记", "项目规划", "问题分析", "决策分析"],
+                "default": "知识梳理",
+            },
             "depth": {"type": "select", "label": "层级深度", "options": ["2层", "3层", "4层"], "default": "3层"},
-            "format": {"type": "select", "label": "输出格式", "options": ["Markdown", "OPML", "PlantUML"], "default": "Markdown"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
+            "format": {
+                "type": "select",
+                "label": "输出格式",
+                "options": ["Markdown", "OPML", "PlantUML"],
+                "default": "Markdown",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
         },
         "export_formats": ["md", "opml", "png"],
     },
@@ -988,7 +1225,7 @@ TOOL_DEFINITIONS = {
 | P0 | | | |
 
 ### 中长期规划
-- 
+-
 
 ---
 
@@ -1005,15 +1242,42 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf", "xlsx"],
         "templates": [
-            {"id": "app", "name": "APP竞品", "content": "【我的产品】\n名称：\n类型：\n核心功能：\n目标用户：\n\n【竞品A】\n名称：\n核心优势：\n用户规模：\n\n【竞品B】\n名称：\n核心优势：\n用户规模："},
-            {"id": "saas", "name": "SaaS竞品", "content": "【我的产品】\n名称：\n定位：\n定价：\n\n【竞品A】\n名称：\n定价：\n客户数：\n\n【竞品B】\n名称：\n定价：\n客户数："},
-            {"id": "ecommerce", "name": "电商竞品", "content": "【我的产品】\n品类：\n价格带：\n渠道：\n\n【竞品A】\n品类：\n价格带：\n月销：\n\n【竞品B】\n品类：\n价格带：\n月销："},
+            {
+                "id": "app",
+                "name": "APP竞品",
+                "content": "【我的产品】\n名称：\n类型：\n核心功能：\n目标用户：\n\n【竞品A】\n名称：\n核心优势：\n用户规模：\n\n【竞品B】\n名称：\n核心优势：\n用户规模：",
+            },
+            {
+                "id": "saas",
+                "name": "SaaS竞品",
+                "content": "【我的产品】\n名称：\n定位：\n定价：\n\n【竞品A】\n名称：\n定价：\n客户数：\n\n【竞品B】\n名称：\n定价：\n客户数：",
+            },
+            {
+                "id": "ecommerce",
+                "name": "电商竞品",
+                "content": "【我的产品】\n品类：\n价格带：\n渠道：\n\n【竞品A】\n品类：\n价格带：\n月销：\n\n【竞品B】\n品类：\n价格带：\n月销：",
+            },
         ],
         "params": {
-            "dimensions": {"type": "select", "label": "分析维度", "options": ["全面分析", "功能对比", "用户体验", "商业模式", "市场策略"], "default": "全面分析"},
-            "depth": {"type": "select", "label": "分析深度", "options": ["快速概览(1页)", "标准分析(3-5页)", "深度研究(10页+)"], "default": "标准分析(3-5页)"},
+            "dimensions": {
+                "type": "select",
+                "label": "分析维度",
+                "options": ["全面分析", "功能对比", "用户体验", "商业模式", "市场策略"],
+                "default": "全面分析",
+            },
+            "depth": {
+                "type": "select",
+                "label": "分析深度",
+                "options": ["快速概览(1页)", "标准分析(3-5页)", "深度研究(10页+)"],
+                "default": "标准分析(3-5页)",
+            },
             "language": {"type": "select", "label": "输出语言", "options": ["中文", "English"], "default": "中文"},
-            "product_type": {"type": "select", "label": "产品类型", "options": ["APP/小程序", "SaaS/企业服务", "电商平台", "硬件产品", "其他"], "default": "APP/小程序"},
+            "product_type": {
+                "type": "select",
+                "label": "产品类型",
+                "options": ["APP/小程序", "SaaS/企业服务", "电商平台", "硬件产品", "其他"],
+                "default": "APP/小程序",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -1196,16 +1460,52 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf", "xlsx"],
         "templates": [
-            {"id": "startup", "name": "创业项目", "content": "【项目名称】\n【一句话介绍】\n【解决什么问题】\n【目标用户】\n【商业模式】\n【核心优势】\n【融资需求】"},
-            {"id": "expansion", "name": "业务扩张", "content": "【现有业务】\n【扩张方向】\n【所需资源】\n【预期收益】\n【风险评估】"},
-            {"id": "franchise", "name": "加盟招商", "content": "【品牌介绍】\n【加盟模式】\n【加盟费用】\n【支持政策】\n【成功案例】"},
-            {"id": "internal", "name": "内部立项", "content": "【项目名称】\n【项目目标】\n【所需资源】\n【预期收益】\n【风险评估】\n【时间规划】"},
+            {
+                "id": "startup",
+                "name": "创业项目",
+                "content": "【项目名称】\n【一句话介绍】\n【解决什么问题】\n【目标用户】\n【商业模式】\n【核心优势】\n【融资需求】",
+            },
+            {
+                "id": "expansion",
+                "name": "业务扩张",
+                "content": "【现有业务】\n【扩张方向】\n【所需资源】\n【预期收益】\n【风险评估】",
+            },
+            {
+                "id": "franchise",
+                "name": "加盟招商",
+                "content": "【品牌介绍】\n【加盟模式】\n【加盟费用】\n【支持政策】\n【成功案例】",
+            },
+            {
+                "id": "internal",
+                "name": "内部立项",
+                "content": "【项目名称】\n【项目目标】\n【所需资源】\n【预期收益】\n【风险评估】\n【时间规划】",
+            },
         ],
         "params": {
-            "purpose": {"type": "select", "label": "用途", "options": ["融资路演", "内部规划", "政府申报", "合作伙伴", "银行贷款"], "default": "融资路演"},
-            "detail_level": {"type": "select", "label": "详细程度", "options": ["概要版(5页)", "标准版(15页)", "详细版(30页+)"], "default": "标准版(15页)"},
-            "language": {"type": "select", "label": "输出语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
-            "industry": {"type": "select", "label": "行业", "options": ["互联网/科技", "消费/零售", "制造/工业", "服务/教育", "医疗/健康", "其他"], "default": "互联网/科技"},
+            "purpose": {
+                "type": "select",
+                "label": "用途",
+                "options": ["融资路演", "内部规划", "政府申报", "合作伙伴", "银行贷款"],
+                "default": "融资路演",
+            },
+            "detail_level": {
+                "type": "select",
+                "label": "详细程度",
+                "options": ["概要版(5页)", "标准版(15页)", "详细版(30页+)"],
+                "default": "标准版(15页)",
+            },
+            "language": {
+                "type": "select",
+                "label": "输出语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
+            "industry": {
+                "type": "select",
+                "label": "行业",
+                "options": ["互联网/科技", "消费/零售", "制造/工业", "服务/教育", "医疗/健康", "其他"],
+                "default": "互联网/科技",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -1294,15 +1594,34 @@ TOOL_DEFINITIONS = {
         "file_types": ["txt", "md", "docx"],
         "templates": [
             {"id": "product", "name": "产品团队", "content": "【产品目标】\n【核心指标】\n【当前现状】\n【期望目标】"},
-            {"id": "engineering", "name": "研发团队", "content": "【技术目标】\n【质量指标】\n【效率指标】\n【当前痛点】"},
+            {
+                "id": "engineering",
+                "name": "研发团队",
+                "content": "【技术目标】\n【质量指标】\n【效率指标】\n【当前痛点】",
+            },
             {"id": "sales", "name": "销售团队", "content": "【业绩目标】\n【客户目标】\n【当前数据】\n【期望增长】"},
             {"id": "personal", "name": "个人成长", "content": "【成长方向】\n【技能目标】\n【学习计划】\n【期望成果】"},
         ],
         "params": {
-            "level": {"type": "select", "label": "层级", "options": ["公司级", "部门级", "团队级", "个人级"], "default": "团队级"},
-            "period": {"type": "select", "label": "周期", "options": ["季度OKR", "年度OKR", "月度OKR"], "default": "季度OKR"},
+            "level": {
+                "type": "select",
+                "label": "层级",
+                "options": ["公司级", "部门级", "团队级", "个人级"],
+                "default": "团队级",
+            },
+            "period": {
+                "type": "select",
+                "label": "周期",
+                "options": ["季度OKR", "年度OKR", "月度OKR"],
+                "default": "季度OKR",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
-            "industry": {"type": "select", "label": "行业", "options": ["互联网/科技", "金融", "制造", "零售", "通用"], "default": "通用"},
+            "industry": {
+                "type": "select",
+                "label": "行业",
+                "options": ["互联网/科技", "金融", "制造", "零售", "通用"],
+                "default": "通用",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -1390,15 +1709,46 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "tech", "name": "技术岗位", "content": "【岗位名称】\n【技术栈】\n【工作年限】\n【学历要求】\n【核心技能】"},
-            {"id": "product", "name": "产品岗位", "content": "【岗位名称】\n【产品类型】\n【工作年限】\n【核心能力】\n【行业要求】"},
-            {"id": "design", "name": "设计岗位", "content": "【岗位名称】\n【设计方向】\n【工具要求】\n【作品集要求】\n【工作年限】"},
-            {"id": "ops", "name": "运营岗位", "content": "【岗位名称】\n【运营方向】\n【核心指标】\n【工作年限】\n【行业经验】"},
+            {
+                "id": "tech",
+                "name": "技术岗位",
+                "content": "【岗位名称】\n【技术栈】\n【工作年限】\n【学历要求】\n【核心技能】",
+            },
+            {
+                "id": "product",
+                "name": "产品岗位",
+                "content": "【岗位名称】\n【产品类型】\n【工作年限】\n【核心能力】\n【行业要求】",
+            },
+            {
+                "id": "design",
+                "name": "设计岗位",
+                "content": "【岗位名称】\n【设计方向】\n【工具要求】\n【作品集要求】\n【工作年限】",
+            },
+            {
+                "id": "ops",
+                "name": "运营岗位",
+                "content": "【岗位名称】\n【运营方向】\n【核心指标】\n【工作年限】\n【行业经验】",
+            },
         ],
         "params": {
-            "job_level": {"type": "select", "label": "岗位级别", "options": ["初级(1-3年)", "中级(3-5年)", "高级(5-8年)", "专家(8年+)", "管理层"], "default": "中级(3-5年)"},
-            "tone": {"type": "select", "label": "语气", "options": ["正式专业", "活泼吸引", "简洁明了", "高端大气"], "default": "正式专业"},
-            "industry": {"type": "select", "label": "行业", "options": ["互联网", "金融", "教育", "医疗", "制造", "通用"], "default": "互联网"},
+            "job_level": {
+                "type": "select",
+                "label": "岗位级别",
+                "options": ["初级(1-3年)", "中级(3-5年)", "高级(5-8年)", "专家(8年+)", "管理层"],
+                "default": "中级(3-5年)",
+            },
+            "tone": {
+                "type": "select",
+                "label": "语气",
+                "options": ["正式专业", "活泼吸引", "简洁明了", "高端大气"],
+                "default": "正式专业",
+            },
+            "industry": {
+                "type": "select",
+                "label": "行业",
+                "options": ["互联网", "金融", "教育", "医疗", "制造", "通用"],
+                "default": "互联网",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -1483,15 +1833,34 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "tutorial", "name": "知识分享", "content": "【分享主题】\n【核心知识点】\n【目标时长】\n【目标人群】"},
+            {
+                "id": "tutorial",
+                "name": "知识分享",
+                "content": "【分享主题】\n【核心知识点】\n【目标时长】\n【目标人群】",
+            },
             {"id": "product", "name": "产品展示", "content": "【产品名称】\n【核心卖点】\n【使用场景】\n【目标人群】"},
             {"id": "vlog", "name": "日常Vlog", "content": "【Vlog主题】\n【拍摄场景】\n【情绪基调】\n【关键片段】"},
             {"id": "skit", "name": "剧情段子", "content": "【剧情主题】\n【角色设定】\n【反转点】\n【核心笑点】"},
         ],
         "params": {
-            "duration": {"type": "select", "label": "时长", "options": ["15秒(抖音)", "30秒(标准)", "60秒(小红书)", "3分钟(B站)"], "default": "30秒(标准)"},
-            "platform": {"type": "select", "label": "平台", "options": ["抖音", "小红书", "视频号", "B站", "快手", "全平台"], "default": "全平台"},
-            "style": {"type": "select", "label": "风格", "options": ["知识分享", "搞笑段子", "情感共鸣", "产品展示", "生活记录", "测评种草"], "default": "知识分享"},
+            "duration": {
+                "type": "select",
+                "label": "时长",
+                "options": ["15秒(抖音)", "30秒(标准)", "60秒(小红书)", "3分钟(B站)"],
+                "default": "30秒(标准)",
+            },
+            "platform": {
+                "type": "select",
+                "label": "平台",
+                "options": ["抖音", "小红书", "视频号", "B站", "快手", "全平台"],
+                "default": "全平台",
+            },
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["知识分享", "搞笑段子", "情感共鸣", "产品展示", "生活记录", "测评种草"],
+                "default": "知识分享",
+            },
         },
         "export_formats": ["md"],
     },
@@ -1571,14 +1940,41 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "xlsx"],
         "templates": [
-            {"id": "personal", "name": "个人IP", "content": "【账号定位】\n【目标人群】\n【内容方向】\n【发布平台】\n【发布频率】"},
-            {"id": "brand", "name": "品牌号", "content": "【品牌名称】\n【品牌调性】\n【推广产品】\n【目标人群】\n【发布平台】"},
-            {"id": "campaign", "name": "活动运营", "content": "【活动名称】\n【活动目标】\n【活动时间】\n【核心内容】\n【推广渠道】"},
+            {
+                "id": "personal",
+                "name": "个人IP",
+                "content": "【账号定位】\n【目标人群】\n【内容方向】\n【发布平台】\n【发布频率】",
+            },
+            {
+                "id": "brand",
+                "name": "品牌号",
+                "content": "【品牌名称】\n【品牌调性】\n【推广产品】\n【目标人群】\n【发布平台】",
+            },
+            {
+                "id": "campaign",
+                "name": "活动运营",
+                "content": "【活动名称】\n【活动目标】\n【活动时间】\n【核心内容】\n【推广渠道】",
+            },
         ],
         "params": {
-            "period": {"type": "select", "label": "周期", "options": ["一周", "两周", "一个月", "一个季度"], "default": "一周"},
-            "frequency": {"type": "select", "label": "频率", "options": ["每天1条", "每天2条", "隔天1条", "每周3条", "每周5条"], "default": "每天1条"},
-            "platform": {"type": "select", "label": "平台", "options": ["小红书", "抖音", "公众号", "视频号", "多平台"], "default": "多平台"},
+            "period": {
+                "type": "select",
+                "label": "周期",
+                "options": ["一周", "两周", "一个月", "一个季度"],
+                "default": "一周",
+            },
+            "frequency": {
+                "type": "select",
+                "label": "频率",
+                "options": ["每天1条", "每天2条", "隔天1条", "每周3条", "每周5条"],
+                "default": "每天1条",
+            },
+            "platform": {
+                "type": "select",
+                "label": "平台",
+                "options": ["小红书", "抖音", "公众号", "视频号", "多平台"],
+                "default": "多平台",
+            },
         },
         "export_formats": ["md", "xlsx"],
     },
@@ -1669,14 +2065,27 @@ TOOL_DEFINITIONS = {
 {input}""",
         "placeholder": "输入你学习的内容...",
         "input_type": "textarea",
-        "supports_file": True,        "templates": [
-            {"id": "textbook", "name": "教材笔记", "content": "【书名/课程】\n【章节】\n【核心概念】\n【重点公式/定理】\n【疑问点】"},
+        "supports_file": True,
+        "templates": [
+            {
+                "id": "textbook",
+                "name": "教材笔记",
+                "content": "【书名/课程】\n【章节】\n【核心概念】\n【重点公式/定理】\n【疑问点】",
+            },
             {"id": "lecture", "name": "课堂笔记", "content": "【课程名】\n【讲师】\n【主题】\n【要点记录】\n【作业】"},
-            {"id": "online", "name": "网课笔记", "content": "【课程平台】\n【课程名】\n【视频编号】\n【知识要点】\n【实践作业】"},
+            {
+                "id": "online",
+                "name": "网课笔记",
+                "content": "【课程平台】\n【课程名】\n【视频编号】\n【知识要点】\n【实践作业】",
+            },
         ],
-
         "params": {
-            "style": {"type": "select", "label": "风格", "options": ["康奈尔笔记", "思维导图式", "Q&A式", "大纲式"], "default": "康奈尔笔记"},
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["康奈尔笔记", "思维导图式", "Q&A式", "大纲式"],
+                "default": "康奈尔笔记",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English", "双语"], "default": "中文"},
         },
         "export_formats": ["md"],
@@ -1744,9 +2153,13 @@ TOOL_DEFINITIONS = {
             {"id": "formula", "name": "公式卡片", "content": "【公式名称】\n【公式内容】\n【适用条件】\n【推导过程】"},
             {"id": "timeline", "name": "时间线卡片", "content": "【事件名称】\n【时间】\n【背景】\n【影响】"},
         ],
-
         "params": {
-            "difficulty": {"type": "select", "label": "难度", "options": ["入门", "基础", "进阶", "高级"], "default": "基础"},
+            "difficulty": {
+                "type": "select",
+                "label": "难度",
+                "options": ["入门", "基础", "进阶", "高级"],
+                "default": "基础",
+            },
             "count": {"type": "select", "label": "数量", "options": ["5张", "8张", "10张", "15张"], "default": "8张"},
         },
         "export_formats": ["md"],
@@ -1811,13 +2224,13 @@ TOOL_DEFINITIONS = {
 ## 用户洞察总结
 
 ### 共同特征
-- 
+-
 
 ### 差异化需求
-- 
+-
 
 ### 产品建议
-- 
+-
 
 ## 专业要求
 1. 画像要真实可信，有具体细节
@@ -1832,11 +2245,18 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "consumer", "name": "消费者画像", "content": "【产品名称】\n【用户年龄段】\n【消费场景】\n【消费能力】\n【购买动机】"},
-            {"id": "b2b", "name": "B2B客户画像", "content": "【行业】\n【公司规模】\n【决策角色】\n【核心需求】\n【预算范围】"},
+            {
+                "id": "consumer",
+                "name": "消费者画像",
+                "content": "【产品名称】\n【用户年龄段】\n【消费场景】\n【消费能力】\n【购买动机】",
+            },
+            {
+                "id": "b2b",
+                "name": "B2B客户画像",
+                "content": "【行业】\n【公司规模】\n【决策角色】\n【核心需求】\n【预算范围】",
+            },
             {"id": "app", "name": "APP用户画像", "content": "【APP类型】\n【使用频率】\n【核心功能】\n【用户痛点】"},
         ],
-
         "params": {
             "count": {"type": "select", "label": "画像数", "options": ["2个", "3个", "4个", "5个"], "default": "3个"},
             "depth": {"type": "select", "label": "深度", "options": ["概要", "标准", "详细"], "default": "标准"},
@@ -1949,14 +2369,31 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "launch", "name": "新品上市", "content": "【产品名称】\n【上市时间】\n【目标人群】\n【核心卖点】\n【预算】\n【推广渠道】"},
-            {"id": "campaign", "name": "营销活动", "content": "【活动名称】\n【活动时间】\n【活动目标】\n【优惠方案】\n【推广计划】"},
+            {
+                "id": "launch",
+                "name": "新品上市",
+                "content": "【产品名称】\n【上市时间】\n【目标人群】\n【核心卖点】\n【预算】\n【推广渠道】",
+            },
+            {
+                "id": "campaign",
+                "name": "营销活动",
+                "content": "【活动名称】\n【活动时间】\n【活动目标】\n【优惠方案】\n【推广计划】",
+            },
             {"id": "brand", "name": "品牌建设", "content": "【品牌定位】\n【核心价值】\n【目标人群】\n【传播策略】"},
         ],
-
         "params": {
-            "budget": {"type": "select", "label": "预算", "options": ["低预算(<1万)", "中预算(1-10万)", "高预算(10万+)", "不限"], "default": "中预算(1-10万)"},
-            "period": {"type": "select", "label": "周期", "options": ["1周", "1个月", "3个月", "半年"], "default": "1个月"},
+            "budget": {
+                "type": "select",
+                "label": "预算",
+                "options": ["低预算(<1万)", "中预算(1-10万)", "高预算(10万+)", "不限"],
+                "default": "中预算(1-10万)",
+            },
+            "period": {
+                "type": "select",
+                "label": "周期",
+                "options": ["1周", "1个月", "3个月", "半年"],
+                "default": "1个月",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -2048,10 +2485,19 @@ TOOL_DEFINITIONS = {
             {"id": "site", "name": "整站SEO", "content": "【网站域名】\n【行业】\n【核心关键词】\n【竞品网站】"},
             {"id": "article", "name": "文章SEO", "content": "【文章主题】\n【目标关键词】\n【文章字数】\n【发布平台】"},
         ],
-
         "params": {
-            "engine": {"type": "select", "label": "搜索引擎", "options": ["Google", "百度", "必应", "全平台"], "default": "Google"},
-            "site_type": {"type": "select", "label": "网站类型", "options": ["企业官网", "电商", "博客", "SaaS", "其他"], "default": "企业官网"},
+            "engine": {
+                "type": "select",
+                "label": "搜索引擎",
+                "options": ["Google", "百度", "必应", "全平台"],
+                "default": "Google",
+            },
+            "site_type": {
+                "type": "select",
+                "label": "网站类型",
+                "options": ["企业官网", "电商", "博客", "SaaS", "其他"],
+                "default": "企业官网",
+            },
         },
         "export_formats": ["md"],
     },
@@ -2139,14 +2585,31 @@ TOOL_DEFINITIONS = {
 {input}""",
         "placeholder": "输入数据或描述数据情况...",
         "input_type": "textarea",
-        "supports_file": True,        "templates": [
-            {"id": "daily", "name": "日报模板", "content": "【日期】\n【核心指标】\n- DAU：\n- 新增：\n- 收入：\n\n【异常情况】\n-\n\n【今日重点】\n- "},
-            {"id": "weekly", "name": "周报模板", "content": "【周期】\n【核心数据】\n| 指标 | 本周 | 上周 | 环比 |\n\n【重点事项】\n-\n\n【下周计划】\n- "},
-            {"id": "campaign-report", "name": "活动报告", "content": "【活动名称】\n【活动时间】\n【活动目标 vs 实际】\n【ROI分析】\n【经验总结】"},
+        "supports_file": True,
+        "templates": [
+            {
+                "id": "daily",
+                "name": "日报模板",
+                "content": "【日期】\n【核心指标】\n- DAU：\n- 新增：\n- 收入：\n\n【异常情况】\n-\n\n【今日重点】\n- ",
+            },
+            {
+                "id": "weekly",
+                "name": "周报模板",
+                "content": "【周期】\n【核心数据】\n| 指标 | 本周 | 上周 | 环比 |\n\n【重点事项】\n-\n\n【下周计划】\n- ",
+            },
+            {
+                "id": "campaign-report",
+                "name": "活动报告",
+                "content": "【活动名称】\n【活动时间】\n【活动目标 vs 实际】\n【ROI分析】\n【经验总结】",
+            },
         ],
-
         "params": {
-            "report_type": {"type": "select", "label": "类型", "options": ["日报", "周报", "月报", "专项分析"], "default": "专项分析"},
+            "report_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["日报", "周报", "月报", "专项分析"],
+                "default": "专项分析",
+            },
             "depth": {"type": "select", "label": "深度", "options": ["概要", "标准", "深度"], "default": "标准"},
         },
         "export_formats": ["md"],
@@ -2207,11 +2670,18 @@ TOOL_DEFINITIONS = {
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "feature", "name": "功能需求", "content": "【功能名称】\n【用户角色】\n【用户目标】\n【验收标准】\n【优先级】"},
+            {
+                "id": "feature",
+                "name": "功能需求",
+                "content": "【功能名称】\n【用户角色】\n【用户目标】\n【验收标准】\n【优先级】",
+            },
             {"id": "epic", "name": "Epic故事", "content": "【Epic名称】\n【业务价值】\n【涉及角色】\n【预估工作量】"},
-            {"id": "bug", "name": "Bug报告", "content": "【Bug标题】\n【复现步骤】\n【期望结果】\n【实际结果】\n【严重程度】"},
+            {
+                "id": "bug",
+                "name": "Bug报告",
+                "content": "【Bug标题】\n【复现步骤】\n【期望结果】\n【实际结果】\n【严重程度】",
+            },
         ],
-
         "params": {
             "count": {"type": "select", "label": "数量", "options": ["5个", "8个", "10个"], "default": "8个"},
             "detail": {"type": "select", "label": "详细", "options": ["概要", "标准", "详细"], "default": "标准"},
@@ -2305,14 +2775,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "rest", "name": "REST API", "content": "【接口名称】\n【请求方法】GET/POST/PUT/DELETE\n【请求路径】\n【请求参数】\n【响应格式】\n【错误码】"},
-            {"id": "graphql", "name": "GraphQL", "content": "【查询名称】\n【类型】Query/Mutation\n【字段定义】\n【参数】\n【示例】"},
-            {"id": "websocket", "name": "WebSocket", "content": "【事件名称】\n【连接地址】\n【消息格式】\n【推送规则】"},
+            {
+                "id": "rest",
+                "name": "REST API",
+                "content": "【接口名称】\n【请求方法】GET/POST/PUT/DELETE\n【请求路径】\n【请求参数】\n【响应格式】\n【错误码】",
+            },
+            {
+                "id": "graphql",
+                "name": "GraphQL",
+                "content": "【查询名称】\n【类型】Query/Mutation\n【字段定义】\n【参数】\n【示例】",
+            },
+            {
+                "id": "websocket",
+                "name": "WebSocket",
+                "content": "【事件名称】\n【连接地址】\n【消息格式】\n【推送规则】",
+            },
         ],
-
         "params": {
-            "style": {"type": "select", "label": "风格", "options": ["RESTful", "GraphQL", "gRPC"], "default": "RESTful"},
-            "format": {"type": "select", "label": "格式", "options": ["Markdown", "OpenAPI/Swagger", "Postman"], "default": "Markdown"},
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["RESTful", "GraphQL", "gRPC"],
+                "default": "RESTful",
+            },
+            "format": {
+                "type": "select",
+                "label": "格式",
+                "options": ["Markdown", "OpenAPI/Swagger", "Postman"],
+                "default": "Markdown",
+            },
         },
         "export_formats": ["md"],
     },
@@ -2393,13 +2884,25 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md"],
         "templates": [
-            {"id": "major", "name": "大版本发布", "content": "【版本号】\n【发布日期】\n【新功能】\n-\n【优化改进】\n-\n【Bug修复】\n-\n【破坏性变更】\n- "},
-            {"id": "hotfix", "name": "紧急修复", "content": "【版本号】\n【问题描述】\n【影响范围】\n【修复方案】\n【验证方式】"},
+            {
+                "id": "major",
+                "name": "大版本发布",
+                "content": "【版本号】\n【发布日期】\n【新功能】\n-\n【优化改进】\n-\n【Bug修复】\n-\n【破坏性变更】\n- ",
+            },
+            {
+                "id": "hotfix",
+                "name": "紧急修复",
+                "content": "【版本号】\n【问题描述】\n【影响范围】\n【修复方案】\n【验证方式】",
+            },
             {"id": "internal", "name": "内部发布", "content": "【版本号】\n【变更内容】\n【配置变更】\n【回滚方案】"},
         ],
-
         "params": {
-            "audience": {"type": "select", "label": "受众", "options": ["终端用户", "开发者", "运维", "全部"], "default": "全部"},
+            "audience": {
+                "type": "select",
+                "label": "受众",
+                "options": ["终端用户", "开发者", "运维", "全部"],
+                "default": "全部",
+            },
             "tone": {"type": "select", "label": "风格", "options": ["正式", "友好", "技术向"], "default": "友好"},
         },
         "export_formats": ["md"],
@@ -2489,14 +2992,40 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "acquisition", "name": "拉新获客", "content": "【产品名称】\n【目标用户】\n【获客渠道】\n【预算范围】\n【预期目标】"},
-            {"id": "activation", "name": "促活转化", "content": "【产品名称】\n【当前活跃度】\n【转化目标】\n【核心功能】\n【用户路径】"},
-            {"id": "retention", "name": "留存提升", "content": "【产品名称】\n【当前留存率】\n【流失原因】\n【提升策略】\n【监控指标】"},
-            {"id": "full", "name": "全面增长", "content": "【产品名称】\n【产品阶段】\n【核心指标】\n【增长瓶颈】\n【资源情况】"},
+            {
+                "id": "acquisition",
+                "name": "拉新获客",
+                "content": "【产品名称】\n【目标用户】\n【获客渠道】\n【预算范围】\n【预期目标】",
+            },
+            {
+                "id": "activation",
+                "name": "促活转化",
+                "content": "【产品名称】\n【当前活跃度】\n【转化目标】\n【核心功能】\n【用户路径】",
+            },
+            {
+                "id": "retention",
+                "name": "留存提升",
+                "content": "【产品名称】\n【当前留存率】\n【流失原因】\n【提升策略】\n【监控指标】",
+            },
+            {
+                "id": "full",
+                "name": "全面增长",
+                "content": "【产品名称】\n【产品阶段】\n【核心指标】\n【增长瓶颈】\n【资源情况】",
+            },
         ],
         "params": {
-            "stage": {"type": "select", "label": "阶段", "options": ["冷启动", "成长期", "成熟期", "衰退期"], "default": "成长期"},
-            "goal": {"type": "select", "label": "目标", "options": ["拉新", "促活", "留存", "变现", "全面增长"], "default": "全面增长"},
+            "stage": {
+                "type": "select",
+                "label": "阶段",
+                "options": ["冷启动", "成长期", "成熟期", "衰退期"],
+                "default": "成长期",
+            },
+            "goal": {
+                "type": "select",
+                "label": "目标",
+                "options": ["拉新", "促活", "留存", "变现", "全面增长"],
+                "default": "全面增长",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -2586,12 +3115,29 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf"],
         "templates": [
-            {"id": "it", "name": "IT项目投标", "content": "【项目名称】\n【招标编号】\n【技术要求】\n【预算金额】\n【交付周期】\n【公司资质】"},
-            {"id": "engineering", "name": "工程项目投标", "content": "【工程名称】\n【工程地点】\n【工程规模】\n【资质要求】\n【工期要求】\n【安全措施】"},
-            {"id": "service", "name": "咨询服务投标", "content": "【项目名称】\n【服务内容】\n【服务周期】\n【团队配置】\n【报价方案】\n【成功案例】"},
+            {
+                "id": "it",
+                "name": "IT项目投标",
+                "content": "【项目名称】\n【招标编号】\n【技术要求】\n【预算金额】\n【交付周期】\n【公司资质】",
+            },
+            {
+                "id": "engineering",
+                "name": "工程项目投标",
+                "content": "【工程名称】\n【工程地点】\n【工程规模】\n【资质要求】\n【工期要求】\n【安全措施】",
+            },
+            {
+                "id": "service",
+                "name": "咨询服务投标",
+                "content": "【项目名称】\n【服务内容】\n【服务周期】\n【团队配置】\n【报价方案】\n【成功案例】",
+            },
         ],
         "params": {
-            "project_type": {"type": "select", "label": "类型", "options": ["IT项目", "工程项目", "咨询服务", "采购", "其他"], "default": "IT项目"},
+            "project_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["IT项目", "工程项目", "咨询服务", "采购", "其他"],
+                "default": "IT项目",
+            },
             "detail": {"type": "select", "label": "详细", "options": ["概要", "标准", "详细"], "default": "标准"},
         },
         "export_formats": ["md", "docx"],
@@ -2636,12 +3182,12 @@ curl -X GET '...' \
 
 ## 第二条 权利与义务
 ### 甲方权利与义务
-1. 
-2. 
+1.
+2.
 
 ### 乙方权利与义务
-1. 
-2. 
+1.
+2.
 
 ## 第三条 价款与支付
 | 项目 | 金额 | 支付时间 |
@@ -2679,14 +3225,40 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "service", "name": "服务合同", "content": "【甲方名称】\n【乙方名称】\n【服务内容】\n【服务期限】\n【费用金额】\n【付款方式】\n【违约责任】"},
-            {"id": "purchase", "name": "采购合同", "content": "【采购方】\n【供应方】\n【采购物品】\n【数量规格】\n【单价总价】\n【交货时间】\n【质量标准】\n【验收方式】"},
-            {"id": "cooperation", "name": "合作协议", "content": "【合作方A】\n【合作方B】\n【合作内容】\n【分工方式】\n【利润分配】\n【合作期限】\n【退出机制】"},
-            {"id": "nda", "name": "保密协议", "content": "【披露方】\n【接收方】\n【保密信息范围】\n【保密期限】\n【违约赔偿】\n【例外情况】"},
+            {
+                "id": "service",
+                "name": "服务合同",
+                "content": "【甲方名称】\n【乙方名称】\n【服务内容】\n【服务期限】\n【费用金额】\n【付款方式】\n【违约责任】",
+            },
+            {
+                "id": "purchase",
+                "name": "采购合同",
+                "content": "【采购方】\n【供应方】\n【采购物品】\n【数量规格】\n【单价总价】\n【交货时间】\n【质量标准】\n【验收方式】",
+            },
+            {
+                "id": "cooperation",
+                "name": "合作协议",
+                "content": "【合作方A】\n【合作方B】\n【合作内容】\n【分工方式】\n【利润分配】\n【合作期限】\n【退出机制】",
+            },
+            {
+                "id": "nda",
+                "name": "保密协议",
+                "content": "【披露方】\n【接收方】\n【保密信息范围】\n【保密期限】\n【违约赔偿】\n【例外情况】",
+            },
         ],
         "params": {
-            "contract_type": {"type": "select", "label": "类型", "options": ["服务合同", "采购合同", "劳动合同", "租赁合同", "合作协议"], "default": "服务合同"},
-            "relation": {"type": "select", "label": "关系", "options": ["B2B", "B2C", "雇佣", "合作"], "default": "B2B"},
+            "contract_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["服务合同", "采购合同", "劳动合同", "租赁合同", "合作协议"],
+                "default": "服务合同",
+            },
+            "relation": {
+                "type": "select",
+                "label": "关系",
+                "options": ["B2B", "B2C", "雇佣", "合作"],
+                "default": "B2B",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -2778,14 +3350,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pptx"],
         "templates": [
-            {"id": "onboard", "name": "新员工入职培训", "content": "【公司名称】\n【岗位类型】\n【培训内容】\n【培训周期】\n【考核方式】\n【导师安排】"},
-            {"id": "skill", "name": "技能提升培训", "content": "【培训主题】\n【目标人群】\n【当前水平】\n【期望水平】\n【实操环节】\n【考核标准】"},
-            {"id": "management", "name": "管理力培训", "content": "【培训主题】\n【管理层级】\n【团队规模】\n【核心挑战】\n【案例需求】\n【行动计划】"},
-            {"id": "compliance", "name": "合规培训", "content": "【合规主题】\n【适用法规】\n【风险场景】\n【案例要求】\n【考试形式】\n【合格标准】"},
+            {
+                "id": "onboard",
+                "name": "新员工入职培训",
+                "content": "【公司名称】\n【岗位类型】\n【培训内容】\n【培训周期】\n【考核方式】\n【导师安排】",
+            },
+            {
+                "id": "skill",
+                "name": "技能提升培训",
+                "content": "【培训主题】\n【目标人群】\n【当前水平】\n【期望水平】\n【实操环节】\n【考核标准】",
+            },
+            {
+                "id": "management",
+                "name": "管理力培训",
+                "content": "【培训主题】\n【管理层级】\n【团队规模】\n【核心挑战】\n【案例需求】\n【行动计划】",
+            },
+            {
+                "id": "compliance",
+                "name": "合规培训",
+                "content": "【合规主题】\n【适用法规】\n【风险场景】\n【案例要求】\n【考试形式】\n【合格标准】",
+            },
         ],
         "params": {
             "duration": {"type": "select", "label": "时长", "options": ["半天", "1天", "2天", "1周"], "default": "1天"},
-            "level": {"type": "select", "label": "水平", "options": ["新手入门", "有基础", "进阶提升", "高级研修"], "default": "有基础"},
+            "level": {
+                "type": "select",
+                "label": "水平",
+                "options": ["新手入门", "有基础", "进阶提升", "高级研修"],
+                "default": "有基础",
+            },
         },
         "export_formats": ["md"],
     },
@@ -2924,16 +3517,34 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "industry", "name": "行业调研", "content": "【行业名称】\n【调研目的】\n【关注维度】\n- 市场规模\n- 竞争格局\n- 发展趋势"},
+            {
+                "id": "industry",
+                "name": "行业调研",
+                "content": "【行业名称】\n【调研目的】\n【关注维度】\n- 市场规模\n- 竞争格局\n- 发展趋势",
+            },
             {"id": "product", "name": "产品调研", "content": "【产品名称】\n【目标市场】\n【竞品范围】\n【调研重点】"},
             {"id": "user", "name": "用户调研", "content": "【调研目的】\n【目标人群】\n【调研方法】\n【样本量要求】"},
         ],
-
         "params": {
-            "scope": {"type": "select", "label": "范围", "options": ["国内市场", "海外市场", "全球市场", "特定区域"], "default": "国内市场"},
-            "depth": {"type": "select", "label": "深度", "options": ["快速概览(1-2页)", "标准报告(5-8页)", "深度研究(15页+)"], "default": "标准报告(5-8页)"},
+            "scope": {
+                "type": "select",
+                "label": "范围",
+                "options": ["国内市场", "海外市场", "全球市场", "特定区域"],
+                "default": "国内市场",
+            },
+            "depth": {
+                "type": "select",
+                "label": "深度",
+                "options": ["快速概览(1-2页)", "标准报告(5-8页)", "深度研究(15页+)"],
+                "default": "标准报告(5-8页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
-            "industry": {"type": "select", "label": "行业", "options": ["互联网/科技", "消费品/零售", "金融/保险", "医疗/健康", "教育/培训", "制造业", "其他"], "default": "互联网/科技"},
+            "industry": {
+                "type": "select",
+                "label": "行业",
+                "options": ["互联网/科技", "消费品/零售", "金融/保险", "医疗/健康", "教育/培训", "制造业", "其他"],
+                "default": "互联网/科技",
+            },
         },
         "export_formats": ["md", "docx", "pdf"],
     },
@@ -3046,14 +3657,31 @@ curl -X GET '...' \
         "file_types": ["txt", "md", "docx"],
         "templates": [
             {"id": "first", "name": "首次拜访", "content": "【客户名称】\n【行业】\n【拜访目的】\n【准备材料】"},
-            {"id": "follow-up", "name": "跟进拜访", "content": "【客户名称】\n【上次拜访摘要】\n【本次目标】\n【准备方案】"},
-            {"id": "complaint", "name": "投诉处理", "content": "【客户名称】\n【投诉内容】\n【影响程度】\n【处理方案】"},
+            {
+                "id": "follow-up",
+                "name": "跟进拜访",
+                "content": "【客户名称】\n【上次拜访摘要】\n【本次目标】\n【准备方案】",
+            },
+            {
+                "id": "complaint",
+                "name": "投诉处理",
+                "content": "【客户名称】\n【投诉内容】\n【影响程度】\n【处理方案】",
+            },
         ],
-
         "params": {
-            "style": {"type": "select", "label": "风格", "options": ["简洁版(1页)", "标准版(2-3页)", "详细版(完整记录)"], "default": "标准版(2-3页)"},
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["简洁版(1页)", "标准版(2-3页)", "详细版(完整记录)"],
+                "default": "标准版(2-3页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
-            "visit_type": {"type": "select", "label": "拜访类型", "options": ["首次拜访", "需求调研", "方案演示", "商务谈判", "关系维护"], "default": "需求调研"},
+            "visit_type": {
+                "type": "select",
+                "label": "拜访类型",
+                "options": ["首次拜访", "需求调研", "方案演示", "商务谈判", "关系维护"],
+                "default": "需求调研",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -3154,17 +3782,45 @@ curl -X GET '...' \
         "file_types": ["txt", "md", "docx"],
         "templates": [
             {"id": "annual", "name": "年会致辞", "content": "【公司/部门】\n【年度亮点】\n【感谢对象】\n【来年展望】"},
-            {"id": "project", "name": "项目汇报", "content": "【项目名称】\n【汇报对象】\n【项目成果】\n【遇到的挑战】\n【下一步计划】"},
+            {
+                "id": "project",
+                "name": "项目汇报",
+                "content": "【项目名称】\n【汇报对象】\n【项目成果】\n【遇到的挑战】\n【下一步计划】",
+            },
             {"id": "keynote", "name": "主题演讲", "content": "【活动主题】\n【演讲时长】\n【核心观点】\n【目标听众】"},
             {"id": "toast", "name": "祝酒词", "content": "【场合】\n【对象】\n【想表达的情感】\n【氛围】"},
         ],
-
         "params": {
-            "duration": {"type": "select", "label": "时长", "options": ["3分钟(800字)", "5分钟(1500字)", "10分钟(3000字)", "20分钟(6000字)", "30分钟(9000字)"], "default": "5分钟(1500字)"},
-            "tone": {"type": "select", "label": "风格", "options": ["正式庄重", "轻松幽默", "激情鼓舞", "温暖感人", "专业权威"], "default": "正式庄重"},
-            "audience": {"type": "select", "label": "听众", "options": ["公司同事", "行业同行", "学生", "公众", "领导", "客户"], "default": "公司同事"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
-            "speech_type": {"type": "select", "label": "类型", "options": ["年会致辞", "项目汇报", "主题演讲", "动员誓师", "获奖感言", "离职告别"], "default": "主题演讲"},
+            "duration": {
+                "type": "select",
+                "label": "时长",
+                "options": ["3分钟(800字)", "5分钟(1500字)", "10分钟(3000字)", "20分钟(6000字)", "30分钟(9000字)"],
+                "default": "5分钟(1500字)",
+            },
+            "tone": {
+                "type": "select",
+                "label": "风格",
+                "options": ["正式庄重", "轻松幽默", "激情鼓舞", "温暖感人", "专业权威"],
+                "default": "正式庄重",
+            },
+            "audience": {
+                "type": "select",
+                "label": "听众",
+                "options": ["公司同事", "行业同行", "学生", "公众", "领导", "客户"],
+                "default": "公司同事",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
+            "speech_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["年会致辞", "项目汇报", "主题演讲", "动员誓师", "获奖感言", "离职告别"],
+                "default": "主题演讲",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -3174,7 +3830,7 @@ curl -X GET '...' \
         "icon": "FileText",
         "color": "red",
         "description": "专业新闻稿/公关稿，提升品牌形象",
-        "prompt_template": """你是一位拥有15年经验的专业公关撰稿人，曾服务于多家知名企业的公关部门。请根据用户提供的信息，生成一篇专亚、规范的新闻稿/公关稿。
+        "prompt_template": r"""你是一位拥有15年经验的专业公关撰稿人，曾服务于多家知名企业的公关部门。请根据用户提供的信息，生成一篇专亚、规范的新闻稿/公关稿。
 
 ## 角色定位
 - 你是公关撰稿专家，熟悉新闻写作规范和媒体传播规律
@@ -3252,16 +3908,38 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "product-launch", "name": "产品发布", "content": "【产品名称】\n【核心功能】\n【上市时间】\n【定价】\n【引用语】"},
-            {"id": "funding", "name": "融资消息", "content": "【公司名称】\n【融资金额】\n【领投方】\n【资金用途】\n【公司引用语】"},
+            {
+                "id": "product-launch",
+                "name": "产品发布",
+                "content": "【产品名称】\n【核心功能】\n【上市时间】\n【定价】\n【引用语】",
+            },
+            {
+                "id": "funding",
+                "name": "融资消息",
+                "content": "【公司名称】\n【融资金额】\n【领投方】\n【资金用途】\n【公司引用语】",
+            },
             {"id": "partnership", "name": "合作公告", "content": "【合作方】\n【合作内容】\n【预期效果】\n【时间线】"},
             {"id": "crisis", "name": "危机公关", "content": "【事件描述】\n【影响范围】\n【处理措施】\n【道歉/声明】"},
         ],
-
         "params": {
-            "type": {"type": "select", "label": "类型", "options": ["产品发布", "企业合作", "融资消息", "活动报道", "危机公关", "人事变动"], "default": "产品发布"},
-            "channel": {"type": "select", "label": "渠道", "options": ["官方媒体", "行业媒体", "社交媒体", "全渠道"], "default": "全渠道"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
+            "type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["产品发布", "企业合作", "融资消息", "活动报道", "危机公关", "人事变动"],
+                "default": "产品发布",
+            },
+            "channel": {
+                "type": "select",
+                "label": "渠道",
+                "options": ["官方媒体", "行业媒体", "社交媒体", "全渠道"],
+                "default": "全渠道",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -3396,14 +4074,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "conference", "name": "行业峰会", "content": "【峰会主题】\n【预计规模】\n【目标嘉宾】\n【议程方向】\n【预算范围】"},
-            {"id": "team-building", "name": "团建活动", "content": "【参与人数】\n【活动偏好】\n【预算/人】\n【时间安排】\n【特殊需求】"},
-            {"id": "exhibition", "name": "展览展会", "content": "【展会名称】\n【展位大小】\n【展示产品】\n【目标客户】"},
+            {
+                "id": "conference",
+                "name": "行业峰会",
+                "content": "【峰会主题】\n【预计规模】\n【目标嘉宾】\n【议程方向】\n【预算范围】",
+            },
+            {
+                "id": "team-building",
+                "name": "团建活动",
+                "content": "【参与人数】\n【活动偏好】\n【预算/人】\n【时间安排】\n【特殊需求】",
+            },
+            {
+                "id": "exhibition",
+                "name": "展览展会",
+                "content": "【展会名称】\n【展位大小】\n【展示产品】\n【目标客户】",
+            },
         ],
-
         "params": {
-            "scale": {"type": "select", "label": "规模", "options": ["小型(<50人)", "中型(50-200人)", "大型(200-1000人)", "超大型(1000+)"], "default": "中型(50-200人)"},
-            "type": {"type": "select", "label": "类型", "options": ["年会", "产品发布会", "团建", "展览", "论坛", "婚礼", "其他"], "default": "其他"},
+            "scale": {
+                "type": "select",
+                "label": "规模",
+                "options": ["小型(<50人)", "中型(50-200人)", "大型(200-1000人)", "超大型(1000+)"],
+                "default": "中型(50-200人)",
+            },
+            "type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["年会", "产品发布会", "团建", "展览", "论坛", "婚礼", "其他"],
+                "default": "其他",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -3536,13 +4235,30 @@ curl -X GET '...' \
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
             {"id": "dept", "name": "部门预算", "content": "【部门名称】\n【人员编制】\n【上年度预算】\n【本年度目标】"},
-            {"id": "project-budget", "name": "项目预算", "content": "【项目名称】\n【项目周期】\n【团队规模】\n【主要支出项】"},
-            {"id": "event-budget", "name": "活动预算", "content": "【活动名称】\n【活动规模】\n【场地需求】\n【餐饮需求】"},
+            {
+                "id": "project-budget",
+                "name": "项目预算",
+                "content": "【项目名称】\n【项目周期】\n【团队规模】\n【主要支出项】",
+            },
+            {
+                "id": "event-budget",
+                "name": "活动预算",
+                "content": "【活动名称】\n【活动规模】\n【场地需求】\n【餐饮需求】",
+            },
         ],
-
         "params": {
-            "type": {"type": "select", "label": "类型", "options": ["部门预算", "项目预算", "活动预算", "年度预算", "专项预算"], "default": "项目预算"},
-            "period": {"type": "select", "label": "周期", "options": ["月度", "季度", "半年", "年度"], "default": "季度"},
+            "type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["部门预算", "项目预算", "活动预算", "年度预算", "专项预算"],
+                "default": "项目预算",
+            },
+            "period": {
+                "type": "select",
+                "label": "周期",
+                "options": ["月度", "季度", "半年", "年度"],
+                "default": "季度",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -3698,14 +4414,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "tech", "name": "技术项目", "content": "【项目名称】\n【技术背景】\n【目标】\n【技术栈】\n【团队规模】\n【预期周期】"},
-            {"id": "business", "name": "业务项目", "content": "【项目名称】\n【业务背景】\n【目标用户】\n【预期收益】\n【投入资源】"},
-            {"id": "improvement", "name": "改善项目", "content": "【改善领域】\n【当前问题】\n【改善目标】\n【衡量指标】"},
+            {
+                "id": "tech",
+                "name": "技术项目",
+                "content": "【项目名称】\n【技术背景】\n【目标】\n【技术栈】\n【团队规模】\n【预期周期】",
+            },
+            {
+                "id": "business",
+                "name": "业务项目",
+                "content": "【项目名称】\n【业务背景】\n【目标用户】\n【预期收益】\n【投入资源】",
+            },
+            {
+                "id": "improvement",
+                "name": "改善项目",
+                "content": "【改善领域】\n【当前问题】\n【改善目标】\n【衡量指标】",
+            },
         ],
-
         "params": {
-            "scale": {"type": "select", "label": "规模", "options": ["小型(<1月)", "中型(1-3月)", "大型(3-6月)", "超大型(6月+)"], "default": "中型(1-3月)"},
-            "detail": {"type": "select", "label": "详细", "options": ["概要版(2页)", "标准版(5页)", "详细版(10页+)"], "default": "标准版(5页)"},
+            "scale": {
+                "type": "select",
+                "label": "规模",
+                "options": ["小型(<1月)", "中型(1-3月)", "大型(3-6月)", "超大型(6月+)"],
+                "default": "中型(1-3月)",
+            },
+            "detail": {
+                "type": "select",
+                "label": "详细",
+                "options": ["概要版(2页)", "标准版(5页)", "详细版(10页+)"],
+                "default": "标准版(5页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -3827,13 +4564,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "csv", "xlsx"],
         "templates": [
-            {"id": "individual", "name": "个股分析", "content": "【股票代码】\n【分析目的】\n【关注指标】\n【投资期限】\n【风险偏好】"},
-            {"id": "compare", "name": "对比分析", "content": "【股票A】\n【股票B】\n【对比维度】\n【投资偏好】\n【关注重点】"},
-            {"id": "sector", "name": "行业分析", "content": "【行业名称】\n【关注公司】\n【分析维度】\n【投资周期】\n【行业趋势】"},
+            {
+                "id": "individual",
+                "name": "个股分析",
+                "content": "【股票代码】\n【分析目的】\n【关注指标】\n【投资期限】\n【风险偏好】",
+            },
+            {
+                "id": "compare",
+                "name": "对比分析",
+                "content": "【股票A】\n【股票B】\n【对比维度】\n【投资偏好】\n【关注重点】",
+            },
+            {
+                "id": "sector",
+                "name": "行业分析",
+                "content": "【行业名称】\n【关注公司】\n【分析维度】\n【投资周期】\n【行业趋势】",
+            },
         ],
         "params": {
-            "stock_name": {"type": "select", "label": "市场", "options": ["A股", "港股", "美股", "其他"], "default": "A股"},
-            "depth": {"type": "select", "label": "深度", "options": ["快速概览", "标准分析", "深度报告"], "default": "标准分析"},
+            "stock_name": {
+                "type": "select",
+                "label": "市场",
+                "options": ["A股", "港股", "美股", "其他"],
+                "default": "A股",
+            },
+            "depth": {
+                "type": "select",
+                "label": "深度",
+                "options": ["快速概览", "标准分析", "深度报告"],
+                "default": "标准分析",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "pdf"],
@@ -3939,14 +4698,40 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "csv", "xlsx"],
         "templates": [
-            {"id": "sales", "name": "销售看板", "content": "【业务线】\n【核心指标】\n【数据周期】\n【关注维度】\n【告警需求】"},
-            {"id": "ops", "name": "运营看板", "content": "【产品名称】\n【用户指标】\n【活跃数据】\n【转化漏斗】\n【留存指标】"},
-            {"id": "finance", "name": "财务看板", "content": "【公司/部门】\n【收入指标】\n【成本结构】\n【利润目标】\n【现金流】"},
-            {"id": "project", "name": "项目看板", "content": "【项目名称】\n【进度指标】\n【里程碑】\n【风险项】\n【资源使用】"},
+            {
+                "id": "sales",
+                "name": "销售看板",
+                "content": "【业务线】\n【核心指标】\n【数据周期】\n【关注维度】\n【告警需求】",
+            },
+            {
+                "id": "ops",
+                "name": "运营看板",
+                "content": "【产品名称】\n【用户指标】\n【活跃数据】\n【转化漏斗】\n【留存指标】",
+            },
+            {
+                "id": "finance",
+                "name": "财务看板",
+                "content": "【公司/部门】\n【收入指标】\n【成本结构】\n【利润目标】\n【现金流】",
+            },
+            {
+                "id": "project",
+                "name": "项目看板",
+                "content": "【项目名称】\n【进度指标】\n【里程碑】\n【风险项】\n【资源使用】",
+            },
         ],
         "params": {
-            "scenario": {"type": "select", "label": "场景", "options": ["销售管理", "运营监控", "财务分析", "项目管理", "人力资源", "其他"], "default": "运营监控"},
-            "dashboard_type": {"type": "select", "label": "类型", "options": ["全局概览", "详细分析", "实时监控", "汇报展示"], "default": "全局概览"},
+            "scenario": {
+                "type": "select",
+                "label": "场景",
+                "options": ["销售管理", "运营监控", "财务分析", "项目管理", "人力资源", "其他"],
+                "default": "运营监控",
+            },
+            "dashboard_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["全局概览", "详细分析", "实时监控", "汇报展示"],
+                "default": "全局概览",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md"],
@@ -4061,14 +4846,31 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "landing", "name": "落地页测试", "content": "【页面名称】\n【测试元素】标题/按钮/图片\n【当前转化率】\n【预期提升】"},
+            {
+                "id": "landing",
+                "name": "落地页测试",
+                "content": "【页面名称】\n【测试元素】标题/按钮/图片\n【当前转化率】\n【预期提升】",
+            },
             {"id": "feature", "name": "功能测试", "content": "【功能名称】\n【对照组】\n【实验组】\n【核心指标】"},
-            {"id": "pricing", "name": "定价测试", "content": "【产品名称】\n【当前定价】\n【测试价格区间】\n【核心指标】"},
+            {
+                "id": "pricing",
+                "name": "定价测试",
+                "content": "【产品名称】\n【当前定价】\n【测试价格区间】\n【核心指标】",
+            },
         ],
-
         "params": {
-            "test_type": {"type": "select", "label": "类型", "options": ["UI/UX测试", "功能测试", "文案测试", "定价测试", "流程优化", "算法测试"], "default": "UI/UX测试"},
-            "sample_size": {"type": "select", "label": "样本量", "options": ["小样本(<1000)", "中样本(1000-10000)", "大样本(10000+)"], "default": "中样本(1000-10000)"},
+            "test_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["UI/UX测试", "功能测试", "文案测试", "定价测试", "流程优化", "算法测试"],
+                "default": "UI/UX测试",
+            },
+            "sample_size": {
+                "type": "select",
+                "label": "样本量",
+                "options": ["小样本(<1000)", "中样本(1000-10000)", "大样本(10000+)"],
+                "default": "中样本(1000-10000)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -4183,16 +4985,47 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "csv", "xlsx"],
         "templates": [
-            {"id": "sales", "name": "销售数据分析", "content": "【数据来源】\n【分析周期】\n【核心指标】\n【区域/产品】\n【对比维度】\n【关注问题】"},
-            {"id": "user", "name": "用户行为分析", "content": "【产品/平台】\n【用户群体】\n【行为指标】\n【分析周期】\n【关键路径】\n【优化目标】"},
-            {"id": "ops", "name": "运营数据分析", "content": "【业务线】\n【核心指标】\n【数据周期】\n【异常现象】\n【优化方向】\n【决策需求】"},
-            {"id": "market", "name": "市场分析数据", "content": "【行业/领域】\n【市场规模】\n【竞品数据】\n【用户画像】\n【趋势关注】\n【决策目标】"},
+            {
+                "id": "sales",
+                "name": "销售数据分析",
+                "content": "【数据来源】\n【分析周期】\n【核心指标】\n【区域/产品】\n【对比维度】\n【关注问题】",
+            },
+            {
+                "id": "user",
+                "name": "用户行为分析",
+                "content": "【产品/平台】\n【用户群体】\n【行为指标】\n【分析周期】\n【关键路径】\n【优化目标】",
+            },
+            {
+                "id": "ops",
+                "name": "运营数据分析",
+                "content": "【业务线】\n【核心指标】\n【数据周期】\n【异常现象】\n【优化方向】\n【决策需求】",
+            },
+            {
+                "id": "market",
+                "name": "市场分析数据",
+                "content": "【行业/领域】\n【市场规模】\n【竞品数据】\n【用户画像】\n【趋势关注】\n【决策目标】",
+            },
         ],
         "params": {
-            "report_type": {"type": "select", "label": "类型", "options": ["日报", "周报", "月报", "季度报告", "专项分析"], "default": "专项分析"},
-            "depth": {"type": "select", "label": "深度", "options": ["概要(1页)", "标准(3-5页)", "深度(8页+)"], "default": "标准(3-5页)"},
+            "report_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["日报", "周报", "月报", "季度报告", "专项分析"],
+                "default": "专项分析",
+            },
+            "depth": {
+                "type": "select",
+                "label": "深度",
+                "options": ["概要(1页)", "标准(3-5页)", "深度(8页+)"],
+                "default": "标准(3-5页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
-            "format": {"type": "select", "label": "格式", "options": ["Markdown", "PPT大纲", "Word文档"], "default": "Markdown"},
+            "format": {
+                "type": "select",
+                "label": "格式",
+                "options": ["Markdown", "PPT大纲", "Word文档"],
+                "default": "Markdown",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -4328,14 +5161,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "startup", "name": "冷启动", "content": "【产品名称】\n【目标用户】\n【当前用户数】\n【核心渠道】\n【预算】"},
-            {"id": "growth-stage", "name": "成长期", "content": "【产品名称】\n【DAU/MAU】\n【留存率】\n【付费率】\n【增长目标】"},
-            {"id": "mature", "name": "成熟期", "content": "【产品名称】\n【用户规模】\n【增长瓶颈】\n【变现情况】\n【优化方向】"},
+            {
+                "id": "startup",
+                "name": "冷启动",
+                "content": "【产品名称】\n【目标用户】\n【当前用户数】\n【核心渠道】\n【预算】",
+            },
+            {
+                "id": "growth-stage",
+                "name": "成长期",
+                "content": "【产品名称】\n【DAU/MAU】\n【留存率】\n【付费率】\n【增长目标】",
+            },
+            {
+                "id": "mature",
+                "name": "成熟期",
+                "content": "【产品名称】\n【用户规模】\n【增长瓶颈】\n【变现情况】\n【优化方向】",
+            },
         ],
-
         "params": {
-            "stage": {"type": "select", "label": "阶段", "options": ["冷启动", "成长期", "成熟期", "衰退期"], "default": "成长期"},
-            "dimensions": {"type": "select", "label": "维度", "options": ["全维度", "获客+留存", "留存+变现", "获客+传播"], "default": "全维度"},
+            "stage": {
+                "type": "select",
+                "label": "阶段",
+                "options": ["冷启动", "成长期", "成熟期", "衰退期"],
+                "default": "成长期",
+            },
+            "dimensions": {
+                "type": "select",
+                "label": "维度",
+                "options": ["全维度", "获客+留存", "留存+变现", "获客+传播"],
+                "default": "全维度",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -4473,14 +5327,40 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "csv", "xlsx"],
         "templates": [
-            {"id": "balance", "name": "资产负债表分析", "content": "【公司名称】\n【分析期间】\n【总资产规模】\n【负债结构】\n【所有者权益】\n【关注重点】"},
-            {"id": "income", "name": "利润表分析", "content": "【公司名称】\n【分析期间】\n【营业收入】\n【成本结构】\n【毛利率变化】\n【盈利趋势】"},
-            {"id": "cashflow", "name": "现金流量分析", "content": "【公司名称】\n【分析期间】\n【经营活动现金流】\n【投资活动现金流】\n【筹资活动现金流】\n【资金缺口】"},
-            {"id": "comprehensive", "name": "综合财务分析", "content": "【公司名称】\n【所属行业】\n【分析期间】\n【核心指标】\n【对标企业】\n【分析目的】\n【决策需求】"},
+            {
+                "id": "balance",
+                "name": "资产负债表分析",
+                "content": "【公司名称】\n【分析期间】\n【总资产规模】\n【负债结构】\n【所有者权益】\n【关注重点】",
+            },
+            {
+                "id": "income",
+                "name": "利润表分析",
+                "content": "【公司名称】\n【分析期间】\n【营业收入】\n【成本结构】\n【毛利率变化】\n【盈利趋势】",
+            },
+            {
+                "id": "cashflow",
+                "name": "现金流量分析",
+                "content": "【公司名称】\n【分析期间】\n【经营活动现金流】\n【投资活动现金流】\n【筹资活动现金流】\n【资金缺口】",
+            },
+            {
+                "id": "comprehensive",
+                "name": "综合财务分析",
+                "content": "【公司名称】\n【所属行业】\n【分析期间】\n【核心指标】\n【对标企业】\n【分析目的】\n【决策需求】",
+            },
         ],
         "params": {
-            "report_type": {"type": "select", "label": "报表", "options": ["资产负债表", "利润表", "现金流量表", "综合分析"], "default": "综合分析"},
-            "depth": {"type": "select", "label": "深度", "options": ["概要(1页)", "标准(3-5页)", "深度(8页+)"], "default": "标准(3-5页)"},
+            "report_type": {
+                "type": "select",
+                "label": "报表",
+                "options": ["资产负债表", "利润表", "现金流量表", "综合分析"],
+                "default": "综合分析",
+            },
+            "depth": {
+                "type": "select",
+                "label": "深度",
+                "options": ["概要(1页)", "标准(3-5页)", "深度(8页+)"],
+                "default": "标准(3-5页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -4631,14 +5511,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
-            {"id": "startup-invest", "name": "早期投资", "content": "【项目名称】\n【融资轮次】\n【融资金额】\n【核心团队】\n【商业模式】"},
-            {"id": "pe", "name": "PE投资", "content": "【公司名称】\n【年营收】\n【净利润】\n【行业地位】\n【退出方式】"},
-            {"id": "stock-invest", "name": "股票投资", "content": "【股票代码】\n【持仓周期】\n【投资金额】\n【风险承受】"},
+            {
+                "id": "startup-invest",
+                "name": "早期投资",
+                "content": "【项目名称】\n【融资轮次】\n【融资金额】\n【核心团队】\n【商业模式】",
+            },
+            {
+                "id": "pe",
+                "name": "PE投资",
+                "content": "【公司名称】\n【年营收】\n【净利润】\n【行业地位】\n【退出方式】",
+            },
+            {
+                "id": "stock-invest",
+                "name": "股票投资",
+                "content": "【股票代码】\n【持仓周期】\n【投资金额】\n【风险承受】",
+            },
         ],
-
         "params": {
-            "invest_type": {"type": "select", "label": "类型", "options": ["股权投资", "债权投资", "基金投资", "房地产", "其他"], "default": "股权投资"},
-            "risk_level": {"type": "select", "label": "风险", "options": ["保守型", "稳健型", "积极型", "激进型"], "default": "稳健型"},
+            "invest_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["股权投资", "债权投资", "基金投资", "房地产", "其他"],
+                "default": "股权投资",
+            },
+            "risk_level": {
+                "type": "select",
+                "label": "风险",
+                "options": ["保守型", "稳健型", "积极型", "激进型"],
+                "default": "稳健型",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -4759,13 +5660,30 @@ curl -X GET '...' \
         "file_types": ["txt", "md", "docx", "xlsx"],
         "templates": [
             {"id": "vat", "name": "增值税筹划", "content": "【企业类型】\n【年营收】\n【主要成本项】\n【当前税负率】"},
-            {"id": "income-tax", "name": "所得税筹划", "content": "【企业类型】\n【年利润】\n【是否高新企业】\n【研发费用】"},
-            {"id": "personal", "name": "个税筹划", "content": "【收入类型】工资/劳务/经营\n【年收入】\n【专项扣除】\n【其他收入】"},
+            {
+                "id": "income-tax",
+                "name": "所得税筹划",
+                "content": "【企业类型】\n【年利润】\n【是否高新企业】\n【研发费用】",
+            },
+            {
+                "id": "personal",
+                "name": "个税筹划",
+                "content": "【收入类型】工资/劳务/经营\n【年收入】\n【专项扣除】\n【其他收入】",
+            },
         ],
-
         "params": {
-            "company_type": {"type": "select", "label": "企业", "options": ["小规模纳税人", "一般纳税人", "个体户", "个人独资", "合伙企业"], "default": "一般纳税人"},
-            "tax_type": {"type": "select", "label": "税种", "options": ["增值税", "企业所得税", "个人所得税", "综合筹划"], "default": "综合筹划"},
+            "company_type": {
+                "type": "select",
+                "label": "企业",
+                "options": ["小规模纳税人", "一般纳税人", "个体户", "个人独资", "合伙企业"],
+                "default": "一般纳税人",
+            },
+            "tax_type": {
+                "type": "select",
+                "label": "税种",
+                "options": ["增值税", "企业所得税", "个人所得税", "综合筹划"],
+                "default": "综合筹划",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -4900,16 +5818,52 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "tech", "name": "技术岗", "content": "【岗位名称】\n【技术栈】\n【工作年限】\n【核心技能要求】\n【团队规模】"},
-            {"id": "product", "name": "产品岗", "content": "【岗位名称】\n【产品类型】\n【工作年限】\n【核心能力】\n【行业要求】"},
-            {"id": "sales", "name": "销售岗", "content": "【岗位名称】\n【销售模式】\n【目标客户】\n【业绩要求】\n【行业经验】"},
-            {"id": "manager", "name": "管理岗", "content": "【岗位名称】\n【管理团队规模】\n【管理范围】\n【核心挑战】\n【期望成果】"},
+            {
+                "id": "tech",
+                "name": "技术岗",
+                "content": "【岗位名称】\n【技术栈】\n【工作年限】\n【核心技能要求】\n【团队规模】",
+            },
+            {
+                "id": "product",
+                "name": "产品岗",
+                "content": "【岗位名称】\n【产品类型】\n【工作年限】\n【核心能力】\n【行业要求】",
+            },
+            {
+                "id": "sales",
+                "name": "销售岗",
+                "content": "【岗位名称】\n【销售模式】\n【目标客户】\n【业绩要求】\n【行业经验】",
+            },
+            {
+                "id": "manager",
+                "name": "管理岗",
+                "content": "【岗位名称】\n【管理团队规模】\n【管理范围】\n【核心挑战】\n【期望成果】",
+            },
         ],
         "params": {
-            "job_type": {"type": "select", "label": "岗位", "options": ["技术岗", "产品岗", "运营岗", "销售岗", "管理岗", "设计岗", "通用"], "default": "通用"},
-            "round": {"type": "select", "label": "轮次", "options": ["初筛(电话)", "技术面(专业)", "终面(综合)", "全套流程"], "default": "全套流程"},
-            "count": {"type": "select", "label": "数量", "options": ["10题(快速)", "15题(标准)", "20题(全面)", "30题(深度)"], "default": "15题(标准)"},
-            "difficulty": {"type": "select", "label": "难度", "options": ["初级", "中级", "高级", "混合"], "default": "混合"},
+            "job_type": {
+                "type": "select",
+                "label": "岗位",
+                "options": ["技术岗", "产品岗", "运营岗", "销售岗", "管理岗", "设计岗", "通用"],
+                "default": "通用",
+            },
+            "round": {
+                "type": "select",
+                "label": "轮次",
+                "options": ["初筛(电话)", "技术面(专业)", "终面(综合)", "全套流程"],
+                "default": "全套流程",
+            },
+            "count": {
+                "type": "select",
+                "label": "数量",
+                "options": ["10题(快速)", "15题(标准)", "20题(全面)", "30题(深度)"],
+                "default": "15题(标准)",
+            },
+            "difficulty": {
+                "type": "select",
+                "label": "难度",
+                "options": ["初级", "中级", "高级", "混合"],
+                "default": "混合",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -5038,14 +5992,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "self", "name": "自评模板", "content": "【评估周期】\n【KPI完成情况】\n- 指标1：目标X，实际Y\n【亮点贡献】\n-\n【待改进】\n-\n【下期目标】\n- "},
-            {"id": "manager", "name": "主管评价", "content": "【员工姓名】\n【岗位】\n【评估周期】\n【业绩评价】\n-\n【能力评价】\n-\n【发展建议】\n- "},
-            {"id": "360", "name": "360度评估", "content": "【被评估人】\n【评估关系】同事/下属/上级\n【协作表现】\n-\n【优点】\n-\n【改进建议】\n- "},
+            {
+                "id": "self",
+                "name": "自评模板",
+                "content": "【评估周期】\n【KPI完成情况】\n- 指标1：目标X，实际Y\n【亮点贡献】\n-\n【待改进】\n-\n【下期目标】\n- ",
+            },
+            {
+                "id": "manager",
+                "name": "主管评价",
+                "content": "【员工姓名】\n【岗位】\n【评估周期】\n【业绩评价】\n-\n【能力评价】\n-\n【发展建议】\n- ",
+            },
+            {
+                "id": "360",
+                "name": "360度评估",
+                "content": "【被评估人】\n【评估关系】同事/下属/上级\n【协作表现】\n-\n【优点】\n-\n【改进建议】\n- ",
+            },
         ],
-
         "params": {
-            "dimensions": {"type": "select", "label": "维度", "options": ["业绩为主", "能力为主", "综合评估", "360度"], "default": "综合评估"},
-            "period": {"type": "select", "label": "周期", "options": ["月度", "季度", "半年", "年度"], "default": "季度"},
+            "dimensions": {
+                "type": "select",
+                "label": "维度",
+                "options": ["业绩为主", "能力为主", "综合评估", "360度"],
+                "default": "综合评估",
+            },
+            "period": {
+                "type": "select",
+                "label": "周期",
+                "options": ["月度", "季度", "半年", "年度"],
+                "default": "季度",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -5171,14 +6146,41 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf"],
         "templates": [
-            {"id": "service", "name": "服务合同", "content": "【合同名称】\n【甲方】\n【乙方】\n【服务内容】\n【合同金额】\n【合同期限】"},
-            {"id": "labor", "name": "劳动合同", "content": "【员工姓名】\n【岗位】\n【工作地点】\n【薪资】\n【合同期限】\n【试用期】"},
-            {"id": "lease", "name": "租赁合同", "content": "【出租方】\n【承租方】\n【租赁物】\n【租金】\n【租期】\n【押金】"},
+            {
+                "id": "service",
+                "name": "服务合同",
+                "content": "【合同名称】\n【甲方】\n【乙方】\n【服务内容】\n【合同金额】\n【合同期限】",
+            },
+            {
+                "id": "labor",
+                "name": "劳动合同",
+                "content": "【员工姓名】\n【岗位】\n【工作地点】\n【薪资】\n【合同期限】\n【试用期】",
+            },
+            {
+                "id": "lease",
+                "name": "租赁合同",
+                "content": "【出租方】\n【承租方】\n【租赁物】\n【租金】\n【租期】\n【押金】",
+            },
         ],
         "params": {
-            "contract_type": {"type": "select", "label": "类型", "options": ["服务合同", "采购合同", "劳动合同", "租赁合同", "投资协议", "合作协议", "其他"], "default": "服务合同"},
-            "focus": {"type": "select", "label": "重点", "options": ["全面审查", "付款条款", "违约责任", "知识产权", "保密条款", "竞业限制"], "default": "全面审查"},
-            "party": {"type": "select", "label": "立场", "options": ["甲方立场", "乙方立场", "中立审查"], "default": "中立审查"},
+            "contract_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["服务合同", "采购合同", "劳动合同", "租赁合同", "投资协议", "合作协议", "其他"],
+                "default": "服务合同",
+            },
+            "focus": {
+                "type": "select",
+                "label": "重点",
+                "options": ["全面审查", "付款条款", "违约责任", "知识产权", "保密条款", "竞业限制"],
+                "default": "全面审查",
+            },
+            "party": {
+                "type": "select",
+                "label": "立场",
+                "options": ["甲方立场", "乙方立场", "中立审查"],
+                "default": "中立审查",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -5284,14 +6286,31 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "pdf"],
         "templates": [
-            {"id": "contract", "name": "合同争议", "content": "【合同名称】\n【争议焦点】\n【我方立场】\n【对方立场】\n【证据材料】"},
-            {"id": "compliance", "name": "合规审查", "content": "【审查对象】\n【适用法规】\n【审查范围】\n【关注重点】"},
+            {
+                "id": "contract",
+                "name": "合同争议",
+                "content": "【合同名称】\n【争议焦点】\n【我方立场】\n【对方立场】\n【证据材料】",
+            },
+            {
+                "id": "compliance",
+                "name": "合规审查",
+                "content": "【审查对象】\n【适用法规】\n【审查范围】\n【关注重点】",
+            },
             {"id": "ip", "name": "知识产权", "content": "【IP类型】\n【权利归属】\n【争议情况】\n【证据材料】"},
         ],
-
         "params": {
-            "issue_type": {"type": "select", "label": "类型", "options": ["合同纠纷", "劳动争议", "知识产权", "公司治理", "合规审查", "侵权责任", "其他"], "default": "合同纠纷"},
-            "detail": {"type": "select", "label": "详细", "options": ["概要版(2页)", "标准版(5页)", "详细版(10页+)"], "default": "标准版(5页)"},
+            "issue_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["合同纠纷", "劳动争议", "知识产权", "公司治理", "合规审查", "侵权责任", "其他"],
+                "default": "合同纠纷",
+            },
+            "detail": {
+                "type": "select",
+                "label": "详细",
+                "options": ["概要版(2页)", "标准版(5页)", "详细版(10页+)"],
+                "default": "标准版(5页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -5380,14 +6399,35 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "xlsx"],
         "templates": [
-            {"id": "standard", "name": "标准标题", "content": "【商品名称】\n【品牌】\n【核心材质/功能】\n【适用场景】\n【目标关键词】"},
-            {"id": "seasonal", "name": "季节促销", "content": "【商品名称】\n【促销活动】\n【优惠力度】\n【季节关键词】"},
-            {"id": "cross-border", "name": "跨境电商", "content": "【Product Name】\n【Target Market】\n【Key Features】\n【Keywords】"},
+            {
+                "id": "standard",
+                "name": "标准标题",
+                "content": "【商品名称】\n【品牌】\n【核心材质/功能】\n【适用场景】\n【目标关键词】",
+            },
+            {
+                "id": "seasonal",
+                "name": "季节促销",
+                "content": "【商品名称】\n【促销活动】\n【优惠力度】\n【季节关键词】",
+            },
+            {
+                "id": "cross-border",
+                "name": "跨境电商",
+                "content": "【Product Name】\n【Target Market】\n【Key Features】\n【Keywords】",
+            },
         ],
-
         "params": {
-            "platform": {"type": "select", "label": "平台", "options": ["淘宝/天猫", "京东", "拼多多", "抖音电商", "亚马逊", "全平台"], "default": "全平台"},
-            "category": {"type": "select", "label": "类目", "options": ["服饰鞋包", "数码家电", "美妆护肤", "食品生鲜", "家居日用", "母婴用品", "运动户外", "其他"], "default": "其他"},
+            "platform": {
+                "type": "select",
+                "label": "平台",
+                "options": ["淘宝/天猫", "京东", "拼多多", "抖音电商", "亚马逊", "全平台"],
+                "default": "全平台",
+            },
+            "category": {
+                "type": "select",
+                "label": "类目",
+                "options": ["服饰鞋包", "数码家电", "美妆护肤", "食品生鲜", "家居日用", "母婴用品", "运动户外", "其他"],
+                "default": "其他",
+            },
             "count": {"type": "select", "label": "数量", "options": ["5个", "8个", "10个"], "default": "8个"},
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
@@ -5399,7 +6439,7 @@ curl -X GET '...' \
         "icon": "FileText",
         "color": "pink",
         "description": "高转化商品详情页文案",
-        "prompt_template": """你是一位拥有10年经验的资深电商文案专家，曾服务多个TOP品牌，操盘过多个爆款详情页。请根据用户提供的商品信息，生成高转化的商品详情页文案。
+        "prompt_template": r"""你是一位拥有10年经验的资深电商文案专家，曾服务多个TOP品牌，操盘过多个爆款详情页。请根据用户提供的商品信息，生成高转化的商品详情页文案。
 
 ## 角色定位
 - 你是电商文案专家，擅长挖掘产品卖点和用户痛点
@@ -5506,14 +6546,31 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "electronics", "name": "数码家电", "content": "【产品名称】\n【核心参数】\n【卖点】\n【使用场景】\n【售后政策】"},
-            {"id": "fashion", "name": "服饰鞋包", "content": "【产品名称】\n【材质】\n【尺码】\n【穿搭场景】\n【保养说明】"},
+            {
+                "id": "electronics",
+                "name": "数码家电",
+                "content": "【产品名称】\n【核心参数】\n【卖点】\n【使用场景】\n【售后政策】",
+            },
+            {
+                "id": "fashion",
+                "name": "服饰鞋包",
+                "content": "【产品名称】\n【材质】\n【尺码】\n【穿搭场景】\n【保养说明】",
+            },
             {"id": "food", "name": "食品生鲜", "content": "【产品名称】\n【产地】\n【规格】\n【保质期】\n【食用方法】"},
         ],
-
         "params": {
-            "style": {"type": "select", "label": "风格", "options": ["专业严谨", "轻松活泼", "高端奢华", "亲民实惠", "科技感"], "default": "专业严谨"},
-            "audience": {"type": "select", "label": "人群", "options": ["年轻白领", "宝妈群体", "男性用户", "学生群体", "中老年", "通用"], "default": "通用"},
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["专业严谨", "轻松活泼", "高端奢华", "亲民实惠", "科技感"],
+                "default": "专业严谨",
+            },
+            "audience": {
+                "type": "select",
+                "label": "人群",
+                "options": ["年轻白领", "宝妈群体", "男性用户", "学生群体", "中老年", "通用"],
+                "default": "通用",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md"],
@@ -5613,15 +6670,41 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx"],
         "templates": [
-            {"id": "ecommerce", "name": "电商客服", "content": "【店铺类型】\n【主要产品】\n【常见问题类型】\n- 物流查询\n- 退换货\n- 产品咨询"},
-            {"id": "saas", "name": "SaaS客服", "content": "【产品类型】\n【用户类型】\n【常见问题】\n- 账号问题\n- 功能使用\n- 账单问题"},
-            {"id": "finance", "name": "金融客服", "content": "【业务类型】\n【合规要求】\n【常见问题】\n- 账户安全\n- 交易问题\n- 产品咨询"},
+            {
+                "id": "ecommerce",
+                "name": "电商客服",
+                "content": "【店铺类型】\n【主要产品】\n【常见问题类型】\n- 物流查询\n- 退换货\n- 产品咨询",
+            },
+            {
+                "id": "saas",
+                "name": "SaaS客服",
+                "content": "【产品类型】\n【用户类型】\n【常见问题】\n- 账号问题\n- 功能使用\n- 账单问题",
+            },
+            {
+                "id": "finance",
+                "name": "金融客服",
+                "content": "【业务类型】\n【合规要求】\n【常见问题】\n- 账户安全\n- 交易问题\n- 产品咨询",
+            },
         ],
-
         "params": {
-            "scene": {"type": "select", "label": "场景", "options": ["售前咨询", "售后处理", "投诉处理", "退换货", "物流问题", "全场景"], "default": "全场景"},
-            "tone": {"type": "select", "label": "语气", "options": ["热情亲切", "专业严谨", "简洁高效", "温暖关怀"], "default": "热情亲切"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
+            "scene": {
+                "type": "select",
+                "label": "场景",
+                "options": ["售前咨询", "售后处理", "投诉处理", "退换货", "物流问题", "全场景"],
+                "default": "全场景",
+            },
+            "tone": {
+                "type": "select",
+                "label": "语气",
+                "options": ["热情亲切", "专业严谨", "简洁高效", "温暖关怀"],
+                "default": "热情亲切",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -5733,15 +6816,37 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md"],
         "templates": [
-            {"id": "ecommerce-app", "name": "电商APP", "content": "【APP名称】\n【核心功能】\n- 商品浏览\n- 购物车\n- 下单支付\n【风格定位】"},
-            {"id": "social-app", "name": "社交APP", "content": "【APP名称】\n【核心功能】\n- 动态发布\n- 消息聊天\n- 个人主页\n【风格定位】"},
+            {
+                "id": "ecommerce-app",
+                "name": "电商APP",
+                "content": "【APP名称】\n【核心功能】\n- 商品浏览\n- 购物车\n- 下单支付\n【风格定位】",
+            },
+            {
+                "id": "social-app",
+                "name": "社交APP",
+                "content": "【APP名称】\n【核心功能】\n- 动态发布\n- 消息聊天\n- 个人主页\n【风格定位】",
+            },
             {"id": "tool-app", "name": "工具APP", "content": "【APP名称】\n【核心功能】\n【使用频率】\n【风格定位】"},
         ],
-
         "params": {
-            "product_type": {"type": "select", "label": "类型", "options": ["APP", "小程序", "网站", "后台系统", "SaaS", "智能硬件"], "default": "APP"},
-            "style": {"type": "select", "label": "风格", "options": ["简洁专业", "活泼有趣", "温暖亲切", "高端大气", "极简冷谈"], "default": "简洁专业"},
-            "language": {"type": "select", "label": "语言", "options": ["中文", "English", "中英双语"], "default": "中文"},
+            "product_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["APP", "小程序", "网站", "后台系统", "SaaS", "智能硬件"],
+                "default": "APP",
+            },
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["简洁专业", "活泼有趣", "温暖亲切", "高端大气", "极简冷谈"],
+                "default": "简洁专业",
+            },
+            "language": {
+                "type": "select",
+                "label": "语言",
+                "options": ["中文", "English", "中英双语"],
+                "default": "中文",
+            },
         },
         "export_formats": ["md", "docx"],
     },
@@ -5822,12 +6927,25 @@ curl -X GET '...' \
         "templates": [
             {"id": "tech", "name": "科技产品", "content": "【产品类型】\n【品牌调性】\n【目标用户】\n【参考品牌】"},
             {"id": "food", "name": "餐饮品牌", "content": "【品牌名称】\n【菜系类型】\n【目标客群】\n【氛围要求】"},
-            {"id": "education", "name": "教育产品", "content": "【产品类型】\n【目标年龄段】\n【品牌调性】\n【使用场景】"},
+            {
+                "id": "education",
+                "name": "教育产品",
+                "content": "【产品类型】\n【目标年龄段】\n【品牌调性】\n【使用场景】",
+            },
         ],
-
         "params": {
-            "style": {"type": "select", "label": "风格", "options": ["科技蓝", "自然绿", "活力橙", "高端黑金", "清新粉蓝", "商务灰", "暖色调", "冷色调"], "default": "科技蓝"},
-            "scene": {"type": "select", "label": "场景", "options": ["APP设计", "网页设计", "品牌设计", "PPT设计", "电商设计", "后台系统"], "default": "APP设计"},
+            "style": {
+                "type": "select",
+                "label": "风格",
+                "options": ["科技蓝", "自然绿", "活力橙", "高端黑金", "清新粉蓝", "商务灰", "暖色调", "冷色调"],
+                "default": "科技蓝",
+            },
+            "scene": {
+                "type": "select",
+                "label": "场景",
+                "options": ["APP设计", "网页设计", "品牌设计", "PPT设计", "电商设计", "后台系统"],
+                "default": "APP设计",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md"],
@@ -5952,14 +7070,27 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "jpg", "png"],
         "templates": [
-            {"id": "mobile", "name": "移动端规范", "content": "【产品名称】\n【平台】iOS/Android/双端\n【设计阶段】\n【主要页面】"},
+            {
+                "id": "mobile",
+                "name": "移动端规范",
+                "content": "【产品名称】\n【平台】iOS/Android/双端\n【设计阶段】\n【主要页面】",
+            },
             {"id": "web", "name": "Web端规范", "content": "【产品名称】\n【设备适配】\n【设计阶段】\n【主要模块】"},
             {"id": "brand", "name": "品牌规范", "content": "【品牌名称】\n【品牌定位】\n【品牌个性】\n【应用场景】"},
         ],
-
         "params": {
-            "doc_type": {"type": "select", "label": "类型", "options": ["设计规范", "设计提案", "改版说明", "品牌手册", "组件库文档"], "default": "设计规范"},
-            "detail": {"type": "select", "label": "详细", "options": ["概要(2页)", "标准(5页)", "详细(10页+)"], "default": "标准(5页)"},
+            "doc_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["设计规范", "设计提案", "改版说明", "品牌手册", "组件库文档"],
+                "default": "设计规范",
+            },
+            "detail": {
+                "type": "select",
+                "label": "详细",
+                "options": ["概要(2页)", "标准(5页)", "详细(10页+)"],
+                "default": "标准(5页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md", "docx"],
@@ -6073,14 +7204,40 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["txt", "md", "docx", "xlsx", "pdf"],
         "templates": [
-            {"id": "business", "name": "商业计划", "content": "【项目名称】\n【目标受众】\n【核心内容】\n【演示时长】\n【风格偏好】"},
-            {"id": "report", "name": "工作汇报", "content": "【汇报主题】\n【汇报对象】\n【工作成果】\n【数据亮点】\n【下步计划】"},
-            {"id": "training", "name": "培训课件", "content": "【培训主题】\n【学员水平】\n【核心知识点】\n【互动环节】\n【培训时长】"},
-            {"id": "product", "name": "产品发布", "content": "【产品名称】\n【核心卖点】\n【目标用户】\n【竞品对比】\n【发布场景】"},
+            {
+                "id": "business",
+                "name": "商业计划",
+                "content": "【项目名称】\n【目标受众】\n【核心内容】\n【演示时长】\n【风格偏好】",
+            },
+            {
+                "id": "report",
+                "name": "工作汇报",
+                "content": "【汇报主题】\n【汇报对象】\n【工作成果】\n【数据亮点】\n【下步计划】",
+            },
+            {
+                "id": "training",
+                "name": "培训课件",
+                "content": "【培训主题】\n【学员水平】\n【核心知识点】\n【互动环节】\n【培训时长】",
+            },
+            {
+                "id": "product",
+                "name": "产品发布",
+                "content": "【产品名称】\n【核心卖点】\n【目标用户】\n【竞品对比】\n【发布场景】",
+            },
         ],
         "params": {
-            "ppt_type": {"type": "select", "label": "类型", "options": ["商业计划", "工作汇报", "产品发布", "培训课件", "项目提案", "其他"], "default": "工作汇报"},
-            "page_count": {"type": "select", "label": "页数", "options": ["精简版(5-10页)", "标准版(15-20页)", "详细版(25-30页)"], "default": "标准版(15-20页)"},
+            "ppt_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["商业计划", "工作汇报", "产品发布", "培训课件", "项目提案", "其他"],
+                "default": "工作汇报",
+            },
+            "page_count": {
+                "type": "select",
+                "label": "页数",
+                "options": ["精简版(5-10页)", "标准版(15-20页)", "详细版(25-30页)"],
+                "default": "标准版(15-20页)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English", "双语"], "default": "中文"},
         },
         "export_formats": ["md"],
@@ -6189,35 +7346,64 @@ curl -X GET '...' \
         "supports_file": True,
         "file_types": ["csv", "xlsx", "xls", "txt"],
         "templates": [
-            {"id": "summary", "name": "数据汇总分析", "content": "【数据来源】\n【分析目标】\n【核心指标】\n【分组维度】\n【输出格式】"},
-            {"id": "trend", "name": "趋势分析", "content": "【数据周期】\n【分析指标】\n【时间粒度】\n【对比基准】\n【预测需求】"},
-            {"id": "vlookup", "name": "数据匹配查询", "content": "【主表数据】\n【匹配表数据】\n【匹配字段】\n【返回字段】\n【异常处理】"},
-            {"id": "pivot", "name": "数据透视表", "content": "【原始数据】\n【行标签】\n【列标签】\n【值字段】\n【筛选条件】\n【汇总方式】"},
+            {
+                "id": "summary",
+                "name": "数据汇总分析",
+                "content": "【数据来源】\n【分析目标】\n【核心指标】\n【分组维度】\n【输出格式】",
+            },
+            {
+                "id": "trend",
+                "name": "趋势分析",
+                "content": "【数据周期】\n【分析指标】\n【时间粒度】\n【对比基准】\n【预测需求】",
+            },
+            {
+                "id": "vlookup",
+                "name": "数据匹配查询",
+                "content": "【主表数据】\n【匹配表数据】\n【匹配字段】\n【返回字段】\n【异常处理】",
+            },
+            {
+                "id": "pivot",
+                "name": "数据透视表",
+                "content": "【原始数据】\n【行标签】\n【列标签】\n【值字段】\n【筛选条件】\n【汇总方式】",
+            },
         ],
         "params": {
-            "analysis_type": {"type": "select", "label": "类型", "options": ["数据汇总", "趋势分析", "对比分析", "相关性分析", "数据清洗", "公式编写"], "default": "数据汇总"},
-            "data_scale": {"type": "select", "label": "规模", "options": ["小型(<1000行)", "中型(1000-10万行)", "大型(10万行+)"], "default": "中型(1000-10万行)"},
+            "analysis_type": {
+                "type": "select",
+                "label": "类型",
+                "options": ["数据汇总", "趋势分析", "对比分析", "相关性分析", "数据清洗", "公式编写"],
+                "default": "数据汇总",
+            },
+            "data_scale": {
+                "type": "select",
+                "label": "规模",
+                "options": ["小型(<1000行)", "中型(1000-10万行)", "大型(10万行+)"],
+                "default": "中型(1000-10万行)",
+            },
             "language": {"type": "select", "label": "语言", "options": ["中文", "English"], "default": "中文"},
         },
         "export_formats": ["md"],
     },
-        }
+}
 
 
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 # 请求模型
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+
 
 class ToolRunRequest(BaseModel):
     tool_id: str
     input: str
-    params: Optional[Dict[str, Any]] = {}
+    params: dict[str, Any] | None = {}
     model: str = ""
 
+    # ══════════════════════════════════════════════════════════════
 
-    # ══════════════════════════════════════════════════════════════
+
 # API 端点
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+
 
 @router.get("/api/tools")
 async def list_tools(current_user: dict = require_auth()):
@@ -6263,25 +7449,27 @@ async def get_usage_stats(current_user: dict = require_auth()):
     conn = get_db()
     try:
         rows = conn.execute(
-            """SELECT tool_id, use_count, last_used_at 
-               FROM tool_usage_stats WHERE user_id=? 
+            """SELECT tool_id, use_count, last_used_at
+               FROM tool_usage_stats WHERE user_id=?
                ORDER BY use_count DESC LIMIT 20""",
-            (user_id,)
+            (user_id,),
         ).fetchall()
         stats = []
         for row in rows:
             tool_id = row["tool_id"]
             if tool_id in TOOL_DEFINITIONS:
                 tool = TOOL_DEFINITIONS[tool_id]
-                stats.append({
-                    "tool_id": tool_id,
-                    "name": tool["name"],
-                    "category": tool["category"],
-                    "icon": tool["icon"],
-                    "color": tool["color"],
-                    "use_count": row["use_count"],
-                    "last_used_at": row["last_used_at"],
-                })
+                stats.append(
+                    {
+                        "tool_id": tool_id,
+                        "name": tool["name"],
+                        "category": tool["category"],
+                        "icon": tool["icon"],
+                        "color": tool["color"],
+                        "use_count": row["use_count"],
+                        "last_used_at": row["last_used_at"],
+                    }
+                )
         return stats
     finally:
         conn.close()
@@ -6339,7 +7527,7 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
     # 渲染提示词
     try:
         prompt = prompt_template.format(input=data.input, **params)
-    except KeyError as e:
+    except KeyError:
         prompt = prompt_template.replace("{input}", data.input)
 
     try:
@@ -6358,41 +7546,47 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
             conn.execute(
                 """INSERT INTO tool_records (id, tool_id, input, result, model, created_at, user_id)
                    VALUES (?,?,?,?,?,?,?) """,
-                (record_id, data.tool_id, json.dumps({"input": data.input, "params": data.params}),
-                 result, data.model, datetime.now().isoformat(), uid)
+                (
+                    record_id,
+                    data.tool_id,
+                    json.dumps({"input": data.input, "params": data.params}),
+                    result,
+                    data.model,
+                    datetime.now().isoformat(),
+                    uid,
+                ),
             )
             # 更新使用统计
             user_id = uid
             stats_id = f"stat_{uuid.uuid4().hex[:12]}"
             existing_stat = conn.execute(
-                "SELECT id, use_count FROM tool_usage_stats WHERE user_id=? AND tool_id=?",
-                (user_id, data.tool_id)
+                "SELECT id, use_count FROM tool_usage_stats WHERE user_id=? AND tool_id=?", (user_id, data.tool_id)
             ).fetchone()
             if existing_stat:
                 conn.execute(
                     "UPDATE tool_usage_stats SET use_count=use_count+1, last_used_at=? WHERE id=?",
-                    (datetime.now().isoformat(), existing_stat["id"])
+                    (datetime.now().isoformat(), existing_stat["id"]),
                 )
             else:
                 conn.execute(
                     "INSERT INTO tool_usage_stats (id, user_id, tool_id, use_count, last_used_at) VALUES (?,?,?,1,?)",
-                    (stats_id, user_id, data.tool_id, datetime.now().isoformat())
+                    (stats_id, user_id, data.tool_id, datetime.now().isoformat()),
                 )
             conn.commit()
         finally:
             conn.close()
 
         return {
-            "ok": True, 
-            "id": record_id, 
+            "ok": True,
+            "id": record_id,
             "result": result,
             "metadata": {
                 "tool_name": tool["name"],
                 "params_used": params,
-            }
+            },
         }
     except Exception as e:
-        raise HTTPException(500, f"工具执行失败: {str(e)}")
+        raise HTTPException(500, f"工具执行失败: {str(e)}") from e
 
 
 @router.get("/api/tools/{tool_id}/history")
@@ -6404,7 +7598,7 @@ async def get_tool_history(tool_id: str, limit: int = 20, current_user: dict = r
         items = []
         for row in conn.execute(
             "SELECT * FROM tool_records WHERE tool_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?",
-            (tool_id, uid, limit)
+            (tool_id, uid, limit),
         ).fetchall():
             item = dict(row)
             # 解析 input JSON
@@ -6412,7 +7606,7 @@ async def get_tool_history(tool_id: str, limit: int = 20, current_user: dict = r
                 input_data = json.loads(item.get("input", "{}"))
                 item["input_text"] = input_data.get("input", "")
                 item["params"] = input_data.get("params", {})
-            except:
+            except Exception:
                 item["input_text"] = item.get("input", "")
                 item["params"] = {}
             items.append(item)
@@ -6429,8 +7623,7 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
         uid = current_user.get("user_id") or "default"
         tools = []
         for row in conn.execute(
-            "SELECT * FROM tool_records WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
-            (uid, min(limit, 100))
+            "SELECT * FROM tool_records WHERE user_id=? ORDER BY created_at DESC LIMIT ?", (uid, min(limit, 100))
         ).fetchall():
             item = dict(row)
             item["tool_name"] = TOOL_DEFINITIONS.get(item.get("tool_id"), {}).get("name", item.get("tool_id"))
@@ -6440,25 +7633,32 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
             except Exception:
                 item["input_text"] = item.get("input", "")
             tools.append(item)
-        shares = [dict(r) for r in conn.execute(
-            "SELECT * FROM shares WHERE user_id=? ORDER BY created_at DESC LIMIT 20",
-            (uid,)
-        ).fetchall()]
+        shares = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM shares WHERE user_id=? ORDER BY created_at DESC LIMIT 20", (uid,)
+            ).fetchall()
+        ]
         return {"tools": tools, "shares": shares}
     finally:
         conn.close()
 
 
 @router.post("/api/tools/upload")
-async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):
+async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):  # noqa: C901
     """上传文件并提取内容"""
     import tempfile
 
     # 检查文件类型
     allowed_types = {
-        '.xlsx': 'excel', '.xls': 'excel', '.csv': 'csv',
-        '.pdf': 'pdf', '.txt': 'text', '.md': 'text',
-        '.doc': 'word', '.docx': 'word'
+        ".xlsx": "excel",
+        ".xls": "excel",
+        ".csv": "csv",
+        ".pdf": "pdf",
+        ".txt": "text",
+        ".md": "text",
+        ".doc": "word",
+        ".docx": "word",
     }
 
     ext = os.path.splitext(file.filename)[1].lower()
@@ -6475,39 +7675,43 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
         file_type = allowed_types[ext]
         extracted_content = ""
 
-        if file_type == 'excel':
+        if file_type == "excel":
             try:
                 import openpyxl
+
                 wb = openpyxl.load_workbook(tmp_path)
                 sheets_data = []
                 for sheet_name in wb.sheetnames:
                     ws = wb[sheet_name]
                     rows = []
                     for row in ws.iter_rows(values_only=True):
-                        rows.append([str(cell) if cell is not None else '' for cell in row])
-                    sheets_data.append({
-                        'name': sheet_name,
-                        'data': rows[:50]  # 限制行数
-                    })
+                        rows.append([str(cell) if cell is not None else "" for cell in row])
+                    sheets_data.append(
+                        {
+                            "name": sheet_name,
+                            "data": rows[:50],  # 限制行数
+                        }
+                    )
                 extracted_content = f"Excel 文件: {file.filename}\n"
                 extracted_content += f"包含 {len(wb.sheetnames)} 个工作表\n\n"
                 for sheet in sheets_data:
                     extracted_content += f"## 工作表: {sheet['name']}\n"
                     extracted_content += f"行数: {len(sheet['data'])}\n"
                     # 转为 Markdown 表格
-                    if sheet['data']:
-                        headers = sheet['data'][0]
+                    if sheet["data"]:
+                        headers = sheet["data"][0]
                         extracted_content += "| " + " | ".join(headers) + " |\n"
                         extracted_content += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                        for row in sheet['data'][1:20]:  # 显示前20行
+                        for row in sheet["data"][1:20]:  # 显示前20行
                             extracted_content += "| " + " | ".join(row) + " |\n"
                     extracted_content += "\n"
-            except ImportError:
-                raise HTTPException(500, "需要安装 openpyxl 库来读取 Excel 文件")
+            except ImportError as e:
+                raise HTTPException(500, "需要安装 openpyxl 库来读取 Excel 文件") from e
 
-        elif file_type == 'csv':
+        elif file_type == "csv":
             import csv
-            with open(tmp_path, 'r', encoding='utf-8') as f:
+
+            with open(tmp_path, encoding="utf-8") as f:
                 reader = csv.reader(f)
                 rows = list(reader)[:50]
                 extracted_content = f"CSV 文件: {file.filename}\n"
@@ -6519,54 +7723,53 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
                     for row in rows[1:30]:
                         extracted_content += "| " + " | ".join(row) + " |\n"
 
-        elif file_type == 'pdf':
+        elif file_type == "pdf":
             try:
                 import PyPDF2
-                with open(tmp_path, 'rb') as f:
+
+                with open(tmp_path, "rb") as f:
                     reader = PyPDF2.PdfReader(f)
                     extracted_content = f"PDF 文件: {file.filename}\n"
                     extracted_content += f"总页数: {len(reader.pages)}\n\n"
                     for i, page in enumerate(reader.pages[:10]):  # 前10页
                         text = page.extract_text()
                         if text:
-                            extracted_content += f"## 第 {i+1} 页\n{text}\n\n"
-            except ImportError:
-                raise HTTPException(500, "需要安装 PyPDF2 库来读取 PDF 文件")
+                            extracted_content += f"## 第 {i + 1} 页\n{text}\n\n"
+            except ImportError as e:
+                raise HTTPException(500, "需要安装 PyPDF2 库来读取 PDF 文件") from e
 
-        elif file_type == 'text':
-            with open(tmp_path, 'r', encoding='utf-8') as f:
+        elif file_type == "text":
+            with open(tmp_path, encoding="utf-8") as f:
                 extracted_content = f.read()
                 if len(extracted_content) > 50000:
                     extracted_content = extracted_content[:50000] + "\n...(内容已截断)"
 
-        elif file_type == 'word':
+        elif file_type == "word":
             try:
                 from docx import Document
+
                 doc = Document(tmp_path)
                 extracted_content = f"Word 文档: {file.filename}\n\n"
                 for para in doc.paragraphs[:100]:
                     if para.text.strip():
                         extracted_content += para.text + "\n"
-            except ImportError:
-                raise HTTPException(500, "需要安装 python-docx 库来读取 Word 文件")
+            except ImportError as e:
+                raise HTTPException(500, "需要安装 python-docx 库来读取 Word 文件") from e
 
-        return {
-            "ok": True,
-            "filename": file.filename,
-            "content": extracted_content,
-            "file_type": file_type
-        }
+        return {"ok": True, "filename": file.filename, "content": extracted_content, "file_type": file_type}
     finally:
         # 清理临时文件
         try:
             os.unlink(tmp_path)
-        except:
+        except Exception:
             pass
 
+    # ══════════════════════════════════════════════════════════════
 
-    # ══════════════════════════════════════════════════════════════
+
 # 收藏与使用统计
-    # ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+
 
 @router.get("/api/tools/favorites/list")
 async def list_favorites(current_user: dict = require_auth()):
@@ -6575,8 +7778,7 @@ async def list_favorites(current_user: dict = require_auth()):
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT tool_id, created_at FROM tool_favorites WHERE user_id=? ORDER BY created_at DESC",
-            (user_id,)
+            "SELECT tool_id, created_at FROM tool_favorites WHERE user_id=? ORDER BY created_at DESC", (user_id,)
         ).fetchall()
         favorites = []
         for row in rows:
@@ -6614,8 +7816,7 @@ async def toggle_favorite(tool_id: str, current_user: dict = require_auth()):
     conn = get_db()
     try:
         existing = conn.execute(
-            "SELECT id FROM tool_favorites WHERE user_id=? AND tool_id=?",
-            (user_id, tool_id)
+            "SELECT id FROM tool_favorites WHERE user_id=? AND tool_id=?", (user_id, tool_id)
         ).fetchone()
 
         if existing:
@@ -6623,13 +7824,8 @@ async def toggle_favorite(tool_id: str, current_user: dict = require_auth()):
             conn.commit()
             return {"ok": True, "favorited": False}
         else:
-            conn.execute(
-                "INSERT INTO tool_favorites (id, user_id, tool_id) VALUES (?,?,?)",
-                (fav_id, user_id, tool_id)
-            )
+            conn.execute("INSERT INTO tool_favorites (id, user_id, tool_id) VALUES (?,?,?)", (fav_id, user_id, tool_id))
             conn.commit()
             return {"ok": True, "favorited": True}
     finally:
         conn.close()
-
-

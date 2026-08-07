@@ -136,4 +136,3 @@ class SkillExecutionNode(BusinessNode):
             error_msg = f"技能函数执行失败: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             return NodeResult.failed(error_msg)
-

@@ -83,9 +83,7 @@ def load_user_ctx(current_user: dict) -> dict:
     if role != "admin" and user_id:
         conn = get_db()
         try:
-            row = conn.execute(
-                "SELECT membership, membership_expires FROM users WHERE id=?", (user_id,)
-            ).fetchone()
+            row = conn.execute("SELECT membership, membership_expires FROM users WHERE id=?", (user_id,)).fetchone()
             if row:
                 membership = row["membership"] or "free"
                 # 会员过期视为免费
@@ -148,7 +146,4 @@ def set_visibility(resource_type: str, resource_id: str, visible_to: str) -> Non
 def get_all_visibility(resource_type: str, known_ids: list[str]) -> list[dict]:
     """管理后台：返回所有资源 + 当前可见范围（含未配置的默认 all）。"""
     conf = get_visibility_map(resource_type)
-    return [
-        {"resource_id": rid, "visible_to": conf.get(rid, "all")}
-        for rid in known_ids
-    ]
+    return [{"resource_id": rid, "visible_to": conf.get(rid, "all")} for rid in known_ids]

@@ -105,6 +105,7 @@ MINDMAP_SYSTEM = """你是一位资深知识架构师和思维导图设计专家
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class MindMapRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=200, description="思维导图主题")
     depth: int = Field(3, ge=2, le=4, description="展开深度（2-4层）")
@@ -112,6 +113,7 @@ class MindMapRequest(BaseModel):
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -142,8 +144,10 @@ init_db()
 
 # ── 异步任务：思维导图生成（进度/自动重试/并发控制）──
 
+
 async def _mindmap_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
     """思维导图 worker：LLM 生成树形结构 → 记录入库（带用户归属）。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -162,7 +166,15 @@ async def _mindmap_generate_worker(payload: dict, progress: Callable | None = No
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO mindmap_records (id, topic, depth, style, result, user_id, created_at) VALUES (?,?,?,?,?,?,?)",
-            (rid, payload.get("topic", ""), payload.get("depth", 2), payload.get("style", "classic"), json.dumps(result, ensure_ascii=False), payload.get("user_id", ""), datetime.now().isoformat()),
+            (
+                rid,
+                payload.get("topic", ""),
+                payload.get("depth", 2),
+                payload.get("style", "classic"),
+                json.dumps(result, ensure_ascii=False),
+                payload.get("user_id", ""),
+                datetime.now().isoformat(),
+            ),
         )
     log_usage("mindmap_generate", len(payload.get("topic", "")), len(raw), 0)
     _report(100, "完成")
@@ -179,10 +191,12 @@ async def generate_mindmap(req: MindMapRequest, current_user: dict = require_aut
     """生成思维导图（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "mindmap_generate", payload,
+        "mindmap_generate",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -215,9 +229,7 @@ def _can_access(conn, record_id: str, current_user: dict) -> bool:
     uid = str(current_user.get("user_id", ""))
     if role in ("admin", "super_admin"):
         return True
-    row = conn.execute(
-        "SELECT user_id FROM mindmap_records WHERE id=?", (record_id,)
-    ).fetchone()
+    row = conn.execute("SELECT user_id FROM mindmap_records WHERE id=?", (record_id,)).fetchone()
     return bool(row) and str(row[0] or "") == uid
 
 

@@ -7,9 +7,12 @@ import App from './App'
 ;(function initTheme() {
   try {
     const saved = localStorage.getItem('theme')
-    const dark = saved === 'dark' || (!saved && window.matchMedia?.('(prefers-color-scheme: dark)').matches)
+    const dark =
+      saved === 'dark' || (!saved && window.matchMedia?.('(prefers-color-scheme: dark)').matches)
     document.documentElement.classList.toggle('dark', dark)
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 })()
 
 ReactDOM.createRoot(document.getElementById('root')).render(

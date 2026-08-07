@@ -26,6 +26,8 @@ def is_production() -> bool:
 def is_development() -> bool:
     """判断当前是否为开发环境。"""
     return APP_ENV in ("development", "dev", "test", "testing", "")
+
+
 ARTIFACTS_DIR = PROJECT_DIR / "artifacts"
 SKILLS_DIR = PROJECT_DIR / "skills_files"
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -49,8 +51,18 @@ DEFAULT_MODELS = [
     {"name": "agnes-vision", "note": "视觉理解", "base_url": "", "api_key": ""},
     {"name": "deepseek-v3", "note": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": ""},
     {"name": "glm-4-plus", "note": "智谱 GLM", "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": ""},
-    {"name": "doubao-seed-1.6", "note": "豆包·火山方舟", "base_url": "https://ark.cn-beijing.volces.com/api/v3", "api_key": ""},
-    {"name": "qwen-max", "note": "通义千问", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "api_key": ""},
+    {
+        "name": "doubao-seed-1.6",
+        "note": "豆包·火山方舟",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "api_key": "",
+    },
+    {
+        "name": "qwen-max",
+        "note": "通义千问",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "api_key": "",
+    },
 ]
 
 # ── 安全配置 ──────────────────────────────────────────────
@@ -63,11 +75,10 @@ TOKEN_EXPIRE_MINUTES = int(os.environ.get("TOKEN_EXPIRE_MINUTES", "480"))
 def validate_security_config() -> None:
     """启动时校验安全配置。生产环境下使用默认 SECRET_KEY 则抛 RuntimeError。"""
     if is_production() and SECRET_KEY == _DEFAULT_SECRET_KEY:
-        raise RuntimeError(
-            "SECRET_KEY 使用了默认值，生产环境必须设置自定义 SECRET_KEY 环境变量！"
-        )
+        raise RuntimeError("SECRET_KEY 使用了默认值，生产环境必须设置自定义 SECRET_KEY 环境变量！")
     if is_production() and len(SECRET_KEY) < 32:
         raise RuntimeError("SECRET_KEY 长度不足 32 字节，生产环境要求更强密钥！")
+
 
 # CORS 允许来源（逗号分隔），默认仅本地开发（含 127.0.0.1 防止 Chrome 缓存/直连登录被拦；
 # 5173 为 vite 默认端口，5174 为端口被占用时 vite 自动递补的端口）

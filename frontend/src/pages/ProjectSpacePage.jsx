@@ -1,43 +1,138 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  FolderKanban, Plus, RefreshCw, ArrowLeft,
-  Image as ImageIcon, Film, Music, FileText, ListTodo, Package,
-  Calendar, Eye, Play, Trash2,
+  FolderKanban,
+  Plus,
+  RefreshCw,
+  ArrowLeft,
+  Image as ImageIcon,
+  Film,
+  Music,
+  FileText,
+  ListTodo,
+  Package,
+  Calendar,
+  Eye,
+  Play,
+  Trash2,
 } from 'lucide-react'
 import { api, API_BASE } from '../lib/api'
 import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { formatDateTime, formatDate } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState,
-  Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 // 项目状态自定义映射
 const PROJECT_STATUS_MAP = {
-  planning:  { text: '规划中', cls: 'bg-blue-100 text-blue-700' },
-  active:    { text: '进行中', cls: 'bg-emerald-100 text-emerald-700' },
+  planning: { text: '规划中', cls: 'bg-blue-100 text-blue-700' },
+  active: { text: '进行中', cls: 'bg-emerald-100 text-emerald-700' },
   completed: { text: '已完成', cls: 'bg-gray-100 text-gray-600' },
-  archived:  { text: '已归档', cls: 'bg-gray-100 text-gray-600' },
-  draft:     { text: '草稿', cls: 'bg-gray-100 text-gray-600' },
+  archived: { text: '已归档', cls: 'bg-gray-100 text-gray-600' },
+  draft: { text: '草稿', cls: 'bg-gray-100 text-gray-600' },
 }
 
 // 按类型分组的元数据
 const TYPE_META = {
-  image:   { label: '图片',   icon: ImageIcon, color: 'pink',   bg: 'bg-pink-50',   text: 'text-pink-700',   border: 'border-pink-200' },
-  video:   { label: '视频',   icon: Film,      color: 'purple', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
-  audio:   { label: '音频',   icon: Music,     color: 'amber',  bg: 'bg-amber-50',  text: 'text-amber-700',  border: 'border-amber-200' },
-  lyrics:  { label: '歌词',   icon: FileText,  color: 'indigo', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
-  prd:     { label: 'PRD',    icon: FileText,  color: 'emerald',bg: 'bg-emerald-50',text: 'text-emerald-700',border: 'border-emerald-200' },
-  review:  { label: '审查报告', icon: FileText, color: 'orange', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' },
-  td:      { label: '技术方案', icon: FileText, color: 'blue',   bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200' },
-  test:    { label: '测试用例', icon: FileText, color: 'cyan',   bg: 'bg-cyan-50',   text: 'text-cyan-700',   border: 'border-cyan-200' },
-  code:    { label: '代码',    icon: FileText,  color: 'gray',   bg: 'bg-gray-50',   text: 'text-gray-700',   border: 'border-gray-200' },
-  doc:     { label: '文档',    icon: FileText,  color: 'slate',  bg: 'bg-slate-50',  text: 'text-slate-700',  border: 'border-slate-200' },
+  image: {
+    label: '图片',
+    icon: ImageIcon,
+    color: 'pink',
+    bg: 'bg-pink-50',
+    text: 'text-pink-700',
+    border: 'border-pink-200',
+  },
+  video: {
+    label: '视频',
+    icon: Film,
+    color: 'purple',
+    bg: 'bg-purple-50',
+    text: 'text-purple-700',
+    border: 'border-purple-200',
+  },
+  audio: {
+    label: '音频',
+    icon: Music,
+    color: 'amber',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+  },
+  lyrics: {
+    label: '歌词',
+    icon: FileText,
+    color: 'indigo',
+    bg: 'bg-indigo-50',
+    text: 'text-indigo-700',
+    border: 'border-indigo-200',
+  },
+  prd: {
+    label: 'PRD',
+    icon: FileText,
+    color: 'emerald',
+    bg: 'bg-emerald-50',
+    text: 'text-emerald-700',
+    border: 'border-emerald-200',
+  },
+  review: {
+    label: '审查报告',
+    icon: FileText,
+    color: 'orange',
+    bg: 'bg-orange-50',
+    text: 'text-orange-700',
+    border: 'border-orange-200',
+  },
+  td: {
+    label: '技术方案',
+    icon: FileText,
+    color: 'blue',
+    bg: 'bg-blue-50',
+    text: 'text-blue-700',
+    border: 'border-blue-200',
+  },
+  test: {
+    label: '测试用例',
+    icon: FileText,
+    color: 'cyan',
+    bg: 'bg-cyan-50',
+    text: 'text-cyan-700',
+    border: 'border-cyan-200',
+  },
+  code: {
+    label: '代码',
+    icon: FileText,
+    color: 'gray',
+    bg: 'bg-gray-50',
+    text: 'text-gray-700',
+    border: 'border-gray-200',
+  },
+  doc: {
+    label: '文档',
+    icon: FileText,
+    color: 'slate',
+    bg: 'bg-slate-50',
+    text: 'text-slate-700',
+    border: 'border-slate-200',
+  },
 }
 
-const getTypeMeta = (t) => TYPE_META[t] || { label: t || '其他', icon: FileText, color: 'gray', bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' }
+const getTypeMeta = (t) =>
+  TYPE_META[t] || {
+    label: t || '其他',
+    icon: FileText,
+    color: 'gray',
+    bg: 'bg-gray-50',
+    text: 'text-gray-700',
+    border: 'border-gray-200',
+  }
 
 export default function ProjectSpacePage() {
   const { id: projectId } = useParams()
@@ -123,7 +218,10 @@ export default function ProjectSpacePage() {
 
     setSaving(true)
     try {
-      const res = await api.post('/api/projects', { name: form.name.trim(), description: form.description.trim() })
+      const res = await api.post('/api/projects', {
+        name: form.name.trim(),
+        description: form.description.trim(),
+      })
       toast.success(`项目「${form.name.trim()}」已创建`)
       setShowCreate(false)
       navigate(`/projects/${res.data.id}`)
@@ -157,8 +255,12 @@ export default function ProjectSpacePage() {
           iconColor="from-indigo-500 to-blue-600"
           actions={
             <>
-              <Button variant="secondary" icon={RefreshCw} onClick={fetchProjects}>刷新</Button>
-              <Button variant="primary" icon={Plus} onClick={openCreate}>新建项目</Button>
+              <Button variant="secondary" icon={RefreshCw} onClick={fetchProjects}>
+                刷新
+              </Button>
+              <Button variant="primary" icon={Plus} onClick={openCreate}>
+                新建项目
+              </Button>
             </>
           }
         />
@@ -191,11 +293,21 @@ export default function ProjectSpacePage() {
                     <FolderKanban className="w-6 h-6 text-indigo-600 group-hover:scale-110 transition-transform" />
                     <Badge status={proj.status || 'planning'} customMap={PROJECT_STATUS_MAP} dot />
                   </div>
-                  <h3 className="font-semibold text-gray-900 group-hover:text-indigo-700">{proj.name}</h3>
-                  <p className="text-sm text-gray-500 mt-1 line-clamp-2 flex-1">{proj.description || '暂无描述'}</p>
+                  <h3 className="font-semibold text-gray-900 group-hover:text-indigo-700">
+                    {proj.name}
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 line-clamp-2 flex-1">
+                    {proj.description || '暂无描述'}
+                  </p>
                   <div className="mt-3 flex items-center gap-4 text-xs text-gray-400">
-                    <span className="flex items-center gap-1"><ListTodo className="w-3 h-3" />{reqCount} 需求</span>
-                    <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{proj.created_at ? formatDate(proj.created_at) : '—'}</span>
+                    <span className="flex items-center gap-1">
+                      <ListTodo className="w-3 h-3" />
+                      {reqCount} 需求
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {proj.created_at ? formatDate(proj.created_at) : '—'}
+                    </span>
                   </div>
                 </div>
               )
@@ -211,14 +323,20 @@ export default function ProjectSpacePage() {
           size="md"
           footer={
             <>
-              <Button variant="secondary" onClick={() => setShowCreate(false)}>取消</Button>
-              <Button variant="primary" loading={saving} onClick={handleCreate}>创建</Button>
+              <Button variant="secondary" onClick={() => setShowCreate(false)}>
+                取消
+              </Button>
+              <Button variant="primary" loading={saving} onClick={handleCreate}>
+                创建
+              </Button>
             </>
           }
         >
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">项目名称 <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                项目名称 <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={form.name}
@@ -251,9 +369,21 @@ export default function ProjectSpacePage() {
     if (!grouped[t]) grouped[t] = []
     grouped[t].push(a)
   })
-  const typeOrder = ['image', 'video', 'audio', 'lyrics', 'prd', 'review', 'td', 'test', 'code', 'doc']
+  const typeOrder = [
+    'image',
+    'video',
+    'audio',
+    'lyrics',
+    'prd',
+    'review',
+    'td',
+    'test',
+    'code',
+    'doc',
+  ]
   const orderedTypes = Object.keys(grouped).sort((a, b) => {
-    const ia = typeOrder.indexOf(a), ib = typeOrder.indexOf(b)
+    const ia = typeOrder.indexOf(a),
+      ib = typeOrder.indexOf(b)
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
   })
 
@@ -264,16 +394,28 @@ export default function ProjectSpacePage() {
         description={
           <>
             {current?.description || '暂无描述'}
-            {current?.id && <span className="ml-2 font-mono text-xs text-gray-400">ID: {current.id}</span>}
+            {current?.id && (
+              <span className="ml-2 font-mono text-xs text-gray-400">ID: {current.id}</span>
+            )}
           </>
         }
         icon={FolderKanban}
         iconColor="from-indigo-500 to-blue-600"
         actions={
           <>
-            <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('/projects')}>返回</Button>
-            <Button variant="secondary" icon={RefreshCw} onClick={() => fetchProjectSpace(projectId)}>刷新</Button>
-            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(current)}>删除项目</Button>
+            <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('/projects')}>
+              返回
+            </Button>
+            <Button
+              variant="secondary"
+              icon={RefreshCw}
+              onClick={() => fetchProjectSpace(projectId)}
+            >
+              刷新
+            </Button>
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(current)}>
+              删除项目
+            </Button>
           </>
         }
       />
@@ -281,7 +423,10 @@ export default function ProjectSpacePage() {
       {loading ? (
         <SkeletonGrid count={4} />
       ) : error ? (
-        <ErrorState message={`加载失败：${error.message}`} onRetry={() => fetchProjectSpace(projectId)} />
+        <ErrorState
+          message={`加载失败：${error.message}`}
+          onRetry={() => fetchProjectSpace(projectId)}
+        />
       ) : (
         <>
           {/* 概览统计 */}
@@ -289,7 +434,15 @@ export default function ProjectSpacePage() {
             <StatCard label="总产物" value={artifacts.length} icon={Package} color="indigo" />
             <StatCard label="需求数" value={requirements.length} icon={ListTodo} color="emerald" />
             <StatCard label="任务数" value={tasks.length} icon={ListTodo} color="amber" />
-            <StatCard label="创作产物" value={['image', 'video', 'audio', 'lyrics'].reduce((s, t) => s + (grouped[t]?.length || 0), 0)} icon={ImageIcon} color="pink" />
+            <StatCard
+              label="创作产物"
+              value={['image', 'video', 'audio', 'lyrics'].reduce(
+                (s, t) => s + (grouped[t]?.length || 0),
+                0
+              )}
+              icon={ImageIcon}
+              color="pink"
+            />
           </div>
 
           {/* 需求列表 */}
@@ -297,16 +450,23 @@ export default function ProjectSpacePage() {
             <Section title={`需求 (${requirements.length})`} icon={ListTodo} color="emerald">
               <div className="space-y-2">
                 {requirements.map((req) => (
-                  <div key={req.id} className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                  <div
+                    key={req.id}
+                    className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-gray-800">{req.name}</span>
                         <Badge status={req.status || 'draft'} dot />
                         <Badge status="inactive" label={req.priority || 'P2'} />
                       </div>
-                      {req.description && <p className="text-xs text-gray-500 mt-1 line-clamp-1">{req.description}</p>}
+                      {req.description && (
+                        <p className="text-xs text-gray-500 mt-1 line-clamp-1">{req.description}</p>
+                      )}
                     </div>
-                    <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{req.created_at ? formatDate(req.created_at) : ''}</span>
+                    <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
+                      {req.created_at ? formatDate(req.created_at) : ''}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -318,10 +478,15 @@ export default function ProjectSpacePage() {
             <Section title={`任务 (${tasks.length})`} icon={ListTodo} color="amber">
               <div className="space-y-2">
                 {tasks.map((task) => (
-                  <div key={task.id} className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg">
+                  <div
+                    key={task.id}
+                    className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg"
+                  >
                     <div className="flex-1 min-w-0">
                       <span className="font-medium text-gray-800">{task.title}</span>
-                      {task.description && <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>}
+                      {task.description && (
+                        <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>
+                      )}
                     </div>
                     <Badge status={task.status || 'todo'} dot />
                   </div>
@@ -345,14 +510,29 @@ export default function ProjectSpacePage() {
               const arts = grouped[type]
               const Icon = meta.icon
               return (
-                <Section key={type} title={`${meta.label} (${arts.length})`} icon={Icon} color={meta.color}>
-                  <div className={`grid gap-3 ${
-                    type === 'image' ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6' :
-                    type === 'video' ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3' :
-                    'grid-cols-1'
-                  }`}>
+                <Section
+                  key={type}
+                  title={`${meta.label} (${arts.length})`}
+                  icon={Icon}
+                  color={meta.color}
+                >
+                  <div
+                    className={`grid gap-3 ${
+                      type === 'image'
+                        ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6'
+                        : type === 'video'
+                          ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3'
+                          : 'grid-cols-1'
+                    }`}
+                  >
                     {arts.map((art) => (
-                      <ArtifactCard key={art.id} art={art} type={type} meta={meta} onView={() => setSelectedArtifact(art)} />
+                      <ArtifactCard
+                        key={art.id}
+                        art={art}
+                        type={type}
+                        meta={meta}
+                        onView={() => setSelectedArtifact(art)}
+                      />
                     ))}
                   </div>
                 </Section>
@@ -366,41 +546,76 @@ export default function ProjectSpacePage() {
       <Modal
         open={!!selectedArtifact}
         onClose={() => setSelectedArtifact(null)}
-        title={selectedArtifact ? `${getTypeMeta(selectedArtifact.type).label} · v${selectedArtifact.version || 1}` : ''}
+        title={
+          selectedArtifact
+            ? `${getTypeMeta(selectedArtifact.type).label} · v${selectedArtifact.version || 1}`
+            : ''
+        }
         size="lg"
-        footer={<Button variant="primary" onClick={() => setSelectedArtifact(null)}>关闭</Button>}
+        footer={
+          <Button variant="primary" onClick={() => setSelectedArtifact(null)}>
+            关闭
+          </Button>
+        }
       >
         {selectedArtifact && (
           <div className="space-y-4">
-            {selectedArtifact.media_url && ['image', 'video', 'audio'].includes(selectedArtifact.type) && (
-              <div className="mb-2">
-                {selectedArtifact.type === 'image' && (
-                  <img src={`${API_BASE}${selectedArtifact.media_url}`} alt={selectedArtifact.id} className="max-w-full rounded-lg mx-auto" />
-                )}
-                {selectedArtifact.type === 'video' && (
-                  <video src={`${API_BASE}${selectedArtifact.media_url}`} controls className="max-w-full rounded-lg mx-auto" />
-                )}
-                {selectedArtifact.type === 'audio' && (
-                  <audio src={`${API_BASE}${selectedArtifact.media_url}`} controls className="w-full" />
-                )}
-              </div>
-            )}
+            {selectedArtifact.media_url &&
+              ['image', 'video', 'audio'].includes(selectedArtifact.type) && (
+                <div className="mb-2">
+                  {selectedArtifact.type === 'image' && (
+                    <img
+                      src={`${API_BASE}${selectedArtifact.media_url}`}
+                      alt={selectedArtifact.id}
+                      className="max-w-full rounded-lg mx-auto"
+                    />
+                  )}
+                  {selectedArtifact.type === 'video' && (
+                    <video
+                      src={`${API_BASE}${selectedArtifact.media_url}`}
+                      controls
+                      className="max-w-full rounded-lg mx-auto"
+                    />
+                  )}
+                  {selectedArtifact.type === 'audio' && (
+                    <audio
+                      src={`${API_BASE}${selectedArtifact.media_url}`}
+                      controls
+                      className="w-full"
+                    />
+                  )}
+                </div>
+              )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <Field label="作者" value={selectedArtifact.author || '—'} />
-              <Field label="创建时间" value={selectedArtifact.created_at ? formatDateTime(selectedArtifact.created_at) : '—'} />
-              {selectedArtifact.duration > 0 && <Field label="时长" value={`${selectedArtifact.duration.toFixed(2)}s`} />}
-              {selectedArtifact.media_url && <Field label="媒体路径" value={selectedArtifact.media_url} mono />}
+              <Field
+                label="创建时间"
+                value={
+                  selectedArtifact.created_at ? formatDateTime(selectedArtifact.created_at) : '—'
+                }
+              />
+              {selectedArtifact.duration > 0 && (
+                <Field label="时长" value={`${selectedArtifact.duration.toFixed(2)}s`} />
+              )}
+              {selectedArtifact.media_url && (
+                <Field label="媒体路径" value={selectedArtifact.media_url} mono />
+              )}
             </div>
             {selectedArtifact.content && (
               <div>
                 <p className="text-xs text-gray-500 mb-1">内容</p>
-                <MarkdownRenderer content={selectedArtifact.content} className="max-h-80 overflow-auto" />
+                <MarkdownRenderer
+                  content={selectedArtifact.content}
+                  className="max-h-80 overflow-auto"
+                />
               </div>
             )}
             {selectedArtifact.metadata && (
               <div>
                 <p className="text-xs text-gray-500 mb-1">元数据</p>
-                <pre className="whitespace-pre-wrap text-xs font-mono text-gray-600 bg-gray-50 p-3 rounded-lg border">{selectedArtifact.metadata}</pre>
+                <pre className="whitespace-pre-wrap text-xs font-mono text-gray-600 bg-gray-50 p-3 rounded-lg border">
+                  {selectedArtifact.metadata}
+                </pre>
               </div>
             )}
           </div>
@@ -413,7 +628,11 @@ export default function ProjectSpacePage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="确认删除项目"
-        message={deleteTarget ? `确定要删除项目「${deleteTarget.name}」吗？项目下的需求和产物关联将失效，此操作不可撤销。` : ''}
+        message={
+          deleteTarget
+            ? `确定要删除项目「${deleteTarget.name}」吗？项目下的需求和产物关联将失效，此操作不可撤销。`
+            : ''
+        }
         confirmLabel="确认删除"
       />
     </div>
@@ -435,7 +654,9 @@ function StatCard({ label, value, icon: Icon, color }) {
           <p className="text-xs text-gray-500">{label}</p>
           <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
         </div>
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorMap[color] || colorMap.indigo}`}>
+        <div
+          className={`w-10 h-10 rounded-lg flex items-center justify-center ${colorMap[color] || colorMap.indigo}`}
+        >
           <Icon className="w-5 h-5" />
         </div>
       </div>
@@ -445,9 +666,16 @@ function StatCard({ label, value, icon: Icon, color }) {
 
 function Section({ title, icon: Icon, color, children }) {
   const colorMap = {
-    indigo: 'text-indigo-600', emerald: 'text-emerald-600', amber: 'text-amber-600',
-    pink: 'text-pink-600', purple: 'text-purple-600', blue: 'text-blue-600',
-    cyan: 'text-cyan-600', orange: 'text-orange-600', gray: 'text-gray-600', slate: 'text-slate-600',
+    indigo: 'text-indigo-600',
+    emerald: 'text-emerald-600',
+    amber: 'text-amber-600',
+    pink: 'text-pink-600',
+    purple: 'text-purple-600',
+    blue: 'text-blue-600',
+    cyan: 'text-cyan-600',
+    orange: 'text-orange-600',
+    gray: 'text-gray-600',
+    slate: 'text-slate-600',
   }
   return (
     <div>
@@ -463,8 +691,16 @@ function Section({ title, icon: Icon, color, children }) {
 function ArtifactCard({ art, type, meta, onView }) {
   if (type === 'image' && art.media_url) {
     return (
-      <div onClick={onView} className="group relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200">
-        <img src={`${API_BASE}${art.media_url}`} alt={art.id} className="w-full h-full object-cover group-hover:scale-105 transition-transform" loading="lazy" />
+      <div
+        onClick={onView}
+        className="group relative aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200"
+      >
+        <img
+          src={`${API_BASE}${art.media_url}`}
+          alt={art.id}
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+          loading="lazy"
+        />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
           <Eye className="w-5 h-5 text-white opacity-0 group-hover:opacity-100" />
         </div>
@@ -473,9 +709,17 @@ function ArtifactCard({ art, type, meta, onView }) {
   }
   if (type === 'video' && art.media_url) {
     return (
-      <div onClick={onView} className="group bg-gray-900 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200">
+      <div
+        onClick={onView}
+        className="group bg-gray-900 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200"
+      >
         <div className="aspect-video flex items-center justify-center relative">
-          <video src={`${API_BASE}${art.media_url}`} className="w-full h-full object-cover" preload="metadata" muted />
+          <video
+            src={`${API_BASE}${art.media_url}`}
+            className="w-full h-full object-cover"
+            preload="metadata"
+            muted
+          />
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/40">
             <Play className="w-10 h-10 text-white fill-white" />
           </div>
@@ -489,21 +733,35 @@ function ArtifactCard({ art, type, meta, onView }) {
   }
   if (type === 'audio' && art.media_url) {
     return (
-      <div onClick={onView} className="p-3 bg-white border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 flex items-center gap-3">
-        <div className={`w-10 h-10 ${meta.bg} ${meta.text} rounded-lg flex items-center justify-center flex-shrink-0`}>
+      <div
+        onClick={onView}
+        className="p-3 bg-white border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 flex items-center gap-3"
+      >
+        <div
+          className={`w-10 h-10 ${meta.bg} ${meta.text} rounded-lg flex items-center justify-center flex-shrink-0`}
+        >
           <Music className="w-5 h-5" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-800 truncate font-mono">{art.id?.slice(0, 20)}</p>
-          <p className="text-xs text-gray-400">{art.duration ? art.duration.toFixed(1) + 's' : ''}</p>
+          <p className="text-sm font-medium text-gray-800 truncate font-mono">
+            {art.id?.slice(0, 20)}
+          </p>
+          <p className="text-xs text-gray-400">
+            {art.duration ? art.duration.toFixed(1) + 's' : ''}
+          </p>
         </div>
         <Play className="w-4 h-4 text-gray-400" />
       </div>
     )
   }
   return (
-    <div onClick={onView} className="p-3 bg-white border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 flex items-start gap-3">
-      <div className={`w-10 h-10 ${meta.bg} ${meta.text} rounded-lg flex items-center justify-center flex-shrink-0`}>
+    <div
+      onClick={onView}
+      className="p-3 bg-white border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 flex items-start gap-3"
+    >
+      <div
+        className={`w-10 h-10 ${meta.bg} ${meta.text} rounded-lg flex items-center justify-center flex-shrink-0`}
+      >
         <FileText className="w-5 h-5" />
       </div>
       <div className="flex-1 min-w-0">
@@ -512,7 +770,9 @@ function ArtifactCard({ art, type, meta, onView }) {
           <span className="text-xs text-gray-400">v{art.version || 1}</span>
         </div>
         <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{art.content || '(无内容预览)'}</p>
-        <p className="text-xs text-gray-400 mt-1">{art.created_at ? formatDateTime(art.created_at) : ''}</p>
+        <p className="text-xs text-gray-400 mt-1">
+          {art.created_at ? formatDateTime(art.created_at) : ''}
+        </p>
       </div>
     </div>
   )
@@ -522,7 +782,9 @@ function Field({ label, value, mono }) {
   return (
     <div>
       <p className="text-xs text-gray-500">{label}</p>
-      <p className={`text-sm text-gray-800 break-all ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
+      <p className={`text-sm text-gray-800 break-all ${mono ? 'font-mono text-xs' : ''}`}>
+        {value}
+      </p>
     </div>
   )
 }

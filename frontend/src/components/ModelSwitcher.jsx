@@ -71,20 +71,26 @@ export default function ModelSwitcher() {
           <span className="text-xs text-ink-500 flex-shrink-0">模型</span>
           <span className="text-xs font-medium text-ink-800 truncate">{current || '加载中…'}</span>
         </span>
-        <ChevronDown className={`w-3.5 h-3.5 text-ink-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-3.5 h-3.5 text-ink-400 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute bottom-full left-3 right-3 mb-2 z-50 bg-white rounded-xl shadow-xl border border-ink-200/70 p-1.5 animate-page-in">
-            <p className="px-2.5 py-1.5 text-[10px] text-ink-400 font-medium">切换模型（所有工具生效）</p>
+            <p className="px-2.5 py-1.5 text-[10px] text-ink-400 font-medium">
+              切换模型（所有工具生效）
+            </p>
             {modelOptions.map((m) => (
               <button
                 key={m}
                 onClick={() => handleSelect(m)}
                 className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs transition-colors ${
-                  m === current ? 'bg-brand-50 text-brand-700 font-medium' : 'text-ink-600 hover:bg-ink-50'
+                  m === current
+                    ? 'bg-brand-50 text-brand-700 font-medium'
+                    : 'text-ink-600 hover:bg-ink-50'
                 }`}
               >
                 <span className="truncate">{m}</span>

@@ -4,12 +4,20 @@ import React from 'react'
  * 统一页面头部
  * - 标题 + 描述 + 右侧操作区
  */
-export default function PageHeader({ title, description, actions, icon: Icon, iconColor = 'from-brand-500 to-brand-700' }) {
+export default function PageHeader({
+  title,
+  description,
+  actions,
+  icon: Icon,
+  iconColor = 'from-brand-500 to-brand-700',
+}) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
       <div className="flex items-start gap-3">
         {Icon && (
-          <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${iconColor} flex items-center justify-center shadow-glow flex-shrink-0`}>
+          <div
+            className={`w-11 h-11 rounded-xl bg-gradient-to-br ${iconColor} flex items-center justify-center shadow-glow flex-shrink-0`}
+          >
             <Icon className="w-6 h-6 text-white" />
           </div>
         )}

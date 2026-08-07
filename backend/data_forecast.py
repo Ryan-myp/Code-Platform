@@ -99,6 +99,7 @@ FORECAST_SYSTEM = """你是资深商业数据分析师（10年+经验），擅�
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class AnalyzeRequest(BaseModel):
     data_id: str = Field(..., description="上传后返回的数据ID")
     target_column: str = Field("", description="目标预测列名（可选，不填自动选择数值列）")
@@ -106,6 +107,7 @@ class AnalyzeRequest(BaseModel):
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
+
 
 def init_db():
     with get_db_context() as conn:
@@ -135,6 +137,7 @@ def init_db():
 init_db()
 
 # ── 辅助函数 ──────────────────────────────────────────────
+
 
 def parse_csv(filepath: str) -> dict:
     """解析CSV文件，返回列名、行数、数值列的统计信息。"""
@@ -176,6 +179,7 @@ def parse_csv(filepath: str) -> dict:
 
 # ── API ──────────────────────────────────────────────────
 
+
 @router.post("/upload")
 async def upload_csv(file: UploadFile = File(...), current_user: dict = require_auth()):
     """上传CSV文件，解析并返回预览数据。"""
@@ -183,7 +187,7 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
         raise HTTPException(400, "未选择文件")
 
     content = await file.read()
-    did = f"data_{int(datetime.now().timestamp()*1000)}"
+    did = f"data_{int(datetime.now().timestamp() * 1000)}"
     save_path = os.path.join(UPLOAD_DIR, f"{did}.csv")
 
     with open(save_path, "wb") as f:
@@ -194,12 +198,21 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
         preview = parse_csv(save_path)
     except Exception as e:
         os.remove(save_path)
-        raise HTTPException(400, f"CSV解析失败：{e}")
+        raise HTTPException(400, f"CSV解析失败：{e}") from e
 
     with get_db_context() as conn:
         conn.execute(
             "INSERT INTO forecast_records (id, filename, filepath, row_count, columns, status, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (did, file.filename, save_path, preview["row_count"], json.dumps(preview["columns"]), "uploaded", str(current_user.get("user_id", "")), datetime.now().isoformat()),
+            (
+                did,
+                file.filename,
+                save_path,
+                preview["row_count"],
+                json.dumps(preview["columns"]),
+                "uploaded",
+                str(current_user.get("user_id", "")),
+                datetime.now().isoformat(),
+            ),
         )
 
     return {
@@ -215,8 +228,10 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
 
 # ── 异步任务：数据预测（进度/自动重试/并发控制）──
 
+
 async def _forecast_analyze_worker(payload: dict, progress: Callable | None = None) -> dict:
     """数据预测 worker：解析数据摘要 → AI 趋势分析+预测 → 记录落库。"""
+
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
@@ -286,10 +301,12 @@ async def analyze_data(req: AnalyzeRequest, current_user: dict = require_auth())
     """分析数据（异步任务：进度跟踪 / 失败自动重试 / 并发控制）"""
     payload = {
         **req.model_dump(),
-        "user_id": str(current_user.get("user_id", "")), "username": current_user.get("username", ""),
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
     }
     task = create_task(
-        "forecast_analyze", payload,
+        "forecast_analyze",
+        payload,
         username=current_user.get("username", ""),
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
@@ -322,9 +339,7 @@ def _can_access(conn, record_id: str, current_user: dict) -> bool:
     uid = str(current_user.get("user_id", ""))
     if role in ("admin", "super_admin"):
         return True
-    row = conn.execute(
-        "SELECT user_id FROM forecast_records WHERE id=?", (record_id,)
-    ).fetchone()
+    row = conn.execute("SELECT user_id FROM forecast_records WHERE id=?", (record_id,)).fetchone()
     return bool(row) and str(row[0] or "") == uid
 
 

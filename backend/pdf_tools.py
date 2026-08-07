@@ -105,6 +105,7 @@ RESUME_SYSTEM = """你是一位拥有10年+招聘经验的资深HR总监兼职�
 
 # ── 数据库 ──────────────────────────────────────────────────
 
+
 def _ensure_tables(conn) -> None:
     conn.execute(
         """CREATE TABLE IF NOT EXISTS pdf_jobs (
@@ -123,6 +124,7 @@ def _ensure_tables(conn) -> None:
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class ContractReviewRequest(BaseModel):
     text: str = Field(..., min_length=20, max_length=10000, description="合同全文")
     title: str = Field("合同审查", max_length=200)
@@ -134,6 +136,7 @@ class ResumeOptimizeRequest(BaseModel):
 
 
 # ── API ──────────────────────────────────────────────────
+
 
 @router.post("/merge")
 async def merge_pdfs(files: list[UploadFile] = File(...), current_user: dict = require_auth()):
@@ -159,6 +162,7 @@ async def merge_pdfs(files: list[UploadFile] = File(...), current_user: dict = r
 
     try:
         from PyPDF2 import PdfMerger
+
         merger = PdfMerger()
         for s in saved:
             merger.append(s["path"])
@@ -192,7 +196,7 @@ async def merge_pdfs(files: list[UploadFile] = File(...), current_user: dict = r
 
 
 @router.post("/split")
-async def split_pdf(
+async def split_pdf(  # noqa: C901
     file: UploadFile = File(...),
     ranges: str = Form("", description="页码范围，如 1-3,5,7-10"),
     current_user: dict = require_auth(),
@@ -219,6 +223,7 @@ async def split_pdf(
 
     try:
         from PyPDF2 import PdfReader, PdfWriter
+
         reader = PdfReader(src_path)
         total_pages = len(reader.pages)
 
@@ -269,6 +274,7 @@ async def extract_table(
 
     try:
         import tabula
+
         dfs = tabula.read_pdf(src_path, pages="all", multiple_tables=True)
         csv_results = []
         for idx, df in enumerate(dfs):
@@ -302,11 +308,11 @@ async def contract_review(req: ContractReviewRequest, current_user: dict = requi
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "AI审查结果格式异常")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "AI审查结果格式异常") from e
     except Exception as e:
         logger.exception("contract review failed")
-        raise HTTPException(500, f"合同审查失败：{e}")
+        raise HTTPException(500, f"合同审查失败：{e}") from e
 
     # 保存记录
     job_id = f"contract_{uuid.uuid4().hex[:10]}"
@@ -315,8 +321,15 @@ async def contract_review(req: ContractReviewRequest, current_user: dict = requi
     conn.execute(
         """INSERT INTO pdf_jobs (id, user_id, job_type, original_filename, result_data, status, created_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (job_id, user, "contract_review", req.title,
-         json.dumps(result, ensure_ascii=False), "done", datetime.now().isoformat()),
+        (
+            job_id,
+            user,
+            "contract_review",
+            req.title,
+            json.dumps(result, ensure_ascii=False),
+            "done",
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -344,11 +357,11 @@ async def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = requi
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "AI简历优化结果格式异常")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "AI简历优化结果格式异常") from e
     except Exception as e:
         logger.exception("resume optimize failed")
-        raise HTTPException(500, f"简历优化失败：{e}")
+        raise HTTPException(500, f"简历优化失败：{e}") from e
 
     # 保存记录
     job_id = f"resume_{uuid.uuid4().hex[:10]}"
@@ -357,8 +370,15 @@ async def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = requi
     conn.execute(
         """INSERT INTO pdf_jobs (id, user_id, job_type, original_filename, result_data, status, created_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (job_id, user, "resume_optimize", req.target_position or "简历优化",
-         json.dumps(result, ensure_ascii=False), "done", datetime.now().isoformat()),
+        (
+            job_id,
+            user,
+            "resume_optimize",
+            req.target_position or "简历优化",
+            json.dumps(result, ensure_ascii=False),
+            "done",
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -373,9 +393,7 @@ async def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = requi
 async def list_jobs(limit: int = 50, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
-    rows = conn.execute(
-        "SELECT * FROM pdf_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM pdf_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     results = []
     for r in rows:
@@ -392,6 +410,7 @@ async def list_jobs(limit: int = 50, current_user: dict = require_auth()):
 async def download_pdf(filename: str):
     """下载合并/拆分的PDF文件。"""
     from fastapi.responses import FileResponse
+
     filepath = os.path.join(PDF_DIR, filename)
     if not os.path.exists(filepath):
         raise HTTPException(404, "文件不存在")

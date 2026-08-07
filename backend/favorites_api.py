@@ -5,7 +5,6 @@
 - DELETE /api/favorites/{id}     取消收藏
 """
 
-import json
 import logging
 from datetime import datetime
 
@@ -32,6 +31,7 @@ router = APIRouter(prefix="/api/favorites", tags=["收藏"])
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class FavoriteRequest(BaseModel):
     fav_type: str = Field(..., description="收藏类型: tool/record/template/gallery")
     target_id: str = Field(..., description="目标ID")
@@ -40,11 +40,12 @@ class FavoriteRequest(BaseModel):
 
 # ── API ──────────────────────────────────────────────────
 
+
 @router.post("")
 async def add_favorite(req: FavoriteRequest, current_user: dict = require_auth()):
     """添加收藏。"""
     user_id = current_user.get("user_id")
-    fid = f"fav_{int(datetime.now().timestamp()*1000)}"
+    fid = f"fav_{int(datetime.now().timestamp() * 1000)}"
 
     with get_db_context() as conn:
         try:
@@ -52,8 +53,8 @@ async def add_favorite(req: FavoriteRequest, current_user: dict = require_auth()
                 "INSERT INTO favorites (id, user_id, fav_type, target_id, label, created_at) VALUES (?,?,?,?,?,?)",
                 (fid, user_id, req.fav_type, req.target_id, req.label or "", datetime.now().isoformat()),
             )
-        except Exception:
-            raise HTTPException(400, "已收藏，请勿重复操作")
+        except Exception as e:
+            raise HTTPException(400, "已收藏，请勿重复操作") from e
 
     return {"id": fid, "message": "收藏成功"}
 
@@ -90,5 +91,3 @@ async def remove_favorite(fav_id: str, current_user: dict = require_auth()):
             raise HTTPException(404, "收藏不存在或无权操作")
         conn.execute("DELETE FROM favorites WHERE id=?", (fav_id,))
     return {"message": "已取消收藏"}
-
-

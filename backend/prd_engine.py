@@ -234,7 +234,9 @@ async def code_chat(req: dict):
         raise HTTPException(400, "请输入消息")
 
     start = time.time()
-    system = f"你是一位高级 {language} 开发工程师。根据用户对话上下文，继续完善或修改代码。直接输出最新完整代码，不要解释。"
+    system = (
+        f"你是一位高级 {language} 开发工程师。根据用户对话上下文，继续完善或修改代码。直接输出最新完整代码，不要解释。"
+    )
     result = call_llm(system, message, max_tokens=8000)
     log_usage("prd_code_chat", len(message), len(result), time.time() - start)
     return {"result": result}
@@ -243,6 +245,7 @@ async def code_chat(req: dict):
 # ══════════════════════════════════════════════════════════════
 # 需求 / 项目 / 成果 管理
 # ══════════════════════════════════════════════════════════════
+
 
 @router.get("/api/requirements")
 async def list_requirements():
@@ -275,9 +278,18 @@ async def create_requirement(req: dict):
     conn.execute(
         """INSERT INTO requirements (id, name, description, status, priority, project_id, creator, version, created_at, updated_at, active)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-        (req_id, name, req.get("description", ""), req.get("status", "draft"),
-         req.get("priority", "P1"), req.get("project_id", ""), req.get("creator", "admin"),
-         1, now, now),
+        (
+            req_id,
+            name,
+            req.get("description", ""),
+            req.get("status", "draft"),
+            req.get("priority", "P1"),
+            req.get("project_id", ""),
+            req.get("creator", "admin"),
+            1,
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -331,7 +343,18 @@ async def get_test_runs(req_id: str):
 @router.put("/api/requirements/{req_id}")
 async def update_requirement(req_id: str, req: dict):
     conn = get_db()
-    fields = ["name", "description", "status", "priority", "project_id", "prd_text", "review_report", "tech_design", "test_cases", "code"]
+    fields = [
+        "name",
+        "description",
+        "status",
+        "priority",
+        "project_id",
+        "prd_text",
+        "review_report",
+        "tech_design",
+        "test_cases",
+        "code",
+    ]
     updates = []
     vals = []
     for f in fields:
@@ -366,12 +389,22 @@ async def save_pipeline_output(req_id: str, req: dict):
     """
     stage = req.get("stage") or ""
     content = req.get("content") or ""
-    field_map = {"prd": "prd_text", "review": "review_report", "td": "tech_design", "test": "test_cases", "code": "code", "code_review": "code_review", "review_code": "code_review"}
+    field_map = {
+        "prd": "prd_text",
+        "review": "review_report",
+        "td": "tech_design",
+        "test": "test_cases",
+        "code": "code",
+        "code_review": "code_review",
+        "review_code": "code_review",
+    }
     field = field_map.get(stage)
     if not field:
         raise HTTPException(400, f"未知阶段: {stage}")
     conn = get_db()
-    conn.execute(f"UPDATE requirements SET {field}=?, updated_at=? WHERE id=?", (content, datetime.now().isoformat(), req_id))
+    conn.execute(
+        f"UPDATE requirements SET {field}=?, updated_at=? WHERE id=?", (content, datetime.now().isoformat(), req_id)
+    )
     # 流水线状态：当前阶段 fresh，下游全部 stale（上游变更后下游产物需重新生成）
     STAGE_ORDER = ["prd", "review", "td", "test", "code", "review_code"]
     row = conn.execute("SELECT pipeline_status FROM requirements WHERE id=?", (req_id,)).fetchone()
@@ -381,7 +414,7 @@ async def save_pipeline_output(req_id: str, req: dict):
     now = datetime.now().isoformat()
     ps[stage] = {"status": "fresh", "updated_at": now}
     if stage in STAGE_ORDER:
-        for s in STAGE_ORDER[STAGE_ORDER.index(stage) + 1:]:
+        for s in STAGE_ORDER[STAGE_ORDER.index(stage) + 1 :]:
             ps[s] = {"status": "stale", "updated_at": ps.get(s, {}).get("updated_at", "")}
     conn.execute("UPDATE requirements SET pipeline_status=? WHERE id=?", (json.dumps(ps, ensure_ascii=False), req_id))
     conn.commit()
@@ -390,6 +423,7 @@ async def save_pipeline_output(req_id: str, req: dict):
 
 
 # ── 项目管理 ────────────────────────────────────────────────
+
 
 @router.get("/api/projects")
 async def list_projects():
@@ -427,6 +461,7 @@ async def delete_project(proj_id: str):
 
 
 # ── 成果仓库 ────────────────────────────────────────────────
+
 
 @router.get("/api/artifacts")
 async def list_artifacts(project_id: str = ""):
@@ -466,9 +501,16 @@ async def create_artifact(req: dict):
     conn.execute(
         """INSERT INTO artifacts (id, project_id, requirement_id, type, content, version, author, created_at, active)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-        (art_id, req.get("project_id", ""), req.get("requirement_id", ""), req.get("type", "doc"),
-         json.dumps(req.get("content", {})), req.get("version", "v1"), req.get("author", "admin"),
-         datetime.now().isoformat()),
+        (
+            art_id,
+            req.get("project_id", ""),
+            req.get("requirement_id", ""),
+            req.get("type", "doc"),
+            json.dumps(req.get("content", {})),
+            req.get("version", "v1"),
+            req.get("author", "admin"),
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -487,6 +529,7 @@ async def delete_artifact(art_id: str):
 # ══════════════════════════════════════════════════════════════
 # 系统配置
 # ══════════════════════════════════════════════════════════════
+
 
 @router.get("/api/config")
 async def get_config():
@@ -612,7 +655,7 @@ async def delete_model(name: str):
     row = conn.execute("SELECT value FROM config WHERE key='model_name'").fetchone()
     current_default = row["value"] if row and row["value"] else DEFAULT_MODELS[0]["name"]
     if current_default == name:
-        fallback = (models[0]["name"] if models else DEFAULT_MODELS[0]["name"])
+        fallback = models[0]["name"] if models else DEFAULT_MODELS[0]["name"]
         conn.execute(
             "INSERT INTO config (key, value) VALUES ('model_name', ?) ON CONFLICT(key) DO UPDATE SET value=?",
             (fallback, fallback),
@@ -621,7 +664,6 @@ async def delete_model(name: str):
     conn.close()
     load_config()
     return {"models": _mask_models(models if models else [dict(m) for m in DEFAULT_MODELS])}
-
 
 
 @router.post("/api/config/save")
@@ -648,6 +690,7 @@ async def save_config(req: dict):
 # 使用统计 + 自进化
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/usage-stats")
 async def usage_stats(request: Request):
     # 可选：从 Authorization 头解析当前用户，返回会员等级与今日剩余额度（未登录则返回 free）
@@ -667,7 +710,9 @@ async def usage_stats(request: Request):
     total = conn.execute("SELECT COUNT(*) c FROM usage_logs").fetchone()["c"]
     success = conn.execute("SELECT COUNT(*) c FROM usage_logs WHERE success=1").fetchone()["c"]
     avg_time = conn.execute("SELECT AVG(response_time) a FROM usage_logs").fetchone()["a"]
-    by_type = conn.execute("SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs GROUP BY task_type").fetchall()
+    by_type = conn.execute(
+        "SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs GROUP BY task_type"
+    ).fetchall()
     recent = conn.execute("SELECT * FROM usage_logs ORDER BY timestamp DESC LIMIT 10").fetchall()
     # 近7天每日趋势（date → 调用次数 + token 消耗）
     daily = conn.execute(
@@ -682,7 +727,9 @@ async def usage_stats(request: Request):
     today = conn.execute(
         "SELECT COUNT(*) c, COALESCE(SUM(input_length + output_length), 0) tokens FROM usage_logs WHERE substr(timestamp,1,10) = substr(date('now'),1,10)"
     ).fetchone()
-    total_tokens = conn.execute("SELECT COALESCE(SUM(input_length + output_length), 0) t FROM usage_logs").fetchone()["t"]
+    total_tokens = conn.execute("SELECT COALESCE(SUM(input_length + output_length), 0) t FROM usage_logs").fetchone()[
+        "t"
+    ]
     conn.close()
     return {
         "total_calls": total,

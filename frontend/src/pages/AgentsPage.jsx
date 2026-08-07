@@ -1,18 +1,51 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Bot, Plus, Edit2, Trash2, Search,
-  Play, RefreshCw, Cpu, MemoryStick,
-  Layers, Zap, Code2, PenTool, BarChart3,
-  HeadphonesIcon, Languages, LayoutGrid, List as ListIcon,
-  MessageSquare, Clock, X, Sparkles, ChevronDown,
-  CheckSquare, Square, Power, PowerOff,
-  Wrench, Database, Cable, Loader2,
+  Bot,
+  Plus,
+  Edit2,
+  Trash2,
+  Search,
+  Play,
+  RefreshCw,
+  Cpu,
+  MemoryStick,
+  Layers,
+  Zap,
+  Code2,
+  PenTool,
+  BarChart3,
+  HeadphonesIcon,
+  Languages,
+  LayoutGrid,
+  List as ListIcon,
+  MessageSquare,
+  Clock,
+  X,
+  Sparkles,
+  ChevronDown,
+  CheckSquare,
+  Square,
+  Power,
+  PowerOff,
+  Wrench,
+  Database,
+  Cable,
+  Loader2,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
-import { Modal, Button, Empty, PageLoading, SkeletonGrid, ErrorState, Badge, PageHeader } from '../components/ui'
+import {
+  Modal,
+  Button,
+  Empty,
+  PageLoading,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+} from '../components/ui'
 
 // 默认 Expert Prompt
 const DEFAULT_PROMPTS = {
@@ -60,7 +93,8 @@ const AGENT_TAGS = [
 
 // 根据 agent 信息猜测标签
 function guessAgentTag(agent) {
-  const text = `${agent.name || ''} ${agent.description || ''} ${agent.instructions || ''}`.toLowerCase()
+  const text =
+    `${agent.name || ''} ${agent.description || ''} ${agent.instructions || ''}`.toLowerCase()
   if (/代码|编程|开发|code|debug|api|全栈|前端|后端/.test(text)) return 'coding'
   if (/文案|写作|内容|营销|blog|文章|创意/.test(text)) return 'writing'
   if (/数据|分析|统计|报表|财务|dashboard/.test(text)) return 'analysis'
@@ -86,7 +120,9 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
   if (viewMode === 'list') {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow flex items-center gap-4">
-        <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${modelColor} flex items-center justify-center text-white font-bold flex-shrink-0`}>
+        <div
+          className={`w-10 h-10 rounded-lg bg-gradient-to-br ${modelColor} flex items-center justify-center text-white font-bold flex-shrink-0`}
+        >
           {agent.name?.[0]?.toUpperCase() || 'A'}
         </div>
         <div className="flex-1 min-w-0">
@@ -97,20 +133,42 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
           <p className="text-sm text-gray-500 truncate">{agent.description || '暂无描述'}</p>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-sm text-gray-500 flex-shrink-0">
-          <span className="flex items-center gap-1"><Bot className="w-4 h-4" />{agent.model}</span>
-          <span className="flex items-center gap-1"><MessageSquare className="w-4 h-4" />{agent.tool_count || 0}</span>
+          <span className="flex items-center gap-1">
+            <Bot className="w-4 h-4" />
+            {agent.model}
+          </span>
+          <span className="flex items-center gap-1">
+            <MessageSquare className="w-4 h-4" />
+            {agent.tool_count || 0}
+          </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button onClick={() => onExecute(agent)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="执行">
+          <button
+            onClick={() => onExecute(agent)}
+            className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors"
+            title="执行"
+          >
             <Play className="w-4 h-4" />
           </button>
-          <button onClick={() => onView(agent)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看">
+          <button
+            onClick={() => onView(agent)}
+            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+            title="查看"
+          >
             <Layers className="w-4 h-4" />
           </button>
-          <button onClick={() => onEdit(agent)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(agent)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(agent)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(agent)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -122,7 +180,9 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
     <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 group flex flex-col">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${modelColor} flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0`}>
+          <div
+            className={`w-12 h-12 rounded-xl bg-gradient-to-br ${modelColor} flex items-center justify-center text-white font-bold text-lg shadow-lg flex-shrink-0`}
+          >
             {agent.name?.[0]?.toUpperCase() || 'A'}
           </div>
           <div className="min-w-0">
@@ -160,16 +220,34 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
       </div>
 
       <div className="flex items-center gap-2 pt-4 border-t border-gray-100">
-        <Button variant="success" size="sm" icon={Play} onClick={() => onExecute(agent)} className="flex-1">
+        <Button
+          variant="success"
+          size="sm"
+          icon={Play}
+          onClick={() => onExecute(agent)}
+          className="flex-1"
+        >
           执行
         </Button>
-        <button onClick={() => onView(agent)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看详情">
+        <button
+          onClick={() => onView(agent)}
+          className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+          title="查看详情"
+        >
           <Layers className="w-4 h-4" />
         </button>
-        <button onClick={() => onEdit(agent)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+        <button
+          onClick={() => onEdit(agent)}
+          className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+          title="编辑"
+        >
           <Edit2 className="w-4 h-4" />
         </button>
-        <button onClick={() => onDelete(agent)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+        <button
+          onClick={() => onDelete(agent)}
+          className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+          title="删除"
+        >
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
@@ -180,8 +258,8 @@ function AgentCard({ agent, onView, onEdit, onDelete, onExecute, viewMode }) {
 // 资源多选组件：工具 / 知识库 / Skills / MCP 通用
 function ResourceMultiSelect({ title, options, selected, onChange, loading, placeholder }) {
   const [q, setQ] = useState('')
-  const filtered = options.filter((o) =>
-    !q || (o.name || o.label || '').toLowerCase().includes(q.toLowerCase())
+  const filtered = options.filter(
+    (o) => !q || (o.name || o.label || '').toLowerCase().includes(q.toLowerCase())
   )
   const toggle = (id) => {
     onChange(selected.includes(id) ? selected.filter((i) => i !== id) : [...selected, id])
@@ -223,7 +301,9 @@ function ResourceMultiSelect({ title, options, selected, onChange, loading, plac
                     className="w-3.5 h-3.5 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                   />
                   <span className="flex-1 truncate">{o.name}</span>
-                  {o.category && <span className="text-[10px] text-gray-400 flex-shrink-0">{o.category}</span>}
+                  {o.category && (
+                    <span className="text-[10px] text-gray-400 flex-shrink-0">{o.category}</span>
+                  )}
                 </label>
               )
             })
@@ -239,8 +319,14 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
   // 模型下拉选项：优先使用系统配置的模型列表（未加载/未配置时回退内置常量）
   const formModelOptions = modelList.length ? modelList.map((m) => m.name) : MODELS
   const [form, setForm] = useState({
-    name: '', description: '', model: 'agnes-2.5-flash', instructions: '',
-    tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
+    name: '',
+    description: '',
+    model: 'agnes-2.5-flash',
+    instructions: '',
+    tools: [],
+    knowledge_base_ids: [],
+    skill_ids: [],
+    mcp_server_ids: [],
   })
   const [errors, setErrors] = useState({})
   // 可绑定资源选项
@@ -259,14 +345,34 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
       api.get('/api/knowledge-bases'),
       api.get('/api/skills'),
       api.get('/api/mcp-servers'),
-    ]).then(([tools, kbs, skills, mcps]) => {
-      if (cancelled) return
-      setToolOptions(tools.status === 'fulfilled' ? tools.value.data.map((t) => ({ id: t.id, name: t.name, category: t.category })) : [])
-      setKbOptions(kbs.status === 'fulfilled' ? kbs.value.data.map((k) => ({ id: k.id, name: k.name })) : [])
-      setSkillOptions(skills.status === 'fulfilled' ? skills.value.data.map((s) => ({ id: s.id, name: s.name })) : [])
-      setMcpOptions(mcps.status === 'fulfilled' ? mcps.value.data.map((m) => ({ id: m.id, name: m.name })) : [])
-    }).finally(() => { if (!cancelled) setLoadingOptions(false) })
-    return () => { cancelled = true }
+    ])
+      .then(([tools, kbs, skills, mcps]) => {
+        if (cancelled) return
+        setToolOptions(
+          tools.status === 'fulfilled'
+            ? tools.value.data.map((t) => ({ id: t.id, name: t.name, category: t.category }))
+            : []
+        )
+        setKbOptions(
+          kbs.status === 'fulfilled' ? kbs.value.data.map((k) => ({ id: k.id, name: k.name })) : []
+        )
+        setSkillOptions(
+          skills.status === 'fulfilled'
+            ? skills.value.data.map((s) => ({ id: s.id, name: s.name }))
+            : []
+        )
+        setMcpOptions(
+          mcps.status === 'fulfilled'
+            ? mcps.value.data.map((m) => ({ id: m.id, name: m.name }))
+            : []
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOptions(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open])
 
   useEffect(() => {
@@ -278,7 +384,9 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
           model: editing.model || 'agnes-2.5-flash',
           instructions: editing.instructions || '',
           tools: Array.isArray(editing.tools) ? editing.tools : [],
-          knowledge_base_ids: Array.isArray(editing.knowledge_base_ids) ? editing.knowledge_base_ids : [],
+          knowledge_base_ids: Array.isArray(editing.knowledge_base_ids)
+            ? editing.knowledge_base_ids
+            : [],
           skill_ids: Array.isArray(editing.skill_ids) ? editing.skill_ids : [],
           mcp_server_ids: Array.isArray(editing.mcp_server_ids) ? editing.mcp_server_ids : [],
         })
@@ -288,13 +396,21 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
           description: defaults.description || '',
           model: 'agnes-2.5-flash',
           instructions: defaults.instructions || '',
-          tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
+          tools: [],
+          knowledge_base_ids: [],
+          skill_ids: [],
+          mcp_server_ids: [],
         })
       } else {
         setForm({
-          name: '', description: '', model: 'agnes-2.5-flash',
+          name: '',
+          description: '',
+          model: 'agnes-2.5-flash',
           instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '',
-          tools: [], knowledge_base_ids: [], skill_ids: [], mcp_server_ids: [],
+          tools: [],
+          knowledge_base_ids: [],
+          skill_ids: [],
+          mcp_server_ids: [],
         })
       }
       setErrors({})
@@ -324,14 +440,20 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -358,7 +480,11 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
             onChange={(e) => setField('model', e.target.value)}
             className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
           >
-                        {formModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+            {formModelOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
           </select>
         </div>
         <div>
@@ -367,12 +493,18 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
             <div className="flex items-center gap-1">
               <Sparkles className="w-3.5 h-3.5 text-purple-400" />
               <select
-                onChange={(e) => e.target.value && setField('instructions', DEFAULT_PROMPTS[e.target.value])}
+                onChange={(e) =>
+                  e.target.value && setField('instructions', DEFAULT_PROMPTS[e.target.value])
+                }
                 className="text-xs text-purple-600 bg-transparent border-none outline-none cursor-pointer"
                 defaultValue=""
               >
                 <option value="">选择模板…</option>
-                {Object.keys(DEFAULT_PROMPTS).map((k) => <option key={k} value={k}>{k}</option>)}
+                {Object.keys(DEFAULT_PROMPTS).map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -387,7 +519,9 @@ function AgentFormModal({ open, onClose, onSubmit, editing, defaults, loading, m
 
         {/* 资源绑定：工具 / 知识库 / Skills / MCP */}
         <div className="pt-1 border-t border-gray-100 space-y-4">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">能力绑定（可选）</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            能力绑定（可选）
+          </p>
           <ResourceMultiSelect
             title="工具 Tools"
             icon={Wrench}
@@ -473,14 +607,16 @@ export default function AgentsPage() {
 
   // 加载系统配置的模型列表
   useEffect(() => {
-    api.get('/api/config')
+    api
+      .get('/api/config')
       .then((res) => setModelList(Array.isArray(res.data.models) ? res.data.models : []))
       .catch(() => {})
   }, [])
 
   // 加载专业角色模板
   useEffect(() => {
-    api.get('/api/agent-templates')
+    api
+      .get('/api/agent-templates')
       .then((res) => setTemplates(Array.isArray(res.data) ? res.data : []))
       .catch(() => {})
   }, [])
@@ -505,9 +641,11 @@ export default function AgentsPage() {
   }
 
   const filteredAgents = agents.filter((agent) => {
-    const matchSearch = agent.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchSearch =
+      agent.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.description?.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchFilter = filter === 'all' ||
+    const matchFilter =
+      filter === 'all' ||
       (filter === 'active' && (agent.status || 'active') === 'active') ||
       (filter === 'inactive' && agent.status === 'inactive')
     const tag = agent.tag || guessAgentTag(agent)
@@ -517,21 +655,27 @@ export default function AgentsPage() {
 
   const toggleSelectAll = () => {
     if (selectedIds.length === filteredAgents.length) setSelectedIds([])
-    else setSelectedIds(filteredAgents.map(a => a.id))
+    else setSelectedIds(filteredAgents.map((a) => a.id))
   }
   const batchAction = async (action) => {
-    if (selectedIds.length === 0) { toast.error('请先选择 Agent'); return }
+    if (selectedIds.length === 0) {
+      toast.error('请先选择 Agent')
+      return
+    }
     try {
       if (action === 'delete') {
-        await Promise.all(selectedIds.map(id => api.delete(`/api/agents/${id}`)))
+        await Promise.all(selectedIds.map((id) => api.delete(`/api/agents/${id}`)))
         toast.success(`已删除 ${selectedIds.length} 个 Agent`)
       } else {
         const status = action === 'enable' ? 'active' : 'inactive'
-        await Promise.all(selectedIds.map(id => api.put(`/api/agents/${id}`, { status })))
+        await Promise.all(selectedIds.map((id) => api.put(`/api/agents/${id}`, { status })))
         toast.success(`已${action === 'enable' ? '启用' : '停用'} ${selectedIds.length} 个 Agent`)
       }
-      setSelectedIds([]); fetchAgents()
-    } catch (e) { toast.error(`批量操作失败：${e.message}`) }
+      setSelectedIds([])
+      fetchAgents()
+    } catch (e) {
+      toast.error(`批量操作失败：${e.message}`)
+    }
   }
 
   const openCreate = () => {
@@ -583,10 +727,32 @@ export default function AgentsPage() {
   }
 
   const stats = [
-    { label: '总 Agent 数', value: agents.length, icon: Bot, color: 'from-violet-500 to-purple-600' },
-    { label: '运行中', value: agents.filter((a) => (a.status || 'active') === 'active').length, icon: Zap, color: 'from-emerald-500 to-green-600' },
-    { label: '停用', value: agents.filter((a) => a.status === 'inactive').length, icon: MemoryStick, color: 'from-gray-400 to-gray-500' },
-    { label: '平均工具数', value: (agents.reduce((acc, a) => acc + (a.tool_count || 0), 0) / (agents.length || 1)).toFixed(1), icon: Cpu, color: 'from-blue-500 to-cyan-600' },
+    {
+      label: '总 Agent 数',
+      value: agents.length,
+      icon: Bot,
+      color: 'from-violet-500 to-purple-600',
+    },
+    {
+      label: '运行中',
+      value: agents.filter((a) => (a.status || 'active') === 'active').length,
+      icon: Zap,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: '停用',
+      value: agents.filter((a) => a.status === 'inactive').length,
+      icon: MemoryStick,
+      color: 'from-gray-400 to-gray-500',
+    },
+    {
+      label: '平均工具数',
+      value: (
+        agents.reduce((acc, a) => acc + (a.tool_count || 0), 0) / (agents.length || 1)
+      ).toFixed(1),
+      icon: Cpu,
+      color: 'from-blue-500 to-cyan-600',
+    },
   ]
 
   return (
@@ -596,7 +762,9 @@ export default function AgentsPage() {
         description="创建和管理 AI Agent，绑定工具、Skills 和知识库"
         icon={Bot}
         actions={
-          <Button variant="primary" icon={Plus} onClick={openCreate}>新建 Agent</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建 Agent
+          </Button>
         }
       />
 
@@ -609,7 +777,9 @@ export default function AgentsPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -625,19 +795,58 @@ export default function AgentsPage() {
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
-              { name: '代码助手', icon: Code2, desc: '全栈开发专家', color: 'from-blue-500 to-cyan-600', instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '' },
-              { name: '文案写手', icon: PenTool, desc: '营销文案专家', color: 'from-pink-500 to-rose-600', instructions: '' },
-              { name: '数据分析师', icon: BarChart3, desc: '数据分析专家', color: 'from-green-500 to-emerald-600', instructions: '' },
-              { name: '客服助手', icon: HeadphonesIcon, desc: '客户服务专家', color: 'from-amber-500 to-orange-600', instructions: '' },
-              { name: '翻译官', icon: Languages, desc: '多语言翻译', color: 'from-purple-500 to-indigo-600', instructions: '' },
+              {
+                name: '代码助手',
+                icon: Code2,
+                desc: '全栈开发专家',
+                color: 'from-blue-500 to-cyan-600',
+                instructions: DEFAULT_PROMPTS['Senior Dev Expert'] || '',
+              },
+              {
+                name: '文案写手',
+                icon: PenTool,
+                desc: '营销文案专家',
+                color: 'from-pink-500 to-rose-600',
+                instructions: '',
+              },
+              {
+                name: '数据分析师',
+                icon: BarChart3,
+                desc: '数据分析专家',
+                color: 'from-green-500 to-emerald-600',
+                instructions: '',
+              },
+              {
+                name: '客服助手',
+                icon: HeadphonesIcon,
+                desc: '客户服务专家',
+                color: 'from-amber-500 to-orange-600',
+                instructions: '',
+              },
+              {
+                name: '翻译官',
+                icon: Languages,
+                desc: '多语言翻译',
+                color: 'from-purple-500 to-indigo-600',
+                instructions: '',
+              },
             ].map((tpl, i) => (
-              <button key={i} onClick={() => {
-                setEditingAgent(null)
-                setFormDefaults({ name: tpl.name, description: tpl.desc, instructions: tpl.instructions })
-                setShowForm(true)
-              }}
-                className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all">
-                <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center`}>
+              <button
+                key={i}
+                onClick={() => {
+                  setEditingAgent(null)
+                  setFormDefaults({
+                    name: tpl.name,
+                    description: tpl.desc,
+                    instructions: tpl.instructions,
+                  })
+                  setShowForm(true)
+                }}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl border border-gray-200 hover:border-purple-300 hover:bg-purple-50/50 transition-all"
+              >
+                <div
+                  className={`w-10 h-10 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center`}
+                >
                   <tpl.icon className="w-5 h-5 text-white" />
                 </div>
                 <div className="text-sm font-medium text-gray-900">{tpl.name}</div>
@@ -660,8 +869,14 @@ export default function AgentsPage() {
                     disabled={creatingTpl === tpl.name}
                     className="flex items-start gap-3 p-4 rounded-xl border border-gray-200 hover:border-violet-300 hover:bg-violet-50/50 hover:shadow-md transition-all text-left disabled:opacity-60"
                   >
-                    <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.tag === 'coding' ? 'from-blue-500 to-cyan-600' : tpl.tag === 'writing' ? 'from-pink-500 to-rose-600' : tpl.tag === 'service' ? 'from-amber-500 to-orange-600' : 'from-emerald-500 to-teal-600'} flex items-center justify-center text-white flex-shrink-0`}>
-                      {creatingTpl === tpl.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
+                    <div
+                      className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.tag === 'coding' ? 'from-blue-500 to-cyan-600' : tpl.tag === 'writing' ? 'from-pink-500 to-rose-600' : tpl.tag === 'service' ? 'from-amber-500 to-orange-600' : 'from-emerald-500 to-teal-600'} flex items-center justify-center text-white flex-shrink-0`}
+                    >
+                      {creatingTpl === tpl.name ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Bot className="w-4 h-4" />
+                      )}
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-sm font-semibold text-gray-800 truncate">{tpl.label}</h4>
@@ -677,13 +892,16 @@ export default function AgentsPage() {
 
       {/* 标签筛选 */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {AGENT_TAGS.map(tag => (
-          <button key={tag.value} onClick={() => setTagFilter(tag.value)}
+        {AGENT_TAGS.map((tag) => (
+          <button
+            key={tag.value}
+            onClick={() => setTagFilter(tag.value)}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
               tagFilter === tag.value
                 ? 'bg-purple-100 text-purple-700 shadow-sm'
                 : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-            }`}>
+            }`}
+          >
             <tag.icon className="w-3.5 h-3.5" />
             {tag.label}
           </button>
@@ -734,25 +952,35 @@ export default function AgentsPage() {
       {/* 批量操作栏 */}
       {agents.length > 0 && (
         <div className="flex items-center gap-3 px-1">
-          <button onClick={toggleSelectAll}
-            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-purple-600 transition-colors">
-            {selectedIds.length === filteredAgents.length && filteredAgents.length > 0
-              ? <CheckSquare className="w-4 h-4 text-purple-600" />
-              : <Square className="w-4 h-4" />}
+          <button
+            onClick={toggleSelectAll}
+            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-purple-600 transition-colors"
+          >
+            {selectedIds.length === filteredAgents.length && filteredAgents.length > 0 ? (
+              <CheckSquare className="w-4 h-4 text-purple-600" />
+            ) : (
+              <Square className="w-4 h-4" />
+            )}
             {selectedIds.length > 0 ? `已选 ${selectedIds.length} 个` : '全选'}
           </button>
           {selectedIds.length > 0 && (
             <div className="flex items-center gap-2">
-              <button onClick={() => batchAction('enable')}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors">
+              <button
+                onClick={() => batchAction('enable')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+              >
                 <Power className="w-3 h-3" /> 启用
               </button>
-              <button onClick={() => batchAction('disable')}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors">
+              <button
+                onClick={() => batchAction('disable')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+              >
                 <PowerOff className="w-3 h-3" /> 停用
               </button>
-              <button onClick={() => batchAction('delete')}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-red-50 text-red-700 hover:bg-red-100 transition-colors">
+              <button
+                onClick={() => batchAction('delete')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+              >
                 <Trash2 className="w-3 h-3" /> 删除
               </button>
             </div>
@@ -770,7 +998,11 @@ export default function AgentsPage() {
           <Empty
             icon={Bot}
             title={searchQuery || filter !== 'all' ? '未找到匹配的 Agent' : '暂无 Agent'}
-            description={searchQuery || filter !== 'all' ? '尝试调整搜索或筛选条件' : '点击「新建 Agent」创建你的第一个 AI 助手'}
+            description={
+              searchQuery || filter !== 'all'
+                ? '尝试调整搜索或筛选条件'
+                : '点击「新建 Agent」创建你的第一个 AI 助手'
+            }
             actionLabel={searchQuery || filter !== 'all' ? undefined : '新建 Agent'}
             onAction={searchQuery || filter !== 'all' ? undefined : openCreate}
           />
@@ -816,22 +1048,24 @@ export default function AgentsPage() {
       />
 
       {/* 删除确认 */}
-      <Modal
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        size="sm"
-      >
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} size="sm">
         <div className="text-center">
           <div className="w-14 h-14 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-4">
             <Trash2 className="w-7 h-7 text-red-500" />
           </div>
           <h3 className="text-lg font-bold text-gray-900 mb-2">确认删除 Agent</h3>
           <p className="text-sm text-gray-500 mb-6">
-            确定要删除 Agent「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。
+            确定要删除 Agent「
+            <span className="font-medium text-gray-700">{deleteTarget?.name}</span>
+            」吗？此操作不可撤销。
           </p>
           <div className="flex items-center justify-center gap-3">
-            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>取消</Button>
-            <Button variant="danger" icon={Trash2} loading={deleting} onClick={handleDelete}>确认删除</Button>
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+              取消
+            </Button>
+            <Button variant="danger" icon={Trash2} loading={deleting} onClick={handleDelete}>
+              确认删除
+            </Button>
           </div>
         </div>
       </Modal>

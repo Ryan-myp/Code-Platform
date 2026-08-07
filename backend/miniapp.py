@@ -13,8 +13,8 @@ import re
 import time
 import uuid
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -134,7 +134,135 @@ def _extract_json(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
         raise ValueError("LLM 输出中未找到 JSON 对象")
-    return json.loads(text[start:end + 1])
+    return json.loads(text[start : end + 1])
+
+
+# ─── QC 质量门禁（对齐 game_factory 商用交付标准）──────────────────
+# 小程序运行必需的基础文件
+_REQUIRED_FILES = ["app.js", "app.json", "app.wxss", "project.config.json", "sitemap.json"]
+# WXML 中常自闭合的组件（不要求配对闭合）
+_VOID_WXML = {
+    "input",
+    "image",
+    "icon",
+    "progress",
+    "slider",
+    "switch",
+    "checkbox",
+    "radio",
+    "textarea",
+    "canvas",
+    "video",
+    "audio",
+    "ad",
+}
+
+
+def _node_check_js(js: str) -> tuple[bool, str]:
+    """node --check 语法校验；node 不可用时跳过（避免环境强依赖）。"""
+    import os
+    import subprocess
+    import tempfile
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(js)
+            tmp = f.name
+        try:
+            r = subprocess.run(["node", "--check", tmp], capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                return True, "语法通过"
+            return False, (r.stderr or r.stdout or "").strip()[:300]
+        finally:
+            os.unlink(tmp)
+    except FileNotFoundError:
+        return True, "node 不可用，跳过"
+    except Exception as e:
+        return True, f"校验器异常，跳过: {e}"
+
+
+def _check_wxml_tags(src: str, path: str) -> str | None:
+    """WXML 标签配对检查：{{}} 表达式先占位，忽略自闭合/void 组件。"""
+    src = re.sub(r"\{\{.*?\}\}", "{{}}", src, flags=re.DOTALL)
+    stack = []
+    pat = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\"[^\"]*\"|'[^']*'|[^>\"'])*)>")
+    for m in pat.finditer(src):
+        closing, tag, attrs = m.group(1), m.group(2), m.group(3)
+        if closing:
+            # void 组件的显式闭合（<image></image>）是微信官方合法写法，忽略
+            if tag.lower() in _VOID_WXML:
+                continue
+            if not stack:
+                return f"{path}: 多余闭合标签 </{tag}>"
+            if stack[-1] != tag:
+                return f"{path}: </{tag}> 与最近未闭合 <{stack[-1]}> 不配对"
+            stack.pop()
+        elif not attrs.rstrip().endswith("/") and tag.lower() not in _VOID_WXML:
+            stack.append(tag)
+    if stack:
+        return f"{path}: 未闭合标签 <{stack[-1]}>"
+    return None
+
+
+def _qc_check(files: dict) -> dict:
+    """生成产物质量门禁：必需文件 + app.json 页面注册交叉校验 + WXML 配对 + JS 语法。"""
+    checks = []
+    # 1. 必需基础文件（app.json 缺失时 worker 会兜底生成，此处主要拦空内容）
+    for req in _REQUIRED_FILES:
+        ok = req in files and bool(str(files[req]).strip())
+        checks.append({"item": f"必需文件 {req}", "ok": ok, "detail": "存在" if ok else "缺失"})
+    # 2. app.json 可解析 + 页面注册交叉校验（生成页面必须注册、注册页面必须四件套齐全）
+    app_cfg, app_err = {}, ""
+    try:
+        app_cfg = json.loads(files.get("app.json") or "{}")
+    except Exception as e:
+        app_err = str(e)
+    checks.append({"item": "app.json 可解析", "ok": not app_err, "detail": "OK" if not app_err else app_err})
+    if app_cfg:
+        registered = set(app_cfg.get("pages") or [])
+        generated = {p.rsplit(".", 1)[0] for p in files if p.startswith("pages/")}
+        unregistered = sorted(generated - registered)
+        checks.append(
+            {
+                "item": "app.json 注册全部生成页面",
+                "ok": not unregistered,
+                "detail": "OK" if not unregistered else f"未注册: {unregistered}",
+            }
+        )
+        missing = sorted(
+            {f"{rp}.{ext}" for rp in registered for ext in ("js", "wxml", "wxss", "json") if f"{rp}.{ext}" not in files}
+        )
+        checks.append(
+            {"item": "注册页面四件套齐全", "ok": not missing, "detail": "OK" if not missing else f"缺失: {missing}"}
+        )
+    # 3. WXML 标签配对
+    wxml_errors = [e for p in sorted(k for k in files if k.endswith(".wxml")) if (e := _check_wxml_tags(files[p], p))]
+    checks.append(
+        {
+            "item": "WXML 标签配对",
+            "ok": not wxml_errors,
+            "detail": "OK" if not wxml_errors else "；".join(wxml_errors[:3]),
+        }
+    )
+    # 4. JS 语法（node --check，逐文件）
+    js_bad = None
+    for p in sorted(k for k in files if k.endswith(".js")):
+        ok, msg = _node_check_js(files[p])
+        if not ok:
+            js_bad = f"{p}: {msg}"
+            break
+    checks.append(
+        {"item": "JS 语法（node --check）", "ok": js_bad is None, "detail": "OK" if js_bad is None else js_bad}
+    )
+    return {"ok": all(c["ok"] for c in checks), "checks": checks}
+
+
+def _ensure_qc_column(conn) -> None:
+    """幂等补列：miniapp_projects.qc 存质量门禁报告（JSON）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(miniapp_projects)").fetchall()]
+    if "qc" not in cols:
+        conn.execute("ALTER TABLE miniapp_projects ADD COLUMN qc TEXT DEFAULT ''")
+        conn.commit()
 
 
 @router.get("/templates")
@@ -152,7 +280,7 @@ async def list_projects(current_user: dict = require_auth()):
     return [dict(r) for r in rows]
 
 
-async def _miniapp_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _miniapp_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 生成完整小程序项目（同步/异步任务共用执行体，异步时回报进度）。"""
     req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
@@ -166,11 +294,18 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
             except Exception:
                 pass
 
-    structure_desc = "\n".join(f"- {s}" for s in (tpl["structure"] if tpl else [
-        "根据需求自行设计合理的页面结构（建议 3-5 个页面）",
-    ]))
+    structure_desc = "\n".join(
+        f"- {s}"
+        for s in (
+            tpl["structure"]
+            if tpl
+            else [
+                "根据需求自行设计合理的页面结构（建议 3-5 个页面）",
+            ]
+        )
+    )
     user_prompt = f"""项目名称：{req.name}
-选择模板：{tpl['name'] if tpl else '自定义'}
+选择模板：{tpl["name"] if tpl else "自定义"}
 模板页面结构：
 {structure_desc}
 
@@ -190,41 +325,87 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
         raise HTTPException(500, f"生成失败: {e}") from e
 
     files = None
-    try:
-        files = _extract_json(result)
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.warning("miniapp JSON parse failed (will retry compact): %s", e)
-        # 输出被截断/超长：自动降级为精简版重试（只保留核心页面）
+    qc = None
+    last_err = ""
+    # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
+    for attempt in range(3):
+        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
         try:
-            retry_prompt = user_prompt + (
-                "\n\n重要：上次输出因过长被截断导致失败。本次请严格精简：\n"
-                "1. 页面数量控制在 2 个以内（首页 + 一个核心功能页），其余页面省略\n"
-                "2. 每个文件控制在 40 行以内，全部文件总字符数不超过 15000\n"
-                "3. app.json 只注册实际生成的页面"
-            )
-            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=8000, temperature=0.3)
             files = _extract_json(result)
-        except (ValueError, json.JSONDecodeError, HTTPException) as e2:
-            raise HTTPException(502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}") from e2
-
-    if not isinstance(files, dict) or not files:
-        raise HTTPException(502, "AI 未生成任何文件，请重试")
-
-    # 兜底：确保 app.json 存在（小程序运行必需）
-    if "app.json" not in files:
-        files = {"app.json": json.dumps({
-            "pages": sorted({p.split("/", 1)[0] + "/index/index" for p in files if p.startswith("pages/")}) or ["pages/index/index"],
-            "window": {"navigationBarTitleText": req.name, "navigationBarBackgroundColor": "#4F46E5",
-                        "navigationBarTextStyle": "white"},
-        }, ensure_ascii=False, indent=2), **files}
+            if not isinstance(files, dict) or not files:
+                raise ValueError("AI 未生成任何文件")
+            # 兜底：确保 app.json 存在（小程序运行必需）
+            if "app.json" not in files:
+                files = {
+                    "app.json": json.dumps(
+                        {
+                            "pages": sorted(
+                                {p.split("/", 1)[0] + "/index/index" for p in files if p.startswith("pages/")}
+                            )
+                            or ["pages/index/index"],
+                            "window": {
+                                "navigationBarTitleText": req.name,
+                                "navigationBarBackgroundColor": "#4F46E5",
+                                "navigationBarTextStyle": "white",
+                            },
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    **files,
+                }
+            qc = _qc_check(files)
+            if qc["ok"]:
+                break
+            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
+            logger.warning("miniapp QC failed (attempt %d): %s", attempt + 1, last_err)
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
+                f"问题清单：{last_err}\n"
+                "请针对性地修复以上问题，重新输出完整的项目 JSON（不要省略任何文件、不要截断，"
+                "app.json 的 pages 必须与生成页面完全一致）。"
+            )
+            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=12000, temperature=0.3)
+        except (ValueError, json.JSONDecodeError) as e:
+            last_err = str(e)
+            logger.warning("miniapp JSON parse failed (attempt %d): %s", attempt + 1, e)
+            # 输出被截断/超长：自动降级为精简版重试（只保留核心页面）
+            try:
+                retry_prompt = user_prompt + (
+                    "\n\n重要：上次输出因过长被截断导致失败。本次请严格精简：\n"
+                    "1. 页面数量控制在 2 个以内（首页 + 一个核心功能页），其余页面省略\n"
+                    "2. 每个文件控制在 40 行以内，全部文件总字符数不超过 15000\n"
+                    "3. app.json 只注册实际生成的页面"
+                )
+                result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=8000, temperature=0.3)
+            except (HTTPException, ValueError, json.JSONDecodeError) as e2:
+                raise HTTPException(
+                    502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}"
+                ) from e2
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"生成失败: {e}") from e
+    if not files or qc is None:
+        raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
+    if not qc["ok"]:
+        raise HTTPException(502, f"质量门禁未通过（已自动修复重试 3 次）：{last_err}")
 
     proj_id = f"mp_{uuid.uuid4().hex[:12]}"
     conn = get_db()
+    _ensure_qc_column(conn)
     conn.execute(
-        """INSERT INTO miniapp_projects (id, name, template, requirement, files, created_at)
-           VALUES (?,?,?,?,?,?)""",
-        (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), datetime.now().isoformat()),
+        """INSERT INTO miniapp_projects (id, name, template, requirement, files, qc, created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        (
+            proj_id,
+            req.name,
+            req.template,
+            req.requirement,
+            json.dumps(files, ensure_ascii=False),
+            json.dumps(qc, ensure_ascii=False),
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
@@ -238,6 +419,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
         "template": req.template,
         "file_count": len(files),
         "files": files,
+        "qc": qc,
     }
 
 
@@ -258,8 +440,10 @@ async def generate_project(
         return await _miniapp_generate_worker(req.model_dump())
     task = create_task("miniapp_generate", req.model_dump(), username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "小程序生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "小程序生成任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -289,6 +473,10 @@ async def get_project(proj_id: str, current_user: dict = require_auth()):
         raise HTTPException(404, "项目不存在")
     d = dict(row)
     d["files"] = json.loads(d.get("files") or "{}")
+    try:
+        d["qc"] = json.loads(d.get("qc") or "{}")
+    except Exception:
+        d["qc"] = {}
     return d
 
 
@@ -329,11 +517,7 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-            )
-        },
+        headers={"Content-Disposition": (f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}")},
     )
 
 

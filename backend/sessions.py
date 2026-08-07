@@ -147,5 +147,3 @@ async def api_delete_session(session_id: str):
     """删除会话"""
     delete_session(session_id)
     return {"success": True}
-
-

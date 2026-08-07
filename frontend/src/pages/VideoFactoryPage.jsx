@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Video, Film, Clapperboard, Play, Download, Sparkles,
-  RefreshCw, Wand2, Trash2,
+  Video,
+  Film,
+  Clapperboard,
+  Play,
+  Download,
+  Sparkles,
+  RefreshCw,
+  Wand2,
+  Trash2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatBytes } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState,
-  Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 import useAsyncTask from '../hooks/useAsyncTask'
 
@@ -134,7 +147,9 @@ export default function VideoFactoryPage() {
     try {
       const res = await api.get('/api/video-factory/stats')
       setStats(res.data)
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   }, [])
 
   const fetchVideos = useCallback(async () => {
@@ -154,14 +169,18 @@ export default function VideoFactoryPage() {
     fetchStats()
     fetchVideos()
     fetchCloudPrompts()
-    return () => { stopPolling() }
+    return () => {
+      stopPolling()
+    }
   }, [fetchStats, fetchVideos, stopPolling])
 
   const fetchCloudPrompts = async () => {
     try {
       const res = await api.get('/api/video-factory/prompts')
       setCloudPrompts(res.data?.prompts || [])
-    } catch { /* 静默：后端无此接口时降级为本地模板 */ }
+    } catch {
+      /* 静默：后端无此接口时降级为本地模板 */
+    }
   }
 
   // 异步任务进度回调（提交与手动刷新共用）
@@ -169,7 +188,12 @@ export default function VideoFactoryPage() {
     setLastResult((prev) => ({ ...prev, progress: t.progress, stage: t.stage }))
   }
   const handleTaskSuccess = (data) => {
-    setLastResult({ ...data, url: data.url ? absUrl(data.url) : null, status: 'completed', created_at: new Date().toLocaleString() })
+    setLastResult({
+      ...data,
+      url: data.url ? absUrl(data.url) : null,
+      status: 'completed',
+      created_at: new Date().toLocaleString(),
+    })
     setCreating(false)
     toast.success('视频生成完成！')
     fetchVideos()
@@ -201,7 +225,12 @@ export default function VideoFactoryPage() {
       onError: handleTaskError,
     })
     if (r.task_id) {
-      setLastResult({ video_id: r.task_id, status: 'processing', prompt, created_at: new Date().toLocaleString() })
+      setLastResult({
+        video_id: r.task_id,
+        status: 'processing',
+        prompt,
+        created_at: new Date().toLocaleString(),
+      })
       toast.success('视频任务已提交，后台生成中（可在任务中心查看进度）')
     }
   }
@@ -242,7 +271,11 @@ export default function VideoFactoryPage() {
 
   const statsCards = [
     { label: '视频总数', value: stats.total_videos, color: 'text-blue-600' },
-    { label: 'API 状态', value: stats.api_configured ? '已配置' : '未配置', color: stats.api_configured ? 'text-green-600' : 'text-red-600' },
+    {
+      label: 'API 状态',
+      value: stats.api_configured ? '已配置' : '未配置',
+      color: stats.api_configured ? 'text-green-600' : 'text-red-600',
+    },
     { label: '当前价格', value: stats.price || '免费', color: 'text-purple-600' },
     { label: '模型版本', value: stats.model || 'V2.0', color: 'text-orange-600' },
   ]
@@ -255,7 +288,14 @@ export default function VideoFactoryPage() {
         icon={Video}
         iconColor="from-blue-500 to-cyan-500"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={() => { fetchStats(); fetchVideos() }}>
+          <Button
+            variant="secondary"
+            icon={RefreshCw}
+            onClick={() => {
+              fetchStats()
+              fetchVideos()
+            }}
+          >
             刷新
           </Button>
         }
@@ -280,8 +320,9 @@ export default function VideoFactoryPage() {
           </h2>
           <button
             onClick={() => {
-              const localPresets = PRESET_CATEGORIES.flatMap(c => c.presets)
-              const allPresets = cloudPrompts.length > 0 ? [...cloudPrompts, ...localPresets] : localPresets
+              const localPresets = PRESET_CATEGORIES.flatMap((c) => c.presets)
+              const allPresets =
+                cloudPrompts.length > 0 ? [...cloudPrompts, ...localPresets] : localPresets
               setPrompt(allPresets[Math.floor(Math.random() * allPresets.length)])
             }}
             className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
@@ -292,7 +333,9 @@ export default function VideoFactoryPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">视频描述 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            视频描述 <span className="text-red-500">*</span>
+          </label>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -314,8 +357,11 @@ export default function VideoFactoryPage() {
                 </button>
                 <div className="absolute z-10 top-full left-0 mt-1 w-72 bg-white rounded-xl border border-gray-200 shadow-lg p-2 space-y-1 hidden group-hover:block">
                   {cat.presets.map((p, pi) => (
-                    <button key={pi} onClick={() => setPrompt(p)}
-                      className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-blue-50 text-gray-600 truncate transition-colors">
+                    <button
+                      key={pi}
+                      onClick={() => setPrompt(p)}
+                      className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-blue-50 text-gray-600 truncate transition-colors"
+                    >
                       {p.slice(0, 40)}...
                     </button>
                   ))}
@@ -331,13 +377,18 @@ export default function VideoFactoryPage() {
             <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
               <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
               云端提示词库
-              <span className="text-xs text-gray-400 font-normal">（来自 /api/video-factory/prompts）</span>
+              <span className="text-xs text-gray-400 font-normal">
+                （来自 /api/video-factory/prompts）
+              </span>
             </label>
             <div className="flex flex-wrap gap-2">
               {cloudPrompts.map((p, pi) => (
-                <button key={pi} onClick={() => setPrompt(p)}
+                <button
+                  key={pi}
+                  onClick={() => setPrompt(p)}
                   title={p}
-                  className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-xs text-blue-700 truncate max-w-xs transition-colors">
+                  className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50/60 hover:bg-blue-100 text-xs text-blue-700 truncate max-w-xs transition-colors"
+                >
                   {p.slice(0, 46)}...
                 </button>
               ))}
@@ -349,14 +400,29 @@ export default function VideoFactoryPage() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">视频风格</label>
-            <select defaultValue="" className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm">
-              {VIDEO_STYLES.map(s => <option key={s.value} value={s.value}>{s.label}{s.desc ? ` (${s.desc})` : ''}</option>)}
+            <select
+              defaultValue=""
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+            >
+              {VIDEO_STYLES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                  {s.desc ? ` (${s.desc})` : ''}
+                </option>
+              ))}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">镜头语言</label>
-            <select defaultValue="" className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm">
-              {CAMERA_ANGLES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+            <select
+              defaultValue=""
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+            >
+              {CAMERA_ANGLES.map((a) => (
+                <option key={a.value} value={a.value}>
+                  {a.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -373,13 +439,20 @@ export default function VideoFactoryPage() {
               }}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             >
-              {RESOLUTIONS.map((r) => <option key={r.value} value={r.value}>{r.label} ({r.value})</option>)}
+              {RESOLUTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label} ({r.value})
+                </option>
+              ))}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">时长（秒）</label>
             <input
-              type="number" min="1" max="15" value={duration}
+              type="number"
+              min="1"
+              max="15"
+              value={duration}
               onChange={(e) => setDuration(Number(e.target.value))}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             />
@@ -387,19 +460,29 @@ export default function VideoFactoryPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">生成模式</label>
             <select
-              value={mode} onChange={(e) => setMode(e.target.value)}
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             >
-              {MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">帧率</label>
             <select
-              value={frameRate} onChange={(e) => setFrameRate(Number(e.target.value))}
+              value={frameRate}
+              onChange={(e) => setFrameRate(Number(e.target.value))}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             >
-              {FRAME_RATES.map((f) => <option key={f} value={f}>{f} fps</option>)}
+              {FRAME_RATES.map((f) => (
+                <option key={f} value={f}>
+                  {f} fps
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -408,7 +491,9 @@ export default function VideoFactoryPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">参考图片 URL</label>
             <input
-              type="text" value={image} onChange={(e) => setImage(e.target.value)}
+              type="text"
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
               placeholder="https://example.com/image.jpg"
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             />
@@ -428,45 +513,86 @@ export default function VideoFactoryPage() {
         </Button>
 
         {lastResult && (
-          <div className={`p-4 rounded-xl ${
-            lastResult.status === 'completed' ? 'bg-green-50 border border-green-200' :
-            lastResult.status === 'failed' ? 'bg-red-50 border border-red-200' :
-            'bg-blue-50 border border-blue-200'
-          }`}>
+          <div
+            className={`p-4 rounded-xl ${
+              lastResult.status === 'completed'
+                ? 'bg-green-50 border border-green-200'
+                : lastResult.status === 'failed'
+                  ? 'bg-red-50 border border-red-200'
+                  : 'bg-blue-50 border border-blue-200'
+            }`}
+          >
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <div className="font-medium text-gray-900 flex items-center gap-2">
-                  <Badge status={lastResult.status === 'completed' ? 'completed' : lastResult.status === 'failed' ? 'failed' : 'processing'} dot />
-                  {lastResult.status === 'completed' ? '视频生成完成' :
-                   lastResult.status === 'failed' ? '视频生成失败' : '视频生成中...'}
+                  <Badge
+                    status={
+                      lastResult.status === 'completed'
+                        ? 'completed'
+                        : lastResult.status === 'failed'
+                          ? 'failed'
+                          : 'processing'
+                    }
+                    dot
+                  />
+                  {lastResult.status === 'completed'
+                    ? '视频生成完成'
+                    : lastResult.status === 'failed'
+                      ? '视频生成失败'
+                      : '视频生成中...'}
                 </div>
                 <div className="text-sm text-gray-500 mt-1 truncate">ID: {lastResult.video_id}</div>
                 {lastResult.created_at && (
-                  <div className="text-xs text-gray-400 mt-1">创建时间: {lastResult.created_at}</div>
+                  <div className="text-xs text-gray-400 mt-1">
+                    创建时间: {lastResult.created_at}
+                  </div>
                 )}
                 {lastResult.status === 'failed' && lastResult.error && (
                   <div className="text-sm text-red-600 mt-1">失败原因：{lastResult.error}</div>
                 )}
-                {lastResult.status !== 'completed' && lastResult.status !== 'failed' && lastResult.progress !== undefined && (
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span className="truncate">{lastResult.stage || '视频生成中...'}</span>
-                      <span className="ml-2">{Math.round(lastResult.progress || 0)}%</span>
+                {lastResult.status !== 'completed' &&
+                  lastResult.status !== 'failed' &&
+                  lastResult.progress !== undefined && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span className="truncate">{lastResult.stage || '视频生成中...'}</span>
+                        <span className="ml-2">{Math.round(lastResult.progress || 0)}%</span>
+                      </div>
+                      <div className="mt-1 h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all"
+                          style={{ width: `${lastResult.progress || 0}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="mt-1 h-1.5 bg-blue-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full transition-all" style={{ width: `${lastResult.progress || 0}%` }} />
-                    </div>
-                  </div>
-                )}
+                  )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 {lastResult.status === 'completed' && lastResult.url && (
-                  <Button variant="success" size="sm" icon={Play} onClick={() => handlePlay({ ...lastResult, filename: `${lastResult.video_id}.mp4` })}>
+                  <Button
+                    variant="success"
+                    size="sm"
+                    icon={Play}
+                    onClick={() =>
+                      handlePlay({ ...lastResult, filename: `${lastResult.video_id}.mp4` })
+                    }
+                  >
                     查看视频
                   </Button>
                 )}
                 {lastResult.status !== 'completed' && lastResult.status !== 'failed' && (
-                  <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => startPolling(lastResult.video_id, { onUpdate: handleTaskUpdate, onSuccess: handleTaskSuccess, onError: handleTaskError })}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={RefreshCw}
+                    onClick={() =>
+                      startPolling(lastResult.video_id, {
+                        onUpdate: handleTaskUpdate,
+                        onSuccess: handleTaskSuccess,
+                        onError: handleTaskError,
+                      })
+                    }
+                  >
                     刷新状态
                   </Button>
                 )}
@@ -499,13 +625,25 @@ export default function VideoFactoryPage() {
                   <Video className="w-8 h-8 text-gray-400 group-hover:text-blue-500 transition-colors" />
                 </div>
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 rounded-xl flex items-center justify-center gap-2 transition-all opacity-0 group-hover:opacity-100">
-                  <button onClick={() => handlePlay(video)} className="p-2 bg-white rounded-full hover:bg-blue-50 transition-colors" title="播放">
+                  <button
+                    onClick={() => handlePlay(video)}
+                    className="p-2 bg-white rounded-full hover:bg-blue-50 transition-colors"
+                    title="播放"
+                  >
                     <Play className="w-4 h-4 text-blue-600" />
                   </button>
-                  <button onClick={() => handleDownload(video)} className="p-2 bg-white rounded-full hover:bg-green-50 transition-colors" title="下载">
+                  <button
+                    onClick={() => handleDownload(video)}
+                    className="p-2 bg-white rounded-full hover:bg-green-50 transition-colors"
+                    title="下载"
+                  >
                     <Download className="w-4 h-4 text-green-600" />
                   </button>
-                  <button onClick={() => setDeleteTarget(video)} className="p-2 bg-white rounded-full hover:bg-red-50 transition-colors" title="删除">
+                  <button
+                    onClick={() => setDeleteTarget(video)}
+                    className="p-2 bg-white rounded-full hover:bg-red-50 transition-colors"
+                    title="删除"
+                  >
                     <Trash2 className="w-4 h-4 text-red-600" />
                   </button>
                 </div>
@@ -550,15 +688,27 @@ export default function VideoFactoryPage() {
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setSelectedVideo(null)}>关闭</Button>
-            <Button variant="success" icon={Download} onClick={() => handleDownload(selectedVideo)}>下载视频</Button>
-            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(selectedVideo)}>删除</Button>
+            <Button variant="secondary" onClick={() => setSelectedVideo(null)}>
+              关闭
+            </Button>
+            <Button variant="success" icon={Download} onClick={() => handleDownload(selectedVideo)}>
+              下载视频
+            </Button>
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(selectedVideo)}>
+              删除
+            </Button>
           </>
         }
       >
         {selectedVideo && (
           <>
-            <video ref={videoRef} src={selectedVideo.url} className="w-full rounded-lg" controls autoPlay />
+            <video
+              ref={videoRef}
+              src={selectedVideo.url}
+              className="w-full rounded-lg"
+              controls
+              autoPlay
+            />
             <div className="mt-3 text-sm text-gray-500">{selectedVideo.filename}</div>
           </>
         )}

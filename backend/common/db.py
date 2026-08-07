@@ -101,7 +101,6 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
         role TEXT DEFAULT 'user', created_at TEXT, active INTEGER DEFAULT 1
     )""",
-
     # ── 结果分享（商业版：引流传播） ────────────────────────
     """CREATE TABLE IF NOT EXISTS shares (
         id TEXT PRIMARY KEY, share_code TEXT UNIQUE NOT NULL,
@@ -109,7 +108,6 @@ _SCHEMA_STATEMENTS = [
         title TEXT DEFAULT '', content TEXT DEFAULT '',
         created_at TEXT, views INTEGER DEFAULT 0
     )""",
-
     # ── 会员订单（商业版：支付闭环） ────────────────────────
     """CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, plan TEXT NOT NULL,
@@ -117,14 +115,12 @@ _SCHEMA_STATEMENTS = [
         voucher TEXT DEFAULT '', remark TEXT DEFAULT '',
         created_at TEXT, reviewed_at TEXT, reviewed_by TEXT DEFAULT ''
     )""",
-
     # ── 资源可见性（v9.3：内容权限 / 灰度发布） ─────────────
     """CREATE TABLE IF NOT EXISTS resource_visibility (
         resource_type TEXT NOT NULL, resource_id TEXT NOT NULL,
         visible_to TEXT DEFAULT 'all', updated_at TEXT,
         PRIMARY KEY (resource_type, resource_id)
     )""",
-
     # ── Agent / Team / Workflow ─────────────────────────────
     """CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
@@ -156,7 +152,6 @@ _SCHEMA_STATEMENTS = [
         output_data TEXT DEFAULT '{}', completed_at TEXT,
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
     )""",
-
     # ── 会话 / 消息 / 记忆 ──────────────────────────────────
     # conversations + messages 是 chat_engine 使用的对话模型
     """CREATE TABLE IF NOT EXISTS conversations (
@@ -179,7 +174,6 @@ _SCHEMA_STATEMENTS = [
         created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )""",
-
     # ── 研发流程 ────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
@@ -208,7 +202,6 @@ _SCHEMA_STATEMENTS = [
         type TEXT NOT NULL, content TEXT DEFAULT '', version INTEGER DEFAULT 1,
         author TEXT DEFAULT '', created_at TEXT, active INTEGER DEFAULT 1
     )""",
-
     # ── 能力扩展 ────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS knowledge_bases (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT DEFAULT 'file',
@@ -240,14 +233,12 @@ _SCHEMA_STATEMENTS = [
         experience_years INTEGER DEFAULT 5, proficiency_level TEXT DEFAULT 'expert',
         created_at TEXT, active INTEGER DEFAULT 1
     )""",
-
     # ── 沙箱 ────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS sandbox_projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
         command TEXT DEFAULT 'python3 main.py', skill_id TEXT, status TEXT DEFAULT 'ready',
         port INTEGER, created_at TEXT, updated_at TEXT, project_dir TEXT
     )""",
-
     # ── 协作 ────────────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS comments (
         id TEXT PRIMARY KEY, content TEXT NOT NULL, author_id TEXT DEFAULT 'system',
@@ -260,7 +251,6 @@ _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS work_likes (
         id TEXT PRIMARY KEY, work_id TEXT NOT NULL, user_id TEXT DEFAULT '', created_at TEXT
     )""",
-
     # ── 配置与统计 ──────────────────────────────────────────
     """CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
@@ -273,7 +263,6 @@ _SCHEMA_STATEMENTS = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL, version INTEGER NOT NULL,
         instructions TEXT NOT NULL, optimized_at TEXT, created_by TEXT DEFAULT 'system'
     )""",
-
     # ── v9.0: 平台体验增强 ──────────────────────────────────
     # 全局任务（跨项目）
     """CREATE TABLE IF NOT EXISTS global_tasks (
@@ -315,7 +304,6 @@ _SCHEMA_STATEMENTS = [
         size TEXT DEFAULT 'md', visible INTEGER DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── v9.0: Phase 2 研发增强 ──────────────────────────────
     # CI/CD 流水线
     """CREATE TABLE IF NOT EXISTS pipelines (
@@ -343,7 +331,6 @@ _SCHEMA_STATEMENTS = [
         result TEXT DEFAULT '', model TEXT DEFAULT '',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── v9.0: Phase 3 内容创作 ──────────────────────────────
     # 文案任务（user_id：商业化用户隔离）
     """CREATE TABLE IF NOT EXISTS copywriting_tasks (
@@ -359,7 +346,6 @@ _SCHEMA_STATEMENTS = [
         model TEXT DEFAULT '', user_id TEXT DEFAULT '',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── v9.0: Phase 4 运营分析 ──────────────────────────────
     # A/B 测试
     """CREATE TABLE IF NOT EXISTS ab_tests (
@@ -369,7 +355,6 @@ _SCHEMA_STATEMENTS = [
         created_by TEXT DEFAULT 'admin', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP, active INTEGER DEFAULT 1
     )""",
-
     # ── v9.0: 办公效率 ──────────────────────────────────────
     # PPT 生成记录（user_id：商业化用户隔离）
     """CREATE TABLE IF NOT EXISTS ppt_generations (
@@ -435,7 +420,6 @@ _SCHEMA_STATEMENTS = [
         title TEXT DEFAULT '', content TEXT DEFAULT '{}',
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
-
     # ── 内容发布中心（公众号/抖音/快手） ──────────────────────
     # 第三方平台账号配置（自动发布用；secret 存库、读取时脱敏）
     """CREATE TABLE IF NOT EXISTS publish_accounts (
@@ -549,7 +533,11 @@ def _rebuild_messages_if_needed(conn: sqlite3.Connection) -> None:
             if col in existing_cols:
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {col} {ddl}")
         # 复制数据（仅保留两表共有的列）
-        shared = [c for c in existing_cols if c in ("id", "conversation_id", "role", "content", "timestamp", "session_id", "metadata", "created_at")]
+        shared = [
+            c
+            for c in existing_cols
+            if c in ("id", "conversation_id", "role", "content", "timestamp", "session_id", "metadata", "created_at")
+        ]
         col_list = ", ".join(shared)
         conn.execute(f"INSERT INTO messages ({col_list}) SELECT {col_list} FROM messages_old")
         conn.execute("DROP TABLE messages_old")
@@ -652,5 +640,6 @@ def init_schema() -> None:
 
     # 预置 admin 用户（仅在不存在时）
     from common.auth import ensure_admin_user
+
     ensure_admin_user()
     logger.info("Database schema initialized")

@@ -1,17 +1,44 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Database, Plus, Edit2, Trash2, Search,
-  FolderOpen, Link2, Hash, RefreshCw,
-  FileText, Globe, File, Clock, BarChart3,
-  BookOpen, Shield, HelpCircle, TrendingUp,
-  Cable, Loader2, Server, CheckCircle2, XCircle,
-  UploadCloud, FolderSearch, FileX2,
+  Database,
+  Plus,
+  Edit2,
+  Trash2,
+  Search,
+  FolderOpen,
+  Link2,
+  Hash,
+  RefreshCw,
+  FileText,
+  Globe,
+  File,
+  Clock,
+  BarChart3,
+  BookOpen,
+  Shield,
+  HelpCircle,
+  TrendingUp,
+  Cable,
+  Loader2,
+  Server,
+  CheckCircle2,
+  XCircle,
+  UploadCloud,
+  FolderSearch,
+  FileX2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const KB_TYPES = [
@@ -32,18 +59,62 @@ const DOC_SUBTYPES = [
   { value: 'db', label: '数据库', icon: Database, color: 'bg-amber-50 text-amber-600' },
 ]
 
-const getSubtypeMeta = (subtype) => DOC_SUBTYPES.find(d => d.value === subtype) || DOC_SUBTYPES[0]
+const getSubtypeMeta = (subtype) => DOC_SUBTYPES.find((d) => d.value === subtype) || DOC_SUBTYPES[0]
 
 // 知识库快速模板
 const KB_TEMPLATES = [
-  { name: '产品文档库', description: '产品需求文档、PRD、用户手册等产品相关资料', icon: BookOpen, color: 'from-blue-500 to-indigo-600',
-    defaults: { name: '产品文档库', type: 'file', path: '', description: '产品需求文档、PRD、用户手册等产品相关资料', subtype: 'general' } },
-  { name: '技术规范库', description: 'API文档、架构设计、编码规范等技术文档', icon: Shield, color: 'from-emerald-500 to-green-600',
-    defaults: { name: '技术规范库', type: 'file', path: '', description: 'API文档、架构设计、编码规范等技术文档', subtype: 'general' } },
-  { name: 'FAQ 知识库', description: '常见问题解答、客户FAQ、技术支持问答', icon: HelpCircle, color: 'from-amber-500 to-orange-600',
-    defaults: { name: 'FAQ 知识库', type: 'file', path: '', description: '常见问题解答、客户FAQ、技术支持问答集合', subtype: 'general' } },
-  { name: '行业报告库', description: '行业分析报告、市场研究、竞品分析等', icon: TrendingUp, color: 'from-violet-500 to-purple-600',
-    defaults: { name: '行业报告库', type: 'file', path: '', description: '行业分析报告、市场研究、竞品分析等研究资料', subtype: 'pdf' } },
+  {
+    name: '产品文档库',
+    description: '产品需求文档、PRD、用户手册等产品相关资料',
+    icon: BookOpen,
+    color: 'from-blue-500 to-indigo-600',
+    defaults: {
+      name: '产品文档库',
+      type: 'file',
+      path: '',
+      description: '产品需求文档、PRD、用户手册等产品相关资料',
+      subtype: 'general',
+    },
+  },
+  {
+    name: '技术规范库',
+    description: 'API文档、架构设计、编码规范等技术文档',
+    icon: Shield,
+    color: 'from-emerald-500 to-green-600',
+    defaults: {
+      name: '技术规范库',
+      type: 'file',
+      path: '',
+      description: 'API文档、架构设计、编码规范等技术文档',
+      subtype: 'general',
+    },
+  },
+  {
+    name: 'FAQ 知识库',
+    description: '常见问题解答、客户FAQ、技术支持问答',
+    icon: HelpCircle,
+    color: 'from-amber-500 to-orange-600',
+    defaults: {
+      name: 'FAQ 知识库',
+      type: 'file',
+      path: '',
+      description: '常见问题解答、客户FAQ、技术支持问答集合',
+      subtype: 'general',
+    },
+  },
+  {
+    name: '行业报告库',
+    description: '行业分析报告、市场研究、竞品分析等',
+    icon: TrendingUp,
+    color: 'from-violet-500 to-purple-600',
+    defaults: {
+      name: '行业报告库',
+      type: 'file',
+      path: '',
+      description: '行业分析报告、市场研究、竞品分析等研究资料',
+      subtype: 'pdf',
+    },
+  },
 ]
 
 // 根据路径/URL推测文档子类型
@@ -67,21 +138,28 @@ function KBCard({ kb, onEdit, onDelete, onTest, onSearch, onDocs, testing }) {
   const totalSize = kb.total_size ? formatFileSize(kb.total_size) : null
   const cfg = kb.config || {}
   // db 类型连接信息摘要
-  const dbInfo = kb.type !== 'db' ? null : (
-    cfg.engine === 'sqlite' ? (cfg.database || '-') : `${cfg.host || 'localhost'}:${cfg.port || ''}/${cfg.database || ''}`
-  )
+  const dbInfo =
+    kb.type !== 'db'
+      ? null
+      : cfg.engine === 'sqlite'
+        ? cfg.database || '-'
+        : `${cfg.host || 'localhost'}:${cfg.port || ''}/${cfg.database || ''}`
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all duration-200 flex flex-col">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-white flex-shrink-0 shadow-lg`}>
+          <div
+            className={`w-12 h-12 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-white flex-shrink-0 shadow-lg`}
+          >
             <Icon className="w-6 h-6" />
           </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{kb.name}</h3>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${subMeta.color}`}>{subMeta.label}</span>
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${subMeta.color}`}>
+                {subMeta.label}
+              </span>
               <span className="text-xs text-gray-400">{meta.label}</span>
             </div>
           </div>
@@ -98,7 +176,9 @@ function KBCard({ kb, onEdit, onDelete, onTest, onSearch, onDocs, testing }) {
           <>
             <p className="text-sm text-gray-600 flex items-center gap-2 min-w-0">
               <Database className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              <span className="truncate font-mono text-xs">{cfg.engine || 'sqlite'} · {dbInfo}</span>
+              <span className="truncate font-mono text-xs">
+                {cfg.engine || 'sqlite'} · {dbInfo}
+              </span>
             </p>
             {cfg.table && (
               <p className="text-sm text-gray-600 flex items-center gap-2 min-w-0 pl-6">
@@ -120,12 +200,14 @@ function KBCard({ kb, onEdit, onDelete, onTest, onSearch, onDocs, testing }) {
           </span>
           {docCount > 0 && (
             <span className="flex items-center gap-1">
-              <FileText className="w-3.5 h-3.5" />{docCount} 文档
+              <FileText className="w-3.5 h-3.5" />
+              {docCount} 文档
             </span>
           )}
           {totalSize && (
             <span className="flex items-center gap-1">
-              <BarChart3 className="w-3.5 h-3.5" />{totalSize}
+              <BarChart3 className="w-3.5 h-3.5" />
+              {totalSize}
             </span>
           )}
         </div>
@@ -201,8 +283,21 @@ function formatFileSize(bytes) {
 function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const toast = useToast()
   const [form, setForm] = useState({
-    name: '', type: 'file', path: '', url: '', top_k: 5, description: '', subtype: 'general',
-    engine: 'sqlite', db_path: '', db_name: '', host: 'localhost', port: '3306', user: '', password: '', table: '',
+    name: '',
+    type: 'file',
+    path: '',
+    url: '',
+    top_k: 5,
+    description: '',
+    subtype: 'general',
+    engine: 'sqlite',
+    db_path: '',
+    db_name: '',
+    host: 'localhost',
+    port: '3306',
+    user: '',
+    password: '',
+    table: '',
   })
   const [errors, setErrors] = useState({})
   const [testing, setTesting] = useState(false)
@@ -227,11 +322,16 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
       setTesting(true)
       try {
         const t = await api.post('/api/knowledge-bases/test-connection', {
-          type: 'file', path: d.path, config: {},
+          type: 'file',
+          path: d.path,
+          config: {},
         })
         setTestResult(t.data)
       } catch (err2) {
-        setTestResult({ ok: false, error: err2.response?.data?.detail || err2.message || '测试失败' })
+        setTestResult({
+          ok: false,
+          error: err2.response?.data?.detail || err2.message || '测试失败',
+        })
       } finally {
         setTesting(false)
       }
@@ -356,7 +456,9 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
 
   const inputCls = (err) =>
     `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
-      err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-purple-500/20 focus:border-purple-500'
+      err
+        ? 'border-red-300 focus:ring-red-500/20'
+        : 'border-gray-200 focus:ring-purple-500/20 focus:border-purple-500'
     }`
 
   return (
@@ -367,8 +469,12 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
@@ -427,7 +533,9 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
             className={inputCls(false)}
           >
             {KB_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
             ))}
           </select>
         </div>
@@ -473,7 +581,9 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
               placeholder="/path/to/documents"
               className={inputCls(errors.path)}
             />
-            <p className="text-xs text-gray-400 mt-1">本地目录或文件的绝对路径，Agent 将扫描其中的文本文件</p>
+            <p className="text-xs text-gray-400 mt-1">
+              本地目录或文件的绝对路径，Agent 将扫描其中的文本文件
+            </p>
             {errors.path && <p className="text-xs text-red-500 mt-1">{errors.path}</p>}
           </div>
         )}
@@ -599,7 +709,9 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
                 placeholder="users / products"
                 className={inputCls(false)}
               />
-              <p className="text-xs text-gray-400 mt-1">连接测试成功后会自动列出可用的表，可直接复制表名</p>
+              <p className="text-xs text-gray-400 mt-1">
+                连接测试成功后会自动列出可用的表，可直接复制表名
+              </p>
             </div>
           </div>
         )}
@@ -624,8 +736,8 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
           <Button variant="secondary" icon={Cable} onClick={handleTestConnection} loading={testing}>
             测试连接
           </Button>
-          {testResult && (
-            testResult.ok ? (
+          {testResult &&
+            (testResult.ok ? (
               <div className="mt-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-700">
                 <p className="flex items-center gap-1.5 font-medium">
                   <CheckCircle2 className="w-4 h-4" />
@@ -637,7 +749,12 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
                 {testResult.tables?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {testResult.tables.map((t) => (
-                      <span key={t} className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-xs font-mono text-emerald-700">{t}</span>
+                      <span
+                        key={t}
+                        className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-xs font-mono text-emerald-700"
+                      >
+                        {t}
+                      </span>
                     ))}
                   </div>
                 )}
@@ -649,8 +766,7 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
                   {testResult.error || '连接失败'}
                 </p>
               </div>
-            )
-          )}
+            ))}
         </div>
       </div>
     </Modal>
@@ -674,7 +790,9 @@ function KBSearchModal({ kb, onClose }) {
     setSearching(true)
     setError(null)
     try {
-      const res = await api.get(`/api/knowledge-bases/${kb.id}/search`, { params: { q: q.trim(), limit } })
+      const res = await api.get(`/api/knowledge-bases/${kb.id}/search`, {
+        params: { q: q.trim(), limit },
+      })
       setHits(res.data)
     } catch (e) {
       setError(e.response?.data?.detail || e.message || '检索失败')
@@ -700,24 +818,34 @@ function KBSearchModal({ kb, onClose }) {
             onChange={(e) => setLimit(Number(e.target.value))}
             className="px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none"
           >
-            {[5, 10, 20].map((n) => <option key={n} value={n}>前 {n} 条</option>)}
+            {[5, 10, 20].map((n) => (
+              <option key={n} value={n}>
+                前 {n} 条
+              </option>
+            ))}
           </select>
-          <Button variant="primary" icon={Search} onClick={doSearch} loading={searching}>检索</Button>
+          <Button variant="primary" icon={Search} onClick={doSearch} loading={searching}>
+            检索
+          </Button>
         </div>
 
         {error && (
-          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{error}</div>
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
+            {error}
+          </div>
         )}
 
-        {hits && (
-          hits.count === 0 ? (
-            <div className="py-8 text-center text-gray-400 text-sm">未找到匹配内容，换个关键词试试</div>
+        {hits &&
+          (hits.count === 0 ? (
+            <div className="py-8 text-center text-gray-400 text-sm">
+              未找到匹配内容，换个关键词试试
+            </div>
           ) : (
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
               <p className="text-xs text-gray-500">
                 共 {hits.count} 条结果{hits.table ? `（表：${hits.table}）` : ''}
               </p>
-              {hits.hits.map((hit, idx) => (
+              {hits.hits.map((hit, idx) =>
                 hit.file ? (
                   <div key={idx} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
                     <p className="text-xs font-medium text-gray-700 mb-1.5">
@@ -726,23 +854,30 @@ function KBSearchModal({ kb, onClose }) {
                       <span className="text-gray-400 ml-1">（{hit.match_count} 处匹配）</span>
                     </p>
                     {hit.matches.map((m, mi) => (
-                      <p key={mi} className="text-xs text-gray-600 leading-relaxed border-t border-gray-100 py-1.5 first:border-t-0">{m}</p>
+                      <p
+                        key={mi}
+                        className="text-xs text-gray-600 leading-relaxed border-t border-gray-100 py-1.5 first:border-t-0"
+                      >
+                        {m}
+                      </p>
                     ))}
                   </div>
                 ) : (
                   <div key={idx} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
                     {Object.entries(hit).map(([k, v]) => (
-                      <p key={k} className="text-xs text-gray-600 leading-relaxed flex gap-2 py-0.5">
+                      <p
+                        key={k}
+                        className="text-xs text-gray-600 leading-relaxed flex gap-2 py-0.5"
+                      >
                         <span className="font-mono text-purple-600 flex-shrink-0">{k}</span>
                         <span className="truncate">{v}</span>
                       </p>
                     ))}
                   </div>
                 )
-              ))}
+              )}
             </div>
-          )
-        )}
+          ))}
       </div>
     </Modal>
   )
@@ -779,7 +914,9 @@ function KBDocsModal({ kb, onClose, onSearch }) {
     if (doc.is_table) return
     setDeleting(doc.name)
     try {
-      await api.delete(`/api/knowledge-bases/${kb.id}/documents`, { params: { filename: doc.name } })
+      await api.delete(`/api/knowledge-bases/${kb.id}/documents`, {
+        params: { filename: doc.name },
+      })
       toast.success(`已删除 ${doc.name}`)
       loadDocs()
     } catch (e) {
@@ -801,9 +938,15 @@ function KBDocsModal({ kb, onClose, onSearch }) {
           </button>
         )}
 
-        {error && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{error}</div>}
+        {error && (
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
+            {error}
+          </div>
+        )}
 
-        {loading && !docs && <p className="text-sm text-gray-400 text-center py-6">加载文档列表…</p>}
+        {loading && !docs && (
+          <p className="text-sm text-gray-400 text-center py-6">加载文档列表…</p>
+        )}
 
         {!loading && docs && docs.count === 0 && (
           <p className="text-sm text-gray-400 text-center py-6">暂无文档，上传文件后即可在此查看</p>
@@ -811,17 +954,28 @@ function KBDocsModal({ kb, onClose, onSearch }) {
 
         {docs && docs.count > 0 && (
           <>
-            <p className="text-xs text-gray-500">共 {docs.count} 个文档（{docs.type === 'db' ? '数据库表' : '文件'}）</p>
+            <p className="text-xs text-gray-500">
+              共 {docs.count} 个文档（{docs.type === 'db' ? '数据库表' : '文件'}）
+            </p>
             <div className="max-h-[45vh] overflow-y-auto space-y-1.5 pr-1">
               {docs.docs.map((doc) => (
-                <div key={doc.path || doc.name} className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                <div
+                  key={doc.path || doc.name}
+                  className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors"
+                >
                   <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
-                    {doc.is_table ? <Database className="w-4 h-4 text-amber-600" /> : <FileText className="w-4 h-4 text-amber-600" />}
+                    {doc.is_table ? (
+                      <Database className="w-4 h-4 text-amber-600" />
+                    ) : (
+                      <FileText className="w-4 h-4 text-amber-600" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-800 truncate">{doc.name}</p>
                     <p className="text-xs text-gray-400">
-                      {doc.is_table ? '数据库表' : `${formatFileSize(doc.size)}${doc.mtime ? ' · ' + new Date(doc.mtime).toLocaleString('zh-CN') : ''}`}
+                      {doc.is_table
+                        ? '数据库表'
+                        : `${formatFileSize(doc.size)}${doc.mtime ? ' · ' + new Date(doc.mtime).toLocaleString('zh-CN') : ''}`}
                     </p>
                   </div>
                   {!doc.is_table && (
@@ -831,7 +985,11 @@ function KBDocsModal({ kb, onClose, onSearch }) {
                       className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50"
                       title="删除文档"
                     >
-                      {deleting === doc.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileX2 className="w-4 h-4" />}
+                      {deleting === doc.name ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <FileX2 className="w-4 h-4" />
+                      )}
                     </button>
                   )}
                 </div>
@@ -879,7 +1037,8 @@ export default function KnowledgeBasesPage() {
 
   const filteredItems = items.filter((item) => {
     const q = searchTerm.toLowerCase()
-    const matchSearch = !q ||
+    const matchSearch =
+      !q ||
       item.name?.toLowerCase().includes(q) ||
       item.path?.toLowerCase().includes(q) ||
       item.url?.toLowerCase().includes(q) ||
@@ -949,10 +1108,30 @@ export default function KnowledgeBasesPage() {
   const totalDocs = items.reduce((sum, i) => sum + (i.doc_count || 0), 0)
 
   const stats = [
-    { label: '总知识库', value: items.length, icon: Database, color: 'from-violet-500 to-purple-600' },
-    { label: '本地文件', value: items.filter((i) => (i.type || 'file') === 'file').length, icon: FolderOpen, color: 'from-emerald-500 to-green-600' },
-    { label: 'URL 类型', value: items.filter((i) => i.type === 'url').length, icon: Globe, color: 'from-blue-500 to-cyan-600' },
-    { label: '数据库', value: items.filter((i) => i.type === 'db').length, icon: Server, color: 'from-amber-500 to-orange-600' },
+    {
+      label: '总知识库',
+      value: items.length,
+      icon: Database,
+      color: 'from-violet-500 to-purple-600',
+    },
+    {
+      label: '本地文件',
+      value: items.filter((i) => (i.type || 'file') === 'file').length,
+      icon: FolderOpen,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: 'URL 类型',
+      value: items.filter((i) => i.type === 'url').length,
+      icon: Globe,
+      color: 'from-blue-500 to-cyan-600',
+    },
+    {
+      label: '数据库',
+      value: items.filter((i) => i.type === 'db').length,
+      icon: Server,
+      color: 'from-amber-500 to-orange-600',
+    },
     { label: '总文档数', value: totalDocs, icon: FileText, color: 'from-rose-500 to-pink-600' },
   ]
 
@@ -964,7 +1143,9 @@ export default function KnowledgeBasesPage() {
         icon={Database}
         iconColor="from-violet-500 to-purple-600"
         actions={
-          <Button variant="primary" icon={Plus} onClick={openCreate}>新建知识库</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建知识库
+          </Button>
         }
       />
 
@@ -977,7 +1158,9 @@ export default function KnowledgeBasesPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -996,10 +1179,15 @@ export default function KnowledgeBasesPage() {
             {KB_TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
-                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                onClick={() => {
+                  setFormDefaults(tpl.defaults)
+                  setShowForm(true)
+                }}
                 className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
               >
-                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                <div
+                  className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}
+                >
                   <tpl.icon className="w-4.5 h-4.5" />
                 </div>
                 <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
@@ -1030,7 +1218,9 @@ export default function KnowledgeBasesPage() {
           >
             <option value="all">全部类型</option>
             {KB_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
             ))}
           </select>
           <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData} title="刷新">
@@ -1049,7 +1239,11 @@ export default function KnowledgeBasesPage() {
           <Empty
             icon={Database}
             title={searchTerm || typeFilter !== 'all' ? '未找到匹配的知识库' : '暂无知识库'}
-            description={searchTerm || typeFilter !== 'all' ? '尝试调整搜索或筛选条件' : '点击「新建知识库」创建你的第一个知识库'}
+            description={
+              searchTerm || typeFilter !== 'all'
+                ? '尝试调整搜索或筛选条件'
+                : '点击「新建知识库」创建你的第一个知识库'
+            }
             actionLabel={searchTerm || typeFilter !== 'all' ? undefined : '新建知识库'}
             onAction={searchTerm || typeFilter !== 'all' ? undefined : openCreate}
           />
@@ -1073,7 +1267,11 @@ export default function KnowledgeBasesPage() {
 
       <KBFormModal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingItem(null); setFormDefaults(null) }}
+        onClose={() => {
+          setShowForm(false)
+          setEditingItem(null)
+          setFormDefaults(null)
+        }}
         onSubmit={handleSave}
         editing={editingItem}
         defaults={formDefaults}
@@ -1089,7 +1287,13 @@ export default function KnowledgeBasesPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="确认删除知识库"
-        message={<>确定要删除知识库「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。</>}
+        message={
+          <>
+            确定要删除知识库「
+            <span className="font-medium text-gray-700">{deleteTarget?.name}</span>
+            」吗？此操作不可撤销。
+          </>
+        }
         confirmLabel="确认删除"
       />
     </div>

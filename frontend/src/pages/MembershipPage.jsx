@@ -1,7 +1,21 @@
 import React, { useEffect, useState } from 'react'
 import {
-  ArrowRight, Check, Crown, FileUp, Loader2, RefreshCw, ShieldCheck,
-  Sparkles, Zap, Clock, XCircle, Banknote, QrCode, Trophy, AlertTriangle, Ticket,
+  ArrowRight,
+  Check,
+  Crown,
+  FileUp,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Zap,
+  Clock,
+  XCircle,
+  Banknote,
+  QrCode,
+  Trophy,
+  AlertTriangle,
+  Ticket,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -16,9 +30,27 @@ const STATUS_META = {
 }
 
 const PLAN_META = {
-  free: { icon: Zap, color: 'from-gray-500 to-gray-600', ring: 'ring-gray-200', btn: 'bg-gray-100 text-gray-500', tag: '入门' },
-  pro: { icon: Sparkles, color: 'from-blue-500 to-indigo-600', ring: 'ring-blue-200', btn: 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700', tag: '推荐' },
-  vip: { icon: Crown, color: 'from-amber-500 to-orange-600', ring: 'ring-amber-200', btn: 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700', tag: '至尊' },
+  free: {
+    icon: Zap,
+    color: 'from-gray-500 to-gray-600',
+    ring: 'ring-gray-200',
+    btn: 'bg-gray-100 text-gray-500',
+    tag: '入门',
+  },
+  pro: {
+    icon: Sparkles,
+    color: 'from-blue-500 to-indigo-600',
+    ring: 'ring-blue-200',
+    btn: 'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700',
+    tag: '推荐',
+  },
+  vip: {
+    icon: Crown,
+    color: 'from-amber-500 to-orange-600',
+    ring: 'ring-amber-200',
+    btn: 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700',
+    tag: '至尊',
+  },
 }
 
 export default function MembershipPage() {
@@ -128,13 +160,19 @@ export default function MembershipPage() {
           </h1>
           <p className="text-sm text-ink-500 mt-1">开通会员，解锁更大额度，畅用全部 AI 工具</p>
         </div>
-        <button onClick={loadAll} className="p-2 hover:bg-ink-50 rounded-lg transition-colors text-ink-400 hover:text-brand-600" title="刷新">
+        <button
+          onClick={loadAll}
+          className="p-2 hover:bg-ink-50 rounded-lg transition-colors text-ink-400 hover:text-brand-600"
+          title="刷新"
+        >
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
       {/* 当前会员状态 */}
-      <div className={`rounded-2xl p-6 mb-8 text-white bg-gradient-to-r ${membership === 'vip' ? 'from-amber-500 via-orange-500 to-rose-500' : membership === 'pro' ? 'from-blue-600 via-indigo-600 to-violet-600' : 'from-ink-700 to-ink-800'}`}>
+      <div
+        className={`rounded-2xl p-6 mb-8 text-white bg-gradient-to-r ${membership === 'vip' ? 'from-amber-500 via-orange-500 to-rose-500' : membership === 'pro' ? 'from-blue-600 via-indigo-600 to-violet-600' : 'from-ink-700 to-ink-800'}`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm opacity-80">当前方案</p>
@@ -144,17 +182,21 @@ export default function MembershipPage() {
                 <span className="text-xs font-normal opacity-80 bg-white/20 rounded-full px-3 py-1">
                   有效期至 {quota.membership_expires.slice(0, 10)}
                   {quota.membership_days_left != null && quota.membership_days_left <= 7 && (
-                    <span className="ml-1.5 text-amber-200">· 剩 {quota.membership_days_left} 天</span>
+                    <span className="ml-1.5 text-amber-200">
+                      · 剩 {quota.membership_days_left} 天
+                    </span>
                   )}
                 </span>
               )}
             </p>
-            {membership !== 'free' && quota?.membership_days_left != null && quota.membership_days_left <= 3 && (
-              <div className="mt-3 inline-flex items-center gap-2 bg-white/15 border border-white/30 rounded-xl px-3 py-2 text-xs">
-                <AlertTriangle className="w-4 h-4 text-amber-200" />
-                会员即将到期（剩 {quota.membership_days_left} 天），建议尽快续费避免额度降级
-              </div>
-            )}
+            {membership !== 'free' &&
+              quota?.membership_days_left != null &&
+              quota.membership_days_left <= 3 && (
+                <div className="mt-3 inline-flex items-center gap-2 bg-white/15 border border-white/30 rounded-xl px-3 py-2 text-xs">
+                  <AlertTriangle className="w-4 h-4 text-amber-200" />
+                  会员即将到期（剩 {quota.membership_days_left} 天），建议尽快续费避免额度降级
+                </div>
+              )}
           </div>
           <div className="text-right">
             <p className="text-sm opacity-80">今日剩余额度</p>
@@ -192,11 +234,15 @@ export default function MembershipPage() {
                     className={`relative bg-white rounded-2xl border border-ink-200/60 shadow-soft p-6 flex flex-col ring-2 ring-transparent transition-all hover:-translate-y-1 hover:shadow-lg ${isCurrent ? meta.ring : ''}`}
                   >
                     {key !== 'free' && (
-                      <span className={`absolute top-4 right-4 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gradient-to-r ${meta.color} text-white`}>
+                      <span
+                        className={`absolute top-4 right-4 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gradient-to-r ${meta.color} text-white`}
+                      >
                         {meta.tag}
                       </span>
                     )}
-                    <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center mb-4 shadow-soft`}>
+                    <div
+                      className={`w-11 h-11 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center mb-4 shadow-soft`}
+                    >
                       <Icon className="w-5 h-5 text-white" />
                     </div>
                     <h3 className="font-semibold text-ink-900 text-lg">{plan.name}</h3>
@@ -218,11 +264,16 @@ export default function MembershipPage() {
                       ))}
                     </ul>
                     {isCurrent ? (
-                      <button disabled className={`w-full py-2.5 rounded-xl text-sm font-medium ${meta.btn} opacity-60 cursor-default`}>
+                      <button
+                        disabled
+                        className={`w-full py-2.5 rounded-xl text-sm font-medium ${meta.btn} opacity-60 cursor-default`}
+                      >
                         当前方案
                       </button>
                     ) : key === 'free' ? (
-                      <div className="w-full py-2.5 rounded-xl text-sm font-medium bg-ink-50 text-ink-400 text-center">默认方案</div>
+                      <div className="w-full py-2.5 rounded-xl text-sm font-medium bg-ink-50 text-ink-400 text-center">
+                        默认方案
+                      </div>
                     ) : (
                       <button
                         onClick={() => setBuyPlan(key)}
@@ -249,10 +300,14 @@ export default function MembershipPage() {
               {orders.map((o) => {
                 const st = STATUS_META[o.status] || STATUS_META.pending
                 return (
-                  <div key={o.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                  <div
+                    key={o.id}
+                    className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
+                  >
                     <div>
                       <p className="text-sm font-medium text-ink-800">
-                        {plans?.[o.plan]?.name || o.plan} · <span className="text-ink-500">¥{o.amount}</span>
+                        {plans?.[o.plan]?.name || o.plan} ·{' '}
+                        <span className="text-ink-500">¥{o.amount}</span>
                       </p>
                       <p className="text-xs text-ink-400 mt-0.5">
                         订单号 {o.id.slice(-10)} · {o.created_at.slice(0, 16).replace('T', ' ')}
@@ -260,7 +315,11 @@ export default function MembershipPage() {
                       {o.remark && <p className="text-xs text-ink-400 mt-0.5">备注：{o.remark}</p>}
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className={`text-xs font-medium px-2.5 py-1 rounded-full border ${st.cls}`}>{st.label}</span>
+                      <span
+                        className={`text-xs font-medium px-2.5 py-1 rounded-full border ${st.cls}`}
+                      >
+                        {st.label}
+                      </span>
                       {o.status === 'pending' && (
                         <button
                           onClick={() => setCurrentOrder(o)}
@@ -279,7 +338,9 @@ export default function MembershipPage() {
           {/* 邀请排行榜 */}
           <h2 className="font-semibold text-ink-900 mb-4 flex items-center gap-2 mt-10">
             <Trophy className="w-5 h-5 text-amber-500" /> 邀请排行榜
-            <span className="text-xs font-normal text-ink-400">每邀请 1 位新用户，双方各得 +5 次额度</span>
+            <span className="text-xs font-normal text-ink-400">
+              每邀请 1 位新用户，双方各得 +5 次额度
+            </span>
           </h2>
           {leaderboard && leaderboard.board.length === 0 ? (
             <div className="bg-white rounded-2xl border border-dashed border-ink-200 p-10 text-center text-ink-400 text-sm">
@@ -291,16 +352,31 @@ export default function MembershipPage() {
                 {leaderboard?.board.map((u) => {
                   const isMe = u.username === quota?.username
                   return (
-                    <div key={u.username} className={`flex items-center gap-4 px-5 py-3 ${isMe ? 'bg-brand-50/50' : ''}`}>
-                      <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0 ${
-                        u.rank === 1 ? 'bg-amber-100 text-amber-600' : u.rank === 2 ? 'bg-gray-100 text-gray-500' : u.rank === 3 ? 'bg-orange-100 text-orange-600' : 'bg-ink-50 text-ink-400'
-                      }`}>
+                    <div
+                      key={u.username}
+                      className={`flex items-center gap-4 px-5 py-3 ${isMe ? 'bg-brand-50/50' : ''}`}
+                    >
+                      <span
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold flex-shrink-0 ${
+                          u.rank === 1
+                            ? 'bg-amber-100 text-amber-600'
+                            : u.rank === 2
+                              ? 'bg-gray-100 text-gray-500'
+                              : u.rank === 3
+                                ? 'bg-orange-100 text-orange-600'
+                                : 'bg-ink-50 text-ink-400'
+                        }`}
+                      >
                         {u.rank}
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-ink-800 truncate">
                           {u.nickname}
-                          {isMe && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-600">我</span>}
+                          {isMe && (
+                            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-600">
+                              我
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-ink-400">@{u.username}</p>
                       </div>
@@ -310,20 +386,21 @@ export default function MembershipPage() {
                     </div>
                   )
                 })}
-                {leaderboard?.my_rank != null && leaderboard.my_rank > (leaderboard.board.length || 0) && (
-                  <div className="flex items-center gap-4 px-5 py-3 bg-ink-50/60">
-                    <span className="w-7 h-7 rounded-lg bg-ink-100 text-ink-500 flex items-center justify-center text-sm font-bold flex-shrink-0">
-                      {leaderboard.my_rank}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-ink-800 truncate">我的排名</p>
-                      <p className="text-xs text-ink-400">继续邀请好友即可上榜</p>
+                {leaderboard?.my_rank != null &&
+                  leaderboard.my_rank > (leaderboard.board.length || 0) && (
+                    <div className="flex items-center gap-4 px-5 py-3 bg-ink-50/60">
+                      <span className="w-7 h-7 rounded-lg bg-ink-100 text-ink-500 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                        {leaderboard.my_rank}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-ink-800 truncate">我的排名</p>
+                        <p className="text-xs text-ink-400">继续邀请好友即可上榜</p>
+                      </div>
+                      <span className="text-sm font-semibold text-ink-600 flex-shrink-0">
+                        邀请 {leaderboard.my_invites} 人
+                      </span>
                     </div>
-                    <span className="text-sm font-semibold text-ink-600 flex-shrink-0">
-                      邀请 {leaderboard.my_invites} 人
-                    </span>
-                  </div>
-                )}
+                  )}
               </div>
             </div>
           )}
@@ -375,7 +452,9 @@ export default function MembershipPage() {
                     </p>
                   </div>
                   <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 leading-relaxed">
-                    请通过微信 / 支付宝转账至管理员账户，付款后上传转账截图，管理员审核通过后自动开通会员（有效期 30 天）。
+                    请通过微信 /
+                    支付宝转账至管理员账户，付款后上传转账截图，管理员审核通过后自动开通会员（有效期
+                    30 天）。
                   </div>
                   {paymentQr ? (
                     <div className="rounded-xl border border-ink-200 overflow-hidden">
@@ -414,7 +493,9 @@ export default function MembershipPage() {
                     <span className="text-ink-600">待支付金额</span>
                     <span className="font-semibold text-ink-900">
                       {currentOrder.original_amount > currentOrder.amount && (
-                        <span className="text-ink-400 line-through mr-2 font-normal">¥{currentOrder.original_amount}</span>
+                        <span className="text-ink-400 line-through mr-2 font-normal">
+                          ¥{currentOrder.original_amount}
+                        </span>
                       )}
                       ¥{currentOrder.amount}
                       {currentOrder.coupon_code && (
@@ -439,7 +520,9 @@ export default function MembershipPage() {
                     )}
                   </label>
                   <div>
-                    <label className="block text-sm font-medium text-ink-700 mb-1.5">转账说明（可选）</label>
+                    <label className="block text-sm font-medium text-ink-700 mb-1.5">
+                      转账说明（可选）
+                    </label>
                     <textarea
                       value={remark}
                       onChange={(e) => setRemark(e.target.value)}

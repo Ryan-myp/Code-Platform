@@ -32,6 +32,7 @@ _BCRYPT_MAX_BYTES = 72
 # 密码哈希（直接使用 bcrypt，避免 passlib 与 bcrypt 4.x 的兼容问题）
 # ══════════════════════════════════════════════════════════════
 
+
 def hash_password(password: str) -> str:
     """bcrypt 哈希密码，返回字符串。"""
     pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
@@ -56,6 +57,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 # ══════════════════════════════════════════════════════════════
 # JWT 令牌
 # ══════════════════════════════════════════════════════════════
+
 
 def create_access_token(subject: str, extra: dict = None, expires_delta: timedelta = None) -> str:
     """创建 JWT。subject 通常是 username。"""
@@ -90,6 +92,7 @@ decode_token = decode_access_token
 # ══════════════════════════════════════════════════════════════
 # 用户 CRUD
 # ══════════════════════════════════════════════════════════════
+
 
 def _gen_user_id() -> str:
     return f"user_{uuid.uuid4().hex[:12]}"
@@ -128,9 +131,7 @@ def authenticate_user(username: str, password: str) -> str | None:
             return None
         # 旧 sha256 哈希自动升级为 bcrypt
         if not row["password_hash"].startswith("$2"):
-            conn.execute(
-                "UPDATE users SET password_hash=? WHERE id=?", (hash_password(password), row["id"])
-            )
+            conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(password), row["id"]))
             conn.commit()
         return create_access_token(row["username"], {"user_id": row["id"], "role": row["role"]})
     finally:
@@ -182,8 +183,15 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
         conn.execute(
             """INSERT INTO users (id, username, password_hash, role, active, created_at, invite_code, invited_by, share_from)
                VALUES (?, ?, ?, 'user', 1, ?, ?, ?, ?)""",
-            (uid, username, hash_password(password), datetime.now().isoformat(),
-             _gen_invite_code(), inviter["id"] if inviter else "", share_ref),
+            (
+                uid,
+                username,
+                hash_password(password),
+                datetime.now().isoformat(),
+                _gen_invite_code(),
+                inviter["id"] if inviter else "",
+                share_ref,
+            ),
         )
         if inviter:
             # 双方各奖励一次性额度
@@ -205,11 +213,17 @@ MEMBERSHIP_QUOTA = {"free": 30, "pro": 200, "vip": 9999}
 # 会员套餐定价（元 / 30 天），与前端会员中心一致
 MEMBERSHIP_PLANS = {
     "pro": {
-        "name": "专业版", "price": 19.9, "days": 30, "daily_quota": 200,
+        "name": "专业版",
+        "price": 19.9,
+        "days": 30,
+        "daily_quota": 200,
         "features": ["每日 200 次生成额度", "全部工具畅用", "专属客服支持"],
     },
     "vip": {
-        "name": "至尊版", "price": 99.0, "days": 30, "daily_quota": 9999,
+        "name": "至尊版",
+        "price": 99.0,
+        "days": 30,
+        "daily_quota": 9999,
         "features": ["无限生成额度", "全部工具畅用", "专属客服支持", "新功能抢先体验"],
     },
 }
@@ -299,9 +313,11 @@ def update_user_profile(user_id: str, nickname: str = None, avatar: str = None) 
     try:
         sets, params = [], []
         if nickname is not None:
-            sets.append("nickname=?"); params.append(nickname[:30])
+            sets.append("nickname=?")
+            params.append(nickname[:30])
         if avatar is not None:
-            sets.append("avatar=?"); params.append(avatar[:500])
+            sets.append("avatar=?")
+            params.append(avatar[:500])
         if sets:
             params.append(user_id)
             conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", params)
@@ -397,6 +413,7 @@ def get_quota_info(user_id: str) -> dict:
 # 结果分享（商业版：引流传播）
 # ══════════════════════════════════════════════════════════════
 
+
 def create_share(user_id: str, content_type: str, title: str, content: str) -> dict:
     """创建分享记录，返回带 share_code 的分享信息。"""
     import secrets
@@ -413,8 +430,13 @@ def create_share(user_id: str, content_type: str, title: str, content: str) -> d
             (share_id, share_code, user_id, content_type, title[:100], content, datetime.now().isoformat()),
         )
         conn.commit()
-        return {"id": share_id, "share_code": share_code, "content_type": content_type,
-                "title": title[:100], "created_at": datetime.now().isoformat()}
+        return {
+            "id": share_id,
+            "share_code": share_code,
+            "content_type": content_type,
+            "title": title[:100],
+            "created_at": datetime.now().isoformat(),
+        }
     finally:
         conn.close()
 
@@ -464,8 +486,7 @@ def _maybe_send_expiry_notice(user_id: str) -> None:
         plan_name = MEMBERSHIP_PLANS.get(m, {}).get("name", m)
         title = f"会员将于 {exp[:10]} 到期" if days_left > 0 else "会员今日到期"
         content = (
-            f"您的{plan_name}会员还剩 {days_left} 天到期" if days_left > 0
-            else f"您的{plan_name}会员今日到期"
+            f"您的{plan_name}会员还剩 {days_left} 天到期" if days_left > 0 else f"您的{plan_name}会员今日到期"
         ) + "，到期后将自动降级为免费版，建议尽快续费以免影响使用。"
         conn.execute(
             """INSERT INTO notifications (id, type, title, content, target_type, target_id, user_id, created_at)
@@ -486,6 +507,7 @@ def _maybe_send_expiry_notice(user_id: str) -> None:
 ORDER_EXPIRE_DAYS = {"pending": 7, "paid": 14}
 
 # ── 优惠券 / 折扣码 ───────────────────────────────────────────
+
 
 def validate_coupon(code: str) -> dict:
     """校验优惠券：存在 / 启用 / 未过期 / 未超用。无效抛 HTTPException(400)。"""
@@ -724,8 +746,10 @@ def ensure_admin_user() -> None:
 # FastAPI 依赖
 # ══════════════════════════════════════════════════════════════
 
+
 async def get_current_user(
-    request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)  # noqa: B008
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),  # noqa: B008
 ) -> dict[str, Any]:
     """FastAPI 依赖：解析 Bearer token 返回用户信息。"""
     payload = decode_access_token(credentials.credentials)

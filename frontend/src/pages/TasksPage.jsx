@@ -1,8 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  CheckCircle2, Circle, Clock, AlertCircle, XCircle, RotateCcw, Ban,
-  Filter, RefreshCw, Zap, FileText, Music, Image, Video, Mic, Gamepad2,
-  Smartphone, PauseCircle, Eye, BarChart3, Trash2
+  CheckCircle2,
+  Circle,
+  Clock,
+  AlertCircle,
+  XCircle,
+  RotateCcw,
+  Ban,
+  Filter,
+  RefreshCw,
+  Zap,
+  FileText,
+  Music,
+  Image,
+  Video,
+  Mic,
+  Gamepad2,
+  Smartphone,
+  PauseCircle,
+  Eye,
+  BarChart3,
+  Trash2,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -100,14 +118,19 @@ export default function TasksPage() {
   const timerRef = useRef(null)
   const offsetRef = useRef(0)
 
-  useEffect(() => { offsetRef.current = offset }, [offset])
+  useEffect(() => {
+    offsetRef.current = offset
+  }, [offset])
 
-  const buildParams = useCallback((off) => {
-    const params = { limit: PAGE_SIZE, offset: off }
-    if (filter.type) params.type = filter.type
-    if (filter.status) params.status = filter.status
-    return params
-  }, [filter])
+  const buildParams = useCallback(
+    (off) => {
+      const params = { limit: PAGE_SIZE, offset: off }
+      if (filter.type) params.type = filter.type
+      if (filter.status) params.status = filter.status
+      return params
+    },
+    [filter]
+  )
 
   const applyPage = (data, append) => {
     const list = data.tasks || []
@@ -119,17 +142,20 @@ export default function TasksPage() {
   }
 
   // 拉第一页（silent=true 时不触发 loading 态，供 WS 事件/兜底轮询静默刷新）
-  const loadFirst = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    try {
-      const res = await api.get('/api/tasks', { params: buildParams(0) })
-      applyPage(res.data, false)
-    } catch {
-      // 静默失败，避免弹窗轰炸
-    } finally {
-      setLoading(false)
-    }
-  }, [buildParams])
+  const loadFirst = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true)
+      try {
+        const res = await api.get('/api/tasks', { params: buildParams(0) })
+        applyPage(res.data, false)
+      } catch {
+        // 静默失败，避免弹窗轰炸
+      } finally {
+        setLoading(false)
+      }
+    },
+    [buildParams]
+  )
 
   // 静默刷新：已翻页时不打断当前浏览
   const refreshQuiet = useCallback(() => {
@@ -142,7 +168,9 @@ export default function TasksPage() {
     if (loadingMore) return
     setLoadingMore(true)
     try {
-      const res = await api.get('/api/tasks', { params: buildParams(offsetRef.current + PAGE_SIZE) })
+      const res = await api.get('/api/tasks', {
+        params: buildParams(offsetRef.current + PAGE_SIZE),
+      })
       applyPage(res.data, true)
     } catch {
       // 静默失败
@@ -151,11 +179,16 @@ export default function TasksPage() {
     }
   }, [buildParams, loadingMore])
 
-  useEffect(() => { loadFirst() }, [loadFirst])
+  useEffect(() => {
+    loadFirst()
+  }, [loadFirst])
 
   // 任务统计卡（后端 30s 缓存，无需高频刷新）
   useEffect(() => {
-    api.get('/api/tasks/stats').then((res) => setStats(res.data)).catch(() => {})
+    api
+      .get('/api/tasks/stats')
+      .then((res) => setStats(res.data))
+      .catch(() => {})
   }, [])
 
   // WS 实时推送：任务列表事件驱动刷新；断线降级为 10s 兜底轮询
@@ -164,9 +197,15 @@ export default function TasksPage() {
     if (!username) return
     const wsOk = { current: false }
     const unsub = connectWs(`task:user:${username}`, {
-      onOpen: () => { wsOk.current = true },
-      onClose: () => { wsOk.current = false },
-      onMessage: () => { refreshQuiet() },
+      onOpen: () => {
+        wsOk.current = true
+      },
+      onClose: () => {
+        wsOk.current = false
+      },
+      onMessage: () => {
+        refreshQuiet()
+      },
     })
     timerRef.current = setInterval(() => {
       if (!wsOk.current) refreshQuiet()
@@ -203,9 +242,10 @@ export default function TasksPage() {
   }
 
   const cancelTask = async (task) => {
-    const msg = task.status === 'running'
-      ? '确定取消该任务？执行中任务将在下次进度检查时中止（已产生的部分外部消耗无法退回）'
-      : '确定取消该任务？（仅排队中的任务可取消）'
+    const msg =
+      task.status === 'running'
+        ? '确定取消该任务？执行中任务将在下次进度检查时中止（已产生的部分外部消耗无法退回）'
+        : '确定取消该任务？（仅排队中的任务可取消）'
     if (!confirm(msg)) return
     setActionId(task.id)
     try {
@@ -237,7 +277,10 @@ export default function TasksPage() {
       await api.delete(`/api/tasks/${task.id}`)
       toast.success('任务已删除')
       loadFirst(true)
-      api.get('/api/tasks/stats').then((res) => setStats(res.data)).catch(() => {})
+      api
+        .get('/api/tasks/stats')
+        .then((res) => setStats(res.data))
+        .catch(() => {})
     } catch (e) {
       toast.error(`删除失败：${e.message}`)
     } finally {
@@ -247,19 +290,29 @@ export default function TasksPage() {
 
   // 清空终态任务记录（执行中的任务不受影响）
   const cleanupTasks = async () => {
-    if (!confirm('确定清空所有已完成的终态任务记录（成功/失败/已中断/已取消）？执行中的任务不受影响，删除后不可恢复')) return
+    if (
+      !confirm(
+        '确定清空所有已完成的终态任务记录（成功/失败/已中断/已取消）？执行中的任务不受影响，删除后不可恢复'
+      )
+    )
+      return
     try {
       const res = await api.post('/api/tasks/cleanup')
       toast.success(res.data?.message || '已清理历史任务')
       loadFirst(true)
-      api.get('/api/tasks/stats').then((r) => setStats(r.data)).catch(() => {})
+      api
+        .get('/api/tasks/stats')
+        .then((r) => setStats(r.data))
+        .catch(() => {})
     } catch (e) {
       toast.error(`清理失败：${e.message}`)
     }
   }
 
-  const typeMeta = (type) => TYPE_META[type] || { label: type || '未知任务', icon: FileText, color: 'gray' }
-  const statusMeta = (status) => STATUS_META[status] || { label: status || '未知', color: 'gray', icon: Circle }
+  const typeMeta = (type) =>
+    TYPE_META[type] || { label: type || '未知任务', icon: FileText, color: 'gray' }
+  const statusMeta = (status) =>
+    STATUS_META[status] || { label: status || '未知', color: 'gray', icon: Circle }
 
   return (
     <div className="space-y-6">
@@ -267,7 +320,9 @@ export default function TasksPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">任务中心</h1>
-          <p className="text-sm text-gray-500 mt-1">AI 生成任务实时进度 · 关闭页面也不中断，完成后自动保存产物</p>
+          <p className="text-sm text-gray-500 mt-1">
+            AI 生成任务实时进度 · 关闭页面也不中断，完成后自动保存产物
+          </p>
         </div>
         <Button variant="ghost" icon={RefreshCw} onClick={refresh}>
           刷新
@@ -277,10 +332,30 @@ export default function TasksPage() {
       {/* 统计卡 */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard icon={FileText} label="累计任务" value={stats.total} color="bg-brand-50 text-brand-600" />
-          <StatCard icon={Zap} label="排队 / 执行中" value={stats.active} color="bg-blue-50 text-blue-600" />
-          <StatCard icon={CheckCircle2} label="今日完成" value={stats.today_finished} color="bg-green-50 text-green-600" />
-          <StatCard icon={BarChart3} label="成功率" value={`${stats.success_rate ?? 0}%`} color="bg-amber-50 text-amber-600" />
+          <StatCard
+            icon={FileText}
+            label="累计任务"
+            value={stats.total}
+            color="bg-brand-50 text-brand-600"
+          />
+          <StatCard
+            icon={Zap}
+            label="排队 / 执行中"
+            value={stats.active}
+            color="bg-blue-50 text-blue-600"
+          />
+          <StatCard
+            icon={CheckCircle2}
+            label="今日完成"
+            value={stats.today_finished}
+            color="bg-green-50 text-green-600"
+          />
+          <StatCard
+            icon={BarChart3}
+            label="成功率"
+            value={`${stats.success_rate ?? 0}%`}
+            color="bg-amber-50 text-amber-600"
+          />
         </div>
       )}
 
@@ -298,7 +373,9 @@ export default function TasksPage() {
           >
             <option value="">全部类型</option>
             {Object.entries(TYPE_META).map(([value, m]) => (
-              <option key={value} value={value}>{m.label}</option>
+              <option key={value} value={value}>
+                {m.label}
+              </option>
             ))}
           </select>
           <select
@@ -307,7 +384,11 @@ export default function TasksPage() {
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500"
           >
             <option value="">全部状态</option>
-            {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
           </select>
           {(filter.type || filter.status) && (
             <Button variant="ghost" size="sm" onClick={() => setFilter({ type: '', status: '' })}>
@@ -315,8 +396,7 @@ export default function TasksPage() {
             </Button>
           )}
           <div className="ml-auto flex items-center gap-2 text-sm text-gray-500">
-            <Zap className="w-4 h-4 text-amber-500" />
-            共 {total} 个任务
+            <Zap className="w-4 h-4 text-amber-500" />共 {total} 个任务
             {total > 0 && (
               <Button variant="ghost" size="sm" onClick={cleanupTasks}>
                 清空已完成
@@ -351,7 +431,9 @@ export default function TasksPage() {
             return (
               <Card key={task.id} className="!p-4">
                 <div className="flex items-start gap-3">
-                  <div className={`p-2.5 rounded-xl bg-${tm.color}-50 text-${tm.color}-600 shrink-0`}>
+                  <div
+                    className={`p-2.5 rounded-xl bg-${tm.color}-50 text-${tm.color}-600 shrink-0`}
+                  >
                     <TypeIcon className="w-5 h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -366,15 +448,21 @@ export default function TasksPage() {
                       <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${
-                            task.status === 'success' ? 'bg-green-500'
-                              : task.status === 'failed' ? 'bg-red-400'
+                            task.status === 'success'
+                              ? 'bg-green-500'
+                              : task.status === 'failed'
+                                ? 'bg-red-400'
                                 : 'bg-brand-500'
                           }`}
                           style={{ width: `${task.progress || 0}%` }}
                         />
                       </div>
                       <span className="text-xs text-gray-500 w-10 text-right">
-                        {active ? `${Math.round(task.progress || 0)}%` : task.status === 'success' ? '100%' : '—'}
+                        {active
+                          ? `${Math.round(task.progress || 0)}%`
+                          : task.status === 'success'
+                            ? '100%'
+                            : '—'}
                       </span>
                     </div>
                     {/* 阶段文案 / 错误 */}
@@ -397,7 +485,9 @@ export default function TasksPage() {
                       <span className="text-xs text-gray-400">
                         {task.created_at ? task.created_at.replace('T', ' ').slice(0, 19) : ''}
                       </span>
-                      {task.created_by && <span className="text-xs text-gray-400">by {task.created_by}</span>}
+                      {task.created_by && (
+                        <span className="text-xs text-gray-400">by {task.created_by}</span>
+                      )}
                       {task.retry_count > 0 && (
                         <span className="text-xs text-gray-400">重试 {task.retry_count} 次</span>
                       )}
@@ -480,8 +570,18 @@ export default function TasksPage() {
               <InfoItem label="完成时间" value={detail.finished_at} />
               <InfoItem label="创建者" value={detail.created_by} />
               <InfoItem label="重试次数" value={String(detail.retry_count ?? 0)} />
-              <InfoItem label="优先级" value={detail.priority > 0 ? `P${detail.priority}` : '普通'} />
-              <InfoItem label="自动重试" value={detail.max_attempts > 0 ? `最多 ${detail.max_attempts} 次（失败自动重试）` : '关闭'} />
+              <InfoItem
+                label="优先级"
+                value={detail.priority > 0 ? `P${detail.priority}` : '普通'}
+              />
+              <InfoItem
+                label="自动重试"
+                value={
+                  detail.max_attempts > 0
+                    ? `最多 ${detail.max_attempts} 次（失败自动重试）`
+                    : '关闭'
+                }
+              />
               <InfoItem label="阶段" value={detail.stage} />
             </div>
             {detail.error && (

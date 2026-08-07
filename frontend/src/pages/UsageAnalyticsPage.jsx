@@ -1,11 +1,43 @@
 import React, { useState, useEffect } from 'react'
-import { BarChart3, TrendingUp, PieChart, Zap, Clock, Activity, DollarSign, Layers, Target, Download } from 'lucide-react'
+import {
+  BarChart3,
+  TrendingUp,
+  PieChart,
+  Zap,
+  Clock,
+  Activity,
+  DollarSign,
+  Layers,
+  Target,
+  Download,
+} from 'lucide-react'
 import { Card, PageHeader } from '../components/ui'
 import api, { API_BASE } from '../lib/api'
 import { useToast } from '../lib/toast'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart as RePieChart, Pie, Cell } from 'recharts'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart as RePieChart,
+  Pie,
+  Cell,
+} from 'recharts'
 
-const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316']
+const COLORS = [
+  '#6366f1',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+  '#ec4899',
+  '#f97316',
+]
 
 export default function UsageAnalyticsPage() {
   const toast = useToast()
@@ -46,7 +78,13 @@ export default function UsageAnalyticsPage() {
 
       // 构建每日使用趋势（最近7天）
       if (data.daily_breakdown) {
-        setDailyUsage(data.daily_breakdown.map((d) => ({ date: d.date, 调用次数: d.count, 消耗Token: d.tokens })))
+        setDailyUsage(
+          data.daily_breakdown.map((d) => ({
+            date: d.date,
+            调用次数: d.count,
+            消耗Token: d.tokens,
+          }))
+        )
       }
 
       // 构建模块分布
@@ -60,8 +98,12 @@ export default function UsageAnalyticsPage() {
       for (let i = 6; i >= 0; i--) {
         const d = new Date(today)
         d.setDate(d.getDate() - i)
-        const dateStr = `${d.getMonth()+1}/${d.getDate()}`
-        mockDaily.push({ date: dateStr, 调用次数: Math.floor(Math.random()*20)+5, 消耗Token: Math.floor(Math.random()*5000)+1000 })
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`
+        mockDaily.push({
+          date: dateStr,
+          调用次数: Math.floor(Math.random() * 20) + 5,
+          消耗Token: Math.floor(Math.random() * 5000) + 1000,
+        })
       }
       setDailyUsage(mockDaily)
 
@@ -106,13 +148,43 @@ export default function UsageAnalyticsPage() {
       {/* 总览卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: '累计调用', value: stats?.total_calls?.toLocaleString() || '-', icon: Zap, color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-50', text: 'text-blue-600' },
-          { label: '累计Token', value: stats?.total_tokens?.toLocaleString() || '-', icon: Layers, color: 'from-emerald-500 to-teal-600', bg: 'bg-emerald-50', text: 'text-emerald-600' },
-          { label: '今日调用', value: stats?.today_calls || '-', icon: Activity, color: 'from-amber-500 to-orange-600', bg: 'bg-amber-50', text: 'text-amber-600' },
-          { label: '今日Token', value: stats?.today_tokens?.toLocaleString() || '-', icon: Target, color: 'from-purple-500 to-violet-600', bg: 'bg-purple-50', text: 'text-purple-600' },
+          {
+            label: '累计调用',
+            value: stats?.total_calls?.toLocaleString() || '-',
+            icon: Zap,
+            color: 'from-blue-500 to-indigo-600',
+            bg: 'bg-blue-50',
+            text: 'text-blue-600',
+          },
+          {
+            label: '累计Token',
+            value: stats?.total_tokens?.toLocaleString() || '-',
+            icon: Layers,
+            color: 'from-emerald-500 to-teal-600',
+            bg: 'bg-emerald-50',
+            text: 'text-emerald-600',
+          },
+          {
+            label: '今日调用',
+            value: stats?.today_calls || '-',
+            icon: Activity,
+            color: 'from-amber-500 to-orange-600',
+            bg: 'bg-amber-50',
+            text: 'text-amber-600',
+          },
+          {
+            label: '今日Token',
+            value: stats?.today_tokens?.toLocaleString() || '-',
+            icon: Target,
+            color: 'from-purple-500 to-violet-600',
+            bg: 'bg-purple-50',
+            text: 'text-purple-600',
+          },
         ].map((item, i) => (
           <Card key={i} className="text-center">
-            <div className={`w-10 h-10 mx-auto rounded-xl bg-gradient-to-br ${item.color} flex items-center justify-center mb-2`}>
+            <div
+              className={`w-10 h-10 mx-auto rounded-xl bg-gradient-to-br ${item.color} flex items-center justify-center mb-2`}
+            >
               <item.icon className="w-5 h-5 text-white" />
             </div>
             <div className={`text-2xl font-bold ${item.text}`}>{item.value}</div>
@@ -135,8 +207,20 @@ export default function UsageAnalyticsPage() {
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="调用次数" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} />
-                <Line type="monotone" dataKey="消耗Token" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} />
+                <Line
+                  type="monotone"
+                  dataKey="调用次数"
+                  stroke="#6366f1"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="消耗Token"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  dot={{ r: 4 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -150,7 +234,16 @@ export default function UsageAnalyticsPage() {
           {moduleDist.length > 0 && (
             <ResponsiveContainer width="100%" height={280}>
               <RePieChart>
-                <Pie data={moduleDist} cx="50%" cy="50%" outerRadius={90} innerRadius={50} paddingAngle={3} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                <Pie
+                  data={moduleDist}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={90}
+                  innerRadius={50}
+                  paddingAngle={3}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
                   {moduleDist.map((entry, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
                   ))}
@@ -170,7 +263,9 @@ export default function UsageAnalyticsPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <div className="text-xs text-gray-500">会员等级</div>
-            <div className="font-semibold text-gray-800 capitalize">{stats?.member_level || '-'}</div>
+            <div className="font-semibold text-gray-800 capitalize">
+              {stats?.member_level || '-'}
+            </div>
           </div>
           <div>
             <div className="text-xs text-gray-500">今日剩余</div>
@@ -182,7 +277,11 @@ export default function UsageAnalyticsPage() {
           </div>
           <div>
             <div className="text-xs text-gray-500">日均调用</div>
-            <div className="font-semibold text-gray-800">{stats?.total_calls ? Math.round(stats.total_calls / Math.max(1, (dailyUsage.length || 7))) : '-'}</div>
+            <div className="font-semibold text-gray-800">
+              {stats?.total_calls
+                ? Math.round(stats.total_calls / Math.max(1, dailyUsage.length || 7))
+                : '-'}
+            </div>
           </div>
         </div>
       </Card>

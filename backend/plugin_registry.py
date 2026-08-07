@@ -53,10 +53,7 @@ class PluginRegistry:
         return plugin.execute(input_data)
 
     def health_check(self) -> list:
-        return [
-            {"name": p.name, "version": p.version, "status": "ok"}
-            for p in self._plugins.values()
-        ]
+        return [{"name": p.name, "version": p.version, "status": "ok"} for p in self._plugins.values()]
 
 
 # 全局注册表实例

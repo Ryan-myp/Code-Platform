@@ -1,17 +1,43 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Sparkles, Image as ImageIcon, LayoutTemplate, Scissors,
-  Download, Trash2, Eye, Upload, Wand2, Loader2,
-  RefreshCw, TrendingUp, LayoutGrid, List as ListIcon,
-  UserCircle, Shirt, Camera, Crop, RotateCw, FlipHorizontal, Sliders,
-  DownloadCloud, Search, Image, Plus, FileJson2,
+  Sparkles,
+  Image as ImageIcon,
+  LayoutTemplate,
+  Scissors,
+  Download,
+  Trash2,
+  Eye,
+  Upload,
+  Wand2,
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  LayoutGrid,
+  List as ListIcon,
+  UserCircle,
+  Shirt,
+  Camera,
+  Crop,
+  RotateCw,
+  FlipHorizontal,
+  Sliders,
+  DownloadCloud,
+  Search,
+  Image,
+  Plus,
+  FileJson2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatBytes } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState,
-  PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 import useAsyncTask from '../hooks/useAsyncTask'
 
@@ -20,11 +46,31 @@ const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : ''
 
 // 提示词模板
 const PROMPT_TEMPLATES = [
-  { name: '商品摄影', prompt: 'Professional product photography of [PRODUCT], studio lighting, white background, high-end commercial style, shot on Canon EOS R5, 85mm lens' },
-  { name: '场景图', prompt: 'Lifestyle scene with [SUBJECT], [ACTION], [ENVIRONMENT], golden hour lighting, cinematic composition, 4K quality' },
-  { name: '社交媒体', prompt: '[PLATFORM] post design, [THEME], vertical format 9:16, bold typography area, modern aesthetic' },
-  { name: 'Logo设计', prompt: 'Minimalist logo design for [BRAND], [STYLE] style, vector graphic, clean lines, modern aesthetic' },
-  { name: '海报设计', prompt: 'Promotional poster for [EVENT], dynamic composition, bold colors, typography space, professional design' },
+  {
+    name: '商品摄影',
+    prompt:
+      'Professional product photography of [PRODUCT], studio lighting, white background, high-end commercial style, shot on Canon EOS R5, 85mm lens',
+  },
+  {
+    name: '场景图',
+    prompt:
+      'Lifestyle scene with [SUBJECT], [ACTION], [ENVIRONMENT], golden hour lighting, cinematic composition, 4K quality',
+  },
+  {
+    name: '社交媒体',
+    prompt:
+      '[PLATFORM] post design, [THEME], vertical format 9:16, bold typography area, modern aesthetic',
+  },
+  {
+    name: 'Logo设计',
+    prompt:
+      'Minimalist logo design for [BRAND], [STYLE] style, vector graphic, clean lines, modern aesthetic',
+  },
+  {
+    name: '海报设计',
+    prompt:
+      'Promotional poster for [EVENT], dynamic composition, bold colors, typography space, professional design',
+  },
 ]
 
 // 尺寸选项
@@ -108,13 +154,25 @@ export default function ImageFactoryPage() {
 
   // 模板管理
   const [templateModal, setTemplateModal] = useState(false) // 'create' | 'upload' | null
-  const [templateForm, setTemplateForm] = useState({ name: '', width: 1080, height: 1920, background: '#FFFFFF', layers: '' })
+  const [templateForm, setTemplateForm] = useState({
+    name: '',
+    width: 1080,
+    height: 1920,
+    background: '#FFFFFF',
+    layers: '',
+  })
   const [templateSaving, setTemplateSaving] = useState(false)
   const [deletingTemplate, setDeletingTemplate] = useState(null)
 
   // 编辑
   const [uploadedImage, setUploadedImage] = useState(null) // { url, filename }
-  const [editOptions, setEditOptions] = useState({ angle: '0', filter: 'none', brightness: 1.0, contrast: 1.0, saturation: 1.0 })
+  const [editOptions, setEditOptions] = useState({
+    angle: '0',
+    filter: 'none',
+    brightness: 1.0,
+    contrast: 1.0,
+    saturation: 1.0,
+  })
   const [editBusy, setEditBusy] = useState(false)
   const editFileRef = useRef(null)
 
@@ -138,7 +196,9 @@ export default function ImageFactoryPage() {
     try {
       const res = await api.get('/api/image-factory/stats')
       setStats(res.data)
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   }, [])
 
   const fetchImages = useCallback(async () => {
@@ -159,7 +219,9 @@ export default function ImageFactoryPage() {
       const res = await api.get('/api/image-factory/templates')
       setTemplates(res.data)
       if (res.data.length > 0 && !selectedTemplate) setSelectedTemplate(res.data[0].id)
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   }, [selectedTemplate])
 
   useEffect(() => {
@@ -212,7 +274,9 @@ export default function ImageFactoryPage() {
       onSuccess: (data) => {
         const success = (data.results || []).filter((r) => !r.error)
         const errors = (data.results || []).filter((r) => r.error)
-        setGeneratedImages(success.map((r) => ({ ...r, url: absUrl(r.url), prompt: r.prompt || prompt })))
+        setGeneratedImages(
+          success.map((r) => ({ ...r, url: absUrl(r.url), prompt: r.prompt || prompt }))
+        )
         if (errors.length > 0) {
           setGenerationError(errors[0].error)
         } else if (success.length > 0) {
@@ -223,7 +287,10 @@ export default function ImageFactoryPage() {
         setGenerating(false)
         fetchImages()
       },
-      onError: (e) => { setGenerating(false); setGenerationError(`生成失败：${e.message}`) },
+      onError: (e) => {
+        setGenerating(false)
+        setGenerationError(`生成失败：${e.message}`)
+      },
     })
   }
 
@@ -234,23 +301,30 @@ export default function ImageFactoryPage() {
     }
     setRendering(true)
     setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
-    await submitTask('/api/image-factory/template/render', {
-      template_id: selectedTemplate,
-      overrides: {},
-    }, {
-      onUpdate: (t) => setGenTask(t),
-      onSuccess: (data) => {
-        if (data.url) {
-          setGeneratedImages([{ ...data, url: absUrl(data.url), prompt: '模板渲染' }])
-          toast.success('模板渲染完成')
-          fetchImages()
-        } else {
-          toast.error('渲染失败，未返回图片')
-        }
-        setRendering(false)
+    await submitTask(
+      '/api/image-factory/template/render',
+      {
+        template_id: selectedTemplate,
+        overrides: {},
       },
-      onError: (e) => { setRendering(false); toast.error(`渲染失败：${e.message}`) },
-    })
+      {
+        onUpdate: (t) => setGenTask(t),
+        onSuccess: (data) => {
+          if (data.url) {
+            setGeneratedImages([{ ...data, url: absUrl(data.url), prompt: '模板渲染' }])
+            toast.success('模板渲染完成')
+            fetchImages()
+          } else {
+            toast.error('渲染失败，未返回图片')
+          }
+          setRendering(false)
+        },
+        onError: (e) => {
+          setRendering(false)
+          toast.error(`渲染失败：${e.message}`)
+        },
+      }
+    )
   }
 
   // ── 图生图 ──
@@ -262,8 +336,14 @@ export default function ImageFactoryPage() {
   }
 
   const handleImg2Img = async () => {
-    if (!img2imgPrompt.trim()) { toast.error('请输入提示词'); return }
-    if (!img2imgFile) { toast.error('请先上传参考图'); return }
+    if (!img2imgPrompt.trim()) {
+      toast.error('请输入提示词')
+      return
+    }
+    if (!img2imgFile) {
+      toast.error('请先上传参考图')
+      return
+    }
     setImg2imgBusy(true)
     setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
     const form = new FormData()
@@ -276,7 +356,14 @@ export default function ImageFactoryPage() {
       onSuccess: (data) => {
         if (data.url || data.image_url) {
           const url = data.url || data.image_url
-          setGeneratedImages([{ ...data, url: absUrl(url), prompt: img2imgPrompt, filename: data.filename || url.split('/').pop() }])
+          setGeneratedImages([
+            {
+              ...data,
+              url: absUrl(url),
+              prompt: img2imgPrompt,
+              filename: data.filename || url.split('/').pop(),
+            },
+          ])
           toast.success('图生图完成')
           fetchImages()
         } else {
@@ -284,17 +371,29 @@ export default function ImageFactoryPage() {
         }
         setImg2imgBusy(false)
       },
-      onError: (e) => { setImg2imgBusy(false); toast.error(`图生图失败：${e.message}`) },
+      onError: (e) => {
+        setImg2imgBusy(false)
+        toast.error(`图生图失败：${e.message}`)
+      },
     })
   }
 
   // ── 模板管理 ──
   const handleCreateTemplate = async () => {
-    if (!templateForm.name.trim()) { toast.error('请输入模板名称'); return }
+    if (!templateForm.name.trim()) {
+      toast.error('请输入模板名称')
+      return
+    }
     setTemplateSaving(true)
     try {
       let layers = []
-      try { layers = templateForm.layers.trim() ? JSON.parse(templateForm.layers) : [] } catch { toast.error('图层 JSON 格式错误'); setTemplateSaving(false); return }
+      try {
+        layers = templateForm.layers.trim() ? JSON.parse(templateForm.layers) : []
+      } catch {
+        toast.error('图层 JSON 格式错误')
+        setTemplateSaving(false)
+        return
+      }
       const res = await api.post('/api/image-factory/template/create', {
         name: templateForm.name.trim(),
         width: Number(templateForm.width) || 1080,
@@ -390,13 +489,17 @@ export default function ImageFactoryPage() {
       const form = new FormData()
       form.append('image', blob, uploadedImage.filename || 'image.png')
       if (editType === 'crop') {
-        form.append('x1', 0); form.append('y1', 0); form.append('x2', 100); form.append('y2', 100)
+        form.append('x1', 0)
+        form.append('y1', 0)
+        form.append('x2', 100)
+        form.append('y2', 100)
       } else if (editType === 'rotate') {
         form.append('angle', editOptions.angle || '0')
       } else if (editType === 'flip') {
         form.append('direction', 'horizontal')
       } else if (editType === 'filter') {
-        form.append('filter_type', editOptions.filter || 'none'); form.append('intensity', 0.5)
+        form.append('filter_type', editOptions.filter || 'none')
+        form.append('intensity', 0.5)
       } else if (editType === 'adjust') {
         form.append('brightness', editOptions.brightness)
         form.append('contrast', editOptions.contrast)
@@ -449,7 +552,10 @@ export default function ImageFactoryPage() {
           }
           setTryOnGenerating(false)
         },
-        onError: (e) => { setTryOnGenerating(false); toast.error(`生成失败：${e.message}`) },
+        onError: (e) => {
+          setTryOnGenerating(false)
+          toast.error(`生成失败：${e.message}`)
+        },
       })
     } catch (e) {
       setTryOnGenerating(false)
@@ -462,21 +568,50 @@ export default function ImageFactoryPage() {
   )
 
   const statsCards = [
-    { label: '已生成图片', value: stats.total_images, icon: ImageIcon, color: 'from-violet-500 to-purple-500' },
-    { label: '可用模板', value: stats.total_templates, icon: LayoutTemplate, color: 'from-blue-500 to-cyan-500' },
+    {
+      label: '已生成图片',
+      value: stats.total_images,
+      icon: ImageIcon,
+      color: 'from-violet-500 to-purple-500',
+    },
+    {
+      label: '可用模板',
+      value: stats.total_templates,
+      icon: LayoutTemplate,
+      color: 'from-blue-500 to-cyan-500',
+    },
     { label: '模型版本', value: 'agnes-2.1', icon: Sparkles, color: 'from-pink-500 to-rose-500' },
-    { label: 'API 状态', value: stats.api_configured ? '正常' : '未配置', icon: TrendingUp, color: stats.api_configured ? 'from-green-500 to-emerald-500' : 'from-yellow-500 to-orange-500' },
+    {
+      label: 'API 状态',
+      value: stats.api_configured ? '正常' : '未配置',
+      icon: TrendingUp,
+      color: stats.api_configured
+        ? 'from-green-500 to-emerald-500'
+        : 'from-yellow-500 to-orange-500',
+    },
   ]
 
   const renderImageActions = (img) => (
     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-      <button onClick={() => setPreviewImage(img)} className="p-2 bg-white rounded-full hover:bg-gray-100 transition-colors" title="预览">
+      <button
+        onClick={() => setPreviewImage(img)}
+        className="p-2 bg-white rounded-full hover:bg-gray-100 transition-colors"
+        title="预览"
+      >
         <Eye className="w-4 h-4" />
       </button>
-      <button onClick={() => handleDownload(img)} className="p-2 bg-white rounded-full hover:bg-green-100 hover:text-green-600 transition-colors" title="下载">
+      <button
+        onClick={() => handleDownload(img)}
+        className="p-2 bg-white rounded-full hover:bg-green-100 hover:text-green-600 transition-colors"
+        title="下载"
+      >
         <Download className="w-4 h-4" />
       </button>
-      <button onClick={() => setDeleteTarget(img)} className="p-2 bg-white rounded-full hover:bg-red-100 hover:text-red-600 transition-colors" title="删除">
+      <button
+        onClick={() => setDeleteTarget(img)}
+        className="p-2 bg-white rounded-full hover:bg-red-100 hover:text-red-600 transition-colors"
+        title="删除"
+      >
         <Trash2 className="w-4 h-4" />
       </button>
     </div>
@@ -490,7 +625,14 @@ export default function ImageFactoryPage() {
         icon={Sparkles}
         iconColor="from-violet-500 via-purple-500 to-pink-500"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={() => { fetchStats(); fetchImages() }}>
+          <Button
+            variant="secondary"
+            icon={RefreshCw}
+            onClick={() => {
+              fetchStats()
+              fetchImages()
+            }}
+          >
             刷新
           </Button>
         }
@@ -502,10 +644,14 @@ export default function ImageFactoryPage() {
           <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-200">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">{stat.label}</p>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  {stat.label}
+                </p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center shadow-sm flex-shrink-0`}>
+              <div
+                className={`w-11 h-11 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center shadow-sm flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -541,7 +687,9 @@ export default function ImageFactoryPage() {
             <div className="lg:col-span-1 space-y-6">
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <label className="text-sm font-medium text-gray-700">提示词 <span className="text-red-500">*</span></label>
+                  <label className="text-sm font-medium text-gray-700">
+                    提示词 <span className="text-red-500">*</span>
+                  </label>
                   <button
                     onClick={() => applyTemplate(PROMPT_TEMPLATES[0])}
                     className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1"
@@ -586,7 +734,9 @@ export default function ImageFactoryPage() {
                       key={n}
                       onClick={() => setBatchSize(n)}
                       className={`w-10 h-10 rounded-lg border font-medium transition-all ${
-                        batchSize === n ? 'border-violet-500 bg-violet-500 text-white' : 'border-gray-200 hover:bg-gray-50'
+                        batchSize === n
+                          ? 'border-violet-500 bg-violet-500 text-white'
+                          : 'border-gray-200 hover:bg-gray-50'
                       }`}
                     >
                       {n}
@@ -614,9 +764,14 @@ export default function ImageFactoryPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
 
@@ -697,14 +852,23 @@ export default function ImageFactoryPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1 space-y-5">
-              <input ref={img2imgRef} type="file" accept="image/*" className="hidden" onChange={handleImg2ImgUpload} />
+              <input
+                ref={img2imgRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImg2ImgUpload}
+              />
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
                 {img2imgPreview ? (
                   <div className="relative rounded-xl overflow-hidden border border-gray-200">
                     <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
                     <button
-                      onClick={() => { setImg2imgFile(null); setImg2imgPreview('') }}
+                      onClick={() => {
+                        setImg2imgFile(null)
+                        setImg2imgPreview('')
+                      }}
                       className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-red-500 transition-colors"
                       title="移除"
                     >
@@ -750,7 +914,9 @@ export default function ImageFactoryPage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">变化强度：{img2imgStrength}</label>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  变化强度：{img2imgStrength}
+                </label>
                 <input
                   type="range"
                   min="0"
@@ -782,9 +948,14 @@ export default function ImageFactoryPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
             </div>
@@ -795,12 +966,20 @@ export default function ImageFactoryPage() {
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
               ) : generatedImages.length > 0 ? (
                 <div className="relative group rounded-xl overflow-hidden shadow-sm">
-                  <img src={generatedImages[0].url} alt={img2imgPrompt} className="w-full h-64 object-cover" />
+                  <img
+                    src={generatedImages[0].url}
+                    alt={img2imgPrompt}
+                    className="w-full h-64 object-cover"
+                  />
                   {renderImageActions(generatedImages[0])}
                 </div>
               ) : (
                 <div className="h-64">
-                  <Empty icon={Image} title="暂无结果" description="上传参考图并输入提示词，生成风格变体" />
+                  <Empty
+                    icon={Image}
+                    title="暂无结果"
+                    description="上传参考图并输入提示词，生成风格变体"
+                  />
                 </div>
               )}
             </div>
@@ -808,20 +987,28 @@ export default function ImageFactoryPage() {
         </div>
       )}
 
-
       {/* Img2Img Tab */}
       {activeTab === 'img2img' && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1 space-y-5">
-              <input ref={img2imgRef} type="file" accept="image/*" className="hidden" onChange={handleImg2ImgUpload} />
+              <input
+                ref={img2imgRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleImg2ImgUpload}
+              />
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
                 {img2imgPreview ? (
                   <div className="relative rounded-xl overflow-hidden border border-gray-200">
                     <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
                     <button
-                      onClick={() => { setImg2imgFile(null); setImg2imgPreview('') }}
+                      onClick={() => {
+                        setImg2imgFile(null)
+                        setImg2imgPreview('')
+                      }}
                       className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-red-500 transition-colors"
                       title="移除"
                     >
@@ -867,7 +1054,9 @@ export default function ImageFactoryPage() {
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">变化强度：{img2imgStrength}</label>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  变化强度：{img2imgStrength}
+                </label>
                 <input
                   type="range"
                   min="0"
@@ -899,9 +1088,14 @@ export default function ImageFactoryPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
             </div>
@@ -912,12 +1106,20 @@ export default function ImageFactoryPage() {
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
               ) : generatedImages.length > 0 ? (
                 <div className="relative group rounded-xl overflow-hidden shadow-sm">
-                  <img src={generatedImages[0].url} alt={img2imgPrompt} className="w-full h-64 object-cover" />
+                  <img
+                    src={generatedImages[0].url}
+                    alt={img2imgPrompt}
+                    className="w-full h-64 object-cover"
+                  />
                   {renderImageActions(generatedImages[0])}
                 </div>
               ) : (
                 <div className="h-64">
-                  <Empty icon={Image} title="暂无结果" description="上传参考图并输入提示词，生成风格变体" />
+                  <Empty
+                    icon={Image}
+                    title="暂无结果"
+                    description="上传参考图并输入提示词，生成风格变体"
+                  />
                 </div>
               )}
             </div>
@@ -946,7 +1148,13 @@ export default function ImageFactoryPage() {
                     >
                       <Upload className="w-3 h-3" /> 上传
                     </button>
-                    <input id="tmpl-upload-input" type="file" accept=".json" className="hidden" onChange={handleUploadTemplate} />
+                    <input
+                      id="tmpl-upload-input"
+                      type="file"
+                      accept=".json"
+                      className="hidden"
+                      onChange={handleUploadTemplate}
+                    />
                   </div>
                 </div>
                 {templates.length === 0 ? (
@@ -958,17 +1166,26 @@ export default function ImageFactoryPage() {
                         key={t.id}
                         onClick={() => setSelectedTemplate(t.id)}
                         className={`w-full px-4 py-3 rounded-xl border text-left flex items-center justify-between transition-all ${
-                          selectedTemplate === t.id ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:bg-gray-50'
+                          selectedTemplate === t.id
+                            ? 'border-violet-500 bg-violet-50'
+                            : 'border-gray-200 hover:bg-gray-50'
                         }`}
                       >
                         <div>
                           <div className="font-medium text-gray-900">{t.name}</div>
-                          <div className="text-xs text-gray-500">{t.width} × {t.height}</div>
+                          <div className="text-xs text-gray-500">
+                            {t.width} × {t.height}
+                          </div>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {selectedTemplate === t.id && <div className="w-2 h-2 rounded-full bg-violet-500" />}
+                          {selectedTemplate === t.id && (
+                            <div className="w-2 h-2 rounded-full bg-violet-500" />
+                          )}
                           <span
-                            onClick={(e) => { e.stopPropagation(); setDeletingTemplate(t.id) }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeletingTemplate(t.id)
+                            }}
                             className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                             title="删除模板"
                           >
@@ -1000,9 +1217,14 @@ export default function ImageFactoryPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
             </div>
@@ -1013,7 +1235,11 @@ export default function ImageFactoryPage() {
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
               ) : generatedImages.length > 0 ? (
                 <div className="relative group rounded-xl overflow-hidden shadow-sm">
-                  <img src={generatedImages[0].url} alt="模板结果" className="w-full h-64 object-cover" />
+                  <img
+                    src={generatedImages[0].url}
+                    alt="模板结果"
+                    className="w-full h-64 object-cover"
+                  />
                   {renderImageActions(generatedImages[0])}
                 </div>
               ) : (
@@ -1031,7 +1257,13 @@ export default function ImageFactoryPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-6">图片编辑工具</h2>
 
-          <input ref={editFileRef} type="file" accept="image/*" className="hidden" onChange={handleEditUpload} />
+          <input
+            ref={editFileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleEditUpload}
+          />
 
           <button
             onClick={() => editFileRef.current?.click()}
@@ -1044,7 +1276,11 @@ export default function ImageFactoryPage() {
 
           {uploadedImage && (
             <div className="mt-6 mb-6">
-              <img src={uploadedImage.url} alt="待编辑" className="w-full max-h-96 object-contain rounded-xl" />
+              <img
+                src={uploadedImage.url}
+                alt="待编辑"
+                className="w-full max-h-96 object-contain rounded-xl"
+              />
             </div>
           )}
 
@@ -1096,18 +1332,46 @@ export default function ImageFactoryPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700 mb-2 block">亮度: {editOptions.brightness.toFixed(1)}</label>
-                  <input type="range" min="0" max="2" step="0.1" value={editOptions.brightness}
-                    onChange={(e) => setEditOptions({ ...editOptions, brightness: parseFloat(e.target.value) })} className="w-full" />
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">
+                    亮度: {editOptions.brightness.toFixed(1)}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={editOptions.brightness}
+                    onChange={(e) =>
+                      setEditOptions({ ...editOptions, brightness: parseFloat(e.target.value) })
+                    }
+                    className="w-full"
+                  />
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700 mb-2 block">对比度: {editOptions.contrast.toFixed(1)}</label>
-                  <input type="range" min="0" max="2" step="0.1" value={editOptions.contrast}
-                    onChange={(e) => setEditOptions({ ...editOptions, contrast: parseFloat(e.target.value) })} className="w-full" />
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">
+                    对比度: {editOptions.contrast.toFixed(1)}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.1"
+                    value={editOptions.contrast}
+                    onChange={(e) =>
+                      setEditOptions({ ...editOptions, contrast: parseFloat(e.target.value) })
+                    }
+                    className="w-full"
+                  />
                 </div>
               </div>
 
-              <Button variant="gradient" icon={Sliders} loading={editBusy} onClick={() => handleEditImage('adjust')} className="w-full">
+              <Button
+                variant="gradient"
+                icon={Sliders}
+                loading={editBusy}
+                onClick={() => handleEditImage('adjust')}
+                className="w-full"
+              >
                 应用调整
               </Button>
             </div>
@@ -1126,20 +1390,33 @@ export default function ImageFactoryPage() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium text-gray-700">上传人物照片</label>
-                  <button onClick={() => setShowImagePicker('person')} className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1">
+                  <button
+                    onClick={() => setShowImagePicker('person')}
+                    className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1"
+                  >
                     <ImageIcon className="w-3 h-3" />
                     <span>从图库选择</span>
                   </button>
                 </div>
                 <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-violet-500 transition-colors">
-                  <input type="file" accept="image/*" className="hidden" id="person-upload"
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    id="person-upload"
                     onChange={(e) => {
                       const file = e.target.files?.[0]
-                      if (file) setPersonImage({ url: URL.createObjectURL(file), filename: file.name })
-                    }} />
+                      if (file)
+                        setPersonImage({ url: URL.createObjectURL(file), filename: file.name })
+                    }}
+                  />
                   <label htmlFor="person-upload" className="cursor-pointer">
                     {personImage ? (
-                      <img src={personImage.url} alt="人物" className="w-full h-48 object-contain rounded-lg" />
+                      <img
+                        src={personImage.url}
+                        alt="人物"
+                        className="w-full h-48 object-contain rounded-lg"
+                      />
                     ) : (
                       <>
                         <Camera className="w-12 h-12 mx-auto text-violet-500 mb-3" />
@@ -1155,20 +1432,33 @@ export default function ImageFactoryPage() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium text-gray-700">上传衣物照片</label>
-                  <button onClick={() => setShowImagePicker('clothing')} className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1">
+                  <button
+                    onClick={() => setShowImagePicker('clothing')}
+                    className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1"
+                  >
                     <ImageIcon className="w-3 h-3" />
                     <span>从图库选择</span>
                   </button>
                 </div>
                 <div className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-violet-500 transition-colors">
-                  <input type="file" accept="image/*" className="hidden" id="clothing-upload"
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    id="clothing-upload"
                     onChange={(e) => {
                       const file = e.target.files?.[0]
-                      if (file) setClothingImage({ url: URL.createObjectURL(file), filename: file.name })
-                    }} />
+                      if (file)
+                        setClothingImage({ url: URL.createObjectURL(file), filename: file.name })
+                    }}
+                  />
                   <label htmlFor="clothing-upload" className="cursor-pointer">
                     {clothingImage ? (
-                      <img src={clothingImage.url} alt="衣物" className="w-full h-48 object-contain rounded-lg" />
+                      <img
+                        src={clothingImage.url}
+                        alt="衣物"
+                        className="w-full h-48 object-contain rounded-lg"
+                      />
                     ) : (
                       <>
                         <Shirt className="w-12 h-12 mx-auto text-violet-500 mb-3" />
@@ -1194,8 +1484,11 @@ export default function ImageFactoryPage() {
                 <label className="text-sm font-medium text-gray-700 mb-3 block">风格</label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {TRYON_STYLES.map((s) => (
-                    <button key={s.id} onClick={() => setTryOnStyle(s.id)}
-                      className={`p-3 rounded-lg border text-center transition-all ${tryOnStyle === s.id ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <button
+                      key={s.id}
+                      onClick={() => setTryOnStyle(s.id)}
+                      className={`p-3 rounded-lg border text-center transition-all ${tryOnStyle === s.id ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}
+                    >
                       <div className="text-2xl mb-1">{s.icon}</div>
                       <div className="text-sm font-medium">{s.label}</div>
                     </button>
@@ -1207,8 +1500,11 @@ export default function ImageFactoryPage() {
                 <label className="text-sm font-medium text-gray-700 mb-3 block">背景场景</label>
                 <div className="grid grid-cols-3 gap-2">
                   {TRYON_BACKGROUNDS.map((bg) => (
-                    <button key={bg.id} onClick={() => setTryOnBackground(bg.id)}
-                      className={`p-3 rounded-lg border text-center transition-all ${tryOnBackground === bg.id ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                    <button
+                      key={bg.id}
+                      onClick={() => setTryOnBackground(bg.id)}
+                      className={`p-3 rounded-lg border text-center transition-all ${tryOnBackground === bg.id ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}
+                    >
                       <div className="text-2xl mb-1">{bg.icon}</div>
                       <div className="text-xs font-medium">{bg.label}</div>
                     </button>
@@ -1216,8 +1512,15 @@ export default function ImageFactoryPage() {
                 </div>
               </div>
 
-              <Button variant="gradient" size="lg" icon={Wand2} loading={tryOnGenerating}
-                disabled={!personImage || !clothingImage} onClick={handleTryOn} className="w-full">
+              <Button
+                variant="gradient"
+                size="lg"
+                icon={Wand2}
+                loading={tryOnGenerating}
+                disabled={!personImage || !clothingImage}
+                onClick={handleTryOn}
+                className="w-full"
+              >
                 {tryOnGenerating ? '生成任务执行中（后台）…' : '生成试穿效果'}
               </Button>
               {tryOnGenerating && genTask && (
@@ -1228,9 +1531,14 @@ export default function ImageFactoryPage() {
                     <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
                   </div>
                   <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                      style={{ width: `${genTask.progress || 0}%` }}
+                    />
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+                  </p>
                 </div>
               )}
             </div>
@@ -1240,7 +1548,12 @@ export default function ImageFactoryPage() {
               <div className="flex items-center justify-between">
                 <h3 className="font-medium text-gray-900">试穿效果</h3>
                 {tryOnResult && (
-                  <Button variant="success" size="sm" icon={Download} onClick={() => handleDownload(tryOnResult)}>
+                  <Button
+                    variant="success"
+                    size="sm"
+                    icon={Download}
+                    onClick={() => handleDownload(tryOnResult)}
+                  >
                     下载
                   </Button>
                 )}
@@ -1254,7 +1567,11 @@ export default function ImageFactoryPage() {
                 </div>
               ) : (
                 <div className="h-96">
-                  <Empty icon={UserCircle} title="上传照片后生成试穿效果" description="支持人物全身照 + 衣物平铺照" />
+                  <Empty
+                    icon={UserCircle}
+                    title="上传照片后生成试穿效果"
+                    description="支持人物全身照 + 衣物平铺照"
+                  />
                 </div>
               )}
 
@@ -1275,12 +1592,19 @@ export default function ImageFactoryPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900">3D 旋转查看</h3>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => setIsAutoRotate(!isAutoRotate)}
-                    className={`px-3 py-1.5 rounded-lg text-sm ${isAutoRotate ? 'bg-violet-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>
+                  <button
+                    onClick={() => setIsAutoRotate(!isAutoRotate)}
+                    className={`px-3 py-1.5 rounded-lg text-sm ${isAutoRotate ? 'bg-violet-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}
+                  >
                     {isAutoRotate ? '暂停' : '自动旋转'}
                   </button>
-                  <button onClick={() => { setRotationY(0); setRotationX(0) }}
-                    className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 hover:bg-gray-100">
+                  <button
+                    onClick={() => {
+                      setRotationY(0)
+                      setRotationX(0)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 hover:bg-gray-100"
+                  >
                     重置
                   </button>
                 </div>
@@ -1309,13 +1633,26 @@ export default function ImageFactoryPage() {
                       document.addEventListener('mouseup', onUp)
                     }}
                   >
-                    <div className="w-full h-full flex items-center justify-center transition-transform duration-100"
-                      style={{ transform: `rotateY(${rotationY}deg) rotateX(${rotationX}deg)`, transformStyle: 'preserve-3d' }}>
-                      <img src={tryOnResult.url} alt="试穿效果" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+                    <div
+                      className="w-full h-full flex items-center justify-center transition-transform duration-100"
+                      style={{
+                        transform: `rotateY(${rotationY}deg) rotateX(${rotationX}deg)`,
+                        transformStyle: 'preserve-3d',
+                      }}
+                    >
+                      <img
+                        src={tryOnResult.url}
+                        alt="试穿效果"
+                        className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                      />
                     </div>
                     <div className="absolute bottom-4 left-4 flex items-center gap-2">
-                      <div className="px-2 py-1 rounded text-xs bg-white/75">X: {rotationX.toFixed(0)}°</div>
-                      <div className="px-2 py-1 rounded text-xs bg-white/75">Y: {rotationY.toFixed(0)}°</div>
+                      <div className="px-2 py-1 rounded text-xs bg-white/75">
+                        X: {rotationX.toFixed(0)}°
+                      </div>
+                      <div className="px-2 py-1 rounded text-xs bg-white/75">
+                        Y: {rotationY.toFixed(0)}°
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1326,18 +1663,42 @@ export default function ImageFactoryPage() {
                       <span className="text-xs text-gray-500">水平 (Y轴)</span>
                       <span className="text-xs text-gray-500">{rotationY.toFixed(0)}°</span>
                     </div>
-                    <input type="range" min="-180" max="180" value={rotationY} onChange={(e) => setRotationY(Number(e.target.value))} className="w-full" />
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      value={rotationY}
+                      onChange={(e) => setRotationY(Number(e.target.value))}
+                      className="w-full"
+                    />
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-gray-500">垂直 (X轴)</span>
                       <span className="text-xs text-gray-500">{rotationX.toFixed(0)}°</span>
                     </div>
-                    <input type="range" min="-90" max="90" value={rotationX} onChange={(e) => setRotationX(Number(e.target.value))} className="w-full" />
+                    <input
+                      type="range"
+                      min="-90"
+                      max="90"
+                      value={rotationX}
+                      onChange={(e) => setRotationX(Number(e.target.value))}
+                      className="w-full"
+                    />
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-700 mb-2 block">自动旋转速度</label>
-                    <input type="range" min="0.5" max="5" step="0.5" value={rotationSpeed} onChange={(e) => setRotationSpeed(Number(e.target.value))} className="w-full" />
+                    <label className="text-sm font-medium text-gray-700 mb-2 block">
+                      自动旋转速度
+                    </label>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="5"
+                      step="0.5"
+                      value={rotationSpeed}
+                      onChange={(e) => setRotationSpeed(Number(e.target.value))}
+                      className="w-full"
+                    />
                     <div className="text-xs text-gray-500 text-center mt-1">{rotationSpeed}x</div>
                   </div>
                 </div>
@@ -1355,16 +1716,30 @@ export default function ImageFactoryPage() {
             <div className="flex items-center gap-2">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索图片..."
-                  className="pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm" />
+                  className="pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+                />
               </div>
-              <Button variant="secondary" size="sm" icon={RefreshCw} onClick={fetchImages}>刷新</Button>
+              <Button variant="secondary" size="sm" icon={RefreshCw} onClick={fetchImages}>
+                刷新
+              </Button>
               <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-                <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-violet-600' : 'text-gray-500'}`} title="网格视图">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-violet-600' : 'text-gray-500'}`}
+                  title="网格视图"
+                >
                   <LayoutGrid className="w-4 h-4" />
                 </button>
-                <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-violet-600' : 'text-gray-500'}`} title="列表视图">
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-violet-600' : 'text-gray-500'}`}
+                  title="列表视图"
+                >
                   <ListIcon className="w-4 h-4" />
                 </button>
               </div>
@@ -1376,12 +1751,23 @@ export default function ImageFactoryPage() {
           ) : galleryError ? (
             <ErrorState message={`加载失败：${galleryError.message}`} onRetry={fetchImages} />
           ) : filteredImages.length === 0 ? (
-            <Empty icon={ImageIcon} title={searchQuery ? '未找到匹配的图片' : '暂无图片'} description={searchQuery ? '尝试调整搜索条件' : '去「文生图」生成你的第一张图片'} />
+            <Empty
+              icon={ImageIcon}
+              title={searchQuery ? '未找到匹配的图片' : '暂无图片'}
+              description={searchQuery ? '尝试调整搜索条件' : '去「文生图」生成你的第一张图片'}
+            />
           ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredImages.map((img) => (
-                <div key={img.filename} className="group relative rounded-xl overflow-hidden shadow-sm">
-                  <img src={absUrl(img.url)} alt={img.filename} className="w-full h-40 object-cover" />
+                <div
+                  key={img.filename}
+                  className="group relative rounded-xl overflow-hidden shadow-sm"
+                >
+                  <img
+                    src={absUrl(img.url)}
+                    alt={img.filename}
+                    className="w-full h-40 object-cover"
+                  />
                   {renderImageActions({ ...img, url: absUrl(img.url) })}
                   <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs text-white truncate bg-black/50">
                     {img.filename}
@@ -1392,20 +1778,41 @@ export default function ImageFactoryPage() {
           ) : (
             <div className="space-y-2">
               {filteredImages.map((img) => (
-                <div key={img.filename} className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors">
-                  <img src={absUrl(img.url)} alt={img.filename} className="w-16 h-16 object-cover rounded-lg flex-shrink-0" />
+                <div
+                  key={img.filename}
+                  className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <img
+                    src={absUrl(img.url)}
+                    alt={img.filename}
+                    className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-900 truncate">{img.filename}</p>
-                    <p className="text-sm text-gray-500">{formatRelativeTime(img.created_at)} · {formatBytes(img.size)}</p>
+                    <p className="text-sm text-gray-500">
+                      {formatRelativeTime(img.created_at)} · {formatBytes(img.size)}
+                    </p>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => setPreviewImage({ ...img, url: absUrl(img.url) })} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="预览">
+                    <button
+                      onClick={() => setPreviewImage({ ...img, url: absUrl(img.url) })}
+                      className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+                      title="预览"
+                    >
                       <Eye className="w-4 h-4" />
                     </button>
-                    <button onClick={() => handleDownload({ ...img, url: absUrl(img.url) })} className="p-2 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded-lg transition-colors" title="下载">
+                    <button
+                      onClick={() => handleDownload({ ...img, url: absUrl(img.url) })}
+                      className="p-2 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded-lg transition-colors"
+                      title="下载"
+                    >
                       <Download className="w-4 h-4" />
                     </button>
-                    <button onClick={() => setDeleteTarget({ ...img, url: absUrl(img.url) })} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+                    <button
+                      onClick={() => setDeleteTarget({ ...img, url: absUrl(img.url) })}
+                      className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+                      title="删除"
+                    >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -1424,9 +1831,15 @@ export default function ImageFactoryPage() {
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setPreviewImage(null)}>关闭</Button>
-            <Button variant="success" icon={Download} onClick={() => handleDownload(previewImage)}>下载</Button>
-            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(previewImage)}>删除</Button>
+            <Button variant="secondary" onClick={() => setPreviewImage(null)}>
+              关闭
+            </Button>
+            <Button variant="success" icon={Download} onClick={() => handleDownload(previewImage)}>
+              下载
+            </Button>
+            <Button variant="danger" icon={Trash2} onClick={() => setDeleteTarget(previewImage)}>
+              删除
+            </Button>
           </>
         }
       >
@@ -1448,7 +1861,8 @@ export default function ImageFactoryPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             {images.map((img) => {
               const url = absUrl(img.url)
-              const selected = (showImagePicker === 'person' && personImage?.url === url) ||
+              const selected =
+                (showImagePicker === 'person' && personImage?.url === url) ||
                 (showImagePicker === 'clothing' && clothingImage?.url === url)
               return (
                 <button
@@ -1474,7 +1888,11 @@ export default function ImageFactoryPage() {
 
       {/* 删除确认 */}
       {/* 模板管理弹窗 */}
-      <Modal open={templateModal === 'create'} onClose={() => setTemplateModal(false)} title="新建模板">
+      <Modal
+        open={templateModal === 'create'}
+        onClose={() => setTemplateModal(false)}
+        title="新建模板"
+      >
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 *</label>
@@ -1522,7 +1940,9 @@ export default function ImageFactoryPage() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">图层配置（JSON，可选）</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              图层配置（JSON，可选）
+            </label>
             <textarea
               value={templateForm.layers}
               onChange={(e) => setTemplateForm({ ...templateForm, layers: e.target.value })}
@@ -1533,8 +1953,17 @@ export default function ImageFactoryPage() {
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-6">
-          <Button variant="ghost" onClick={() => setTemplateModal(false)}>取消</Button>
-          <Button variant="gradient" icon={Plus} loading={templateSaving} onClick={handleCreateTemplate}>创建模板</Button>
+          <Button variant="ghost" onClick={() => setTemplateModal(false)}>
+            取消
+          </Button>
+          <Button
+            variant="gradient"
+            icon={Plus}
+            loading={templateSaving}
+            onClick={handleCreateTemplate}
+          >
+            创建模板
+          </Button>
         </div>
       </Modal>
 

@@ -13,9 +13,7 @@ export default function LoginPage({ onLogin }) {
     () => new URLSearchParams(window.location.search).get('invite') || ''
   )
   // 分享来源（?share=code，注册时上报用于渠道转化统计）
-  const [shareRef] = useState(
-    () => new URLSearchParams(window.location.search).get('share') || ''
-  )
+  const [shareRef] = useState(() => new URLSearchParams(window.location.search).get('share') || '')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -48,7 +46,13 @@ export default function LoginPage({ onLogin }) {
       const url = mode === 'register' ? '/api/auth/register' : '/api/auth/login'
       const payload =
         mode === 'register'
-          ? { username: username.trim(), nickname: nickname.trim() || undefined, password, invite_code: inviteCode.trim() || undefined, share_ref: shareRef || undefined }
+          ? {
+              username: username.trim(),
+              nickname: nickname.trim() || undefined,
+              password,
+              invite_code: inviteCode.trim() || undefined,
+              share_ref: shareRef || undefined,
+            }
           : { username: username.trim(), password }
       const res = await api.post(url, payload)
       const { access_token, user } = res.data
@@ -58,7 +62,9 @@ export default function LoginPage({ onLogin }) {
       onLogin(user)
       navigate('/home')
     } catch (err) {
-      setError(err.message || (mode === 'register' ? '注册失败，请重试' : '登录失败，请检查用户名和密码'))
+      setError(
+        err.message || (mode === 'register' ? '注册失败，请重试' : '登录失败，请检查用户名和密码')
+      )
     } finally {
       setLoading(false)
     }
@@ -159,12 +165,14 @@ export default function LoginPage({ onLogin }) {
           </div>
           {mode === 'register' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">邀请码（选填）</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                邀请码（选填）
+              </label>
               <div className="relative">
                 <UserPlus className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-value={inviteCode}
+                  value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
                   className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70 uppercase"
                   placeholder="填写好友邀请码，双方各得 5 次额度"
@@ -204,8 +212,10 @@ value={inviteCode}
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {mode === 'register' ? '注册中…' : '登录中…'}
               </>
+            ) : mode === 'register' ? (
+              '注册并登录'
             ) : (
-              mode === 'register' ? '注册并登录' : '登录'
+              '登录'
             )}
           </button>
         </form>
@@ -213,14 +223,17 @@ value={inviteCode}
         {mode === 'login' && (
           <div className="mt-6 p-3 bg-purple-50/50 border border-purple-100 rounded-xl text-center">
             <p className="text-xs text-gray-500">
-              默认账号：<span className="font-mono text-purple-600">admin</span> / <span className="font-mono text-purple-600">admin123</span>
+              默认账号：<span className="font-mono text-purple-600">admin</span> /{' '}
+              <span className="font-mono text-purple-600">admin123</span>
             </p>
           </div>
         )}
         {mode === 'register' && (
           <div className="mt-6 p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl text-center">
             <p className="text-xs text-gray-500">
-              注册即得 <span className="font-semibold text-purple-600">30 次/日</span> 免费额度，填邀请码双方各得 <span className="font-semibold text-rose-500">5 次</span> 奖励额度！
+              注册即得 <span className="font-semibold text-purple-600">30 次/日</span>{' '}
+              免费额度，填邀请码双方各得 <span className="font-semibold text-rose-500">5 次</span>{' '}
+              奖励额度！
             </p>
           </div>
         )}

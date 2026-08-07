@@ -53,15 +53,15 @@ _IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 # SSRF 防护 — 阻止对私有/内部网络的请求
 # ══════════════════════════════════════════════════════════════
 _BLOCKED_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),       # IPv4 loopback
-    ipaddress.ip_network("10.0.0.0/8"),         # 私有网络 A
-    ipaddress.ip_network("172.16.0.0/12"),      # 私有网络 B
-    ipaddress.ip_network("192.168.0.0/16"),      # 私有网络 C
-    ipaddress.ip_network("169.254.0.0/16"),     # 链路本地
-    ipaddress.ip_network("0.0.0.0/8"),          # 本网络
-    ipaddress.ip_network("::1/128"),            # IPv6 loopback
-    ipaddress.ip_network("fc00::/7"),           # IPv6 唯一本地
-    ipaddress.ip_network("fe80::/10"),          # IPv6 链路本地
+    ipaddress.ip_network("127.0.0.0/8"),  # IPv4 loopback
+    ipaddress.ip_network("10.0.0.0/8"),  # 私有网络 A
+    ipaddress.ip_network("172.16.0.0/12"),  # 私有网络 B
+    ipaddress.ip_network("192.168.0.0/16"),  # 私有网络 C
+    ipaddress.ip_network("169.254.0.0/16"),  # 链路本地
+    ipaddress.ip_network("0.0.0.0/8"),  # 本网络
+    ipaddress.ip_network("::1/128"),  # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),  # IPv6 唯一本地
+    ipaddress.ip_network("fe80::/10"),  # IPv6 链路本地
 ]
 
 
@@ -118,13 +118,23 @@ def _substitute(text, results: dict):
 # 工具：AST 白名单求值器 (condition 节点)
 # ══════════════════════════════════════════════════════════════
 _ALLOWED_BINOPS = {
-    ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul, ast.Div: _op.truediv,
-    ast.Mod: _op.mod, ast.FloorDiv: _op.floordiv, ast.Pow: _op.pow,
+    ast.Add: _op.add,
+    ast.Sub: _op.sub,
+    ast.Mult: _op.mul,
+    ast.Div: _op.truediv,
+    ast.Mod: _op.mod,
+    ast.FloorDiv: _op.floordiv,
+    ast.Pow: _op.pow,
 }
 _ALLOWED_CMPOPS = {
-    ast.Eq: _op.eq, ast.NotEq: _op.ne, ast.Lt: _op.lt, ast.LtE: _op.le,
-    ast.Gt: _op.gt, ast.GtE: _op.ge,
-    ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b,
+    ast.Eq: _op.eq,
+    ast.NotEq: _op.ne,
+    ast.Lt: _op.lt,
+    ast.LtE: _op.le,
+    ast.Gt: _op.gt,
+    ast.GtE: _op.ge,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
 }
 _ALLOWED_UNARYOPS = {ast.USub: _op.neg, ast.UAdd: _op.pos, ast.Not: _op.not_, ast.Invert: _op.invert}
 
@@ -282,7 +292,13 @@ class WorkflowExecutor:
         conn = get_db()
         conn.execute(
             "INSERT INTO workflow_runs (id, workflow_id, status, input_data, started_at) VALUES (?, ?, ?, ?, ?)",
-            (run_id, workflow_id, "running", json.dumps(input_data or {}, ensure_ascii=False), datetime.now().isoformat()),
+            (
+                run_id,
+                workflow_id,
+                "running",
+                json.dumps(input_data or {}, ensure_ascii=False),
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
         conn.close()
@@ -302,10 +318,7 @@ class WorkflowExecutor:
             # Kahn 算法：按入度分层并行执行
             while len(processed) < len(nodes):
                 # 找出当前可执行的节点（入度为 0 且未处理）
-                ready = [
-                    nid for nid in in_degree
-                    if in_degree[nid] == 0 and nid not in processed
-                ]
+                ready = [nid for nid in in_degree if in_degree[nid] == 0 and nid not in processed]
                 if not ready:
                     # 有环：剩余节点无法执行
                     remaining = [nid for nid in in_degree if nid not in processed]
@@ -333,10 +346,16 @@ class WorkflowExecutor:
                     # WebSocket 推送进度
                     try:
                         from realtime import manager
-                        await manager.send_progress(ws_channel, "node_completed", {
-                            "node_id": node_id, "status": status,
-                            "result": results[node_id],
-                        })
+
+                        await manager.send_progress(
+                            ws_channel,
+                            "node_completed",
+                            {
+                                "node_id": node_id,
+                                "status": status,
+                                "result": results[node_id],
+                            },
+                        )
                     except Exception:
                         pass
                     return node_id
@@ -364,6 +383,7 @@ class WorkflowExecutor:
         # WebSocket 推送完成事件
         try:
             from realtime import manager
+
             await manager.send_progress(ws_channel, "workflow_completed", {"run_id": run_id, "results": results})
         except Exception:
             pass
@@ -423,6 +443,7 @@ class WorkflowExecutor:
 
         try:
             import importlib
+
             module = importlib.import_module(module_path)
             cls = getattr(module, class_name)
             node = cls(node_id=class_name, name=class_name, **node_config)
@@ -506,6 +527,7 @@ class WorkflowExecutor:
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
                 tf.write(code)
                 tmp_path = tf.name
+
             # 子进程资源限制：内存 256MB，CPU 10s，文件 4MB
             def _set_subprocess_limits():
                 try:
@@ -514,8 +536,11 @@ class WorkflowExecutor:
                     resource.setrlimit(resource.RLIMIT_FSIZE, (4 * 1024 * 1024, 4 * 1024 * 1024))
                 except (ValueError, OSError):
                     pass  # 某些平台不支持某些限制
+
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, "-S", tmp_path,
+                sys.executable,
+                "-S",
+                tmp_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -550,8 +575,12 @@ class WorkflowExecutor:
             return {"status": "error", "message": "表达式为空"}
         env = {
             "results": previous_results,
-            "true": True, "false": False, "True": True, "False": False,
-            "null": None, "None": None,
+            "true": True,
+            "false": False,
+            "True": True,
+            "False": False,
+            "null": None,
+            "None": None,
         }
         try:
             value = _safe_eval(expression, env)
@@ -569,7 +598,8 @@ class WorkflowExecutor:
     async def execute_output_node(self, config: dict, previous_results: dict) -> dict:
         """输出节点：把上游最后一个成功节点的结果作为最终输出。"""
         success = {
-            k: v for k, v in previous_results.items()
+            k: v
+            for k, v in previous_results.items()
             if k != "input" and isinstance(v, dict) and v.get("status") == "success"
         }
         if not success:

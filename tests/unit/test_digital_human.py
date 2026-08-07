@@ -62,6 +62,22 @@ class TestScriptTimeline:
         # 超时域返回闭嘴
         assert _mouth_shape_at(tl, end + 0.1) == (0.0, 0.5)
 
+    def test_mouth_smooth_transition(self):
+        """口型时间窗平滑：字间谷底被抬起（不彻底闭嘴，去顿挫感），中段峰值不损失。"""
+        from digital_human import _build_script_timeline, _mouth_shape_at
+        tl = _build_script_timeline("大你", 2.0)
+        boundary = tl[1][1]  # 第二个字起点（字间交界）
+        # 未平滑：字尾收拢→字首张开，交界处完全闭合（开度≈0）
+        raw = _mouth_shape_at(tl, boundary, smooth=0)[0]
+        # 平滑后：窗口平均抬起谷底，嘴型过渡更连贯
+        sm = _mouth_shape_at(tl, boundary, smooth=0.03)[0]
+        assert raw < 0.05 and sm > raw + 0.02
+        # 中段峰值不受影响（三点都在维持区，env=1）
+        mid = (tl[0][1] + tl[0][2]) / 2
+        assert _mouth_shape_at(tl, mid, smooth=0.03)[0] == tl[0][3]
+        # 完全静音段仍闭嘴（平滑不产生噪声口型）
+        assert _mouth_shape_at(tl, tl[-1][2] + 0.1, smooth=0.03)[0] == 0.0
+
 
 class TestContentSafety:
     def test_hard_block_words(self):

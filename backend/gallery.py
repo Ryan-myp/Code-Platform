@@ -59,17 +59,18 @@ def _decorate(row: dict, user_id: str) -> dict:
     work_id = row["id"]
     conn = get_db()
     try:
-        likes = conn.execute(
-            "SELECT COUNT(*) c FROM work_likes WHERE work_id=?", (work_id,)
-        ).fetchone()["c"]
+        likes = conn.execute("SELECT COUNT(*) c FROM work_likes WHERE work_id=?", (work_id,)).fetchone()["c"]
         comments = conn.execute(
             "SELECT COUNT(*) c FROM comments WHERE target_type='work' AND target_id=? AND active=1",
             (work_id,),
         ).fetchone()["c"]
-        liked = conn.execute(
-            "SELECT 1 FROM work_likes WHERE work_id=? AND user_id=?",
-            (work_id, user_id),
-        ).fetchone() is not None
+        liked = (
+            conn.execute(
+                "SELECT 1 FROM work_likes WHERE work_id=? AND user_id=?",
+                (work_id, user_id),
+            ).fetchone()
+            is not None
+        )
     finally:
         conn.close()
     meta = TYPE_META.get(row.get("type", ""), {})
@@ -123,14 +124,13 @@ async def list_works(
         # 最热：按点赞数倒序（子查询关联 work_likes）
         rows = conn.execute(
             "SELECT a.*, (SELECT COUNT(*) FROM work_likes wl WHERE wl.work_id=a.id) AS like_count "
-            f"FROM artifacts a WHERE {" AND ".join(where)} "
+            "FROM artifacts a WHERE " + " AND ".join(where) + " "
             "ORDER BY like_count DESC, a.created_at DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM artifacts WHERE " + " AND ".join(where)
-            + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM artifacts WHERE " + " AND ".join(where) + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
         ).fetchall()
     conn.close()
@@ -142,9 +142,7 @@ async def get_work(work_id: str, current_user: dict = require_auth()):
     """作品详情（含点赞/评论统计）。"""
     user_id = _uid(current_user)
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM artifacts WHERE id=? AND active=1", (work_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM artifacts WHERE id=? AND active=1", (work_id,)).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "作品不存在")
@@ -156,15 +154,11 @@ async def toggle_work_like(work_id: str, current_user: dict = require_auth()):
     """点赞/取消点赞作品（toggle）。"""
     user_id = _uid(current_user)
     conn = get_db()
-    exists = conn.execute(
-        "SELECT 1 FROM artifacts WHERE id=? AND active=1", (work_id,)
-    ).fetchone()
+    exists = conn.execute("SELECT 1 FROM artifacts WHERE id=? AND active=1", (work_id,)).fetchone()
     if not exists:
         conn.close()
         raise HTTPException(404, "作品不存在")
-    row = conn.execute(
-        "SELECT 1 FROM work_likes WHERE work_id=? AND user_id=?", (work_id, user_id)
-    ).fetchone()
+    row = conn.execute("SELECT 1 FROM work_likes WHERE work_id=? AND user_id=?", (work_id, user_id)).fetchone()
     if row:
         conn.execute("DELETE FROM work_likes WHERE work_id=? AND user_id=?", (work_id, user_id))
         liked = False
@@ -174,9 +168,7 @@ async def toggle_work_like(work_id: str, current_user: dict = require_auth()):
             (f"wl_{uuid.uuid4().hex[:12]}", work_id, user_id, datetime.now().isoformat()),
         )
         liked = True
-    count = conn.execute(
-        "SELECT COUNT(*) c FROM work_likes WHERE work_id=?", (work_id,)
-    ).fetchone()["c"]
+    count = conn.execute("SELECT COUNT(*) c FROM work_likes WHERE work_id=?", (work_id,)).fetchone()["c"]
     conn.commit()
     conn.close()
     return {"liked": liked, "likes": count}
@@ -196,14 +188,12 @@ async def gallery_stats(current_user: dict = require_auth()):
             (today,),
         ).fetchone()["c"]
         likes = conn.execute("SELECT COUNT(*) c FROM work_likes").fetchone()["c"]
-        comments = conn.execute(
-            "SELECT COUNT(*) c FROM comments WHERE target_type='work' AND active=1"
-        ).fetchone()["c"]
+        comments = conn.execute("SELECT COUNT(*) c FROM comments WHERE target_type='work' AND active=1").fetchone()["c"]
         by_type = {}
         for t in ("image", "video", "audio"):
-            by_type[t] = conn.execute(
-                "SELECT COUNT(*) c FROM artifacts WHERE type=? AND active=1", (t,)
-            ).fetchone()["c"]
+            by_type[t] = conn.execute("SELECT COUNT(*) c FROM artifacts WHERE type=? AND active=1", (t,)).fetchone()[
+                "c"
+            ]
     finally:
         conn.close()
     return {

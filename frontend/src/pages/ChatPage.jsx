@@ -1,8 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  MessageSquare, Send, Users, Layers, Menu, X,
-  Sparkles, User, Plus, Trash2, Search, Clock,
-  Bot as BotIcon, ArrowRight, RefreshCw, Brain, ChevronDown,
+  MessageSquare,
+  Send,
+  Users,
+  Layers,
+  Menu,
+  X,
+  Sparkles,
+  User,
+  Plus,
+  Trash2,
+  Search,
+  Clock,
+  Bot as BotIcon,
+  ArrowRight,
+  RefreshCw,
+  Brain,
+  ChevronDown,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
@@ -93,8 +107,12 @@ export default function ChatPage() {
     }
   }, [agents])
 
-  useEffect(() => { fetchTargets() }, [fetchTargets])
-  useEffect(() => { fetchConversations() }, [fetchConversations])
+  useEffect(() => {
+    fetchTargets()
+  }, [fetchTargets])
+  useEffect(() => {
+    fetchConversations()
+  }, [fetchConversations])
 
   // 自动滚动到底部
   useEffect(() => {
@@ -115,17 +133,26 @@ export default function ChatPage() {
       const lower = name.toLowerCase()
       const agent = agents.find((a) => a.name?.toLowerCase().includes(lower))
       if (agent) {
-        if (!seen.has('agent:' + agent.id)) { resolved.push({ type: 'agent', ...agent }); seen.add('agent:' + agent.id) }
+        if (!seen.has('agent:' + agent.id)) {
+          resolved.push({ type: 'agent', ...agent })
+          seen.add('agent:' + agent.id)
+        }
         return
       }
       const team = teams.find((t) => t.name?.toLowerCase().includes(lower))
       if (team) {
-        if (!seen.has('team:' + team.id)) { resolved.push({ type: 'team', ...team }); seen.add('team:' + team.id) }
+        if (!seen.has('team:' + team.id)) {
+          resolved.push({ type: 'team', ...team })
+          seen.add('team:' + team.id)
+        }
         return
       }
       const wf = workflows.find((w) => w.name?.toLowerCase().includes(lower))
       if (wf) {
-        if (!seen.has('workflow:' + wf.id)) { resolved.push({ type: 'workflow', ...wf }); seen.add('workflow:' + wf.id) }
+        if (!seen.has('workflow:' + wf.id)) {
+          resolved.push({ type: 'workflow', ...wf })
+          seen.add('workflow:' + wf.id)
+        }
       }
     })
     return resolved
@@ -133,11 +160,16 @@ export default function ChatPage() {
 
   // 加载会话记忆
   const loadMemories = async (convId) => {
-    if (!convId) { setMemories([]); return }
+    if (!convId) {
+      setMemories([])
+      return
+    }
     try {
       const res = await api.get(`/api/conversations/${convId}/memories`)
       setMemories(res.data || [])
-    } catch { setMemories([]) }
+    } catch {
+      setMemories([])
+    }
   }
 
   // 添加记忆
@@ -145,12 +177,17 @@ export default function ChatPage() {
     if (!memInput.trim() || !activeConversationId) return
     setMemBusy(true)
     try {
-      await api.post(`/api/conversations/${activeConversationId}/memories`, { content: memInput.trim() })
+      await api.post(`/api/conversations/${activeConversationId}/memories`, {
+        content: memInput.trim(),
+      })
       setMemInput('')
       toast.success('记忆已保存，后续对话可引用')
       loadMemories(activeConversationId)
-    } catch (e) { toast.error(`保存失败：${e.message}`) }
-    finally { setMemBusy(false) }
+    } catch (e) {
+      toast.error(`保存失败：${e.message}`)
+    } finally {
+      setMemBusy(false)
+    }
   }
 
   // 删除记忆
@@ -159,7 +196,9 @@ export default function ChatPage() {
       await api.delete(`/api/conversations/memories/${memId}`)
       setMemories((prev) => prev.filter((m) => m.id !== memId))
       toast.success('记忆已删除')
-    } catch (e) { toast.error(`删除失败：${e.message}`) }
+    } catch (e) {
+      toast.error(`删除失败：${e.message}`)
+    }
   }
 
   // 加载某个会话的消息
@@ -275,19 +314,27 @@ export default function ChatPage() {
         assistantContent = res.data.result || '（无返回结果）'
       } else if (targets.length === 1) {
         const t = targets[0]
-        const url = t.type === 'agent'
-          ? `/api/agents/${t.id}/run`
-          : t.type === 'team' ? `/api/teams/${t.id}/run` : `/api/workflows/${t.id}/run`
+        const url =
+          t.type === 'agent'
+            ? `/api/agents/${t.id}/run`
+            : t.type === 'team'
+              ? `/api/teams/${t.id}/run`
+              : `/api/workflows/${t.id}/run`
         const res = await api.post(url, { message: content })
         assistantContent = res.data.result || '（无返回结果）'
       } else {
         // 多目标并行 → 聚合
         const results = await Promise.allSettled(
           targets.map((t) => {
-            const url = t.type === 'agent'
-              ? `/api/agents/${t.id}/run`
-              : t.type === 'team' ? `/api/teams/${t.id}/run` : `/api/workflows/${t.id}/run`
-            return api.post(url, { message: content }).then((res) => res.data.result || '（无返回结果）')
+            const url =
+              t.type === 'agent'
+                ? `/api/agents/${t.id}/run`
+                : t.type === 'team'
+                  ? `/api/teams/${t.id}/run`
+                  : `/api/workflows/${t.id}/run`
+            return api
+              .post(url, { message: content })
+              .then((res) => res.data.result || '（无返回结果）')
           })
         )
         assistantContent = results
@@ -302,24 +349,33 @@ export default function ChatPage() {
       // 持久化 assistant 消息（使用局部 convId，修复原代码依赖 null conversationId 的 bug）
       if (convId) {
         try {
-          await api.post(`/api/conversations/${convId}/messages`, { role: 'assistant', content: assistantContent })
+          await api.post(`/api/conversations/${convId}/messages`, {
+            role: 'assistant',
+            content: assistantContent,
+          })
         } catch {
           /* 持久化失败不阻塞展示 */
         }
       }
 
-      setMessages((prev) => [...prev, {
-        role: 'assistant',
-        content: assistantContent,
-        timestamp: new Date().toISOString(),
-        targets,
-      }])
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: assistantContent,
+          timestamp: new Date().toISOString(),
+          targets,
+        },
+      ])
     } catch (e) {
-      setMessages((prev) => [...prev, {
-        role: 'error',
-        content: `执行失败：${e.message}`,
-        timestamp: new Date().toISOString(),
-      }])
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'error',
+          content: `执行失败：${e.message}`,
+          timestamp: new Date().toISOString(),
+        },
+      ])
       toast.error(`执行失败：${e.message}`)
     } finally {
       setSending(false)
@@ -353,7 +409,8 @@ export default function ChatPage() {
   )
 
   const sidebarLoading = targetsLoading || convLoading
-  const noResources = !targetsLoading && agents.length === 0 && teams.length === 0 && workflows.length === 0
+  const noResources =
+    !targetsLoading && agents.length === 0 && teams.length === 0 && workflows.length === 0
   const activeConversation = conversations.find((c) => c.id === activeConversationId)
 
   const renderSidebar = () => (
@@ -364,7 +421,13 @@ export default function ChatPage() {
             <MessageSquare className="w-4 h-4 text-purple-600" />
             对话列表
           </h2>
-          <Button size="sm" variant="ghost" icon={Plus} onClick={handleNewConversation} title="新建对话">
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={Plus}
+            onClick={handleNewConversation}
+            title="新建对话"
+          >
             新建
           </Button>
         </div>
@@ -382,10 +445,15 @@ export default function ChatPage() {
 
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {sidebarLoading ? (
-          <div className="p-2"><SkeletonList count={4} /></div>
+          <div className="p-2">
+            <SkeletonList count={4} />
+          </div>
         ) : convError ? (
           <div className="p-2">
-            <ErrorState message={`加载会话失败：${convError.message}`} onRetry={fetchConversations} />
+            <ErrorState
+              message={`加载会话失败：${convError.message}`}
+              onRetry={fetchConversations}
+            />
           </div>
         ) : filteredConversations.length === 0 ? (
           <Empty
@@ -409,7 +477,9 @@ export default function ChatPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{conv.title || '未命名对话'}</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {conv.title || '未命名对话'}
+                  </p>
                   <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400">
                     <Clock className="w-3 h-3" />
                     <span>{formatRelativeTime(conv.updated_at || conv.created_at)}</span>
@@ -422,7 +492,10 @@ export default function ChatPage() {
                   </div>
                 </div>
                 <button
-                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(conv) }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDeleteTarget(conv)
+                  }}
                   className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 rounded transition-opacity"
                   title="删除对话"
                 >
@@ -453,7 +526,10 @@ export default function ChatPage() {
           <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
           <aside className="absolute inset-y-0 left-0 w-72 max-w-[80vw] bg-white shadow-xl flex flex-col">
             <div className="flex justify-end p-2">
-              <button onClick={() => setSidebarOpen(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+              <button
+                onClick={() => setSidebarOpen(false)}
+                className="p-1.5 hover:bg-gray-100 rounded-lg"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -481,13 +557,21 @@ export default function ChatPage() {
               <h1 className="font-bold text-gray-900 truncate">
                 {activeConversation?.title || '智能协作中心'}
               </h1>
-              <p className="text-xs text-gray-500 truncate">@Agent / @Team / @Workflow 自动路由执行</p>
+              <p className="text-xs text-gray-500 truncate">
+                @Agent / @Team / @Workflow 自动路由执行
+              </p>
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs flex-shrink-0">
-            <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-full">{agents.length} Agents</span>
-            <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full">{teams.length} Teams</span>
-            <span className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full">{workflows.length} Workflows</span>
+            <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-full">
+              {agents.length} Agents
+            </span>
+            <span className="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full">
+              {teams.length} Teams
+            </span>
+            <span className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full">
+              {workflows.length} Workflows
+            </span>
           </div>
         </header>
 
@@ -514,7 +598,10 @@ export default function ChatPage() {
                 {EXAMPLES.map((ex, i) => (
                   <button
                     key={i}
-                    onClick={() => { setInputText(ex.text); inputRef.current?.focus() }}
+                    onClick={() => {
+                      setInputText(ex.text)
+                      inputRef.current?.focus()
+                    }}
                     className="w-full p-3.5 bg-white border border-gray-200 rounded-xl hover:shadow-md hover:border-purple-200 transition-all text-left"
                   >
                     <p className="text-sm text-gray-700">
@@ -555,19 +642,32 @@ export default function ChatPage() {
             >
               <Brain className="w-3.5 h-3.5 text-amber-500" />
               会话记忆
-              <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">{memories.length}</span>
-              <ChevronDown className={`w-3 h-3 transition-transform ${memOpen ? 'rotate-180' : ''}`} />
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                {memories.length}
+              </span>
+              <ChevronDown
+                className={`w-3 h-3 transition-transform ${memOpen ? 'rotate-180' : ''}`}
+              />
             </button>
             {memOpen && (
               <div className="mt-2 space-y-2">
                 {memories.length === 0 ? (
-                  <p className="text-xs text-gray-400">暂无记忆。记录用户偏好、关键决定，后续对话可直接引用。</p>
+                  <p className="text-xs text-gray-400">
+                    暂无记忆。记录用户偏好、关键决定，后续对话可直接引用。
+                  </p>
                 ) : (
                   <div className="max-h-32 overflow-y-auto space-y-1">
                     {memories.map((m) => (
-                      <div key={m.id} className="flex items-start gap-2 text-xs bg-white rounded-lg border border-amber-100 px-2.5 py-1.5">
+                      <div
+                        key={m.id}
+                        className="flex items-start gap-2 text-xs bg-white rounded-lg border border-amber-100 px-2.5 py-1.5"
+                      >
                         <span className="text-gray-600 flex-1">{m.content}</span>
-                        <button onClick={() => deleteMemory(m.id)} className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0" title="删除记忆">
+                        <button
+                          onClick={() => deleteMemory(m.id)}
+                          className="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
+                          title="删除记忆"
+                        >
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
@@ -596,9 +696,27 @@ export default function ChatPage() {
           <div className="relative">
             {showSuggestions && hasSuggestions && (
               <div className="absolute bottom-full left-0 mb-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-64 overflow-y-auto z-10 w-72">
-                <MentionGroup label="Agents" icon={BotIcon} color="text-purple-500" items={filteredAgents} onPick={insertMention} />
-                <MentionGroup label="Teams" icon={Users} color="text-emerald-500" items={filteredTeams} onPick={insertMention} />
-                <MentionGroup label="Workflows" icon={Layers} color="text-blue-500" items={filteredWorkflows} onPick={insertMention} />
+                <MentionGroup
+                  label="Agents"
+                  icon={BotIcon}
+                  color="text-purple-500"
+                  items={filteredAgents}
+                  onPick={insertMention}
+                />
+                <MentionGroup
+                  label="Teams"
+                  icon={Users}
+                  color="text-emerald-500"
+                  items={filteredTeams}
+                  onPick={insertMention}
+                />
+                <MentionGroup
+                  label="Workflows"
+                  icon={Layers}
+                  color="text-blue-500"
+                  items={filteredWorkflows}
+                  onPick={insertMention}
+                />
               </div>
             )}
             <div className="flex items-end gap-2">
@@ -637,7 +755,9 @@ export default function ChatPage() {
         title="确认删除对话"
         message={
           <>
-            确定要删除对话「<span className="font-medium text-gray-700">{deleteTarget?.title || '未命名对话'}</span>」吗？此操作不可撤销。
+            确定要删除对话「
+            <span className="font-medium text-gray-700">{deleteTarget?.title || '未命名对话'}</span>
+            」吗？此操作不可撤销。
           </>
         }
         confirmLabel="确认删除"
@@ -678,37 +798,54 @@ function MessageBubble({ msg }) {
   const isError = msg.role === 'error'
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`flex items-start gap-2 max-w-[85%] md:max-w-2xl ${isUser ? 'flex-row-reverse' : ''}`}>
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-          isUser
-            ? 'bg-gradient-to-br from-purple-600 to-indigo-600'
-            : isError
-              ? 'bg-red-500'
-              : 'bg-gradient-to-br from-indigo-500 to-purple-500'
-        }`}>
-          {isUser ? <User className="w-4 h-4 text-white" /> : <BotIcon className="w-4 h-4 text-white" />}
+      <div
+        className={`flex items-start gap-2 max-w-[85%] md:max-w-2xl ${isUser ? 'flex-row-reverse' : ''}`}
+      >
+        <div
+          className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+            isUser
+              ? 'bg-gradient-to-br from-purple-600 to-indigo-600'
+              : isError
+                ? 'bg-red-500'
+                : 'bg-gradient-to-br from-indigo-500 to-purple-500'
+          }`}
+        >
+          {isUser ? (
+            <User className="w-4 h-4 text-white" />
+          ) : (
+            <BotIcon className="w-4 h-4 text-white" />
+          )}
         </div>
-        <div className={`rounded-2xl px-4 py-3 ${
-          isUser
-            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
-            : isError
-              ? 'bg-red-50 text-red-700 border border-red-200'
-              : 'bg-white border border-gray-200 text-gray-900'
-        }`}>
+        <div
+          className={`rounded-2xl px-4 py-3 ${
+            isUser
+              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white'
+              : isError
+                ? 'bg-red-50 text-red-700 border border-red-200'
+                : 'bg-white border border-gray-200 text-gray-900'
+          }`}
+        >
           {msg.targets && msg.targets.length > 0 && (
-            <div className={`flex items-center flex-wrap gap-1 mb-2 text-xs ${isUser ? 'text-white/80' : 'text-gray-500'}`}>
+            <div
+              className={`flex items-center flex-wrap gap-1 mb-2 text-xs ${isUser ? 'text-white/80' : 'text-gray-500'}`}
+            >
               <ArrowRight className="w-3 h-3" />
               {msg.targets.map((t, i) => {
                 const meta = targetMeta(t.type)
                 return (
-                  <span key={i} className={`px-2 py-0.5 rounded-full ${isUser ? 'bg-white/20 text-white' : meta.chip}`}>
+                  <span
+                    key={i}
+                    className={`px-2 py-0.5 rounded-full ${isUser ? 'bg-white/20 text-white' : meta.chip}`}
+                  >
                     {t.name}
                   </span>
                 )
               })}
             </div>
           )}
-          <div className={`text-sm leading-relaxed ${isUser || isError ? 'whitespace-pre-wrap' : ''}`}>
+          <div
+            className={`text-sm leading-relaxed ${isUser || isError ? 'whitespace-pre-wrap' : ''}`}
+          >
             {isUser || isError ? msg.content : <MarkdownRenderer content={msg.content} />}
           </div>
           <p className={`text-xs mt-1.5 ${isUser ? 'text-white/60' : 'text-gray-400'}`}>

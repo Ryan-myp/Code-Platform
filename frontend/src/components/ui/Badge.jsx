@@ -7,7 +7,15 @@ import { getStatusMeta } from '../../lib/format'
  * - 用法二（指定颜色 + 内容）：<Badge color="blue">文本</Badge> / <Badge color="green" dot>运行中</Badge>
  * - 支持自定义映射 customMap
  */
-export default function Badge({ status, color, customMap, label, dot = false, children, className = '' }) {
+export default function Badge({
+  status,
+  color,
+  customMap,
+  label,
+  dot = false,
+  children,
+  className = '',
+}) {
   const meta = color
     ? { text: children ?? label ?? '', cls: COLOR_CLS[color] || COLOR_CLS.gray }
     : getStatusMeta(status, customMap)
@@ -25,7 +33,9 @@ export default function Badge({ status, color, customMap, label, dot = false, ch
 /** 静态颜色徽章 */
 export function ColorBadge({ color = 'gray', children, className = '' }) {
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${COLOR_CLS[color] || COLOR_CLS.gray} ${className}`}>
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${COLOR_CLS[color] || COLOR_CLS.gray} ${className}`}
+    >
       {children}
     </span>
   )

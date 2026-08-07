@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 # 认证
 # ══════════════════════════════════════════════════════════════
 
+
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, description="用户名")
     password: str = Field(..., min_length=1, description="密码")
@@ -21,6 +22,7 @@ class LoginRequest(BaseModel):
 # 全局智能助手（浮动机器人）
 # ══════════════════════════════════════════════════════════════
 
+
 class AssistantChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000, description="用户消息")
     history: list[dict] = Field(default_factory=list, description="最近对话历史（最多 10 条）")
@@ -29,6 +31,7 @@ class AssistantChatRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 # 认证（商业版：注册 / 资料 / 密码 / 分享）
 # ══════════════════════════════════════════════════════════════
+
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=20, pattern=r"^[\w\u4e00-\u9fa5-]+$", description="用户名")
@@ -62,6 +65,7 @@ class ShareCreateRequest(BaseModel):
 # Agent
 # ══════════════════════════════════════════════════════════════
 
+
 class AgentCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Agent 名称")
     description: str = ""
@@ -88,6 +92,7 @@ class AgentUpdateRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 # Workflow
 # ══════════════════════════════════════════════════════════════
+
 
 class WorkflowDefinition(BaseModel):
     nodes: list[dict[str, Any]] = []
@@ -118,6 +123,7 @@ class WorkflowRunRequest(BaseModel):
 # Team
 # ══════════════════════════════════════════════════════════════
 
+
 class TeamCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Team 名称")
     description: str = ""
@@ -144,6 +150,7 @@ class TeamRunRequest(BaseModel):
 # Skill
 # ══════════════════════════════════════════════════════════════
 
+
 class SkillCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Skill 名称")
     description: str = ""
@@ -160,12 +167,14 @@ class SkillUpdateRequest(BaseModel):
 
 class SkillFileWriteRequest(BaseModel):
     """写入 Skill 文件（新建/更新），路径通过 URL query 参数 path 传入。"""
+
     content: str = ""
 
 
 # ══════════════════════════════════════════════════════════════
 # Knowledge Base
 # ══════════════════════════════════════════════════════════════
+
 
 class KnowledgeBaseCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="知识库名称")
@@ -198,6 +207,7 @@ class KnowledgeBaseUpdateRequest(BaseModel):
 # MCP Server
 # ══════════════════════════════════════════════════════════════
 
+
 class MCPServerCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="MCP Server 名称")
     transport_type: str = "stdio"
@@ -227,6 +237,7 @@ class MCPServerUpdateRequest(BaseModel):
 # 评论
 # ══════════════════════════════════════════════════════════════
 
+
 class CommentCreateRequest(BaseModel):
     content: str = Field(..., min_length=1, description="评论内容")
     author_id: str = "admin"
@@ -243,6 +254,7 @@ class CommentLikeRequest(BaseModel):
 # 沙箱
 # ══════════════════════════════════════════════════════════════
 
+
 class SandboxProjectCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="项目名称")
     image: str = "python:3.12-alpine"
@@ -258,6 +270,7 @@ class SandboxPullImageRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 # 对话
 # ══════════════════════════════════════════════════════════════
+
 
 class ConversationCreateRequest(BaseModel):
     title: str = "新对话"
@@ -276,6 +289,7 @@ class AgentRunRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 # PRD / 研发流程
 # ══════════════════════════════════════════════════════════════
+
 
 class PRDGenerateRequest(BaseModel):
     prd_text: str = Field(..., min_length=1, description="需求描述")
@@ -354,6 +368,7 @@ class PipelineOutputRequest(BaseModel):
 # 配置
 # ══════════════════════════════════════════════════════════════
 
+
 class ConfigSaveRequest(BaseModel):
     api_key: str | None = None
     api_url: str | None = None
@@ -367,6 +382,7 @@ class OptimizePromptsRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 # 插件
 # ══════════════════════════════════════════════════════════════
+
 
 class PluginExecuteRequest(BaseModel):
     input_data: dict[str, Any] = {}

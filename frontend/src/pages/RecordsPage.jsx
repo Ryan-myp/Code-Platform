@@ -1,7 +1,17 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Calendar, ChevronDown, Clock, Copy, Eye, FileText, History,
-  Link2, Loader2, Share2, Sparkles, Wrench,
+  Calendar,
+  ChevronDown,
+  Clock,
+  Copy,
+  Eye,
+  FileText,
+  History,
+  Link2,
+  Loader2,
+  Share2,
+  Sparkles,
+  Wrench,
 } from 'lucide-react'
 import api from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -72,7 +82,9 @@ export default function RecordsPage() {
           <button
             onClick={() => setTab('tools')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all ${
-              tab === 'tools' ? 'bg-white shadow-soft text-brand-600 font-medium' : 'text-ink-500 hover:text-ink-700'
+              tab === 'tools'
+                ? 'bg-white shadow-soft text-brand-600 font-medium'
+                : 'text-ink-500 hover:text-ink-700'
             }`}
           >
             <Wrench className="w-4 h-4" />
@@ -82,7 +94,9 @@ export default function RecordsPage() {
           <button
             onClick={() => setTab('shares')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all ${
-              tab === 'shares' ? 'bg-white shadow-soft text-brand-600 font-medium' : 'text-ink-500 hover:text-ink-700'
+              tab === 'shares'
+                ? 'bg-white shadow-soft text-brand-600 font-medium'
+                : 'text-ink-500 hover:text-ink-700'
             }`}
           >
             <Share2 className="w-4 h-4" />
@@ -103,7 +117,10 @@ export default function RecordsPage() {
           ) : (
             <div className="space-y-3">
               {tools.map((r) => (
-                <div key={r.id} className="bg-white rounded-2xl border border-ink-200/60 shadow-soft overflow-hidden">
+                <div
+                  key={r.id}
+                  className="bg-white rounded-2xl border border-ink-200/60 shadow-soft overflow-hidden"
+                >
                   <button
                     onClick={() => setExpanded(expanded === r.id ? null : r.id)}
                     className="w-full flex items-center gap-3 px-5 py-4 hover:bg-ink-50/50 transition-colors text-left"
@@ -113,7 +130,9 @@ export default function RecordsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-ink-800 truncate">{r.tool_name}</p>
-                      <p className="text-xs text-ink-400 truncate mt-0.5">{r.input_text || '（无输入内容）'}</p>
+                      <p className="text-xs text-ink-400 truncate mt-0.5">
+                        {r.input_text || '（无输入内容）'}
+                      </p>
                     </div>
                     <div className="flex items-center gap-3 flex-shrink-0">
                       {r.model && (
@@ -125,7 +144,9 @@ export default function RecordsPage() {
                         <Clock className="w-3 h-3" />
                         {r.created_at?.slice(5, 16)}
                       </span>
-                      <ChevronDown className={`w-4 h-4 text-ink-400 transition-transform ${expanded === r.id ? 'rotate-180' : ''}`} />
+                      <ChevronDown
+                        className={`w-4 h-4 text-ink-400 transition-transform ${expanded === r.id ? 'rotate-180' : ''}`}
+                      />
                     </div>
                   </button>
                   {expanded === r.id && (
@@ -134,7 +155,10 @@ export default function RecordsPage() {
                         <span className="text-xs text-ink-400">生成结果</span>
                         <div className="flex items-center gap-1">
                           <ShareButton content={r.result} title={`${r.tool_name} 生成结果`} />
-                          <ExportButton content={r.result} title={`${r.tool_name}-${r.created_at?.slice(0, 10)}`} />
+                          <ExportButton
+                            content={r.result}
+                            title={`${r.tool_name}-${r.created_at?.slice(0, 10)}`}
+                          />
                         </div>
                       </div>
                       <div className="max-h-96 overflow-y-auto rounded-xl bg-ink-50/50 p-4">
@@ -160,10 +184,15 @@ export default function RecordsPage() {
           ) : (
             <div className="space-y-3">
               {shares.map((s) => (
-                <div key={s.id} className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+                <div
+                  key={s.id}
+                  className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-ink-800 truncate">{s.title || '分享内容'}</p>
+                      <p className="text-sm font-medium text-ink-800 truncate">
+                        {s.title || '分享内容'}
+                      </p>
                       <div className="flex items-center gap-4 mt-1.5 text-xs text-ink-400">
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
@@ -173,7 +202,9 @@ export default function RecordsPage() {
                           <Eye className="w-3 h-3" />
                           {s.views} 次浏览
                         </span>
-                        <span className="px-2 py-0.5 bg-ink-100 text-ink-500 rounded-full">{s.content_type}</span>
+                        <span className="px-2 py-0.5 bg-ink-100 text-ink-500 rounded-full">
+                          {s.content_type}
+                        </span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">

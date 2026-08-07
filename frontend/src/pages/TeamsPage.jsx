@@ -1,16 +1,41 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Users, Plus, Edit2, Trash2, Search, Eye,
-  MessageSquare, RefreshCw, LayoutGrid, List as ListIcon, Bot, Settings, UserPlus,
-  Code2, PenTool, HeadphonesIcon, Activity, Shield, UserCog,
-  Play, Loader2, CheckCircle2, XCircle,
+  Users,
+  Plus,
+  Edit2,
+  Trash2,
+  Search,
+  Eye,
+  MessageSquare,
+  RefreshCw,
+  LayoutGrid,
+  List as ListIcon,
+  Bot,
+  Settings,
+  UserPlus,
+  Code2,
+  PenTool,
+  HeadphonesIcon,
+  Activity,
+  Shield,
+  UserCog,
+  Play,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 const MODE_META = {
@@ -21,12 +46,45 @@ const MODE_META = {
 
 // 团队快速模板
 const TEAM_TEMPLATES = [
-  { name: '产品研发组', description: '产品经理 + 开发 + 测试的敏捷研发团队', icon: Code2, color: 'from-blue-500 to-indigo-600',
-    defaults: { name: '产品研发组', description: '负责产品需求分析、开发实现、测试验证的敏捷研发团队', mode: 'coordinate', instructions: '## 协作规则\n1. 产品经理负责需求拆解和优先级排序\n2. 开发人员负责技术实现和代码质量\n3. 测试人员负责质量保障和Bug追踪\n4. 每日同步进度，遇到阻塞及时上报' } },
-  { name: '内容创作组', description: '策划 + 写作 + 审核的内容生产团队', icon: PenTool, color: 'from-amber-500 to-orange-600',
-    defaults: { name: '内容创作组', description: '负责内容策划、文案撰写、审核发布的内容生产团队', mode: 'sequential', instructions: '## 协作规则\n1. 策划人员负责选题规划和内容方向\n2. 写作人员负责文案创作和内容生产\n3. 审核人员负责质量把关和合规审查\n4. 按流程顺序执行，每环节完成后流转下一步' } },
-  { name: '客户服务组', description: '售前咨询 + 技术支持 + 售后跟进', icon: HeadphonesIcon, color: 'from-emerald-500 to-teal-600',
-    defaults: { name: '客户服务组', description: '负责售前咨询、技术支持、售后跟进的全流程客户服务团队', mode: 'parallel', instructions: '## 协作规则\n1. 售前顾问负责产品咨询和方案推荐\n2. 技术支持负责问题诊断和解决方案\n3. 售后专员负责跟进和客户满意度\n4. 各角色可并行处理不同客户请求' } },
+  {
+    name: '产品研发组',
+    description: '产品经理 + 开发 + 测试的敏捷研发团队',
+    icon: Code2,
+    color: 'from-blue-500 to-indigo-600',
+    defaults: {
+      name: '产品研发组',
+      description: '负责产品需求分析、开发实现、测试验证的敏捷研发团队',
+      mode: 'coordinate',
+      instructions:
+        '## 协作规则\n1. 产品经理负责需求拆解和优先级排序\n2. 开发人员负责技术实现和代码质量\n3. 测试人员负责质量保障和Bug追踪\n4. 每日同步进度，遇到阻塞及时上报',
+    },
+  },
+  {
+    name: '内容创作组',
+    description: '策划 + 写作 + 审核的内容生产团队',
+    icon: PenTool,
+    color: 'from-amber-500 to-orange-600',
+    defaults: {
+      name: '内容创作组',
+      description: '负责内容策划、文案撰写、审核发布的内容生产团队',
+      mode: 'sequential',
+      instructions:
+        '## 协作规则\n1. 策划人员负责选题规划和内容方向\n2. 写作人员负责文案创作和内容生产\n3. 审核人员负责质量把关和合规审查\n4. 按流程顺序执行，每环节完成后流转下一步',
+    },
+  },
+  {
+    name: '客户服务组',
+    description: '售前咨询 + 技术支持 + 售后跟进',
+    icon: HeadphonesIcon,
+    color: 'from-emerald-500 to-teal-600',
+    defaults: {
+      name: '客户服务组',
+      description: '负责售前咨询、技术支持、售后跟进的全流程客户服务团队',
+      mode: 'parallel',
+      instructions:
+        '## 协作规则\n1. 售前顾问负责产品咨询和方案推荐\n2. 技术支持负责问题诊断和解决方案\n3. 售后专员负责跟进和客户满意度\n4. 各角色可并行处理不同客户请求',
+    },
+  },
 ]
 
 // 成员角色定义
@@ -50,7 +108,11 @@ function generateActivityLog(team) {
 
 function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
   const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
-  const memberIds = Array.isArray(team.members) ? team.members : (team.members ? JSON.parse(team.members) : [])
+  const memberIds = Array.isArray(team.members)
+    ? team.members
+    : team.members
+      ? JSON.parse(team.members)
+      : []
   const memberCount = memberIds.length
 
   if (viewMode === 'list') {
@@ -62,20 +124,52 @@ function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-gray-900 truncate">{team.name}</h3>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>{modeMeta.label}</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
+              {modeMeta.label}
+            </span>
           </div>
           <p className="text-sm text-gray-500 truncate">{team.description || '暂无描述'}</p>
         </div>
         <div className="hidden sm:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
-          <span className="flex items-center gap-1"><Bot className="w-3.5 h-3.5" />{memberCount} 成员</span>
-          <span className="flex items-center gap-1"><Activity className="w-3.5 h-3.5" />{team.execution_count || 0} 次执行</span>
+          <span className="flex items-center gap-1">
+            <Bot className="w-3.5 h-3.5" />
+            {memberCount} 成员
+          </span>
+          <span className="flex items-center gap-1">
+            <Activity className="w-3.5 h-3.5" />
+            {team.execution_count || 0} 次执行
+          </span>
           <span>{formatRelativeTime(team.created_at)}</span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button onClick={() => onRun(team)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="运行"><Play className="w-4 h-4" /></button>
-          <button onClick={() => onView(team)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看"><Eye className="w-4 h-4" /></button>
-          <button onClick={() => onEdit(team)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={() => onDelete(team)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除"><Trash2 className="w-4 h-4" /></button>
+          <button
+            onClick={() => onRun(team)}
+            className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors"
+            title="运行"
+          >
+            <Play className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onView(team)}
+            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+            title="查看"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onEdit(team)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onDelete(team)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
     )
@@ -91,21 +185,28 @@ function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{team.name}</h3>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>{modeMeta.label}</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
+                {modeMeta.label}
+              </span>
               <span className="text-xs text-gray-400">{formatRelativeTime(team.created_at)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <p className="text-sm text-gray-600 line-clamp-2 mb-3 flex-1">{team.description || '暂无描述'}</p>
+      <p className="text-sm text-gray-600 line-clamp-2 mb-3 flex-1">
+        {team.description || '暂无描述'}
+      </p>
 
       {/* 成员头像 + 执行统计 */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="flex -space-x-2">
             {memberIds.slice(0, 4).map((id, i) => (
-              <div key={i} className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 border-2 border-white flex items-center justify-center text-white text-xs font-bold">
+              <div
+                key={i}
+                className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 border-2 border-white flex items-center justify-center text-white text-xs font-bold"
+              >
                 {String.fromCharCode(65 + (i % 26))}
               </div>
             ))}
@@ -123,17 +224,42 @@ function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
           <span className="text-xs text-gray-400">{memberCount} 成员</span>
         </div>
         <span className="text-xs text-gray-400 flex items-center gap-1">
-          <Activity className="w-3 h-3" />{team.execution_count || 0} 次
+          <Activity className="w-3 h-3" />
+          {team.execution_count || 0} 次
         </span>
       </div>
 
       <div className="flex items-center justify-between pt-3 border-t border-gray-100">
         <span className="text-xs text-gray-400">{formatRelativeTime(team.created_at)}</span>
         <div className="flex items-center gap-1">
-          <button onClick={() => onRun(team)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="运行"><Play className="w-4 h-4" /></button>
-          <button onClick={() => onView(team)} className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors" title="查看"><Eye className="w-4 h-4" /></button>
-          <button onClick={() => onEdit(team)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={() => onDelete(team)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除"><Trash2 className="w-4 h-4" /></button>
+          <button
+            onClick={() => onRun(team)}
+            className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors"
+            title="运行"
+          >
+            <Play className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onView(team)}
+            className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+            title="查看"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onEdit(team)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => onDelete(team)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>
@@ -141,13 +267,24 @@ function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
 }
 
 function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loading }) {
-  const [form, setForm] = useState({ name: '', description: '', mode: 'coordinate', members: [], instructions: '', respond_directly: false })
+  const [form, setForm] = useState({
+    name: '',
+    description: '',
+    mode: 'coordinate',
+    members: [],
+    instructions: '',
+    respond_directly: false,
+  })
   const [errors, setErrors] = useState({})
 
   useEffect(() => {
     if (!open) return
     if (editing) {
-      const members = Array.isArray(editing.members) ? editing.members : (editing.members ? JSON.parse(editing.members) : [])
+      const members = Array.isArray(editing.members)
+        ? editing.members
+        : editing.members
+          ? JSON.parse(editing.members)
+          : []
       setForm({
         name: editing.name || '',
         description: editing.description || '',
@@ -166,7 +303,14 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
         respond_directly: false,
       })
     } else {
-      setForm({ name: '', description: '', mode: 'coordinate', members: [], instructions: '', respond_directly: false })
+      setForm({
+        name: '',
+        description: '',
+        mode: 'coordinate',
+        members: [],
+        instructions: '',
+        respond_directly: false,
+      })
     }
     setErrors({})
   }, [open, editing, defaults])
@@ -200,7 +344,9 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
 
   const inputCls = (err) =>
     `w-full px-4 py-2 rounded-xl border focus:ring-2 focus:border-transparent outline-none transition-all ${
-      err ? 'border-red-300 focus:ring-red-500/20' : 'border-gray-200 focus:ring-purple-500/20 focus:border-purple-500'
+      err
+        ? 'border-red-300 focus:ring-red-500/20'
+        : 'border-gray-200 focus:ring-purple-500/20 focus:border-purple-500'
     }`
 
   return (
@@ -211,20 +357,38 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Team 名称 <span className="text-red-500">*</span></label>
-          <input type="text" value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="例如：前端开发小队" className={inputCls(errors.name)} />
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            Team 名称 <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => setField('name', e.target.value)}
+            placeholder="例如：前端开发小队"
+            className={inputCls(errors.name)}
+          />
           {errors.name && <p className="text-xs text-red-500 mt-1">{errors.name}</p>}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
-          <input type="text" value={form.description} onChange={(e) => setField('description', e.target.value)} placeholder="简要说明 Team 的职责和目标" className={inputCls(false)} />
+          <input
+            type="text"
+            value={form.description}
+            onChange={(e) => setField('description', e.target.value)}
+            placeholder="简要说明 Team 的职责和目标"
+            className={inputCls(false)}
+          />
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">协作模式</label>
@@ -256,9 +420,19 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
               agents.map((agent) => {
                 const checked = form.members.includes(agent.id)
                 return (
-                  <label key={agent.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${checked ? 'bg-purple-50' : 'hover:bg-gray-50'}`}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleMember(agent.id)} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
-                    <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-xs font-bold">{agent.name?.[0]?.toUpperCase()}</div>
+                  <label
+                    key={agent.id}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${checked ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleMember(agent.id)}
+                      className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-xs font-bold">
+                      {agent.name?.[0]?.toUpperCase()}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-800 truncate">{agent.name}</p>
                       <p className="text-xs text-gray-400 truncate">{agent.model || ''}</p>
@@ -271,10 +445,21 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">Team 指令</label>
-          <textarea value={form.instructions} onChange={(e) => setField('instructions', e.target.value)} rows={4} placeholder="Team 的系统指令，定义协作规则…" className={`${inputCls(false)} font-mono text-sm`} />
+          <textarea
+            value={form.instructions}
+            onChange={(e) => setField('instructions', e.target.value)}
+            rows={4}
+            placeholder="Team 的系统指令，定义协作规则…"
+            className={`${inputCls(false)} font-mono text-sm`}
+          />
         </div>
         <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={form.respond_directly} onChange={(e) => setField('respond_directly', e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+          <input
+            type="checkbox"
+            checked={form.respond_directly}
+            onChange={(e) => setField('respond_directly', e.target.checked)}
+            className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+          />
           <span className="text-sm text-gray-700">允许成员直接响应（不经协调）</span>
         </label>
       </div>
@@ -285,7 +470,11 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
 function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
   if (!team) return null
   const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
-  const memberIds = Array.isArray(team.members) ? team.members : (team.members ? JSON.parse(team.members) : [])
+  const memberIds = Array.isArray(team.members)
+    ? team.members
+    : team.members
+      ? JSON.parse(team.members)
+      : []
   const activityLog = generateActivityLog(team)
 
   return (
@@ -296,9 +485,28 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>关闭</Button>
-          <Button icon={Edit2} onClick={() => { onEdit(team); onClose() }}>编辑</Button>
-          <Button variant="danger" icon={Trash2} onClick={() => { onDelete(team); onClose() }}>删除</Button>
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+          <Button
+            icon={Edit2}
+            onClick={() => {
+              onEdit(team)
+              onClose()
+            }}
+          >
+            编辑
+          </Button>
+          <Button
+            variant="danger"
+            icon={Trash2}
+            onClick={() => {
+              onDelete(team)
+              onClose()
+            }}
+          >
+            删除
+          </Button>
         </>
       }
     >
@@ -310,8 +518,12 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">{team.name}</h3>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>{modeMeta.label}</span>
-              <span className="text-xs text-gray-500">创建于 {formatRelativeTime(team.created_at)}</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
+                {modeMeta.label}
+              </span>
+              <span className="text-xs text-gray-500">
+                创建于 {formatRelativeTime(team.created_at)}
+              </span>
             </div>
           </div>
         </div>
@@ -324,7 +536,9 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
         )}
 
         <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">成员（{memberIds.length}）</p>
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+            成员（{memberIds.length}）
+          </p>
           <div className="space-y-1.5">
             {memberIds.length === 0 ? (
               <p className="text-sm text-gray-400 italic">暂无成员</p>
@@ -332,7 +546,7 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
               memberIds.map((id, idx) => {
                 const agent = members.find((m) => m.id === id)
                 // 根据索引分配角色标签（第一个为协调者，后面交替分配）
-                const roleIdx = idx === 0 ? 0 : (idx % 2 === 1 ? 1 : 2)
+                const roleIdx = idx === 0 ? 0 : idx % 2 === 1 ? 1 : 2
                 const role = MEMBER_ROLES[roleIdx]
                 return (
                   <div key={id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
@@ -340,7 +554,9 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
                       {agent?.name?.[0]?.toUpperCase() || '?'}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-800 truncate">{agent?.name || id}</p>
+                      <p className="text-sm font-medium text-gray-800 truncate">
+                        {agent?.name || id}
+                      </p>
                       {agent && <p className="text-xs text-gray-400 truncate">{agent.model}</p>}
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${role.color}`}>
@@ -364,9 +580,13 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
             <div className="space-y-2">
               {activityLog.map((log, i) => (
                 <div key={i} className="flex items-center gap-3 text-sm">
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${log.type === 'create' ? 'bg-blue-500' : 'bg-emerald-500'}`} />
+                  <div
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${log.type === 'create' ? 'bg-blue-500' : 'bg-emerald-500'}`}
+                  />
                   <span className="text-gray-700 flex-1">{log.text}</span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">{formatRelativeTime(log.time)}</span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">
+                    {formatRelativeTime(log.time)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -375,8 +595,12 @@ function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
 
         {team.instructions && (
           <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Team 指令</p>
-            <pre className="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">{team.instructions}</pre>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+              Team 指令
+            </p>
+            <pre className="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+              {team.instructions}
+            </pre>
           </div>
         )}
       </div>
@@ -419,20 +643,28 @@ function TeamRunModal({ team, onClose }) {
       size="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>关闭</Button>
-          <Button variant="success" icon={Play} onClick={run} loading={running} disabled={running}>开始协作</Button>
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+          <Button variant="success" icon={Play} onClick={run} loading={running} disabled={running}>
+            开始协作
+          </Button>
         </>
       }
     >
       <div className="space-y-4">
         {team && (
           <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>{modeMeta.label}</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
+              {modeMeta.label}
+            </span>
             <span>{team.description || ''}</span>
           </div>
         )}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">任务描述 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            任务描述 <span className="text-red-500">*</span>
+          </label>
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -440,17 +672,25 @@ function TeamRunModal({ team, onClose }) {
             placeholder="例如：帮我们设计一个用户积分系统的技术方案，并输出测试计划…"
             className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all text-sm"
           />
-          <p className="text-xs text-gray-400 mt-1">任务将按团队协作模式分发给成员 Agent，最终汇总为统一答案</p>
+          <p className="text-xs text-gray-400 mt-1">
+            任务将按团队协作模式分发给成员 Agent，最终汇总为统一答案
+          </p>
         </div>
 
-        {error && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">{error}</div>}
+        {error && (
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
+            {error}
+          </div>
+        )}
 
         {result && (
           <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
             {/* 成员产出 */}
             {Array.isArray(result.members) && result.members.length > 0 && (
               <div className="space-y-3">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">成员产出（{result.members.length}）</p>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                  成员产出（{result.members.length}）
+                </p>
                 {result.members.map((m, i) => (
                   <div key={i} className="rounded-xl border border-gray-200 overflow-hidden">
                     <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100">
@@ -477,7 +717,9 @@ function TeamRunModal({ team, onClose }) {
               <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100/60 border-b border-emerald-200">
                 <Users className="w-4 h-4 text-emerald-600" />
                 <span className="text-sm font-medium text-emerald-800">最终结果</span>
-                {result.elapsed != null && <span className="text-xs text-emerald-600 ml-auto">耗时 {result.elapsed}s</span>}
+                {result.elapsed != null && (
+                  <span className="text-xs text-emerald-600 ml-auto">耗时 {result.elapsed}s</span>
+                )}
               </div>
               <div className="p-3 text-sm text-gray-800">
                 <MarkdownRenderer content={result.result} />
@@ -523,17 +765,27 @@ export default function TeamsPage() {
     }
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    loadData()
+  }, [loadData])
 
   const filteredTeams = teams.filter((t) => {
     const q = searchTerm.toLowerCase()
     if (!q) return true
-    return (t.name || '').toLowerCase().includes(q) ||
-      (t.description || '').toLowerCase().includes(q)
+    return (
+      (t.name || '').toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q)
+    )
   })
 
-  const openCreate = () => { setEditingTeam(null); setFormDefaults(null); setShowForm(true) }
-  const openEdit = (team) => { setEditingTeam(team); setShowForm(true) }
+  const openCreate = () => {
+    setEditingTeam(null)
+    setFormDefaults(null)
+    setShowForm(true)
+  }
+  const openEdit = (team) => {
+    setEditingTeam(team)
+    setShowForm(true)
+  }
 
   const handleSubmit = async (payload) => {
     setSaving(true)
@@ -570,16 +822,36 @@ export default function TeamsPage() {
   }
 
   const totalMembers = teams.reduce((acc, t) => {
-    const ids = Array.isArray(t.members) ? t.members : (t.members ? JSON.parse(t.members) : [])
+    const ids = Array.isArray(t.members) ? t.members : t.members ? JSON.parse(t.members) : []
     return acc + ids.length
   }, 0)
   const totalExecutions = teams.reduce((sum, t) => sum + (t.execution_count || 0), 0)
 
   const stats = [
-    { label: '总 Team 数', value: teams.length, icon: Users, color: 'from-emerald-500 to-teal-600' },
-    { label: '协调模式', value: teams.filter((t) => t.mode === 'coordinate').length, icon: Settings, color: 'from-blue-500 to-cyan-600' },
-    { label: '总成员数', value: totalMembers, icon: UserPlus, color: 'from-violet-500 to-purple-600' },
-    { label: '总执行次数', value: totalExecutions, icon: Activity, color: 'from-amber-500 to-orange-600' },
+    {
+      label: '总 Team 数',
+      value: teams.length,
+      icon: Users,
+      color: 'from-emerald-500 to-teal-600',
+    },
+    {
+      label: '协调模式',
+      value: teams.filter((t) => t.mode === 'coordinate').length,
+      icon: Settings,
+      color: 'from-blue-500 to-cyan-600',
+    },
+    {
+      label: '总成员数',
+      value: totalMembers,
+      icon: UserPlus,
+      color: 'from-violet-500 to-purple-600',
+    },
+    {
+      label: '总执行次数',
+      value: totalExecutions,
+      icon: Activity,
+      color: 'from-amber-500 to-orange-600',
+    },
   ]
 
   return (
@@ -589,7 +861,11 @@ export default function TeamsPage() {
         description="创建和管理 AI Team，协调多个 Agent 协作完成复杂任务"
         icon={Users}
         iconColor="from-emerald-500 to-teal-600"
-        actions={<Button variant="primary" icon={Plus} onClick={openCreate}>新建 Team</Button>}
+        actions={
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建 Team
+          </Button>
+        }
       />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -600,7 +876,9 @@ export default function TeamsPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -619,10 +897,15 @@ export default function TeamsPage() {
             {TEAM_TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
-                onClick={() => { setFormDefaults(tpl.defaults); setShowForm(true) }}
+                onClick={() => {
+                  setFormDefaults(tpl.defaults)
+                  setShowForm(true)
+                }}
                 className="bg-white rounded-xl p-4 border border-gray-200 hover:border-emerald-300 hover:shadow-md transition-all text-left group"
               >
-                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                <div
+                  className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}
+                >
                   <tpl.icon className="w-4.5 h-4.5" />
                 </div>
                 <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
@@ -636,13 +919,33 @@ export default function TeamsPage() {
       <div className="bg-white rounded-2xl border border-gray-200 p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="搜索 Team 名称或描述…" className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="搜索 Team 名称或描述…"
+            className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+          />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData}>刷新</Button>
+          <Button variant="ghost" size="md" icon={RefreshCw} onClick={loadData}>
+            刷新
+          </Button>
           <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-            <button onClick={() => setViewMode('grid')} className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`} title="网格视图"><LayoutGrid className="w-4 h-4" /></button>
-            <button onClick={() => setViewMode('list')} className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`} title="列表视图"><ListIcon className="w-4 h-4" /></button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+              title="网格视图"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`p-2 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-700'}`}
+              title="列表视图"
+            >
+              <ListIcon className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </div>
@@ -653,29 +956,86 @@ export default function TeamsPage() {
         <ErrorState message={`加载失败：${error.message}`} onRetry={loadData} />
       ) : filteredTeams.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200">
-          <Empty icon={Users} title={searchTerm ? '未找到匹配的 Team' : '暂无 Team'} description={searchTerm ? '尝试调整搜索条件' : '点击「新建 Team」创建你的第一个 AI 团队'} actionLabel={searchTerm ? undefined : '新建 Team'} onAction={searchTerm ? undefined : openCreate} />
+          <Empty
+            icon={Users}
+            title={searchTerm ? '未找到匹配的 Team' : '暂无 Team'}
+            description={
+              searchTerm ? '尝试调整搜索条件' : '点击「新建 Team」创建你的第一个 AI 团队'
+            }
+            actionLabel={searchTerm ? undefined : '新建 Team'}
+            onAction={searchTerm ? undefined : openCreate}
+          />
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredTeams.map((team) => (
-            <TeamCard key={team.id} team={team} members={agents} onView={setViewTarget} onEdit={openEdit} onDelete={setDeleteTarget} onRun={setRunTarget} viewMode="grid" />
+            <TeamCard
+              key={team.id}
+              team={team}
+              members={agents}
+              onView={setViewTarget}
+              onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onRun={setRunTarget}
+              viewMode="grid"
+            />
           ))}
         </div>
       ) : (
         <div className="space-y-2">
           {filteredTeams.map((team) => (
-            <TeamCard key={team.id} team={team} members={agents} onView={setViewTarget} onEdit={openEdit} onDelete={setDeleteTarget} onRun={setRunTarget} viewMode="list" />
+            <TeamCard
+              key={team.id}
+              team={team}
+              members={agents}
+              onView={setViewTarget}
+              onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onRun={setRunTarget}
+              viewMode="list"
+            />
           ))}
         </div>
       )}
 
-      <TeamFormModal open={showForm} onClose={() => { setShowForm(false); setEditingTeam(null); setFormDefaults(null) }} onSubmit={handleSubmit} editing={editingTeam} defaults={formDefaults} agents={agents} loading={saving} />
+      <TeamFormModal
+        open={showForm}
+        onClose={() => {
+          setShowForm(false)
+          setEditingTeam(null)
+          setFormDefaults(null)
+        }}
+        onSubmit={handleSubmit}
+        editing={editingTeam}
+        defaults={formDefaults}
+        agents={agents}
+        loading={saving}
+      />
 
-      <TeamDetailModal open={!!viewTarget} onClose={() => setViewTarget(null)} team={viewTarget} members={agents} onEdit={openEdit} onDelete={setDeleteTarget} />
+      <TeamDetailModal
+        open={!!viewTarget}
+        onClose={() => setViewTarget(null)}
+        team={viewTarget}
+        members={agents}
+        onEdit={openEdit}
+        onDelete={setDeleteTarget}
+      />
 
       <TeamRunModal team={runTarget} onClose={() => setRunTarget(null)} />
 
-      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="确认删除 Team" message={<>确定要删除 Team「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>」吗？此操作不可撤销。</>} confirmLabel="确认删除" />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+        title="确认删除 Team"
+        message={
+          <>
+            确定要删除 Team「<span className="font-medium text-gray-700">{deleteTarget?.name}</span>
+            」吗？此操作不可撤销。
+          </>
+        }
+        confirmLabel="确认删除"
+      />
     </div>
   )
 }

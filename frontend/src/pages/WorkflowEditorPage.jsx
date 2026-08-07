@@ -1,13 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Plus, Trash2, Play, Save, Download,
-  GitBranch, GitMerge, Code2, Globe,
-  Zap, FileText, Clock,
-  Image as ImageIcon, Video, Music,
-  CheckCircle2, XCircle,
-  ZoomIn, ZoomOut, RefreshCw, ChevronLeft,
-  Undo2, Redo2, X, Workflow,
+  Plus,
+  Trash2,
+  Play,
+  Save,
+  Download,
+  GitBranch,
+  GitMerge,
+  Code2,
+  Globe,
+  Zap,
+  FileText,
+  Clock,
+  Image as ImageIcon,
+  Video,
+  Music,
+  CheckCircle2,
+  XCircle,
+  ZoomIn,
+  ZoomOut,
+  RefreshCw,
+  ChevronLeft,
+  Undo2,
+  Redo2,
+  X,
+  Workflow,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
@@ -17,28 +35,100 @@ import { Modal, Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '..
 
 // 节点类型定义（与后端 workflows/executor.py 支持的节点一一对应）
 const NODE_TYPES = {
-  agent: { label: 'Agent', icon: GitBranch, color: 'purple', config: { agent_id: '', message: '' } },
-  http: { label: 'HTTP 请求', icon: Globe, color: 'blue', config: { url: '', method: 'GET', headers: '{}' } },
+  agent: {
+    label: 'Agent',
+    icon: GitBranch,
+    color: 'purple',
+    config: { agent_id: '', message: '' },
+  },
+  http: {
+    label: 'HTTP 请求',
+    icon: Globe,
+    color: 'blue',
+    config: { url: '', method: 'GET', headers: '{}' },
+  },
   condition: { label: '条件判断', icon: GitMerge, color: 'orange', config: { expression: '' } },
   parallel: { label: '并行执行', icon: Zap, color: 'green', config: {} },
   code: { label: '代码执行', icon: Code2, color: 'gray', config: { code: '', language: 'python' } },
   delay: { label: '延迟等待', icon: Clock, color: 'yellow', config: { seconds: 1 } },
-  image: { label: '图片生成', icon: ImageIcon, color: 'pink', config: { prompt: '', size: '1024x1024', model: 'agnes-image-2.1-flash' } },
-  video: { label: '视频生成', icon: Video, color: 'blue', config: { prompt: '', duration: 5, width: 1152, height: 768 } },
-  music: { label: '音乐歌词', icon: Music, color: 'yellow', config: { theme: '', style: 'pop', language: 'zh', mood: 'happy' } },
-  prd: { label: 'PRD 流程', icon: FileText, color: 'orange', config: { stage: 'generate', prd_text: '', tech_design: '', language: 'python' } },
+  image: {
+    label: '图片生成',
+    icon: ImageIcon,
+    color: 'pink',
+    config: { prompt: '', size: '1024x1024', model: 'agnes-image-2.1-flash' },
+  },
+  video: {
+    label: '视频生成',
+    icon: Video,
+    color: 'blue',
+    config: { prompt: '', duration: 5, width: 1152, height: 768 },
+  },
+  music: {
+    label: '音乐歌词',
+    icon: Music,
+    color: 'yellow',
+    config: { theme: '', style: 'pop', language: 'zh', mood: 'happy' },
+  },
+  prd: {
+    label: 'PRD 流程',
+    icon: FileText,
+    color: 'orange',
+    config: { stage: 'generate', prd_text: '', tech_design: '', language: 'python' },
+  },
   output: { label: '输出节点', icon: FileText, color: 'pink', config: {} },
 }
 
 // 静态颜色映射（避免 Tailwing 动态类名被 purge）
 const COLOR_STYLES = {
-  purple: { header: 'bg-purple-500', ring: 'ring-purple-500', text: 'text-purple-600', light: 'bg-purple-50', border: 'border-purple-500' },
-  blue: { header: 'bg-blue-500', ring: 'ring-blue-500', text: 'text-blue-600', light: 'bg-blue-50', border: 'border-blue-500' },
-  orange: { header: 'bg-orange-500', ring: 'ring-orange-500', text: 'text-orange-600', light: 'bg-orange-50', border: 'border-orange-500' },
-  green: { header: 'bg-green-500', ring: 'ring-green-500', text: 'text-green-600', light: 'bg-green-50', border: 'border-green-500' },
-  gray: { header: 'bg-gray-500', ring: 'ring-gray-500', text: 'text-gray-600', light: 'bg-gray-50', border: 'border-gray-500' },
-  yellow: { header: 'bg-yellow-500', ring: 'ring-yellow-500', text: 'text-yellow-600', light: 'bg-yellow-50', border: 'border-yellow-500' },
-  pink: { header: 'bg-pink-500', ring: 'ring-pink-500', text: 'text-pink-600', light: 'bg-pink-50', border: 'border-pink-500' },
+  purple: {
+    header: 'bg-purple-500',
+    ring: 'ring-purple-500',
+    text: 'text-purple-600',
+    light: 'bg-purple-50',
+    border: 'border-purple-500',
+  },
+  blue: {
+    header: 'bg-blue-500',
+    ring: 'ring-blue-500',
+    text: 'text-blue-600',
+    light: 'bg-blue-50',
+    border: 'border-blue-500',
+  },
+  orange: {
+    header: 'bg-orange-500',
+    ring: 'ring-orange-500',
+    text: 'text-orange-600',
+    light: 'bg-orange-50',
+    border: 'border-orange-500',
+  },
+  green: {
+    header: 'bg-green-500',
+    ring: 'ring-green-500',
+    text: 'text-green-600',
+    light: 'bg-green-50',
+    border: 'border-green-500',
+  },
+  gray: {
+    header: 'bg-gray-500',
+    ring: 'ring-gray-500',
+    text: 'text-gray-600',
+    light: 'bg-gray-50',
+    border: 'border-gray-500',
+  },
+  yellow: {
+    header: 'bg-yellow-500',
+    ring: 'ring-yellow-500',
+    text: 'text-yellow-600',
+    light: 'bg-yellow-50',
+    border: 'border-yellow-500',
+  },
+  pink: {
+    header: 'bg-pink-500',
+    ring: 'ring-pink-500',
+    text: 'text-pink-600',
+    light: 'bg-pink-50',
+    border: 'border-pink-500',
+  },
 }
 
 const NODE_W = 120
@@ -125,7 +215,8 @@ export default function WorkflowEditorPage() {
 
   // 加载 Agent 列表（供 agent 节点下拉选择）
   useEffect(() => {
-    api.get('/api/agents')
+    api
+      .get('/api/agents')
       .then((res) => setAgents(Array.isArray(res.data) ? res.data : []))
       .catch(() => setAgents([]))
   }, [])
@@ -315,7 +406,7 @@ export default function WorkflowEditorPage() {
     // 如果正在连线，点击任意节点完成连线（不清除 pendingConnection，支持连续分支）
     if (pendingConnection && pendingConnection !== nodeId) {
       addEdge(pendingConnection, nodeId)
-      toast.success(`已连线 → ${nodes.find(n => n.id === nodeId)?.label || nodeId}`)
+      toast.success(`已连线 → ${nodes.find((n) => n.id === nodeId)?.label || nodeId}`)
       // 不清除 pendingConnection，允许继续连线实现分支
     } else if (!dragMoved) {
       // 没有连线时，正常选中节点
@@ -365,7 +456,8 @@ export default function WorkflowEditorPage() {
   useEffect(() => {
     const handler = (e) => {
       const tag = e.target?.tagName
-      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
+      const isInput =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable
       const mod = e.ctrlKey || e.metaKey
 
       if (mod && e.key.toLowerCase() === 'z') {
@@ -433,7 +525,10 @@ export default function WorkflowEditorPage() {
           <ZoomIn className="w-5 h-5" />
         </button>
         <button
-          onClick={() => { setZoom(1); setPosition({ x: 0, y: 0 }) }}
+          onClick={() => {
+            setZoom(1)
+            setPosition({ x: 0, y: 0 })
+          }}
           className="w-11 h-11 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-500 transition-colors"
           title="重置视图"
         >
@@ -507,7 +602,13 @@ export default function WorkflowEditorPage() {
           <Button variant="secondary" size="sm" icon={Download} onClick={exportWorkflow}>
             <span className="hidden sm:inline">导出</span>
           </Button>
-          <Button variant="primary" size="sm" icon={Save} loading={saving} onClick={() => doSave({ manual: true })}>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Save}
+            loading={saving}
+            onClick={() => doSave({ manual: true })}
+          >
             <span className="hidden sm:inline">保存</span>
           </Button>
           <Button variant="success" size="sm" icon={Play} onClick={() => setShowRunDialog(true)}>
@@ -519,10 +620,19 @@ export default function WorkflowEditorPage() {
         <div
           ref={canvasRef}
           className="flex-1 relative overflow-hidden bg-gray-50"
-          style={{ cursor: pendingConnection ? 'crosshair' : isPanning ? 'grabbing' : dragging ? 'grabbing' : 'default' }}
+          style={{
+            cursor: pendingConnection
+              ? 'crosshair'
+              : isPanning
+                ? 'grabbing'
+                : dragging
+                  ? 'grabbing'
+                  : 'default',
+          }}
           onMouseDown={(e) => {
             // 点击画布空白处退出连线模式或取消选中
-            const isCanvas = e.target === canvasRef.current || 
+            const isCanvas =
+              e.target === canvasRef.current ||
               ['svg', 'rect', 'path'].includes(e.target.tagName?.toLowerCase())
             if (isCanvas) {
               if (pendingConnection) {
@@ -561,7 +671,12 @@ export default function WorkflowEditorPage() {
             </svg>
 
             {/* 边 */}
-            <svg className="absolute top-0 left-0" width="4000" height="4000" style={{ pointerEvents: 'none' }}>
+            <svg
+              className="absolute top-0 left-0"
+              width="4000"
+              height="4000"
+              style={{ pointerEvents: 'none' }}
+            >
               {edges.map((edge) => {
                 const fromNode = nodes.find((n) => n.id === edge.from)
                 const toNode = nodes.find((n) => n.id === edge.to)
@@ -644,9 +759,13 @@ export default function WorkflowEditorPage() {
                     } ${isPendingFrom ? 'ring-2 ring-offset-1 ' + styles.ring : ''} ${isPendingTo ? 'ring-2 ring-offset-1 ring-purple-400' : ''}`}
                     style={{ width: NODE_W }}
                   >
-                    <div className={`px-2 py-1.5 rounded-t-lg flex items-center gap-1.5 ${styles.header}`}>
+                    <div
+                      className={`px-2 py-1.5 rounded-t-lg flex items-center gap-1.5 ${styles.header}`}
+                    >
                       <NodeType className="w-3.5 h-3.5 text-white flex-shrink-0" />
-                      <span className="text-[10px] text-white font-medium truncate">{cfg?.label}</span>
+                      <span className="text-[10px] text-white font-medium truncate">
+                        {cfg?.label}
+                      </span>
                     </div>
                     <div className="px-2 py-2 text-xs text-gray-800 text-center truncate">
                       {node.label}
@@ -654,12 +773,15 @@ export default function WorkflowEditorPage() {
 
                     {/* 输入连接点（左侧） */}
                     <div
-                      onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                      }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (pendingConnection && pendingConnection !== node.id) {
                           addEdge(pendingConnection, node.id)
-                          const label = nodes.find(n => n.id === node.id)?.label || node.id
+                          const label = nodes.find((n) => n.id === node.id)?.label || node.id
                           toast.success(`已连线 → ${label}`)
                         }
                       }}
@@ -671,10 +793,13 @@ export default function WorkflowEditorPage() {
                         <polygon points="3,1 8,5 3,9" fill="white" />
                       </svg>
                     </div>
-                    
+
                     {/* 输出连接点（右侧） */}
                     <div
-                      onMouseDown={(e) => { e.stopPropagation(); e.preventDefault() }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                      }}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (pendingConnection === node.id) {
@@ -682,7 +807,7 @@ export default function WorkflowEditorPage() {
                           toast.info('已退出连线模式')
                         } else {
                           setPendingConnection(node.id)
-                          const label = nodes.find(n => n.id === node.id)?.label || node.id
+                          const label = nodes.find((n) => n.id === node.id)?.label || node.id
                           toast.success(`从「${label}」开始连线，可连续创建分支`)
                         }
                       }}
@@ -737,7 +862,8 @@ export default function WorkflowEditorPage() {
 
           {/* 快捷键提示 */}
           <div className="absolute bottom-3 right-3 px-2.5 py-1.5 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-lg text-[10px] text-gray-400 hidden md:block">
-            拖拽移动 · 右侧圆点连线（支持分支） · 点击连线删除 · Del 删除 · Ctrl+Z 撤销 · ${"{input}"} 引用输入
+            拖拽移动 · 右侧圆点连线（支持分支） · 点击连线删除 · Del 删除 · Ctrl+Z 撤销 · $
+            {'{input}'} 引用输入
           </div>
         </div>
       </div>
@@ -780,19 +906,25 @@ export default function WorkflowEditorPage() {
                   {agents.length > 0 ? (
                     <select
                       value={selectedNodeData.config.agent_id || ''}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     >
                       <option value="">通用智能助手（不指定）</option>
                       {agents.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
                       ))}
                     </select>
                   ) : (
                     <input
                       type="text"
                       value={selectedNodeData.config.agent_id || ''}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'agent_id', e.target.value)
+                      }
                       placeholder="输入 Agent ID"
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     />
@@ -802,7 +934,9 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">执行指令</label>
                   <textarea
                     value={selectedNodeData.config.message ?? ''}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'message', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'message', e.target.value)
+                    }
                     rows={3}
                     placeholder="留空则使用工作流输入；可引用上游结果 ${'{node_x.result}'}"
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
@@ -828,7 +962,9 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">请求方法</label>
                   <select
                     value={selectedNodeData.config.method || 'GET'}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'method', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'method', e.target.value)
+                    }
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   >
                     <option value="GET">GET</option>
@@ -838,10 +974,14 @@ export default function WorkflowEditorPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Headers (JSON)</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">
+                    Headers (JSON)
+                  </label>
                   <textarea
                     value={selectedNodeData.config.headers || '{}'}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'headers', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'headers', e.target.value)
+                    }
                     rows={3}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   />
@@ -854,7 +994,9 @@ export default function WorkflowEditorPage() {
                 <label className="block text-xs font-medium text-gray-500 mb-1">表达式</label>
                 <textarea
                   value={selectedNodeData.config.expression || ''}
-                  onChange={(e) => updateNodeConfig(selectedNodeData.id, 'expression', e.target.value)}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNodeData.id, 'expression', e.target.value)
+                  }
                   rows={3}
                   placeholder="例如: ${input.status} == 'success'"
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
@@ -868,7 +1010,9 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">语言</label>
                   <select
                     value={selectedNodeData.config.language || 'python'}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'language', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'language', e.target.value)
+                    }
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   >
                     <option value="python">Python</option>
@@ -895,7 +1039,13 @@ export default function WorkflowEditorPage() {
                   type="number"
                   min="0"
                   value={selectedNodeData.config.seconds ?? 1}
-                  onChange={(e) => updateNodeConfig(selectedNodeData.id, 'seconds', parseFloat(e.target.value) || 0)}
+                  onChange={(e) =>
+                    updateNodeConfig(
+                      selectedNodeData.id,
+                      'seconds',
+                      parseFloat(e.target.value) || 0
+                    )
+                  }
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                 />
               </div>
@@ -907,12 +1057,16 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">画面描述</label>
                   <textarea
                     value={selectedNodeData.config.prompt || ''}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)
+                    }
                     rows={3}
                     placeholder="描述要生成的图片，如：${'{input.message}'}"
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   />
-                  <p className="text-xs text-gray-400 mt-1">可引用上游节点结果，如 ${'{node_1.result}'}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    可引用上游节点结果，如 ${'{node_1.result}'}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">图片尺寸</label>
@@ -935,7 +1089,9 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">视频描述</label>
                   <textarea
                     value={selectedNodeData.config.prompt || ''}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'prompt', e.target.value)
+                    }
                     rows={3}
                     placeholder="描述视频内容，如：${'{input.message}'}"
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
@@ -948,7 +1104,13 @@ export default function WorkflowEditorPage() {
                     min="1"
                     max="10"
                     value={selectedNodeData.config.duration ?? 5}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'duration', parseInt(e.target.value) || 5)}
+                    onChange={(e) =>
+                      updateNodeConfig(
+                        selectedNodeData.id,
+                        'duration',
+                        parseInt(e.target.value) || 5
+                      )
+                    }
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   />
                 </div>
@@ -958,7 +1120,13 @@ export default function WorkflowEditorPage() {
                     <input
                       type="number"
                       value={selectedNodeData.config.width ?? 1152}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'width', parseInt(e.target.value) || 1152)}
+                      onChange={(e) =>
+                        updateNodeConfig(
+                          selectedNodeData.id,
+                          'width',
+                          parseInt(e.target.value) || 1152
+                        )
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     />
                   </div>
@@ -967,7 +1135,13 @@ export default function WorkflowEditorPage() {
                     <input
                       type="number"
                       value={selectedNodeData.config.height ?? 768}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'height', parseInt(e.target.value) || 768)}
+                      onChange={(e) =>
+                        updateNodeConfig(
+                          selectedNodeData.id,
+                          'height',
+                          parseInt(e.target.value) || 768
+                        )
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     />
                   </div>
@@ -992,11 +1166,24 @@ export default function WorkflowEditorPage() {
                     <label className="block text-xs font-medium text-gray-500 mb-1">曲风</label>
                     <select
                       value={selectedNodeData.config.style || 'pop'}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'style', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'style', e.target.value)
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     >
-                      {['pop', 'rock', 'folk', 'electronic', 'country', 'rap', 'jazz', 'classical'].map((s) => (
-                        <option key={s} value={s}>{s}</option>
+                      {[
+                        'pop',
+                        'rock',
+                        'folk',
+                        'electronic',
+                        'country',
+                        'rap',
+                        'jazz',
+                        'classical',
+                      ].map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1004,7 +1191,9 @@ export default function WorkflowEditorPage() {
                     <label className="block text-xs font-medium text-gray-500 mb-1">语言</label>
                     <select
                       value={selectedNodeData.config.language || 'zh'}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'language', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'language', e.target.value)
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     >
                       <option value="zh">中文</option>
@@ -1020,7 +1209,9 @@ export default function WorkflowEditorPage() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   >
                     {['happy', 'sad', 'energetic', 'calm', 'romantic'].map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1047,18 +1238,23 @@ export default function WorkflowEditorPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">PRD 文本</label>
                   <textarea
                     value={selectedNodeData.config.prd_text || ''}
-                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'prd_text', e.target.value)}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'prd_text', e.target.value)
+                    }
                     rows={4}
                     placeholder="需求描述，可引用 ${'{input.message}'}"
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   />
                 </div>
-                {(selectedNodeData.config.stage === 'test' || selectedNodeData.config.stage === 'code') && (
+                {(selectedNodeData.config.stage === 'test' ||
+                  selectedNodeData.config.stage === 'code') && (
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">技术设计</label>
                     <textarea
                       value={selectedNodeData.config.tech_design || ''}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'tech_design', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'tech_design', e.target.value)
+                      }
                       rows={3}
                       placeholder="技术方案描述"
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
@@ -1070,11 +1266,15 @@ export default function WorkflowEditorPage() {
                     <label className="block text-xs font-medium text-gray-500 mb-1">代码语言</label>
                     <select
                       value={selectedNodeData.config.language || 'python'}
-                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'language', e.target.value)}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNodeData.id, 'language', e.target.value)
+                      }
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                     >
                       {['python', 'javascript', 'java', 'go', 'typescript'].map((l) => (
-                        <option key={l} value={l}>{l}</option>
+                        <option key={l} value={l}>
+                          {l}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -1083,7 +1283,9 @@ export default function WorkflowEditorPage() {
             )}
 
             {selectedNodeData.type === 'parallel' && (
-              <p className="text-xs text-gray-400">并行执行节点无需额外配置，所有下游分支将同时触发。</p>
+              <p className="text-xs text-gray-400">
+                并行执行节点无需额外配置，所有下游分支将同时触发。
+              </p>
             )}
 
             {selectedNodeData.type === 'output' && (
@@ -1092,7 +1294,12 @@ export default function WorkflowEditorPage() {
           </div>
 
           <div className="p-4 border-t border-gray-200">
-            <Button variant="danger" icon={Trash2} className="w-full" onClick={() => setDeleteNodeTarget(selectedNodeData.id)}>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              className="w-full"
+              onClick={() => setDeleteNodeTarget(selectedNodeData.id)}
+            >
               删除节点
             </Button>
           </div>
@@ -1125,12 +1332,21 @@ export default function WorkflowEditorPage() {
       {/* 运行输入对话框 */}
       <Modal
         open={showRunDialog}
-        onClose={() => { setShowRunDialog(false); setRunInput('') }}
+        onClose={() => {
+          setShowRunDialog(false)
+          setRunInput('')
+        }}
         title={`执行工作流：${workflow?.name || ''}`}
         size="md"
         footer={
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => { setShowRunDialog(false); setRunInput('') }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowRunDialog(false)
+                setRunInput('')
+              }}
+            >
               取消
             </Button>
             <Button variant="success" icon={Play} loading={running} onClick={runWorkflow}>
@@ -1140,9 +1356,7 @@ export default function WorkflowEditorPage() {
         }
       >
         <div className="space-y-3">
-          <label className="block text-sm font-medium text-gray-700">
-            请输入执行内容或指令
-          </label>
+          <label className="block text-sm font-medium text-gray-700">请输入执行内容或指令</label>
           <textarea
             value={runInput}
             onChange={(e) => setRunInput(e.target.value)}
@@ -1156,9 +1370,7 @@ export default function WorkflowEditorPage() {
               }
             }}
           />
-          <p className="text-xs text-gray-400">
-            提示：按 Ctrl+Enter 快速执行
-          </p>
+          <p className="text-xs text-gray-400">提示：按 Ctrl+Enter 快速执行</p>
         </div>
       </Modal>
 
@@ -1192,23 +1404,32 @@ export default function WorkflowEditorPage() {
             {runResult.run && (
               <div className="p-3 bg-gray-50 rounded-lg text-xs text-gray-600 space-y-1">
                 {runResult.run.id && <div>运行 ID: {runResult.run.id}</div>}
-                {runResult.run.started_at && <div>开始: {formatDateTime(runResult.run.started_at)}</div>}
+                {runResult.run.started_at && (
+                  <div>开始: {formatDateTime(runResult.run.started_at)}</div>
+                )}
               </div>
             )}
             {runResult.nodes?.length > 0 && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-gray-700">节点执行情况</p>
                 {runResult.nodes.map((n, idx) => (
-                  <div key={idx} className={`p-3 rounded-xl border ${n.status === 'error' ? 'border-red-200 bg-red-50/60' : 'border-gray-200 bg-white'}`}>
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-xl border ${n.status === 'error' ? 'border-red-200 bg-red-50/60' : 'border-gray-200 bg-white'}`}
+                  >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-gray-700">{n.label || n.node_id}</span>
+                      <span className="text-xs font-medium text-gray-700">
+                        {n.label || n.node_id}
+                      </span>
                       {n.status === 'error' ? (
                         <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                       ) : (
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                       )}
                     </div>
-                    <p className={`text-xs leading-relaxed ${n.status === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+                    <p
+                      className={`text-xs leading-relaxed ${n.status === 'error' ? 'text-red-600' : 'text-gray-600'}`}
+                    >
                       {n.summary}
                     </p>
                   </div>
@@ -1217,11 +1438,16 @@ export default function WorkflowEditorPage() {
             )}
             {/* 图片生成结果直接预览 */}
             {(() => {
-              const m = typeof runResult.result === 'string'
-                ? runResult.result.match(/\/api\/image-factory\/images\/[\w.-]+/)
-                : null
+              const m =
+                typeof runResult.result === 'string'
+                  ? runResult.result.match(/\/api\/image-factory\/images\/[\w.-]+/)
+                  : null
               return m ? (
-                <img src={m[0]} alt="生成的图片" className="rounded-lg border border-gray-200 w-full" />
+                <img
+                  src={m[0]}
+                  alt="生成的图片"
+                  className="rounded-lg border border-gray-200 w-full"
+                />
               ) : null
             })()}
             <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 max-h-[50vh] overflow-y-auto">

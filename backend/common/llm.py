@@ -149,20 +149,19 @@ def parse_llm_json(raw: str) -> dict:
     # 2. 提取首个 { 到最后一个 } 的 JSON 片段
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
-        candidates.append(text[start:end + 1])
+        candidates.append(text[start : end + 1])
 
     for candidate in candidates:
         for fix in (
-            lambda s: s,                                     # 原样
-            lambda s: re.sub(r",(\s*[}\]])", r"\1", s),   # 尾逗号
+            lambda s: s,  # 原样
+            lambda s: re.sub(r",(\s*[}\]])", r"\1", s),  # 尾逗号
             lambda s: re.sub(r"'([^']*)'\s*:", r'"\1":', s),  # 单引号 key
-            lambda s: re.sub(r"'([^']*)'", r'"\1"', s),   # 单引号字符串
+            lambda s: re.sub(r"'([^']*)'", r'"\1"', s),  # 单引号字符串
         ):
             try:
                 return json.loads(fix(candidate))
             except Exception:
                 continue
-
 
     snippet = text[:120].replace("\n", " ")
     raise ValueError(f"LLM 返回无法解析为 JSON（内容开头：{snippet}…）")

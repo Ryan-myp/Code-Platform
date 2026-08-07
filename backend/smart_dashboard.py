@@ -87,6 +87,7 @@ def _ensure_tables(conn) -> None:
 
 # ── 模型 ──────────────────────────────────────────────────
 
+
 class NLQueryRequest(BaseModel):
     query: str = Field(..., min_length=2, max_length=500, description="自然语言数据查询")
     csv_data: str = Field("", description="可选：CSV数据源（行文本）")
@@ -102,6 +103,7 @@ class SaveDashboardRequest(BaseModel):
 
 
 # ── API ──────────────────────────────────────────────────
+
 
 @router.post("/nl-query")
 async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
@@ -135,11 +137,11 @@ async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         result = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(500, "LLM返回格式异常，无法解析为JSON")
+    except json.JSONDecodeError as e:
+        raise HTTPException(500, "LLM返回格式异常，无法解析为JSON") from e
     except Exception as e:
         logger.exception("nl-query failed")
-        raise HTTPException(500, f"查询失败：{e}")
+        raise HTTPException(500, f"查询失败：{e}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("dashboard_nl_query", len(req.query), len(raw), elapsed)
@@ -154,9 +156,7 @@ async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
 async def list_dashboards(current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
-    rows = conn.execute(
-        "SELECT * FROM dashboard_dashboards ORDER BY updated_at DESC LIMIT 100"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM dashboard_dashboards ORDER BY updated_at DESC LIMIT 100").fetchall()
     conn.close()
     result = []
     for r in rows:
@@ -180,10 +180,17 @@ async def save_dashboard(req: SaveDashboardRequest, current_user: dict = require
         """INSERT INTO dashboard_dashboards
            (id, user_id, title, description, cards, csv_data, csv_filename, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        (dash_id, user, req.title, req.description,
-         json.dumps(req.cards, ensure_ascii=False),
-         req.csv_data[:50000] if req.csv_data else "",
-         req.csv_filename, now, now),
+        (
+            dash_id,
+            user,
+            req.title,
+            req.description,
+            json.dumps(req.cards, ensure_ascii=False),
+            req.csv_data[:50000] if req.csv_data else "",
+            req.csv_filename,
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -202,8 +209,8 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
     except UnicodeDecodeError:
         try:
             text = content.decode("gbk")
-        except Exception:
-            raise HTTPException(400, "无法解析文件编码，请使用UTF-8或GBK编码")
+        except Exception as e:
+            raise HTTPException(400, "无法解析文件编码，请使用UTF-8或GBK编码") from e
 
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
@@ -211,10 +218,7 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
 
     rows = list(reader)
     sample = rows[:10]
-    columns = [
-        {"name": f, "type": _guess_type([r.get(f, "") for r in sample])}
-        for f in reader.fieldnames
-    ]
+    columns = [{"name": f, "type": _guess_type([r.get(f, "") for r in sample])} for f in reader.fieldnames]
 
     return {
         "filename": file.filename,

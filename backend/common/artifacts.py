@@ -41,10 +41,18 @@ def save_artifact(
             """INSERT INTO artifacts
                (id, project_id, requirement_id, type, content, version, author, created_at, active, media_url, duration, metadata)
                VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?)""",
-            (art_id, project_id or "", requirement_id or "", art_type,
-             json.dumps(content if content is not None else {}, ensure_ascii=False),
-             author or "system", datetime.now().isoformat(), media_url or "",
-             float(duration or 0), json.dumps(metadata or {}, ensure_ascii=False)),
+            (
+                art_id,
+                project_id or "",
+                requirement_id or "",
+                art_type,
+                json.dumps(content if content is not None else {}, ensure_ascii=False),
+                author or "system",
+                datetime.now().isoformat(),
+                media_url or "",
+                float(duration or 0),
+                json.dumps(metadata or {}, ensure_ascii=False),
+            ),
         )
         conn.commit()
         conn.close()
@@ -55,8 +63,7 @@ def save_artifact(
 
 def _next_version_no(conn, project_type: str, project_id: str) -> int:
     row = conn.execute(
-        "SELECT COALESCE(MAX(version_no), 0) AS n FROM project_versions "
-        "WHERE project_type=? AND project_id=?",
+        "SELECT COALESCE(MAX(version_no), 0) AS n FROM project_versions WHERE project_type=? AND project_id=?",
         (project_type, project_id),
     ).fetchone()
     return (row["n"] if row else 0) + 1
@@ -81,8 +88,15 @@ def save_version_snapshot(
         conn.execute(
             """INSERT INTO project_versions (project_type, project_id, version_no, files, requirement, note, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (project_type, project_id, no, json.dumps(files, ensure_ascii=False),
-             requirement or "", note or "", datetime.now().isoformat()),
+            (
+                project_type,
+                project_id,
+                no,
+                json.dumps(files, ensure_ascii=False),
+                requirement or "",
+                note or "",
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
         conn.close()

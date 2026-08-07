@@ -53,9 +53,7 @@ def _usage_stats() -> dict:
         for r in conn.execute("SELECT template, COUNT(*) n FROM miniapp_projects GROUP BY template").fetchall():
             stats["miniapp"][r["template"]] = r["n"]
         # 表情包：artifacts.metadata.style（author=meme_factory）
-        for r in conn.execute(
-            "SELECT metadata FROM artifacts WHERE author='meme_factory' AND active=1"
-        ).fetchall():
+        for r in conn.execute("SELECT metadata FROM artifacts WHERE author='meme_factory' AND active=1").fetchall():
             try:
                 md = json.loads(r["metadata"] or "{}")
                 s = md.get("style", "")
@@ -64,9 +62,7 @@ def _usage_stats() -> dict:
             except Exception:
                 pass
         # 配音：artifacts.metadata.scene（author=voice_factory）
-        for r in conn.execute(
-            "SELECT metadata FROM artifacts WHERE author='voice_factory' AND active=1"
-        ).fetchall():
+        for r in conn.execute("SELECT metadata FROM artifacts WHERE author='voice_factory' AND active=1").fetchall():
             try:
                 md = json.loads(r["metadata"] or "{}")
                 s = md.get("scene", "")
@@ -151,16 +147,34 @@ async def template_market(q: str = "", current_user: dict = require_auth()):
     all_items = games + miniapps + memes + voices
     if q_lower:
         all_items = [
-            i for i in all_items
-            if q_lower in i["name"].lower() or q_lower in i["description"].lower()
+            i
+            for i in all_items
+            if q_lower in i["name"].lower()
+            or q_lower in i["description"].lower()
             or any(q_lower in t.lower() for t in i["tags"])
         ]
 
     grouped = {
-        "game": {"label": "小游戏玩法", "count": sum(1 for i in all_items if i["category"] == "game"), "items": [i for i in all_items if i["category"] == "game"]},
-        "miniapp": {"label": "小程序结构", "count": sum(1 for i in all_items if i["category"] == "miniapp"), "items": [i for i in all_items if i["category"] == "miniapp"]},
-        "meme": {"label": "表情包样式", "count": sum(1 for i in all_items if i["category"] == "meme"), "items": [i for i in all_items if i["category"] == "meme"]},
-        "voice": {"label": "配音场景", "count": sum(1 for i in all_items if i["category"] == "voice"), "items": [i for i in all_items if i["category"] == "voice"]},
+        "game": {
+            "label": "小游戏玩法",
+            "count": sum(1 for i in all_items if i["category"] == "game"),
+            "items": [i for i in all_items if i["category"] == "game"],
+        },
+        "miniapp": {
+            "label": "小程序结构",
+            "count": sum(1 for i in all_items if i["category"] == "miniapp"),
+            "items": [i for i in all_items if i["category"] == "miniapp"],
+        },
+        "meme": {
+            "label": "表情包样式",
+            "count": sum(1 for i in all_items if i["category"] == "meme"),
+            "items": [i for i in all_items if i["category"] == "meme"],
+        },
+        "voice": {
+            "label": "配音场景",
+            "count": sum(1 for i in all_items if i["category"] == "voice"),
+            "items": [i for i in all_items if i["category"] == "voice"],
+        },
     }
     return {
         "total": len(all_items),
@@ -222,8 +236,7 @@ async def upload_template(req: TemplateUploadRequest, current_user: dict = requi
         """INSERT INTO user_templates (id, user_id, name, description, category,
            price, content_json, sales, active, created_at)
            VALUES (?,?,?,?,?,?,?,0,1,?)""",
-        (tid, user, req.name, req.description, req.category,
-         req.price, req.content_json, datetime.now().isoformat()),
+        (tid, user, req.name, req.description, req.category, req.price, req.content_json, datetime.now().isoformat()),
     )
     conn.commit()
     conn.close()
@@ -269,9 +282,7 @@ async def buy_template(template_id: str, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_user_templates(conn)
 
-    tpl = conn.execute(
-        "SELECT * FROM user_templates WHERE id=? AND active=1", (template_id,)
-    ).fetchone()
+    tpl = conn.execute("SELECT * FROM user_templates WHERE id=? AND active=1", (template_id,)).fetchone()
     if not tpl:
         conn.close()
         raise HTTPException(404, "模板不存在或已下架")
@@ -292,9 +303,7 @@ async def buy_template(template_id: str, current_user: dict = require_auth()):
     price = tpl["price"]
     if price > 0:
         # 扣减积分：从 user_quotas 表扣减 credits
-        quota = conn.execute(
-            "SELECT credits FROM user_quotas WHERE username=?", (user,)
-        ).fetchone()
+        quota = conn.execute("SELECT credits FROM user_quotas WHERE username=?", (user,)).fetchone()
         balance = int(quota["credits"]) if quota else 0
         if balance < price:
             conn.close()

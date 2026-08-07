@@ -17,6 +17,7 @@ import re
 import time
 import uuid
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,7 +27,6 @@ from pydantic import BaseModel, Field
 from common.auth import require_auth
 from common.llm import call_llm_async, log_usage
 from task_queue import create_task, register_handler
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ def _extract_json(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end <= start:
         raise ValueError("LLM 输出中未找到 JSON 对象")
-    raw = text[start:end + 1]
+    raw = text[start : end + 1]
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
@@ -210,8 +210,8 @@ def _repair_truncated_json(raw: str, err_pos: int) -> dict | None:
     if err_pos <= 0 or err_pos > len(raw):
         return None
     for back in range(min(err_pos, 400)):
-        seg = raw[:err_pos - back].rstrip()
-        for closer in ('"', '"}', '"]', '"}}', '"]}', '}', ']}', '}"'):
+        seg = raw[: err_pos - back].rstrip()
+        for closer in ('"', '"}', '"]', '"}}', '"]}', "}", "]}", '}"'):
             try:
                 return json.loads(seg + closer)
             except (json.JSONDecodeError, ValueError):
@@ -270,13 +270,19 @@ def _validate_files(files: dict) -> dict:
         if "game.json" not in wx:
             wx["game.json"] = json.dumps(
                 {"deviceOrientation": "portrait", "showStatusBar": False},
-                ensure_ascii=False, indent=2,
+                ensure_ascii=False,
+                indent=2,
             )
         if "project.config.json" not in wx:
             wx["project.config.json"] = json.dumps(
-                {"appid": "touristappid", "compileType": "game",
-                 "setting": {"urlCheck": False}, "projectname": "wxgame"},
-                ensure_ascii=False, indent=2,
+                {
+                    "appid": "touristappid",
+                    "compileType": "game",
+                    "setting": {"urlCheck": False},
+                    "projectname": "wxgame",
+                },
+                ensure_ascii=False,
+                indent=2,
             )
         if "game.js" not in wx:
             raise ValueError("wx 版缺少 game.js 入口文件")
@@ -308,6 +314,7 @@ def _node_check_js(js: str) -> tuple[bool, str]:
 
 # 商用要素门禁：生成的游戏必须包含以下能力（双版本任一命中即可）
 _FEATURE_SPECS = [
+    ("Canvas 渲染", ["getContext", "createCanvas"]),
     ("开始界面", ["开始游戏", "startGame"]),
     ("暂停功能", ["暂停", "pause"]),
     ("结束界面", ["再来一局", "gameOver", "restart"]),
@@ -317,15 +324,43 @@ _FEATURE_SPECS = [
 ]
 
 
+def _check_html_pairs(html: str) -> str | None:
+    """HTML 结构门禁：script/style 开闭标签计数配对 + canvas/内联脚本入口存在，错误返回问题描述。"""
+    if not html:
+        return "缺少 index.html"
+    for tag in ("script", "style"):
+        opens = len(re.findall(rf"<{tag}[^>]*>", html))
+        closes = len(re.findall(rf"</{tag}>", html))
+        if opens != closes:
+            return f"<{tag}> 标签不配对（开 {opens} / 闭 {closes}）"
+    if "<canvas" not in html:
+        return "缺少 <canvas> 画布元素"
+    if "<script" not in html:
+        return "缺少 <script> 脚本入口"
+    return None
+
+
 def _qc_check(files: dict) -> dict:
-    """生成产物质量门禁（QC）：JS 语法 + 商用要素覆盖，失败时返回问题清单供自动修复。"""
+    """生成产物质量门禁（QC）：文件完整性 + HTML 结构 + JS 语法 + 商用要素，失败时返回问题清单供自动修复。"""
     checks = []
-    html = files.get("web", {}).get("index.html") or ""
+    web = files.get("web") or {}
+    html = web.get("index.html") or ""
+    wx = files.get("wx") or {}
+    # 1) 文件完整性：web 版必须有 index.html；若产出 wx 版则三件套齐全
+    checks.append({"item": "web index.html 存在", "ok": bool(html), "detail": "已生成" if html else "缺失"})
+    if wx:
+        for name in ("game.js", "game.json", "project.config.json"):
+            ok = bool(wx.get(name))
+            checks.append({"item": f"wx {name} 存在", "ok": ok, "detail": "已生成" if ok else "缺失"})
+    # 2) HTML 结构：script/style 配对 + canvas/入口存在
+    if html:
+        err = _check_html_pairs(html)
+        checks.append({"item": "HTML 结构完整", "ok": err is None, "detail": err or "结构正常"})
     js_blocks = re.findall(r"<script[^>]*>([\s\S]*?)</script>", html)
     if js_blocks:
         ok, msg = _node_check_js("\n".join(js_blocks))
         checks.append({"item": "web JS 语法", "ok": ok, "detail": msg})
-    wx_js = files.get("wx", {}).get("game.js") or ""
+    wx_js = wx.get("game.js") or ""
     if wx_js:
         ok, msg = _node_check_js(wx_js)
         checks.append({"item": "wx game.js 语法", "ok": ok, "detail": msg})
@@ -361,7 +396,7 @@ async def list_projects(current_user: dict = require_auth()):
     return result
 
 
-async def _game_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _game_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 生成双版本小游戏（同步/异步任务共用执行体，异步时回报进度）。"""
     req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
@@ -376,9 +411,9 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
                 pass
 
     user_prompt = f"""游戏名称：{req.name}
-选择模板：{tpl['name'] if tpl else '自定义'}
+选择模板：{tpl["name"] if tpl else "自定义"}
 模板玩法：
-{tpl['play'] if tpl else '根据用户需求自行设计玩法。'}
+{tpl["play"] if tpl else "根据用户需求自行设计玩法。"}
 
 用户需求：
 {req.requirement}
@@ -424,11 +459,18 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
                 f"问题清单：{last_err}\n"
                 "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
             )
-            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=16000, temperature=0.3, timeout=300)
+            result = await call_llm_async(
+                _GENERATE_SYSTEM, retry_prompt, max_tokens=16000, temperature=0.3, timeout=300
+            )
         except (ValueError, json.JSONDecodeError) as e:
             last_err = str(e)
-            logger.warning("game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
-                           attempt + 1, e, len(result or ""), (result or "")[:200])
+            logger.warning(
+                "game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
+                attempt + 1,
+                e,
+                len(result or ""),
+                (result or "")[:200],
+            )
             # 输出截断/超长：自动降级为精简版重试（优先保证 web 单文件可玩）
             retry_prompt = user_prompt + (
                 "\n\n重要：上次输出未通过解析，错误为：" + str(e) + "。\n"
@@ -437,7 +479,9 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
                 "2. 所有字符串正确转义（引号/换行），内容不要截断\n"
                 "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
             )
-            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=10000, temperature=0.3, timeout=300)
+            result = await call_llm_async(
+                _GENERATE_SYSTEM, retry_prompt, max_tokens=10000, temperature=0.3, timeout=300
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -454,8 +498,16 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
     conn.execute(
         """INSERT INTO game_projects (id, name, template, requirement, files, qc, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?)""",
-        (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False), now, now),
+        (
+            proj_id,
+            req.name,
+            req.template,
+            req.requirement,
+            json.dumps(files, ensure_ascii=False),
+            json.dumps(qc, ensure_ascii=False),
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -491,8 +543,10 @@ async def generate_game(
         return await _game_generate_worker(req.model_dump())
     task = create_task("game_generate", req.model_dump(), username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "游戏生成任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "游戏生成任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -530,8 +584,8 @@ async def save_cover(proj_id: str, req: CoverRequest, current_user: dict = requi
     try:
         _, b64 = data.split(",", 1)
         raw = base64.b64decode(b64)
-    except Exception:
-        raise HTTPException(400, "cover base64 解码失败")
+    except Exception as e:
+        raise HTTPException(400, "cover base64 解码失败") from e
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(400, "封面图片过大（≤5MB）")
     conn = get_db()
@@ -546,8 +600,9 @@ async def save_cover(proj_id: str, req: CoverRequest, current_user: dict = requi
     with open(os.path.join(COVER_DIR, fname), "wb") as f:
         f.write(raw)
     cover_url = f"/api/games/{proj_id}/cover-image"
-    conn.execute("UPDATE game_projects SET cover=?, updated_at=? WHERE id=?",
-                 (cover_url, datetime.now().isoformat(), proj_id))
+    conn.execute(
+        "UPDATE game_projects SET cover=?, updated_at=? WHERE id=?", (cover_url, datetime.now().isoformat(), proj_id)
+    )
     conn.commit()
     conn.close()
     return {"success": True, "cover": cover_url}
@@ -651,7 +706,7 @@ _EVOLVE_SYSTEM = """你是一位资深游戏开发工程师，正在对一个已
 7. 所有状态变量声明时必须初始化，事件回调触发的绘制/更新函数开头必须先判空，严禁运行时错误"""
 
 
-async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 二次迭代（同步/异步任务共用执行体）。"""
     proj_id = payload.get("proj_id", "")
     req = EvolveRequest(**payload.get("params", payload))
@@ -675,7 +730,7 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
     # 注入现有代码（截断保护 token 上限）
     web_html = (files.get("web", {}).get("index.html") or "")[:24000]
     wx_js = (files.get("wx", {}).get("game.js") or "")[:20000]
-    user_prompt = f"""游戏名称：{row['name']}
+    user_prompt = f"""游戏名称：{row["name"]}
 
 现有网页版代码（web/index.html，共 {len(web_html)} 字符）：
 ```
@@ -724,16 +779,22 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
         log = json.loads(row["iteration_log"] or "[]")
     except Exception:
         log = []
-    log.append({
-        "requirement": req.requirement,
-        "created_at": datetime.now().isoformat(),
-        "chars": len(result),
-    })
+    log.append(
+        {
+            "requirement": req.requirement,
+            "created_at": datetime.now().isoformat(),
+            "chars": len(result),
+        }
+    )
     conn.execute(
         """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, updated_at=?
            WHERE id=?""",
-        (json.dumps(new_files, ensure_ascii=False), json.dumps(log[-20:], ensure_ascii=False),
-         datetime.now().isoformat(), proj_id),
+        (
+            json.dumps(new_files, ensure_ascii=False),
+            json.dumps(log[-20:], ensure_ascii=False),
+            datetime.now().isoformat(),
+            proj_id,
+        ),
     )
     conn.commit()
     conn.close()
@@ -775,8 +836,10 @@ async def evolve_game(
         return await _game_evolve_worker(payload)
     task = create_task("game_evolve", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "迭代任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "迭代任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 
@@ -840,11 +903,7 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/zip",
-        headers={
-            "Content-Disposition": (
-                f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-            )
-        },
+        headers={"Content-Disposition": (f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}")},
     )
 
 
@@ -857,6 +916,7 @@ def get_db():
 # ══════════════════════════════════════════════════════════════
 # 通用异步任务框架接入：生成/迭代为后台任务（默认异步，页面可关闭）
 # ══════════════════════════════════════════════════════════════
+
 
 async def _game_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务处理器：生成双版本小游戏（async 由框架 asyncio.run 执行）。"""

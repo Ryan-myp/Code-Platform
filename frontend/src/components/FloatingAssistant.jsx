@@ -15,7 +15,8 @@ const QUICK_QUESTIONS = [
   '部署失败怎么办？',
 ]
 
-const WELCOME = '你好呀，我是**小团** 🤖 你的平台智能助手！\n\n我可以帮你解答平台使用问题：额度计算、功能入口、内容发布、小程序开发、Agent / 工作流 / 知识库怎么用……\n\n直接输入问题，或点下方快捷问题试试吧～'
+const WELCOME =
+  '你好呀，我是**小团** 🤖 你的平台智能助手！\n\n我可以帮你解答平台使用问题：额度计算、功能入口、内容发布、小程序开发、Agent / 工作流 / 知识库怎么用……\n\n直接输入问题，或点下方快捷问题试试吧～'
 
 export default function FloatingAssistant() {
   const toast = useToast()
@@ -71,7 +72,10 @@ export default function FloatingAssistant() {
     } catch (e) {
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: `😅 小团暂时走神了：${e.response?.data?.detail || e.message}` },
+        {
+          role: 'assistant',
+          content: `😅 小团暂时走神了：${e.response?.data?.detail || e.message}`,
+        },
       ])
       toast.error('助手请求失败')
     } finally {
@@ -100,7 +104,10 @@ export default function FloatingAssistant() {
         title={open ? '收起助手' : '打开智能助手'}
       >
         {/* 呼吸光环 */}
-        <span className="absolute inset-0 rounded-full bg-purple-500/40 animate-ping group-hover:animate-none" style={{ animationDuration: '2.4s' }} />
+        <span
+          className="absolute inset-0 rounded-full bg-purple-500/40 animate-ping group-hover:animate-none"
+          style={{ animationDuration: '2.4s' }}
+        />
         <span className="relative flex items-center justify-center">
           {open ? <X className="w-6 h-6" /> : <Bot className="w-7 h-7" />}
         </span>
@@ -162,7 +169,10 @@ export default function FloatingAssistant() {
             )}
 
             {messages.map((m, idx) => (
-              <div key={idx} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                key={idx}
+                className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 {m.role === 'user' ? (
                   <div className="max-w-[85%] bg-gradient-to-br from-purple-500 to-indigo-600 text-white rounded-2xl rounded-br-md px-3.5 py-2.5 text-sm whitespace-pre-wrap shadow-sm">
                     {m.content}
@@ -178,9 +188,18 @@ export default function FloatingAssistant() {
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-md px-4 py-3 shadow-sm flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '0ms' }}
+                  />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '150ms' }}
+                  />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '300ms' }}
+                  />
                 </div>
               </div>
             )}
@@ -209,7 +228,11 @@ export default function FloatingAssistant() {
               className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center hover:opacity-90 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
               title="发送 (Enter)"
             >
-              {loading ? <Sparkles className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {loading ? (
+                <Sparkles className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
             </button>
           </div>
         </div>

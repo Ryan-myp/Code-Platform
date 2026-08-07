@@ -9,7 +9,8 @@ export default function useTheme() {
   const [theme, setTheme] = useState(() => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('theme') : null
     if (saved === 'dark' || saved === 'light') return saved
-    return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches
+    return typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-color-scheme: dark)').matches
       ? 'dark'
       : 'light'
   })

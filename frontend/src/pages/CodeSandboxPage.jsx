@@ -5,7 +5,9 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
 const TEMPLATES = [
-  { label: '数据分析', code: `import pandas as pd
+  {
+    label: '数据分析',
+    code: `import pandas as pd
 import numpy as np
 
 # 生成示例数据
@@ -23,8 +25,11 @@ print("=== 销售数据分析 ===")
 print(data.to_string(index=False))
 print(f"\\n总销售额: {data['销售额'].sum()} 万元")
 print(f"总利润: {data['利润'].sum()} 万元")
-print(f"平均利润率: {data['利润率'].mean()}%")` },
-  { label: '算法演示', code: `# 快速排序算法
+print(f"平均利润率: {data['利润率'].mean()}%")`,
+  },
+  {
+    label: '算法演示',
+    code: `# 快速排序算法
 def quicksort(arr):
     if len(arr) <= 1:
         return arr
@@ -38,8 +43,11 @@ def quicksort(arr):
 test_data = [64, 34, 25, 12, 22, 11, 90, 5, 77, 42]
 print(f"原始数组: {test_data}")
 print(f"排序结果: {quicksort(test_data)}")
-print(f"时间复杂度: O(n log n)")` },
-  { label: '可视化', code: `import matplotlib
+print(f"时间复杂度: O(n log n)")`,
+  },
+  {
+    label: '可视化',
+    code: `import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io, base64
@@ -64,7 +72,8 @@ plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
 buf.seek(0)
 img_base64 = base64.b64encode(buf.read()).decode()
 print(f"[IMAGE]{img_base64}[/IMAGE]")
-plt.close()` },
+plt.close()`,
+  },
 ]
 
 export default function CodeSandboxPage() {
@@ -77,12 +86,16 @@ export default function CodeSandboxPage() {
 
   const runCode = async () => {
     if (!code.trim()) return
-    setRunning(true); setOutput('')
+    setRunning(true)
+    setOutput('')
     try {
       const res = await api.post('/api/sandbox/execute', { code: code.trim(), language: 'python' })
       const result = res.data.output || res.data.error || '(无输出)'
       setOutput(result)
-      setHistory((prev) => [{ code: code.trim(), output: result, time: new Date().toISOString() }, ...prev.slice(0, 19)])
+      setHistory((prev) => [
+        { code: code.trim(), output: result, time: new Date().toISOString() },
+        ...prev.slice(0, 19),
+      ])
     } catch (e) {
       setOutput(`执行失败：${e.message}`)
     }
@@ -100,9 +113,17 @@ export default function CodeSandboxPage() {
       const after = text.slice(text.indexOf('[/IMAGE]') + 9)
       return (
         <div>
-          {before && <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{before}</pre>}
-          <img src={`data:image/png;base64,${imgMatch[1]}`} alt="chart" className="max-w-full rounded-lg my-2" />
-          {after && <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{after}</pre>}
+          {before && (
+            <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{before}</pre>
+          )}
+          <img
+            src={`data:image/png;base64,${imgMatch[1]}`}
+            alt="chart"
+            className="max-w-full rounded-lg my-2"
+          />
+          {after && (
+            <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{after}</pre>
+          )}
         </div>
       )
     }
@@ -127,8 +148,11 @@ export default function CodeSandboxPage() {
             </h3>
             <div className="space-y-2">
               {TEMPLATES.map((t, i) => (
-                <button key={i} onClick={() => setCode(t.code)}
-                  className="w-full text-left px-3 py-2 rounded-lg bg-gray-50 hover:bg-amber-50 text-sm text-gray-700 hover:text-amber-700 transition-colors">
+                <button
+                  key={i}
+                  onClick={() => setCode(t.code)}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-gray-50 hover:bg-amber-50 text-sm text-gray-700 hover:text-amber-700 transition-colors"
+                >
                   <Code className="w-3 h-3 inline mr-1.5 text-gray-400" />
                   {t.label}
                 </button>
@@ -145,9 +169,17 @@ export default function CodeSandboxPage() {
             ) : (
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {history.map((h, i) => (
-                  <button key={i} onClick={() => { setCode(h.code); setOutput(h.output) }}
-                    className="w-full text-left p-2 rounded-lg hover:bg-gray-50 text-xs">
-                    <div className="font-medium text-gray-700 truncate font-mono">{h.code.slice(0, 60)}...</div>
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setCode(h.code)
+                      setOutput(h.output)
+                    }}
+                    className="w-full text-left p-2 rounded-lg hover:bg-gray-50 text-xs"
+                  >
+                    <div className="font-medium text-gray-700 truncate font-mono">
+                      {h.code.slice(0, 60)}...
+                    </div>
                     <div className="text-gray-400">{new Date(h.time).toLocaleTimeString()}</div>
                   </button>
                 ))}
@@ -164,12 +196,24 @@ export default function CodeSandboxPage() {
                 <Code className="w-4 h-4 text-gray-700" /> Python 代码
               </h3>
               <div className="flex items-center gap-2">
-                <Button variant="secondary" size="sm" icon={Copy}
-                  onClick={() => { navigator.clipboard.writeText(code); toast.success('已复制') }}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Copy}
+                  onClick={() => {
+                    navigator.clipboard.writeText(code)
+                    toast.success('已复制')
+                  }}
+                >
                   复制
                 </Button>
-                <Button variant="primary" size="sm" icon={running ? Loader2 : Play}
-                  loading={running} onClick={runCode}>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={running ? Loader2 : Play}
+                  loading={running}
+                  onClick={runCode}
+                >
                   {running ? '运行中' : '运行'}
                 </Button>
               </div>
@@ -190,13 +234,22 @@ export default function CodeSandboxPage() {
                 <Terminal className="w-4 h-4 text-gray-700" /> 输出
               </h3>
               {output && (
-                <Button variant="ghost" size="sm" icon={Trash2} onClick={clearOutput}>清空</Button>
+                <Button variant="ghost" size="sm" icon={Trash2} onClick={clearOutput}>
+                  清空
+                </Button>
               )}
             </div>
             {!output ? (
-              <Empty icon={Terminal} title="等待运行" description="编写代码后点击「运行」查看结果" />
+              <Empty
+                icon={Terminal}
+                title="等待运行"
+                description="编写代码后点击「运行」查看结果"
+              />
             ) : (
-              <div ref={outputRef} className="p-4 bg-gray-900 rounded-xl min-h-[100px] max-h-[400px] overflow-y-auto">
+              <div
+                ref={outputRef}
+                className="p-4 bg-gray-900 rounded-xl min-h-[100px] max-h-[400px] overflow-y-auto"
+              >
                 {renderOutput(output)}
               </div>
             )}

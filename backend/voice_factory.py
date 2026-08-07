@@ -18,8 +18,8 @@ import subprocess
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 import requests
 from fastapi import APIRouter, Form, HTTPException, Query
@@ -50,21 +50,57 @@ VOICES = [
     {"id": "zh-CN-YunyangNeural", "name": "云扬", "gender": "男", "style": "字正腔圆，新闻播报感", "emoji": "🎙️"},
     {"id": "zh-CN-XiaomoNeural", "name": "晓墨", "gender": "童", "style": "童声可爱，适合儿童/亲子内容", "emoji": "🧒"},
     {"id": "en-US-AriaNeural", "name": "Aria", "gender": "女", "style": "英文女声，自然流利", "emoji": "🇺🇸"},
-    {"id": "en-US-ChristopherNeural", "name": "Christopher", "gender": "男", "style": "英文男声，沉稳有力", "emoji": "🇬🇧"},
+    {
+        "id": "en-US-ChristopherNeural",
+        "name": "Christopher",
+        "gender": "男",
+        "style": "英文男声，沉稳有力",
+        "emoji": "🇬🇧",
+    },
 ]
 
 # 场景预设：一键套用「音色 + 语速」
 SCENES = [
-    {"id": "shortvideo", "name": "短视频旁白", "desc": "节奏明快，适合口播/知识解说", "voice": "zh-CN-XiaoxiaoNeural", "speed": 1.05},
-    {"id": "ad", "name": "广告口播", "desc": "有感染力，适合产品宣传/带货", "voice": "zh-CN-YunjianNeural", "speed": 1.0},
-    {"id": "audiobook", "name": "有声书", "desc": "娓娓道来，适合故事/小说朗读", "voice": "zh-CN-XiaoxiaoNeural", "speed": 0.95},
-    {"id": "news", "name": "新闻播报", "desc": "字正腔圆，适合资讯/播报类", "voice": "zh-CN-YunyangNeural", "speed": 1.0},
-    {"id": "story", "name": "儿童故事", "desc": "活泼童趣，适合亲子/教育内容", "voice": "zh-CN-XiaomoNeural", "speed": 0.95},
+    {
+        "id": "shortvideo",
+        "name": "短视频旁白",
+        "desc": "节奏明快，适合口播/知识解说",
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "speed": 1.05,
+    },
+    {
+        "id": "ad",
+        "name": "广告口播",
+        "desc": "有感染力，适合产品宣传/带货",
+        "voice": "zh-CN-YunjianNeural",
+        "speed": 1.0,
+    },
+    {
+        "id": "audiobook",
+        "name": "有声书",
+        "desc": "娓娓道来，适合故事/小说朗读",
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "speed": 0.95,
+    },
+    {
+        "id": "news",
+        "name": "新闻播报",
+        "desc": "字正腔圆，适合资讯/播报类",
+        "voice": "zh-CN-YunyangNeural",
+        "speed": 1.0,
+    },
+    {
+        "id": "story",
+        "name": "儿童故事",
+        "desc": "活泼童趣，适合亲子/教育内容",
+        "voice": "zh-CN-XiaomoNeural",
+        "speed": 0.95,
+    },
     {"id": "custom", "name": "自定义", "desc": "自由选择音色与语速", "voice": "zh-CN-XiaoxiaoNeural", "speed": 1.0},
 ]
 
-MAX_SEGMENT_CHARS = 400   # 单段最大字符数（edge-tts 长文本会内部限速，分段更稳）
-MAX_TEXT_CHARS = 10000   # 总文本上限
+MAX_SEGMENT_CHARS = 400  # 单段最大字符数（edge-tts 长文本会内部限速，分段更稳）
+MAX_TEXT_CHARS = 10000  # 总文本上限
 
 
 def _split_text(text: str) -> list[str]:
@@ -107,6 +143,7 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
     中转站也不可用时再回试 edge-tts（免费通道网络抖动可能已自愈）。
     pitch 为音调百分比（-20~+20）。
     """
+
     def _edge_with_retry(rounds: int = 2) -> bytes:
         """带 1s 间隔的 edge-tts 重试；全部失败抛最后一个异常。"""
         last = None
@@ -182,7 +219,8 @@ def _merge_mp3(seg_files: list[str], out_path: str) -> None:
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
-            capture_output=True, timeout=120,
+            capture_output=True,
+            timeout=120,
         )
     finally:
         os.unlink(list_file)
@@ -210,6 +248,7 @@ def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
 
 def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
     """生成标准 SRT 字幕：按分段文本与真实时长累计时间戳（商用配音包必备）。"""
+
     def ts(sec: float) -> str:
         sec = max(0.0, sec)
         h, rem = int(sec // 3600), sec % 3600
@@ -217,7 +256,7 @@ def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
         return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
 
     lines, cursor = [], 0.0
-    for i, (seg_text, dur) in enumerate(zip(segs, durations), 1):
+    for i, (seg_text, dur) in enumerate(zip(segs, durations, strict=False), 1):
         start, cursor = cursor, cursor + max(dur, 0.5)
         lines.append(f"{i}\n{ts(start)} --> {ts(cursor)}\n{seg_text.strip()}\n")
     with open(out_path, "w", encoding="utf-8") as f:
@@ -228,9 +267,10 @@ def _audio_duration(path: str) -> float:
     """ffprobe 读取音频真实时长（秒）。"""
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=30,
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         return round(float(out.stdout.strip()), 1)
     except Exception:
@@ -240,8 +280,12 @@ def _audio_duration(path: str) -> float:
 def _save_artifact(filename: str, text: str, extra: dict) -> str:
     """登记 artifacts 表（type=audio，委托 common.artifacts.save_artifact），失败静默。"""
     return save_artifact(
-        art_type="audio", author="voice_factory",
-        media_url=f"/api/voice/audios/{filename}", content=text[:500], metadata=extra, duration=0.0,
+        art_type="audio",
+        author="voice_factory",
+        media_url=f"/api/voice/audios/{filename}",
+        content=text[:500],
+        metadata=extra,
+        duration=0.0,
     )
 
 
@@ -281,7 +325,7 @@ def _artifact_meta() -> dict:
     return meta
 
 
-async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
@@ -299,7 +343,6 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     speed = float(payload.get("speed") or 1.0)
     pitch = int(payload.get("pitch") or 0)
     format = payload.get("format") or "mp3"
-    project_id = payload.get("project_id") or ""
     if not text:
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
@@ -355,9 +398,19 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    art_id = _save_artifact(filename, text,
-                            {"voice": tts_voice, "scene": scene, "speed": tts_speed, "pitch": pitch,
-                             "format": format, "has_srt": has_srt, "segments": len(segments)})
+    art_id = _save_artifact(
+        filename,
+        text,
+        {
+            "voice": tts_voice,
+            "scene": scene,
+            "speed": tts_speed,
+            "pitch": pitch,
+            "format": format,
+            "has_srt": has_srt,
+            "segments": len(segments),
+        },
+    )
     elapsed = round(time.time() - start, 2)
     from common.llm import log_usage
 
@@ -404,14 +457,23 @@ async def generate_voice(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"text": text, "scene": scene, "voice": voice, "speed": speed,
-               "pitch": pitch, "format": format, "project_id": project_id}
+    payload = {
+        "text": text,
+        "scene": scene,
+        "voice": voice,
+        "speed": speed,
+        "pitch": pitch,
+        "format": format,
+        "project_id": project_id,
+    }
     if sync:
         return await _voice_generate_worker(payload)
     task = create_task("voice_generate", payload, username=user, user_id=uid, role=role)
     return {
-        "task_id": task["id"], "status": "pending",
-        "message": "配音任务已提交，后台执行中，可在任务中心查看进度", "task": task,
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "配音任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
     }
 
 

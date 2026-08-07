@@ -1,18 +1,44 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Star, Trash2, Wrench, History, Store, GalleryVerticalEnd, Link2, Calendar,
+  Star,
+  Trash2,
+  Wrench,
+  History,
+  Store,
+  GalleryVerticalEnd,
+  Link2,
+  Calendar,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
-import { Button, PageHeader, Card, Empty, PageLoading, ErrorState, Badge, ConfirmDialog } from '../components/ui'
+import {
+  Button,
+  PageHeader,
+  Card,
+  Empty,
+  PageLoading,
+  ErrorState,
+  Badge,
+  ConfirmDialog,
+} from '../components/ui'
 import { useNavigate } from 'react-router-dom'
 
 const TYPE_META = {
   tool: { label: '工具', icon: Wrench, color: 'bg-brand-50 text-brand-600', path: '/tool-hub' },
-  record: { label: '记录', icon: History, color: 'bg-emerald-50 text-emerald-600', path: '/records' },
+  record: {
+    label: '记录',
+    icon: History,
+    color: 'bg-emerald-50 text-emerald-600',
+    path: '/records',
+  },
   template: { label: '模板', icon: Store, color: 'bg-amber-50 text-amber-600', path: '/templates' },
-  gallery: { label: '作品', icon: GalleryVerticalEnd, color: 'bg-rose-50 text-rose-600', path: '/gallery' },
+  gallery: {
+    label: '作品',
+    icon: GalleryVerticalEnd,
+    color: 'bg-rose-50 text-rose-600',
+    path: '/gallery',
+  },
 }
 
 export default function FavoritesPage() {
@@ -37,7 +63,9 @@ export default function FavoritesPage() {
     }
   }, [favType])
 
-  useEffect(() => { fetchFavorites() }, [fetchFavorites])
+  useEffect(() => {
+    fetchFavorites()
+  }, [fetchFavorites])
 
   const handleDelete = async () => {
     try {
@@ -64,7 +92,9 @@ export default function FavoritesPage() {
         title="收藏中心"
         description="一键收藏常用工具 / 记录 / 模板 / 作品，随时直达"
         actions={
-          <Button variant="outline" icon={Star} onClick={fetchFavorites}>刷新</Button>
+          <Button variant="outline" icon={Star} onClick={fetchFavorites}>
+            刷新
+          </Button>
         }
       />
 
@@ -89,7 +119,11 @@ export default function FavoritesPage() {
         })}
       </div>
 
-      {loading ? <PageLoading /> : error ? <ErrorState message={error} onRetry={fetchFavorites} /> : favorites.length === 0 ? (
+      {loading ? (
+        <PageLoading />
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchFavorites} />
+      ) : favorites.length === 0 ? (
         <Card>
           <Empty
             icon={Star}
@@ -100,27 +134,52 @@ export default function FavoritesPage() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {favorites.map((f) => {
-            const meta = TYPE_META[f.fav_type] || { label: f.fav_type, icon: Link2, color: 'bg-gray-50 text-gray-600', path: null }
+            const meta = TYPE_META[f.fav_type] || {
+              label: f.fav_type,
+              icon: Link2,
+              color: 'bg-gray-50 text-gray-600',
+              path: null,
+            }
             const Icon = meta.icon
             return (
-              <div key={f.id} className="group bg-white rounded-2xl border border-ink-100 p-4 hover:shadow-soft hover:border-brand-200 transition-all">
+              <div
+                key={f.id}
+                className="group bg-white rounded-2xl border border-ink-100 p-4 hover:shadow-soft hover:border-brand-200 transition-all"
+              >
                 <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${meta.color}`}>
+                  <div
+                    className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${meta.color}`}
+                  >
                     <Icon className="w-5 h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge color={f.fav_type === 'tool' ? 'brand' : f.fav_type === 'record' ? 'green' : f.fav_type === 'template' ? 'amber' : 'rose'}>
+                      <Badge
+                        color={
+                          f.fav_type === 'tool'
+                            ? 'brand'
+                            : f.fav_type === 'record'
+                              ? 'green'
+                              : f.fav_type === 'template'
+                                ? 'amber'
+                                : 'rose'
+                        }
+                      >
                         {meta.label}
                       </Badge>
                       <span className="text-[11px] text-ink-300 flex items-center gap-1">
                         <Calendar className="w-3 h-3" /> {formatDateTime(f.created_at)}
                       </span>
                     </div>
-                    <p className="font-medium text-ink-900 mt-1.5 truncate" title={f.label || f.target_id}>
+                    <p
+                      className="font-medium text-ink-900 mt-1.5 truncate"
+                      title={f.label || f.target_id}
+                    >
                       {f.label || f.target_id}
                     </p>
-                    <p className="text-[11px] text-ink-400 font-mono truncate mt-0.5">{f.target_id}</p>
+                    <p className="text-[11px] text-ink-400 font-mono truncate mt-0.5">
+                      {f.target_id}
+                    </p>
                   </div>
                   <button
                     onClick={() => setDeleting(f.id)}

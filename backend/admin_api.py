@@ -70,9 +70,7 @@ async def admin_stats(current_user: dict = require_auth()):
         except Exception:
             total_tools = 0
         # 会员分布
-        membership_rows = conn.execute(
-            "SELECT membership, COUNT(*) AS c FROM users GROUP BY membership"
-        ).fetchall()
+        membership_rows = conn.execute("SELECT membership, COUNT(*) AS c FROM users GROUP BY membership").fetchall()
         membership_dist = {r["membership"] or "free": r["c"] for r in membership_rows}
         return {
             "total_users": total_users,
@@ -118,7 +116,7 @@ async def admin_users(
 
 
 @router.put("/users/{user_id}")
-async def admin_update_user(
+async def admin_update_user(  # noqa: C901
     user_id: str,
     req: AdminUserUpdateRequest,
     current_user: dict = require_auth(),
@@ -137,17 +135,21 @@ async def admin_update_user(
         if req.membership is not None:
             if req.membership not in ("free", "pro", "vip"):
                 raise HTTPException(400, "无效会员等级")
-            sets.append("membership=?"); params.append(req.membership)
+            sets.append("membership=?")
+            params.append(req.membership)
         if req.daily_quota is not None:
             if req.daily_quota < 0 or req.daily_quota > 100000:
                 raise HTTPException(400, "额度范围无效")
-            sets.append("daily_quota=?"); params.append(req.daily_quota)
+            sets.append("daily_quota=?")
+            params.append(req.daily_quota)
         if req.active is not None:
-            sets.append("active=?"); params.append(1 if req.active else 0)
+            sets.append("active=?")
+            params.append(1 if req.active else 0)
         if req.role is not None:
             if req.role not in ("admin", "user", "viewer"):
                 raise HTTPException(400, "无效角色")
-            sets.append("role=?"); params.append(req.role)
+            sets.append("role=?")
+            params.append(req.role)
         if not sets:
             raise HTTPException(400, "无更新字段")
         params.append(user_id)
@@ -256,10 +258,7 @@ async def admin_orders(status: str = "", current_user: dict = require_auth()):
     expire_stale_orders()  # 惰性关闭超时订单
     conn = get_db()
     try:
-        sql = (
-            "SELECT o.*, u.username FROM orders o "
-            "LEFT JOIN users u ON o.user_id = u.id"
-        )
+        sql = "SELECT o.*, u.username FROM orders o LEFT JOIN users u ON o.user_id = u.id"
         params: list = []
         if status:
             sql += " WHERE o.status=?"
@@ -278,9 +277,7 @@ class OrderReviewRequest(BaseModel):
 
 
 @router.post("/orders/{order_id}/review")
-async def admin_review_order(
-    order_id: str, req: OrderReviewRequest, current_user: dict = require_auth()
-):
+async def admin_review_order(order_id: str, req: OrderReviewRequest, current_user: dict = require_auth()):
     """审核订单：通过自动开通对应会员（30 天）。"""
     _check_admin(current_user)
     return review_order(order_id, current_user.get("user_id") or "admin", req.approve)
@@ -316,7 +313,7 @@ async def admin_activity(
 # 优惠券 / 折扣码管理（v9.4 营销）
 # ══════════════════════════════════════════════════════════════
 
-import uuid as _uuid
+import uuid as _uuid  # noqa: E402
 
 
 class CouponCreateRequest(BaseModel):
@@ -365,9 +362,17 @@ async def admin_create_coupon(req: CouponCreateRequest, current_user: dict = req
         conn.execute(
             """INSERT INTO coupons (id, code, discount_type, value, max_uses, active, expires_at, created_at, created_by)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (cid, code, req.discount_type, req.value, req.max_uses,
-             1 if req.active else 0, expires_at, datetime.now().isoformat(),
-             current_user.get("username") or "admin"),
+            (
+                cid,
+                code,
+                req.discount_type,
+                req.value,
+                req.max_uses,
+                1 if req.active else 0,
+                expires_at,
+                datetime.now().isoformat(),
+                current_user.get("username") or "admin",
+            ),
         )
         conn.commit()
         return dict(conn.execute("SELECT * FROM coupons WHERE id=?", (cid,)).fetchone())
@@ -411,6 +416,7 @@ async def admin_delete_coupon(coupon_id: str, current_user: dict = require_auth(
 # 分享埋点统计（v9.4 渠道分析）
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/share-stats")
 async def admin_share_stats(current_user: dict = require_auth()):
     """每个分享的打开数 / 访问来源分布 / 注册转化率。"""
@@ -423,9 +429,7 @@ async def admin_share_stats(current_user: dict = require_auth()):
         result = []
         for s in shares:
             sid = s["id"]
-            visits = conn.execute(
-                "SELECT COUNT(*) AS c FROM share_visits WHERE share_id=?", (sid,)
-            ).fetchone()["c"]
+            visits = conn.execute("SELECT COUNT(*) AS c FROM share_visits WHERE share_id=?", (sid,)).fetchone()["c"]
             sources = conn.execute(
                 """SELECT source, COUNT(*) AS c FROM share_visits WHERE share_id=?
                    GROUP BY source ORDER BY c DESC""",
@@ -434,22 +438,22 @@ async def admin_share_stats(current_user: dict = require_auth()):
             conversions = conn.execute(
                 "SELECT COUNT(*) AS c FROM users WHERE share_from=?", (s["share_code"],)
             ).fetchone()["c"]
-            result.append({
-                "id": sid,
-                "share_code": s["share_code"],
-                "title": s["title"] or f"{s['content_type']} 分享",
-                "views": s["views"],
-                "visits": visits,
-                "sources": [{"source": r["source"], "count": r["c"]} for r in sources],
-                "conversions": conversions,
-                "conversion_rate": round(conversions / visits * 100, 1) if visits else 0.0,
-                "created_at": s["created_at"],
-            })
+            result.append(
+                {
+                    "id": sid,
+                    "share_code": s["share_code"],
+                    "title": s["title"] or f"{s['content_type']} 分享",
+                    "views": s["views"],
+                    "visits": visits,
+                    "sources": [{"source": r["source"], "count": r["c"]} for r in sources],
+                    "conversions": conversions,
+                    "conversion_rate": round(conversions / visits * 100, 1) if visits else 0.0,
+                    "created_at": s["created_at"],
+                }
+            )
         # 全局汇总
         total_visits = conn.execute("SELECT COUNT(*) AS c FROM share_visits").fetchone()["c"]
-        total_conversions = conn.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE share_from != ''"
-        ).fetchone()["c"]
+        total_conversions = conn.execute("SELECT COUNT(*) AS c FROM users WHERE share_from != ''").fetchone()["c"]
         return {
             "shares": result,
             "totals": {
@@ -466,6 +470,7 @@ async def admin_share_stats(current_user: dict = require_auth()):
 # 订单统计报表（v9.4 营收分析）
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/order-stats")
 async def admin_order_stats(days: int = 30, current_user: dict = require_auth()):
     """营收 / 转化率 / 客单价 + 按天营收趋势 + 套餐分布。"""
@@ -475,7 +480,9 @@ async def admin_order_stats(days: int = 30, current_user: dict = require_auth())
     try:
         approved = conn.execute("SELECT * FROM orders WHERE status='approved'").fetchall()
         revenue = round(sum(float(r["amount"] or 0) for r in approved), 2)
-        discount = round(sum(float(r["original_amount"] or r["amount"] or 0) - float(r["amount"] or 0) for r in approved), 2)
+        discount = round(
+            sum(float(r["original_amount"] or r["amount"] or 0) - float(r["amount"] or 0) for r in approved), 2
+        )
         total_orders = conn.execute("SELECT COUNT(*) AS c FROM orders").fetchone()["c"]
         status_counts = {
             r["status"]: r["c"]
@@ -496,7 +503,13 @@ async def admin_order_stats(days: int = 30, current_user: dict = require_auth())
         for i in range(days):
             d = (datetime.now() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
             r = trend_map.get(d)
-            trend.append({"day": d, "orders": r["orders"] if r else 0, "revenue": round(float(r["revenue"] or 0), 2) if r else 0.0})
+            trend.append(
+                {
+                    "day": d,
+                    "orders": r["orders"] if r else 0,
+                    "revenue": round(float(r["revenue"] or 0), 2) if r else 0.0,
+                }
+            )
         # 套餐分布
         plan_dist = [
             {"plan": r["plan"], "orders": r["c"], "revenue": round(float(r["rev"] or 0), 2)}

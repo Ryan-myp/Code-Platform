@@ -195,4 +195,3 @@ def create_api_call_validator() -> CombiningValidator:
         ),
     ]
     return CombiningValidator(validators)
-

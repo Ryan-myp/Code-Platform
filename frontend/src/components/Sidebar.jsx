@@ -1,15 +1,74 @@
 import React, { useState } from 'react'
 import {
-  Code2, Bot, Layers, Sparkles, Settings, Database, Wrench, Server,
-  ListTodo, FileText, FolderKanban, Puzzle, MessageSquare, Brain,
-  ChevronDown, ChevronRight, Menu, X, Play, Image as ImageIcon, Film, Music,
-  Wand2, LogOut, Users, Zap, Home, CheckCircle2, Bell, Share2,
-  Shield, GitBranch, PenTool, Languages, BarChart3, FlaskConical,
-  Presentation, Table2, TrendingUp, HelpCircle, History as HistoryIcon, Crown, Lock, Search,
-  Send, Smartphone, Gamepad2, Mic2, Sticker, Moon, Sun, UserCircle,
-  GalleryVerticalEnd, Store, Globe, Key, Clock,
-  Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity, BookOpen, Terminal,
-  Radar, Star, Lightbulb
+  Code2,
+  Bot,
+  Layers,
+  Sparkles,
+  Settings,
+  Database,
+  Wrench,
+  Server,
+  ListTodo,
+  FileText,
+  FolderKanban,
+  Puzzle,
+  MessageSquare,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  Menu,
+  X,
+  Play,
+  Image as ImageIcon,
+  Film,
+  Music,
+  Wand2,
+  LogOut,
+  Users,
+  Zap,
+  Home,
+  CheckCircle2,
+  Bell,
+  Share2,
+  Shield,
+  GitBranch,
+  PenTool,
+  Languages,
+  BarChart3,
+  FlaskConical,
+  Presentation,
+  Table2,
+  TrendingUp,
+  HelpCircle,
+  History as HistoryIcon,
+  Crown,
+  Lock,
+  Search,
+  Send,
+  Smartphone,
+  Gamepad2,
+  Mic2,
+  Sticker,
+  Moon,
+  Sun,
+  UserCircle,
+  GalleryVerticalEnd,
+  Store,
+  Globe,
+  Key,
+  Clock,
+  Volume2,
+  Monitor,
+  Landmark,
+  Target,
+  FileSearch,
+  Files,
+  Activity,
+  BookOpen,
+  Terminal,
+  Radar,
+  Star,
+  Lightbulb,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -29,7 +88,11 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
   const [confirmLogout, setConfirmLogout] = useState(false)
 
   const navItems = [
-    { key: 'home', label: '工作台', icon: Home, color: 'from-blue-500 to-indigo-600',
+    {
+      key: 'home',
+      label: '工作台',
+      icon: Home,
+      color: 'from-blue-500 to-indigo-600',
       items: [
         { path: '/home', label: '首页', icon: Home },
         { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
@@ -37,8 +100,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/favorites', label: '收藏中心', icon: Star },
         { path: '/notifications', label: '通知中心', icon: Bell },
         { path: '/membership', label: '会员中心', icon: Crown },
-      ] },
-    { key: 'rdm', label: '研发管理', icon: Code2, color: 'from-brand-500 to-brand-600',
+      ],
+    },
+    {
+      key: 'rdm',
+      label: '研发管理',
+      icon: Code2,
+      color: 'from-brand-500 to-brand-600',
       items: [
         { path: '/board', label: '需求看板', icon: ListTodo },
         { path: '/workspace', label: 'AI 工作台', icon: Sparkles },
@@ -46,8 +114,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/artifacts', label: '成果仓库', icon: FileText },
         { path: '/sandbox', label: '沙箱运行', icon: Play, pageId: 'sandbox' },
         { path: '/pipelines', label: 'CI/CD 流水线', icon: GitBranch },
-      ] },
-    { key: 'agent', label: '智能体', icon: Bot, color: 'from-emerald-500 to-teal-600',
+      ],
+    },
+    {
+      key: 'agent',
+      label: '智能体',
+      icon: Bot,
+      color: 'from-emerald-500 to-teal-600',
       items: [
         { path: '/agents', label: 'Agent 列表', icon: Bot, pageId: 'agents' },
         { path: '/teams', label: 'Team 管理', icon: Users },
@@ -55,8 +128,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/knowledge-bases', label: '知识库', icon: Database },
         { path: '/skills', label: 'Skills', icon: BookOpen },
         { path: '/mcp-servers', label: 'MCP Servers', icon: Server },
-      ] },
-    { key: 'create', label: '内容创作', icon: Wand2, color: 'from-accent-500 to-blue-600',
+      ],
+    },
+    {
+      key: 'create',
+      label: '内容创作',
+      icon: Wand2,
+      color: 'from-accent-500 to-blue-600',
       items: [
         { path: '/image-factory', label: '图片工厂', icon: ImageIcon, pageId: 'image-factory' },
         { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
@@ -65,8 +143,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/translation', label: '翻译中心', icon: Languages, pageId: 'translation' },
         { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
         { path: '/meme', label: '表情包工坊', icon: Sticker, pageId: 'meme' },
-      ] },
-    { key: 'ai-tools', label: 'AI 工坊', icon: Brain, color: 'from-teal-500 to-cyan-600',
+      ],
+    },
+    {
+      key: 'ai-tools',
+      label: 'AI 工坊',
+      icon: Brain,
+      color: 'from-teal-500 to-cyan-600',
       items: [
         { path: '/digital-human', label: 'AI数字人', icon: UserCircle, pageId: 'digital-human' },
         { path: '/voice-chat', label: '语音对话', icon: Mic2, pageId: 'voice-chat' },
@@ -75,9 +158,19 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/forecast', label: '数据预测', icon: TrendingUp, pageId: 'forecast' },
         { path: '/doc-qa', label: '文档问答', icon: Search, pageId: 'doc-qa' },
         { path: '/web-search', label: '联网搜索', icon: Globe, pageId: 'web-search' },
-        { path: '/code-interpreter', label: '代码解释器', icon: Terminal, pageId: 'code-interpreter' },
-      ] },
-    { key: 'apps', label: '应用与社区', icon: Gamepad2, color: 'from-rose-500 to-pink-600',
+        {
+          path: '/code-interpreter',
+          label: '代码解释器',
+          icon: Terminal,
+          pageId: 'code-interpreter',
+        },
+      ],
+    },
+    {
+      key: 'apps',
+      label: '应用与社区',
+      icon: Gamepad2,
+      color: 'from-rose-500 to-pink-600',
       items: [
         { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games' },
         { path: '/miniapp', label: '小程序工坊', icon: Smartphone, pageId: 'miniapp' },
@@ -88,8 +181,13 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/growth', label: '增长工坊', icon: Target, pageId: 'growth' },
         { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery' },
         { path: '/templates', label: '模板市场', icon: Store, pageId: 'templates' },
-      ] },
-    { key: 'office', label: '效率工具', icon: Wrench, color: 'from-orange-500 to-red-600',
+      ],
+    },
+    {
+      key: 'office',
+      label: '效率工具',
+      icon: Wrench,
+      color: 'from-orange-500 to-red-600',
       items: [
         { path: '/tool-hub', label: '全部工具', icon: Wrench },
         { path: '/excel', label: 'Excel 助手', icon: Table2, pageId: 'excel' },
@@ -99,23 +197,32 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/dashboard', label: '数据看板', icon: BarChart3 },
         { path: '/ab-testing', label: 'AB 测试', icon: FlaskConical },
         { path: '/usage-analytics', label: '用量分析', icon: Activity },
-      ] },
-    { key: 'support', label: '协作与支持', icon: MessageSquare, color: 'from-violet-500 to-purple-600',
+      ],
+    },
+    {
+      key: 'support',
+      label: '协作与支持',
+      icon: MessageSquare,
+      color: 'from-violet-500 to-purple-600',
       items: [
         { path: '/chat', label: '智能协作', icon: MessageSquare, pageId: 'chat' },
         { path: '/help', label: '使用帮助', icon: HelpCircle },
         { path: '/evolution', label: '平台自进化', icon: Brain },
-      ] },
-    { key: 'system', label: '系统配置', icon: Settings, color: 'from-amber-500 to-orange-600',
+      ],
+    },
+    {
+      key: 'system',
+      label: '系统配置',
+      icon: Settings,
+      color: 'from-amber-500 to-orange-600',
       items: [
         { path: '/config', label: '模型配置', icon: Settings },
         { path: '/api-platform', label: 'API开放平台', icon: Key, pageId: 'api-platform' },
         { path: '/scheduler', label: '定时任务', icon: Clock },
         { path: '/plugins', label: '插件市场', icon: Puzzle, pageId: 'plugins' },
-        ...(user?.role === 'admin'
-          ? [{ path: '/admin', label: '管理后台', icon: Shield }]
-          : []),
-      ] },
+        ...(user?.role === 'admin' ? [{ path: '/admin', label: '管理后台', icon: Shield }] : []),
+      ],
+    },
   ]
 
   const initExpanded = {}
@@ -138,7 +245,9 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
     <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
       {navItems.map((menu) => {
         // 按可见性过滤入口（admin 设置 hidden / 仅限他人时不在侧边栏展示）
-        const visibleItems = menu.items.filter((i) => !i.pageId || getPageStatusById(i.pageId).visible)
+        const visibleItems = menu.items.filter(
+          (i) => !i.pageId || getPageStatusById(i.pageId).visible
+        )
         if (visibleItems.length === 0) return null
         const isActiveMenu = visibleItems.some((i) => activePath.startsWith(i.path))
         return (
@@ -152,12 +261,18 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
               }`}
             >
               <div className="flex items-center gap-2.5">
-                <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${menu.color} flex items-center justify-center shadow-soft`}>
+                <div
+                  className={`w-7 h-7 rounded-lg bg-gradient-to-br ${menu.color} flex items-center justify-center shadow-soft`}
+                >
                   <menu.icon className="w-3.5 h-3.5 text-white" />
                 </div>
                 <span>{menu.label}</span>
               </div>
-              {expandedMenus[menu.key] ? <ChevronDown className="w-3.5 h-3.5 text-ink-400" /> : <ChevronRight className="w-3.5 h-3.5 text-ink-400" />}
+              {expandedMenus[menu.key] ? (
+                <ChevronDown className="w-3.5 h-3.5 text-ink-400" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-ink-400" />
+              )}
             </button>
             {expandedMenus[menu.key] && (
               <div className="ml-4 mt-0.5 space-y-0.5 border-l border-ink-200/60 pl-3 py-0.5">
@@ -165,7 +280,9 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
                   const showGroup = item.group && item.group !== visibleItems[idx - 1]?.group
                   const pageStatus = item.pageId ? getPageStatusById(item.pageId) : null
                   const locked = !!pageStatus?.locked
-                  const active = activePath === item.path || (item.path !== '/agents' && activePath.startsWith(item.path))
+                  const active =
+                    activePath === item.path ||
+                    (item.path !== '/agents' && activePath.startsWith(item.path))
                   return (
                     <React.Fragment key={item.path}>
                       {showGroup && (
@@ -184,12 +301,16 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
                               : 'text-ink-500 hover:bg-ink-50 hover:text-ink-800 hover:translate-x-0.5'
                         }`}
                       >
-                        <item.icon className={`w-3.5 h-3.5 ${locked ? 'text-amber-400' : active ? 'text-brand-600' : 'text-ink-400'}`} />
+                        <item.icon
+                          className={`w-3.5 h-3.5 ${locked ? 'text-amber-400' : active ? 'text-brand-600' : 'text-ink-400'}`}
+                        />
                         <span>{item.label}</span>
                         {locked ? (
                           <Lock className="w-3 h-3 text-amber-500 ml-auto" />
                         ) : (
-                          active && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-500" />
+                          active && (
+                            <span className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-500" />
+                          )
                         )}
                       </Link>
                     </React.Fragment>
@@ -208,12 +329,20 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       <ModelSwitcher />
       {user && (
         <div className="flex items-center justify-between mb-2 px-1">
-          <Link to="/profile" onClick={onNavigate} className="flex items-center gap-2.5 min-w-0 group">
+          <Link
+            to="/profile"
+            onClick={onNavigate}
+            className="flex items-center gap-2.5 min-w-0 group"
+          >
             <div className="w-9 h-9 bg-gradient-to-br from-brand-500 to-brand-700 rounded-xl flex items-center justify-center shadow-soft flex-shrink-0">
-              <span className="text-white text-sm font-semibold">{user.username?.[0]?.toUpperCase()}</span>
+              <span className="text-white text-sm font-semibold">
+                {user.username?.[0]?.toUpperCase()}
+              </span>
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-ink-800 truncate group-hover:text-brand-600 transition-colors">{user.nickname || user.username}</p>
+              <p className="text-sm font-semibold text-ink-800 truncate group-hover:text-brand-600 transition-colors">
+                {user.nickname || user.username}
+              </p>
               <p className="text-xs text-ink-500 capitalize">{user.role}</p>
             </div>
           </Link>
@@ -236,7 +365,9 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
             <Zap className="w-3.5 h-3.5 text-brand-500" />
             今日额度
           </span>
-          <span className={`text-xs font-semibold ${quota.remaining_today >= 9999 ? 'text-amber-600' : quota.remaining_today <= 5 ? 'text-red-500' : 'text-brand-600'}`}>
+          <span
+            className={`text-xs font-semibold ${quota.remaining_today >= 9999 ? 'text-amber-600' : quota.remaining_today <= 5 ? 'text-red-500' : 'text-brand-600'}`}
+          >
             {quota.remaining_today >= 9999 ? '无限' : `剩 ${quota.remaining_today} 次`}
           </span>
         </Link>
@@ -251,7 +382,9 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
             <Crown className="w-3.5 h-3.5 text-amber-500" />
             升级会员
           </span>
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500 text-white">¥19.9 起</span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500 text-white">
+            ¥19.9 起
+          </span>
         </Link>
       )}
       <div className="flex items-center justify-center gap-1 text-xs text-ink-400 pt-2">
@@ -260,7 +393,11 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         <span className="text-ink-300">·</span>
         <span>v9.0</span>
         <span className="text-ink-300">·</span>
-        <button onClick={toggleTheme} className="flex items-center gap-1 hover:text-brand-500 transition-colors" title="切换深色 / 浅色模式">
+        <button
+          onClick={toggleTheme}
+          className="flex items-center gap-1 hover:text-brand-500 transition-colors"
+          title="切换深色 / 浅色模式"
+        >
           {theme === 'dark' ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
           <span>{theme === 'dark' ? '深色' : '浅色'}</span>
         </button>
@@ -291,7 +428,9 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
           >
             <Search className="w-3.5 h-3.5" />
             <span className="text-xs">搜索需求 / 命令 / 工具…</span>
-            <kbd className="ml-auto px-1.5 py-0.5 text-[10px] bg-white border border-ink-200 rounded font-mono">⌘K</kbd>
+            <kbd className="ml-auto px-1.5 py-0.5 text-[10px] bg-white border border-ink-200 rounded font-mono">
+              ⌘K
+            </kbd>
           </button>
           {renderNav()}
           {renderUser()}
@@ -306,7 +445,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
           </div>
           <span className="font-semibold text-ink-900">小团智能平台</span>
         </div>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-ink-50 rounded-lg transition-colors">
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="p-2 hover:bg-ink-50 rounded-lg transition-colors"
+        >
           {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
       </div>
@@ -314,7 +456,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       {/* Mobile Drawer */}
       {sidebarOpen && (
         <div className="md:hidden fixed inset-0 z-40">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setSidebarOpen(false)}
+          />
           <div className="relative w-64 h-full bg-white animate-[slideRight_0.2s_ease-out] shadow-lg">
             <div className="h-full flex flex-col">
               <div className="px-4 py-4 border-b border-ink-100 flex items-center justify-between">
@@ -324,7 +469,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
                   </div>
                   <h1 className="font-semibold text-ink-900">小团智能平台</h1>
                 </div>
-                <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-ink-50 rounded-lg">
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="p-1 hover:bg-ink-50 rounded-lg"
+                >
                   <X className="w-5 h-5" />
                 </button>
               </div>

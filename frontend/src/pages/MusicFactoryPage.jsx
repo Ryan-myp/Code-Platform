@@ -1,14 +1,31 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Music, FileText, Mic, Play, Pause, Download, Sparkles,
-  RefreshCw, Wand2, Trash2, Headphones, Music2, Disc, Volume2, Copy,
+  Music,
+  FileText,
+  Mic,
+  Play,
+  Pause,
+  Download,
+  Sparkles,
+  RefreshCw,
+  Wand2,
+  Trash2,
+  Headphones,
+  Music2,
+  Disc,
+  Volume2,
+  Copy,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatBytes, copyToClipboard } from '../lib/format'
 import {
-  Button, Empty, SkeletonList, ErrorState,
-  PageHeader, ConfirmDialog,
+  Button,
+  Empty,
+  SkeletonList,
+  ErrorState,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 import useAsyncTask from '../hooks/useAsyncTask'
 
@@ -17,7 +34,8 @@ const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : ''
 
 const PRESET_CATEGORIES = [
   {
-    name: '爱情情感', icon: '💕',
+    name: '爱情情感',
+    icon: '💕',
     themes: [
       { text: '星空下的告白', style: 'ballad' },
       { text: '春天的约定', style: 'pop' },
@@ -26,7 +44,8 @@ const PRESET_CATEGORIES = [
     ],
   },
   {
-    name: '生活场景', icon: '🌴',
+    name: '生活场景',
+    icon: '🌴',
     themes: [
       { text: '夏日海滩旅行', style: 'pop' },
       { text: '深夜食堂', style: 'jazz' },
@@ -35,7 +54,8 @@ const PRESET_CATEGORIES = [
     ],
   },
   {
-    name: '励志奋斗', icon: '🔥',
+    name: '励志奋斗',
+    icon: '🔥',
     themes: [
       { text: '青春奋斗', style: 'rock' },
       { text: '追梦不放弃', style: 'rock' },
@@ -44,7 +64,8 @@ const PRESET_CATEGORIES = [
     ],
   },
   {
-    name: '自然意境', icon: '🌿',
+    name: '自然意境',
+    icon: '🌿',
     themes: [
       { text: '山间清晨的雾气', style: 'classical' },
       { text: '月光下的湖泊', style: 'classical' },
@@ -101,9 +122,24 @@ const TTS_SPEEDS = [
 ]
 
 const LYRICS_TEMPLATES = [
-  { name: '标准结构', icon: '🎵', structure: '[Verse 1]\n[主歌第一段内容]\n\n[Chorus]\n[副歌内容，重复性强]\n\n[Verse 2]\n[主歌第二段内容]\n\n[Chorus]\n[副歌重复]\n\n[Bridge]\n[桥段，情感升华]\n\n[Chorus]\n[副歌最后重复]' },
-  { name: '简单结构', icon: '🎶', structure: '[Verse 1]\n[主歌内容]\n\n[Chorus]\n[副歌内容]\n\n[Verse 2]\n[主歌内容]\n\n[Chorus]\n[副歌重复]' },
-  { name: '说唱结构', icon: '🎤', structure: '[Intro]\n[开场白]\n\n[Verse 1]\n[说唱第一段]\n\n[Hook]\n[记忆点/副歌]\n\n[Verse 2]\n[说唱第二段]\n\n[Hook]\n[记忆点重复]\n\n[Outro]\n[结尾]' },
+  {
+    name: '标准结构',
+    icon: '🎵',
+    structure:
+      '[Verse 1]\n[主歌第一段内容]\n\n[Chorus]\n[副歌内容，重复性强]\n\n[Verse 2]\n[主歌第二段内容]\n\n[Chorus]\n[副歌重复]\n\n[Bridge]\n[桥段，情感升华]\n\n[Chorus]\n[副歌最后重复]',
+  },
+  {
+    name: '简单结构',
+    icon: '🎶',
+    structure:
+      '[Verse 1]\n[主歌内容]\n\n[Chorus]\n[副歌内容]\n\n[Verse 2]\n[主歌内容]\n\n[Chorus]\n[副歌重复]',
+  },
+  {
+    name: '说唱结构',
+    icon: '🎤',
+    structure:
+      '[Intro]\n[开场白]\n\n[Verse 1]\n[说唱第一段]\n\n[Hook]\n[记忆点/副歌]\n\n[Verse 2]\n[说唱第二段]\n\n[Hook]\n[记忆点重复]\n\n[Outro]\n[结尾]',
+  },
 ]
 
 const TABS = [
@@ -159,7 +195,9 @@ export default function MusicFactoryPage() {
     try {
       const res = await api.get('/api/music-factory/stats')
       setStats(res.data)
-    } catch { /* 静默 */ }
+    } catch {
+      /* 静默 */
+    }
   }, [])
 
   const fetchAudios = useCallback(async () => {
@@ -178,9 +216,12 @@ export default function MusicFactoryPage() {
   useEffect(() => {
     fetchStats()
     fetchAudios()
-    api.get('/api/music-factory/lyrics/examples')
+    api
+      .get('/api/music-factory/lyrics/examples')
       .then((res) => setLyricExamples(res.data?.examples || {}))
-      .catch(() => { /* 静默 */ })
+      .catch(() => {
+        /* 静默 */
+      })
   }, [fetchStats, fetchAudios])
 
   const generateLyrics = async () => {
@@ -209,7 +250,10 @@ export default function MusicFactoryPage() {
         }
         setGeneratingLyrics(false)
       },
-      onError: (e) => { setGeneratingLyrics(false); setLyricsError(`生成失败：${e.message}`) },
+      onError: (e) => {
+        setGeneratingLyrics(false)
+        setLyricsError(`生成失败：${e.message}`)
+      },
     })
   }
 
@@ -259,7 +303,10 @@ export default function MusicFactoryPage() {
         }
         setGeneratingTts(false)
       },
-      onError: (e) => { setGeneratingTts(false); toast.error(`生成人声失败：${e.message}`) },
+      onError: (e) => {
+        setGeneratingTts(false)
+        toast.error(`生成人声失败：${e.message}`)
+      },
     })
   }
 
@@ -310,7 +357,11 @@ export default function MusicFactoryPage() {
 
   const statsCards = [
     { label: '音乐作品', value: stats.total_tracks, color: 'text-purple-600' },
-    { label: 'API 状态', value: stats.api_configured ? '已配置' : '未配置', color: stats.api_configured ? 'text-green-600' : 'text-red-600' },
+    {
+      label: 'API 状态',
+      value: stats.api_configured ? '已配置' : '未配置',
+      color: stats.api_configured ? 'text-green-600' : 'text-red-600',
+    },
     { label: '功能模块', value: 3, color: 'text-blue-600' },
     { label: '歌词生成', value: lyrics ? '已生成' : '-', color: 'text-orange-600' },
   ]
@@ -323,7 +374,14 @@ export default function MusicFactoryPage() {
         icon={Music}
         iconColor="from-purple-500 to-pink-500"
         actions={
-          <Button variant="secondary" icon={RefreshCw} onClick={() => { fetchStats(); fetchAudios() }}>
+          <Button
+            variant="secondary"
+            icon={RefreshCw}
+            onClick={() => {
+              fetchStats()
+              fetchAudios()
+            }}
+          >
             刷新
           </Button>
         }
@@ -346,7 +404,9 @@ export default function MusicFactoryPage() {
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-              activeTab === tab.key ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+              activeTab === tab.key
+                ? 'bg-purple-100 text-purple-700'
+                : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
             <tab.icon className="w-4 h-4" />
@@ -365,7 +425,7 @@ export default function MusicFactoryPage() {
             </h2>
             <button
               onClick={() => {
-                const allThemes = PRESET_CATEGORIES.flatMap(c => c.themes)
+                const allThemes = PRESET_CATEGORIES.flatMap((c) => c.themes)
                 const preset = allThemes[Math.floor(Math.random() * allThemes.length)]
                 setTheme(preset.text)
                 setStyle(preset.style)
@@ -379,10 +439,16 @@ export default function MusicFactoryPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">歌曲主题 <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                歌曲主题 <span className="text-red-500">*</span>
+              </label>
               <input
-                type="text" value={theme}
-                onChange={(e) => { setTheme(e.target.value); setLyricsError('') }}
+                type="text"
+                value={theme}
+                onChange={(e) => {
+                  setTheme(e.target.value)
+                  setLyricsError('')
+                }}
                 placeholder="例如：夏日海滩旅行、星空下的告白..."
                 className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
               />
@@ -390,24 +456,41 @@ export default function MusicFactoryPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">音乐风格</label>
-              <select value={style} onChange={(e) => setStyle(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {STYLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              <select
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {STYLES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">语言</label>
-              <select value={language} onChange={(e) => setLanguage(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
                 <option value="zh">中文</option>
                 <option value="en">英文</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">长度</label>
-              <select value={length} onChange={(e) => setLength(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {LENGTHS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+              <select
+                value={length}
+                onChange={(e) => setLength(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {LENGTHS.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -423,8 +506,14 @@ export default function MusicFactoryPage() {
                   </button>
                   <div className="absolute z-10 top-full left-0 mt-1 w-48 bg-white rounded-xl border border-gray-200 shadow-lg p-1.5 space-y-0.5 hidden group-hover:block">
                     {cat.themes.map((preset, pi) => (
-                      <button key={pi} onClick={() => { setTheme(preset.text); setStyle(preset.style) }}
-                        className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-purple-50 text-gray-600 transition-colors">
+                      <button
+                        key={pi}
+                        onClick={() => {
+                          setTheme(preset.text)
+                          setStyle(preset.style)
+                        }}
+                        className="w-full text-left text-xs px-2 py-1.5 rounded-lg hover:bg-purple-50 text-gray-600 transition-colors"
+                      >
                         {preset.text}
                       </button>
                     ))}
@@ -439,8 +528,11 @@ export default function MusicFactoryPage() {
             <span className="text-sm text-gray-500">歌词结构模板:</span>
             <div className="flex flex-wrap gap-2 mt-1">
               {LYRICS_TEMPLATES.map((tpl, i) => (
-                <button key={i} onClick={() => setLyrics(tpl.structure)}
-                  className="text-xs px-3 py-1 bg-gray-100 hover:bg-purple-100 text-gray-700 rounded-full transition-colors flex items-center gap-1">
+                <button
+                  key={i}
+                  onClick={() => setLyrics(tpl.structure)}
+                  className="text-xs px-3 py-1 bg-gray-100 hover:bg-purple-100 text-gray-700 rounded-full transition-colors flex items-center gap-1"
+                >
                   <span>{tpl.icon}</span> {tpl.name}
                 </button>
               ))}
@@ -453,17 +545,37 @@ export default function MusicFactoryPage() {
               <span className="text-sm text-gray-500">歌词示例:</span>
               <div className="flex flex-wrap gap-2 mt-1">
                 {Object.entries(lyricExamples).map(([key, text]) => (
-                  <button key={key}
-                    onClick={() => { setLyrics(text); setSelectedLyrics(text); toast.success('已载入示例歌词') }}
-                    className="text-xs px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-full transition-colors border border-purple-100">
-                    {key === 'love' ? '❤️ 爱情' : key === 'nature' ? '🌿 自然' : key === 'dream' ? '✨ 梦想' : key}
+                  <button
+                    key={key}
+                    onClick={() => {
+                      setLyrics(text)
+                      setSelectedLyrics(text)
+                      toast.success('已载入示例歌词')
+                    }}
+                    className="text-xs px-3 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-full transition-colors border border-purple-100"
+                  >
+                    {key === 'love'
+                      ? '❤️ 爱情'
+                      : key === 'nature'
+                        ? '🌿 自然'
+                        : key === 'dream'
+                          ? '✨ 梦想'
+                          : key}
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          <Button variant="gradient" size="lg" icon={Sparkles} loading={generatingLyrics} disabled={!theme.trim()} onClick={generateLyrics} className="w-full">
+          <Button
+            variant="gradient"
+            size="lg"
+            icon={Sparkles}
+            loading={generatingLyrics}
+            disabled={!theme.trim()}
+            onClick={generateLyrics}
+            className="w-full"
+          >
             {generatingLyrics ? '生成任务执行中（后台）…' : '生成歌词'}
           </Button>
           {generatingLyrics && genTask && (
@@ -474,9 +586,14 @@ export default function MusicFactoryPage() {
                 <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
               </div>
               <div className="mt-1.5 h-1.5 bg-purple-100 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${genTask.progress || 0}%` }}
+                />
               </div>
-              <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+              <p className="mt-1 text-[11px] text-gray-400">
+                任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+              </p>
             </div>
           )}
 
@@ -488,8 +605,18 @@ export default function MusicFactoryPage() {
                   生成结果
                 </span>
                 <div className="flex items-center gap-2">
-                  <Button variant="secondary" size="sm" icon={Copy} onClick={handleCopyLyrics}>复制</Button>
-                  <Button variant="success" size="sm" onClick={() => { setSelectedLyrics(lyrics); setActiveTab('music'); toast.success('已带入音乐生成') }}>
+                  <Button variant="secondary" size="sm" icon={Copy} onClick={handleCopyLyrics}>
+                    复制
+                  </Button>
+                  <Button
+                    variant="success"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedLyrics(lyrics)
+                      setActiveTab('music')
+                      toast.success('已带入音乐生成')
+                    }}
+                  >
                     用于音乐生成
                   </Button>
                 </div>
@@ -511,15 +638,21 @@ export default function MusicFactoryPage() {
           </h2>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">歌词内容 <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              歌词内容 <span className="text-red-500">*</span>
+            </label>
             <textarea
-              value={selectedLyrics} onChange={(e) => setSelectedLyrics(e.target.value)}
+              value={selectedLyrics}
+              onChange={(e) => setSelectedLyrics(e.target.value)}
               placeholder="粘贴歌词或使用歌词生成器创作的歌词..."
               rows={8}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
             />
             {lyrics && (
-              <button onClick={() => setSelectedLyrics(lyrics)} className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1">
+              <button
+                onClick={() => setSelectedLyrics(lyrics)}
+                className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1"
+              >
                 <Wand2 className="w-4 h-4" />
                 使用刚才生成的歌词
               </button>
@@ -529,41 +662,74 @@ export default function MusicFactoryPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">音乐风格</label>
-              <select value={style} onChange={(e) => setStyle(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {STYLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              <select
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {STYLES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">情感基调</label>
-              <select value={mood} onChange={(e) => setMood(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {MOODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              <select
+                value={mood}
+                onChange={(e) => setMood(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {MOODS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">时长（秒）: {musicDuration}s</label>
-            <input type="range" min="15" max="120" value={musicDuration}
-              onChange={(e) => setMusicDuration(Number(e.target.value))} className="w-full accent-purple-500" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              时长（秒）: {musicDuration}s
+            </label>
+            <input
+              type="range"
+              min="15"
+              max="120"
+              value={musicDuration}
+              onChange={(e) => setMusicDuration(Number(e.target.value))}
+              className="w-full accent-purple-500"
+            />
             <div className="flex justify-between text-xs text-gray-400">
               <span>15s</span>
               <span>120s</span>
             </div>
           </div>
 
-          <Button variant="gradient" size="lg" icon={Sparkles} loading={generatingMusic}
-            disabled={!selectedLyrics.trim()} onClick={generateMusic} className="w-full">
+          <Button
+            variant="gradient"
+            size="lg"
+            icon={Sparkles}
+            loading={generatingMusic}
+            disabled={!selectedLyrics.trim()}
+            onClick={generateMusic}
+            className="w-full"
+          >
             {generatingMusic ? '正在创作音乐...' : '生成音乐'}
           </Button>
 
           {musicResult && (
-            <div className={`p-4 rounded-xl ${
-              musicResult.status === 'pending' ? 'bg-blue-50 border border-blue-200' :
-              musicResult.status === 'error' ? 'bg-red-50 border border-red-200' :
-              'bg-purple-50 border border-purple-200'
-            }`}>
+            <div
+              className={`p-4 rounded-xl ${
+                musicResult.status === 'pending'
+                  ? 'bg-blue-50 border border-blue-200'
+                  : musicResult.status === 'error'
+                    ? 'bg-red-50 border border-red-200'
+                    : 'bg-purple-50 border border-purple-200'
+              }`}
+            >
               <div className="flex items-center gap-2">
                 <Volume2 className="w-5 h-5 text-purple-600 flex-shrink-0" />
                 <span className="text-sm text-gray-700">
@@ -584,15 +750,21 @@ export default function MusicFactoryPage() {
           </h2>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">文本内容 <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              文本内容 <span className="text-red-500">*</span>
+            </label>
             <textarea
-              value={ttsText} onChange={(e) => setTtsText(e.target.value)}
+              value={ttsText}
+              onChange={(e) => setTtsText(e.target.value)}
               placeholder="输入要合成的文本，支持歌词、诗歌、对话..."
               rows={4}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
             />
             {lyrics && (
-              <button onClick={() => setTtsText(lyrics)} className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1">
+              <button
+                onClick={() => setTtsText(lyrics)}
+                className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1"
+              >
                 <Wand2 className="w-4 h-4" />
                 使用歌词内容
               </button>
@@ -602,22 +774,43 @@ export default function MusicFactoryPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">声音类型</label>
-              <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+              <select
+                value={ttsVoice}
+                onChange={(e) => setTtsVoice(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {VOICES.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">音乐风格</label>
-              <select value={style} onChange={(e) => setStyle(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none">
-                {STYLES.slice(0, 4).map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              <select
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {STYLES.slice(0, 4).map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
-          <Button variant="gradient" size="lg" icon={Mic} loading={generatingTts}
-            disabled={!ttsText.trim()} onClick={generateTts} className="w-full">
+          <Button
+            variant="gradient"
+            size="lg"
+            icon={Mic}
+            loading={generatingTts}
+            disabled={!ttsText.trim()}
+            onClick={generateTts}
+            className="w-full"
+          >
             {generatingTts ? '生成任务执行中（后台）…' : '生成人声'}
           </Button>
           {generatingTts && genTask && (
@@ -628,9 +821,14 @@ export default function MusicFactoryPage() {
                 <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
               </div>
               <div className="mt-1.5 h-1.5 bg-purple-100 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all" style={{ width: `${genTask.progress || 0}%` }} />
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${genTask.progress || 0}%` }}
+                />
               </div>
-              <p className="mt-1 text-[11px] text-gray-400">任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果</p>
+              <p className="mt-1 text-[11px] text-gray-400">
+                任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+              </p>
             </div>
           )}
 
@@ -671,11 +869,18 @@ export default function MusicFactoryPage() {
         ) : error ? (
           <ErrorState message={`加载失败：${error.message}`} onRetry={fetchAudios} />
         ) : audios.length === 0 ? (
-          <Empty icon={Headphones} title="暂无音乐" description="生成歌词或合成人声后，作品会出现在这里" />
+          <Empty
+            icon={Headphones}
+            title="暂无音乐"
+            description="生成歌词或合成人声后，作品会出现在这里"
+          />
         ) : (
           <div className="space-y-2">
             {audios.map((audio) => (
-              <div key={audio.filename} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
+              <div
+                key={audio.filename}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+              >
                 <div className="flex items-center gap-3 min-w-0">
                   <button
                     onClick={() => handlePlayAudio(audio)}
@@ -688,15 +893,25 @@ export default function MusicFactoryPage() {
                     )}
                   </button>
                   <div className="min-w-0">
-                    <div className="font-medium text-gray-900 truncate">{audio.filename.replace('.mp3', '').replace('music_', '')}</div>
+                    <div className="font-medium text-gray-900 truncate">
+                      {audio.filename.replace('.mp3', '').replace('music_', '')}
+                    </div>
                     <div className="text-sm text-gray-500">{formatBytes(audio.size)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => handleDownload(audio)} className="p-2 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" title="下载">
+                  <button
+                    onClick={() => handleDownload(audio)}
+                    className="p-2 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                    title="下载"
+                  >
                     <Download className="w-4 h-4" />
                   </button>
-                  <button onClick={() => setDeleteTarget(audio)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="删除">
+                  <button
+                    onClick={() => setDeleteTarget(audio)}
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="删除"
+                  >
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>

@@ -4,12 +4,12 @@
 import json
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Form
-from pydantic import BaseModel
-from typing import Optional
 
-from common.db import get_db
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from common.auth import require_auth
+from common.db import get_db
 
 router = APIRouter()
 
@@ -17,6 +17,7 @@ router = APIRouter()
 # ══════════════════════════════════════════════════════════════
 # Models
 # ══════════════════════════════════════════════════════════════
+
 
 class GlobalTaskCreate(BaseModel):
     title: str
@@ -30,13 +31,13 @@ class GlobalTaskCreate(BaseModel):
 
 
 class GlobalTaskUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    due_date: Optional[str] = None
-    tags: Optional[list] = None
-    assigned_to: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    due_date: str | None = None
+    tags: list | None = None
+    assigned_to: str | None = None
 
 
 class NotificationCreate(BaseModel):
@@ -61,6 +62,7 @@ class DashboardWidgetUpdate(BaseModel):
 # Home / Dashboard
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/home/stats")
 async def get_home_stats(current_user: dict = require_auth()):
     """获取首页统计数据"""
@@ -71,8 +73,12 @@ async def get_home_stats(current_user: dict = require_auth()):
             "workflows": conn.execute("SELECT COUNT(*) FROM workflows WHERE active=1").fetchone()[0],
             "projects": conn.execute("SELECT COUNT(*) FROM projects WHERE active=1").fetchone()[0],
             "tasks_total": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE active=1").fetchone()[0],
-            "tasks_todo": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE status='todo' AND active=1").fetchone()[0],
-            "tasks_done": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE status='done' AND active=1").fetchone()[0],
+            "tasks_todo": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE status='todo' AND active=1").fetchone()[
+                0
+            ],
+            "tasks_done": conn.execute("SELECT COUNT(*) FROM global_tasks WHERE status='done' AND active=1").fetchone()[
+                0
+            ],
             "notifications_unread": conn.execute("SELECT COUNT(*) FROM notifications WHERE read=0").fetchone()[0],
             "artifacts": conn.execute("SELECT COUNT(*) FROM artifacts WHERE active=1").fetchone()[0],
         }
@@ -122,9 +128,7 @@ async def get_home_recent(current_user: dict = require_auth()):
 
         # 最近的流水线（部署状态）
         recent_pipelines = []
-        for row in conn.execute(
-            "SELECT * FROM pipelines WHERE active=1 ORDER BY updated_at DESC LIMIT 5"
-        ).fetchall():
+        for row in conn.execute("SELECT * FROM pipelines WHERE active=1 ORDER BY updated_at DESC LIMIT 5").fetchall():
             p = dict(row)
             try:
                 p["config"] = json.loads(p.get("config") or "{}")
@@ -156,7 +160,7 @@ async def get_dashboard_widgets(current_user: dict = require_auth()):
         widgets = []
         for row in conn.execute(
             "SELECT * FROM dashboard_widgets WHERE user_id IN ('default', ?) AND visible=1 ORDER BY position",
-            (current_user["username"],)
+            (current_user["username"],),
         ).fetchall():
             w = dict(row)
             w["config"] = json.loads(w.get("config", "{}"))
@@ -182,16 +186,32 @@ async def update_dashboard_widget(widget_id: str, data: DashboardWidgetUpdate, c
             conn.execute(
                 """INSERT INTO dashboard_widgets (id, user_id, widget_type, title, config, position, size, visible, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (widget_id, current_user["username"], data.widget_type, data.title,
-                 json.dumps(data.config), data.position, data.size, int(data.visible),
-                 datetime.now().isoformat())
+                (
+                    widget_id,
+                    current_user["username"],
+                    data.widget_type,
+                    data.title,
+                    json.dumps(data.config),
+                    data.position,
+                    data.size,
+                    int(data.visible),
+                    datetime.now().isoformat(),
+                ),
             )
         else:
             conn.execute(
                 """UPDATE dashboard_widgets SET widget_type=?, title=?, config=?, position=?, size=?, visible=?, updated_at=?
                    WHERE id=?""",
-                (data.widget_type, data.title, json.dumps(data.config), data.position, data.size,
-                 int(data.visible), datetime.now().isoformat(), widget_id)
+                (
+                    data.widget_type,
+                    data.title,
+                    json.dumps(data.config),
+                    data.position,
+                    data.size,
+                    int(data.visible),
+                    datetime.now().isoformat(),
+                    widget_id,
+                ),
             )
         conn.commit()
         return {"ok": True, "id": widget_id}
@@ -205,7 +225,14 @@ def _get_default_widgets():
         {"id": "stats", "widget_type": "stats", "title": "数据概览", "config": {}, "position": 0, "size": "lg"},
         {"id": "tasks", "widget_type": "tasks", "title": "待办任务", "config": {}, "position": 1, "size": "md"},
         {"id": "recent", "widget_type": "recent", "title": "最近活动", "config": {}, "position": 2, "size": "md"},
-        {"id": "quick_actions", "widget_type": "quick_actions", "title": "快捷操作", "config": {}, "position": 3, "size": "sm"},
+        {
+            "id": "quick_actions",
+            "widget_type": "quick_actions",
+            "title": "快捷操作",
+            "config": {},
+            "position": 3,
+            "size": "sm",
+        },
     ]
 
 
@@ -213,12 +240,13 @@ def _get_default_widgets():
 # Global Tasks
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/tasks")
 async def list_global_tasks(
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    project_id: Optional[str] = None,
-    current_user: dict = require_auth()
+    status: str | None = None,
+    priority: str | None = None,
+    project_id: str | None = None,
+    current_user: dict = require_auth(),
 ):
     """获取全局任务列表"""
     conn = get_db()
@@ -258,9 +286,20 @@ async def create_global_task(data: GlobalTaskCreate, current_user: dict = requir
                (id, title, description, status, priority, due_date, tags, project_id, agent_id,
                 created_by, assigned_to, created_at, updated_at, active)
                VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-            (task_id, data.title, data.description, data.priority, data.due_date,
-             json.dumps(data.tags), data.project_id, data.agent_id,
-             current_user["username"], data.assigned_to, now, now)
+            (
+                task_id,
+                data.title,
+                data.description,
+                data.priority,
+                data.due_date,
+                json.dumps(data.tags),
+                data.project_id,
+                data.agent_id,
+                current_user["username"],
+                data.assigned_to,
+                now,
+                now,
+            ),
         )
         conn.commit()
 
@@ -288,7 +327,7 @@ async def get_global_task(task_id: str, current_user: dict = require_auth()):
 
 
 @router.put("/api/tasks/{task_id}")
-async def update_global_task(task_id: str, data: GlobalTaskUpdate, current_user: dict = require_auth()):
+async def update_global_task(task_id: str, data: GlobalTaskUpdate, current_user: dict = require_auth()):  # noqa: C901
     """更新全局任务"""
     conn = get_db()
     try:
@@ -351,12 +390,9 @@ async def delete_global_task(task_id: str, current_user: dict = require_auth()):
 # Notifications
 # ══════════════════════════════════════════════════════════════
 
+
 @router.get("/api/notifications")
-async def list_notifications(
-    unread_only: bool = False,
-    limit: int = 50,
-    current_user: dict = require_auth()
-):
+async def list_notifications(unread_only: bool = False, limit: int = 50, current_user: dict = require_auth()):
     """获取通知列表"""
     conn = get_db()
     try:
@@ -384,8 +420,16 @@ async def create_notification(data: NotificationCreate, current_user: dict = req
         conn.execute(
             """INSERT INTO notifications (id, type, title, content, target_type, target_id, user_id, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (notif_id, data.type, data.title, data.content, data.target_type, data.target_id,
-             data.user_id, datetime.now().isoformat())
+            (
+                notif_id,
+                data.type,
+                data.title,
+                data.content,
+                data.target_type,
+                data.target_id,
+                data.user_id,
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
         return {"ok": True, "id": notif_id}
@@ -398,10 +442,7 @@ async def mark_notification_read(notif_id: str, current_user: dict = require_aut
     """标记通知已读"""
     conn = get_db()
     try:
-        conn.execute(
-            "UPDATE notifications SET read=1, read_at=? WHERE id=?",
-            (datetime.now().isoformat(), notif_id)
-        )
+        conn.execute("UPDATE notifications SET read=1, read_at=? WHERE id=?", (datetime.now().isoformat(), notif_id))
         conn.commit()
         return {"ok": True}
     finally:
@@ -415,7 +456,7 @@ async def mark_all_notifications_read(current_user: dict = require_auth()):
     try:
         conn.execute(
             "UPDATE notifications SET read=1, read_at=? WHERE user_id IN ('all', ?) AND read=0",
-            (datetime.now().isoformat(), current_user["username"])
+            (datetime.now().isoformat(), current_user["username"]),
         )
         conn.commit()
         return {"ok": True}
@@ -439,12 +480,15 @@ async def delete_notification(notif_id: str, current_user: dict = require_auth()
 # Helper
 # ══════════════════════════════════════════════════════════════
 
-def _create_notification(conn, type: str, title: str, content: str, target_type: str = "", target_id: str = "", user_id: str = "all"):
+
+def _create_notification(
+    conn, type: str, title: str, content: str, target_type: str = "", target_id: str = "", user_id: str = "all"
+):
     """创建通知记录"""
     notif_id = f"notif_{uuid.uuid4().hex[:12]}"
     conn.execute(
         """INSERT INTO notifications (id, type, title, content, target_type, target_id, user_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (notif_id, type, title, content, target_type, target_id, user_id, datetime.now().isoformat())
+        (notif_id, type, title, content, target_type, target_id, user_id, datetime.now().isoformat()),
     )
     conn.commit()

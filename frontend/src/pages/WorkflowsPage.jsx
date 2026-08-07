@@ -1,41 +1,123 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Plus, Edit2, Trash2, Play, Clock,
-  Search, LayoutGrid, List as ListIcon,
-  Workflow, Calendar, Folder,
-  BarChart3, CheckCircle2,
-  GitBranch, Shield, FileCheck, UserCheck,
+  Plus,
+  Edit2,
+  Trash2,
+  Play,
+  Clock,
+  Search,
+  LayoutGrid,
+  List as ListIcon,
+  Workflow,
+  Calendar,
+  Folder,
+  BarChart3,
+  CheckCircle2,
+  GitBranch,
+  Shield,
+  FileCheck,
+  UserCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatDate } from '../lib/format'
 import {
-  Modal, Button, Empty, SkeletonGrid, ErrorState, Badge, PageHeader, ConfirmDialog,
+  Modal,
+  Button,
+  Empty,
+  SkeletonGrid,
+  ErrorState,
+  Badge,
+  PageHeader,
+  ConfirmDialog,
 } from '../components/ui'
 
 // 工作流快速模板（带完整节点编排，创建后即可运行）
 const WORKFLOW_TEMPLATES = [
-  { name: '需求评审流程', description: '需求文档生成→评审→输出的标准化流程', icon: FileCheck, color: 'from-blue-500 to-indigo-600',
-    defaults: { name: '需求评审流程', description: '产品需求收集、技术评审、排期确认的标准化工作流' },
+  {
+    name: '需求评审流程',
+    description: '需求文档生成→评审→输出的标准化流程',
+    icon: FileCheck,
+    color: 'from-blue-500 to-indigo-600',
+    defaults: {
+      name: '需求评审流程',
+      description: '产品需求收集、技术评审、排期确认的标准化工作流',
+    },
     definition: {
       nodes: [
-        { id: 'tpl_prd1', type: 'prd', label: '需求文档生成', x: 60, y: 160, config: { stage: 'generate', prd_text: '${input.message}', tech_design: '', language: 'python' } },
-        { id: 'tpl_prd2', type: 'prd', label: '需求评审', x: 300, y: 160, config: { stage: 'review', prd_text: '${tpl_prd1.result}', tech_design: '', language: 'python' } },
+        {
+          id: 'tpl_prd1',
+          type: 'prd',
+          label: '需求文档生成',
+          x: 60,
+          y: 160,
+          config: {
+            stage: 'generate',
+            prd_text: '${input.message}',
+            tech_design: '',
+            language: 'python',
+          },
+        },
+        {
+          id: 'tpl_prd2',
+          type: 'prd',
+          label: '需求评审',
+          x: 300,
+          y: 160,
+          config: {
+            stage: 'review',
+            prd_text: '${tpl_prd1.result}',
+            tech_design: '',
+            language: 'python',
+          },
+        },
         { id: 'tpl_out1', type: 'output', label: '评审结果输出', x: 540, y: 160, config: {} },
       ],
       edges: [
         { id: 'e_prd1', from: 'tpl_prd1', to: 'tpl_prd2' },
         { id: 'e_prd2', from: 'tpl_prd2', to: 'tpl_out1' },
       ],
-    } },
-  { name: '代码发布流程', description: '发布计划→代码审查→质量判定→决策输出的 CI/CD 流程', icon: GitBranch, color: 'from-emerald-500 to-green-600',
-    defaults: { name: '代码发布流程', description: '代码审查、自动化测试、灰度发布、全量上线的CI/CD工作流' },
+    },
+  },
+  {
+    name: '代码发布流程',
+    description: '发布计划→代码审查→质量判定→决策输出的 CI/CD 流程',
+    icon: GitBranch,
+    color: 'from-emerald-500 to-green-600',
+    defaults: {
+      name: '代码发布流程',
+      description: '代码审查、自动化测试、灰度发布、全量上线的CI/CD工作流',
+    },
     definition: {
       nodes: [
-        { id: 'tpl_plan', type: 'agent', label: '发布计划制定', x: 60, y: 160, config: { agent_id: '', message: '${input.message}' } },
-        { id: 'tpl_review', type: 'agent', label: '代码审查', x: 300, y: 160, config: { agent_id: '', message: '请对以下发布计划进行代码审查并输出审查报告：\n${tpl_plan.result}' } },
-        { id: 'tpl_check', type: 'condition', label: '质量判定', x: 540, y: 160, config: { expression: "results['tpl_review'].status == 'success'" } },
+        {
+          id: 'tpl_plan',
+          type: 'agent',
+          label: '发布计划制定',
+          x: 60,
+          y: 160,
+          config: { agent_id: '', message: '${input.message}' },
+        },
+        {
+          id: 'tpl_review',
+          type: 'agent',
+          label: '代码审查',
+          x: 300,
+          y: 160,
+          config: {
+            agent_id: '',
+            message: '请对以下发布计划进行代码审查并输出审查报告：\n${tpl_plan.result}',
+          },
+        },
+        {
+          id: 'tpl_check',
+          type: 'condition',
+          label: '质量判定',
+          x: 540,
+          y: 160,
+          config: { expression: "results['tpl_review'].status == 'success'" },
+        },
         { id: 'tpl_out2', type: 'output', label: '发布决策输出', x: 780, y: 160, config: {} },
       ],
       edges: [
@@ -43,41 +125,92 @@ const WORKFLOW_TEMPLATES = [
         { id: 'e_review', from: 'tpl_review', to: 'tpl_check' },
         { id: 'e_check', from: 'tpl_check', to: 'tpl_out2' },
       ],
-    } },
-  { name: '内容审核流程', description: '内容创作→合规审核→发布的管控流程', icon: Shield, color: 'from-amber-500 to-orange-600',
-    defaults: { name: '内容审核流程', description: '内容创建、多级审核、合规检查、定时发布的管控工作流' },
+    },
+  },
+  {
+    name: '内容审核流程',
+    description: '内容创作→合规审核→发布的管控流程',
+    icon: Shield,
+    color: 'from-amber-500 to-orange-600',
+    defaults: {
+      name: '内容审核流程',
+      description: '内容创建、多级审核、合规检查、定时发布的管控工作流',
+    },
     definition: {
       nodes: [
-        { id: 'tpl_create', type: 'agent', label: '内容创作', x: 60, y: 160, config: { agent_id: '', message: '请创作以下主题的内容：\n${input.message}' } },
-        { id: 'tpl_audit', type: 'agent', label: '合规审核', x: 300, y: 160, config: { agent_id: '', message: '请审核以下内容是否合规并输出审核结论：\n${tpl_create.result}' } },
+        {
+          id: 'tpl_create',
+          type: 'agent',
+          label: '内容创作',
+          x: 60,
+          y: 160,
+          config: { agent_id: '', message: '请创作以下主题的内容：\n${input.message}' },
+        },
+        {
+          id: 'tpl_audit',
+          type: 'agent',
+          label: '合规审核',
+          x: 300,
+          y: 160,
+          config: {
+            agent_id: '',
+            message: '请审核以下内容是否合规并输出审核结论：\n${tpl_create.result}',
+          },
+        },
         { id: 'tpl_out3', type: 'output', label: '审核结果输出', x: 540, y: 160, config: {} },
       ],
       edges: [
         { id: 'e_create', from: 'tpl_create', to: 'tpl_audit' },
         { id: 'e_audit', from: 'tpl_audit', to: 'tpl_out3' },
       ],
-    } },
-  { name: '客户 Onboarding', description: '需求分析→方案配置→上线计划输出', icon: UserCheck, color: 'from-violet-500 to-purple-600',
-    defaults: { name: '客户 Onboarding', description: '新客户注册、需求对接、系统配置、培训上线的标准流程' },
+    },
+  },
+  {
+    name: '客户 Onboarding',
+    description: '需求分析→方案配置→上线计划输出',
+    icon: UserCheck,
+    color: 'from-violet-500 to-purple-600',
+    defaults: {
+      name: '客户 Onboarding',
+      description: '新客户注册、需求对接、系统配置、培训上线的标准流程',
+    },
     definition: {
       nodes: [
-        { id: 'tpl_analyze', type: 'agent', label: '需求分析', x: 60, y: 160, config: { agent_id: '', message: '请分析以下客户需求并输出需求清单：\n${input.message}' } },
-        { id: 'tpl_plan2', type: 'agent', label: '方案配置', x: 300, y: 160, config: { agent_id: '', message: '根据以下需求清单输出系统配置与上线计划：\n${tpl_analyze.result}' } },
+        {
+          id: 'tpl_analyze',
+          type: 'agent',
+          label: '需求分析',
+          x: 60,
+          y: 160,
+          config: { agent_id: '', message: '请分析以下客户需求并输出需求清单：\n${input.message}' },
+        },
+        {
+          id: 'tpl_plan2',
+          type: 'agent',
+          label: '方案配置',
+          x: 300,
+          y: 160,
+          config: {
+            agent_id: '',
+            message: '根据以下需求清单输出系统配置与上线计划：\n${tpl_analyze.result}',
+          },
+        },
         { id: 'tpl_out4', type: 'output', label: '上线计划输出', x: 540, y: 160, config: {} },
       ],
       edges: [
         { id: 'e_analyze', from: 'tpl_analyze', to: 'tpl_plan2' },
         { id: 'e_plan2', from: 'tpl_plan2', to: 'tpl_out4' },
       ],
-    } },
+    },
+  },
 ]
-
 
 // Workflow 卡片组件
 function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
   const nodeCount = workflow.nodes?.length || 0
   const execCount = workflow.execution_count || 0
-  const successRate = workflow.success_rate != null ? `${Math.round(workflow.success_rate * 100)}%` : null
+  const successRate =
+    workflow.success_rate != null ? `${Math.round(workflow.success_rate * 100)}%` : null
 
   if (viewMode === 'list') {
     return (
@@ -97,24 +230,44 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
         </div>
         <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500 flex-shrink-0">
           <span className="flex items-center gap-1" title="执行次数">
-            <BarChart3 className="w-4 h-4" />{execCount} 次
+            <BarChart3 className="w-4 h-4" />
+            {execCount} 次
           </span>
           {successRate && (
             <span className="flex items-center gap-1" title="成功率">
-              <CheckCircle2 className="w-4 h-4" />{successRate}
+              <CheckCircle2 className="w-4 h-4" />
+              {successRate}
             </span>
           )}
-          <span className="flex items-center gap-1"><Clock className="w-4 h-4" />{formatRelativeTime(workflow.created_at)}</span>
-          <span className="flex items-center gap-1"><Folder className="w-4 h-4" />{nodeCount} 节点</span>
+          <span className="flex items-center gap-1">
+            <Clock className="w-4 h-4" />
+            {formatRelativeTime(workflow.created_at)}
+          </span>
+          <span className="flex items-center gap-1">
+            <Folder className="w-4 h-4" />
+            {nodeCount} 节点
+          </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => onView(workflow)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="打开">
+          <button
+            onClick={() => onView(workflow)}
+            className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors"
+            title="打开"
+          >
             <Play className="w-4 h-4" />
           </button>
-          <button onClick={() => onEdit(workflow)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(workflow)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(workflow)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(workflow)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -150,14 +303,17 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
       {/* 执行统计 */}
       <div className="flex items-center gap-3 mb-3 text-xs text-gray-500">
         <span className="flex items-center gap-1" title="节点数">
-          <Folder className="w-3.5 h-3.5" />{nodeCount} 节点
+          <Folder className="w-3.5 h-3.5" />
+          {nodeCount} 节点
         </span>
         <span className="flex items-center gap-1" title="执行次数">
-          <BarChart3 className="w-3.5 h-3.5" />{execCount} 次
+          <BarChart3 className="w-3.5 h-3.5" />
+          {execCount} 次
         </span>
         {successRate && (
           <span className="flex items-center gap-1" title="成功率">
-            <CheckCircle2 className="w-3.5 h-3.5" />{successRate}
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {successRate}
           </span>
         )}
       </div>
@@ -175,14 +331,29 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
           <Calendar className="w-3.5 h-3.5" />
           {formatRelativeTime(workflow.created_at)}
         </span>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => onView(workflow)} className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors" title="打开">
+        <div
+          className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => onView(workflow)}
+            className="p-2 hover:bg-emerald-50 text-gray-400 hover:text-emerald-600 rounded-lg transition-colors"
+            title="打开"
+          >
             <Play className="w-4 h-4" />
           </button>
-          <button onClick={() => onEdit(workflow)} className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors" title="编辑">
+          <button
+            onClick={() => onEdit(workflow)}
+            className="p-2 hover:bg-purple-50 text-gray-400 hover:text-purple-600 rounded-lg transition-colors"
+            title="编辑"
+          >
             <Edit2 className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(workflow)} className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors" title="删除">
+          <button
+            onClick={() => onDelete(workflow)}
+            className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+            title="删除"
+          >
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
@@ -235,8 +406,12 @@ function WorkflowFormModal({ open, onClose, onSubmit, editing, defaults, loading
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={loading}>{editing ? '保存' : '创建'}</Button>
+          <Button variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} loading={loading}>
+            {editing ? '保存' : '创建'}
+          </Button>
         </>
       }
     >
@@ -248,7 +423,9 @@ function WorkflowFormModal({ open, onClose, onSubmit, editing, defaults, loading
           </div>
         )}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">名称 <span className="text-red-500">*</span></label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            名称 <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             value={form.name}
@@ -307,9 +484,11 @@ export default function WorkflowsPage() {
   }, [fetchWorkflows])
 
   const filteredWorkflows = workflows.filter((w) => {
-    const matchSearch = w.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchSearch =
+      w.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       w.description?.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchFilter = filter === 'all' ||
+    const matchFilter =
+      filter === 'all' ||
       (filter === 'active' && (w.status || 'inactive') === 'active') ||
       (filter === 'inactive' && (w.status || 'inactive') === 'inactive') ||
       (filter === 'draft' && (w.status || 'inactive') === 'draft') ||
@@ -372,16 +551,37 @@ export default function WorkflowsPage() {
   }
 
   const totalExecutions = workflows.reduce((sum, w) => sum + (w.execution_count || 0), 0)
-  const avgSuccess = workflows.filter(w => w.success_rate != null)
-  const avgRate = avgSuccess.length > 0
-    ? Math.round(avgSuccess.reduce((s, w) => s + w.success_rate, 0) / avgSuccess.length * 100)
-    : null
+  const avgSuccess = workflows.filter((w) => w.success_rate != null)
+  const avgRate =
+    avgSuccess.length > 0
+      ? Math.round((avgSuccess.reduce((s, w) => s + w.success_rate, 0) / avgSuccess.length) * 100)
+      : null
 
   const stats = [
-    { label: '总工作流', value: workflows.length, icon: Workflow, color: 'from-violet-500 to-purple-600' },
-    { label: '运行中', value: workflows.filter((w) => (w.status || 'inactive') === 'active').length, icon: Play, color: 'from-emerald-500 to-green-600' },
-    { label: '总执行次数', value: totalExecutions, icon: BarChart3, color: 'from-blue-500 to-cyan-600' },
-    { label: '平均成功率', value: avgRate != null ? `${avgRate}%` : '-', icon: CheckCircle2, color: 'from-amber-500 to-orange-600' },
+    {
+      label: '总工作流',
+      value: workflows.length,
+      icon: Workflow,
+      color: 'from-violet-500 to-purple-600',
+    },
+    {
+      label: '运行中',
+      value: workflows.filter((w) => (w.status || 'inactive') === 'active').length,
+      icon: Play,
+      color: 'from-emerald-500 to-green-600',
+    },
+    {
+      label: '总执行次数',
+      value: totalExecutions,
+      icon: BarChart3,
+      color: 'from-blue-500 to-cyan-600',
+    },
+    {
+      label: '平均成功率',
+      value: avgRate != null ? `${avgRate}%` : '-',
+      icon: CheckCircle2,
+      color: 'from-amber-500 to-orange-600',
+    },
   ]
 
   return (
@@ -391,7 +591,9 @@ export default function WorkflowsPage() {
         description="创建工作流，编排多 Agent 协作"
         icon={Workflow}
         actions={
-          <Button variant="primary" icon={Plus} onClick={openCreate}>新建工作流</Button>
+          <Button variant="primary" icon={Plus} onClick={openCreate}>
+            新建工作流
+          </Button>
         }
       />
 
@@ -404,7 +606,9 @@ export default function WorkflowsPage() {
                 <p className="text-sm text-gray-500">{stat.label}</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}>
+              <div
+                className={`w-10 h-10 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center flex-shrink-0`}
+              >
                 <stat.icon className="w-5 h-5 text-white" />
               </div>
             </div>
@@ -423,10 +627,15 @@ export default function WorkflowsPage() {
             {WORKFLOW_TEMPLATES.map((tpl) => (
               <button
                 key={tpl.name}
-                onClick={() => { setFormDefaults({ ...tpl.defaults, definition: tpl.definition }); setShowForm(true) }}
+                onClick={() => {
+                  setFormDefaults({ ...tpl.defaults, definition: tpl.definition })
+                  setShowForm(true)
+                }}
                 className="bg-white rounded-xl p-4 border border-gray-200 hover:border-violet-300 hover:shadow-md transition-all text-left group"
               >
-                <div className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}>
+                <div
+                  className={`w-9 h-9 rounded-lg bg-gradient-to-br ${tpl.color} flex items-center justify-center text-white mb-3`}
+                >
                   <tpl.icon className="w-4.5 h-4.5" />
                 </div>
                 <h4 className="text-sm font-semibold text-gray-800 mb-1">{tpl.name}</h4>
@@ -491,7 +700,11 @@ export default function WorkflowsPage() {
           <Empty
             icon={Workflow}
             title={searchQuery || filter !== 'all' ? '未找到匹配的工作流' : '暂无工作流'}
-            description={searchQuery || filter !== 'all' ? '尝试调整搜索或筛选条件' : '创建一个工作流来编排多 Agent 协作'}
+            description={
+              searchQuery || filter !== 'all'
+                ? '尝试调整搜索或筛选条件'
+                : '创建一个工作流来编排多 Agent 协作'
+            }
             actionLabel={searchQuery || filter !== 'all' ? undefined : '新建工作流'}
             onAction={searchQuery || filter !== 'all' ? undefined : openCreate}
           />
@@ -526,7 +739,10 @@ export default function WorkflowsPage() {
 
       <WorkflowFormModal
         open={showForm}
-        onClose={() => { setShowForm(false); setFormDefaults(null) }}
+        onClose={() => {
+          setShowForm(false)
+          setFormDefaults(null)
+        }}
         onSubmit={handleSave}
         editing={editingWorkflow}
         defaults={formDefaults}

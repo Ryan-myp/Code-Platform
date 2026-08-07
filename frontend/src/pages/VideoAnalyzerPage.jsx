@@ -1,5 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Upload, Video, FileText, Download, Trash2, Clock, Play, Film, Eye, Sparkles } from 'lucide-react'
+import {
+  Upload,
+  Video,
+  FileText,
+  Download,
+  Trash2,
+  Clock,
+  Play,
+  Film,
+  Eye,
+  Sparkles,
+} from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -16,13 +27,17 @@ export default function VideoAnalyzerPage() {
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
 
-  useEffect(() => { loadRecords() }, [])
+  useEffect(() => {
+    loadRecords()
+  }, [])
 
   const loadRecords = async () => {
     try {
       const res = await api.get('/api/video/records')
       setRecords(res.data || [])
-    } catch {/* 静默失败，不阻塞 UI */}
+    } catch {
+      /* 静默失败，不阻塞 UI */
+    }
   }
 
   const handleUpload = async (e) => {
@@ -45,16 +60,33 @@ export default function VideoAnalyzerPage() {
 
   const handleAnalyze = async () => {
     if (!videoInfo?.video_id || task) return
-    await submitTask('/api/video/analyze', { video_id: videoInfo.video_id, description: '' }, {
-      onUpdate: (t) => setTask(t),
-      onSuccess: (data) => { setResult(data); setTask(null); loadRecords(); toast.success('视频分析完成') },
-      onError: (err) => { setTask(null); toast.error(`分析失败：${err.message}`) },
-    })
+    await submitTask(
+      '/api/video/analyze',
+      { video_id: videoInfo.video_id, description: '' },
+      {
+        onUpdate: (t) => setTask(t),
+        onSuccess: (data) => {
+          setResult(data)
+          setTask(null)
+          loadRecords()
+          toast.success('视频分析完成')
+        },
+        onError: (err) => {
+          setTask(null)
+          toast.error(`分析失败：${err.message}`)
+        },
+      }
+    )
   }
 
   const deleteRecord = async (id) => {
-    try { await api.delete(`/api/video/records/${id}`); loadRecords(); toast.success('已删除') }
-    catch (err) { toast.error(err.message) }
+    try {
+      await api.delete(`/api/video/records/${id}`)
+      loadRecords()
+      toast.success('已删除')
+    } catch (err) {
+      toast.error(err.message)
+    }
   }
 
   return (
@@ -73,7 +105,13 @@ export default function VideoAnalyzerPage() {
             <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <Upload className="w-4 h-4 text-red-500" /> 上传视频
             </h3>
-            <input ref={fileRef} type="file" accept="video/*" onChange={handleUpload} className="hidden" />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="video/*"
+              onChange={handleUpload}
+              className="hidden"
+            />
             <button
               onClick={() => fileRef.current?.click()}
               disabled={uploading}
@@ -93,7 +131,14 @@ export default function VideoAnalyzerPage() {
                   大小：{(videoInfo.file_size / 1024 / 1024).toFixed(1)} MB
                   {videoInfo.duration && ` · 时长：${videoInfo.duration}s`}
                 </div>
-                <Button variant="primary" size="sm" icon={Sparkles} loading={!!task} onClick={() => handleAnalyze()} className="w-full mt-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Sparkles}
+                  loading={!!task}
+                  onClick={() => handleAnalyze()}
+                  className="w-full mt-2"
+                >
                   开始智能分析
                 </Button>
                 {task && (
@@ -103,8 +148,10 @@ export default function VideoAnalyzerPage() {
                       <span>{task.progress || 0}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-red-500 to-pink-500 rounded-full transition-all duration-300"
-                        style={{ width: `${task.progress || 0}%` }} />
+                      <div
+                        className="h-full bg-gradient-to-r from-red-500 to-pink-500 rounded-full transition-all duration-300"
+                        style={{ width: `${task.progress || 0}%` }}
+                      />
                     </div>
                   </div>
                 )}
@@ -121,14 +168,24 @@ export default function VideoAnalyzerPage() {
             ) : (
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
                 {records.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs">
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
+                  >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-700 truncate">{r.filename}</div>
-                      <div className="text-gray-400">{(r.file_size/1024/1024).toFixed(1)}MB · {r.created_at?.slice(0,10)}</div>
+                      <div className="text-gray-400">
+                        {(r.file_size / 1024 / 1024).toFixed(1)}MB · {r.created_at?.slice(0, 10)}
+                      </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      <Badge color={r.status === 'done' ? 'green' : 'gray'}>{r.status === 'done' ? '已分析' : '已上传'}</Badge>
-                      <button onClick={() => deleteRecord(r.id)} className="p-1 text-gray-300 hover:text-red-500">
+                      <Badge color={r.status === 'done' ? 'green' : 'gray'}>
+                        {r.status === 'done' ? '已分析' : '已上传'}
+                      </Badge>
+                      <button
+                        onClick={() => deleteRecord(r.id)}
+                        className="p-1 text-gray-300 hover:text-red-500"
+                      >
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
@@ -150,7 +207,11 @@ export default function VideoAnalyzerPage() {
               </div>
             </Card>
           ) : !result ? (
-            <Empty icon={Eye} title="等待分析" description="上传视频后点击「开始智能分析」，AI将自动生成详细报告" />
+            <Empty
+              icon={Eye}
+              title="等待分析"
+              description="上传视频后点击「开始智能分析」，AI将自动生成详细报告"
+            />
           ) : (
             <>
               <Card className="border-red-200">
@@ -174,7 +235,12 @@ export default function VideoAnalyzerPage() {
                     <div className="text-xs text-gray-500">话题</div>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {result.topics?.map((t, i) => (
-                        <span key={i} className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs">{t}</span>
+                        <span
+                          key={i}
+                          className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs"
+                        >
+                          {t}
+                        </span>
                       ))}
                     </div>
                   </div>
@@ -197,14 +263,23 @@ export default function VideoAnalyzerPage() {
               {result.key_scenes?.length > 0 && (
                 <Card>
                   <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                    <Play className="w-4 h-4 text-amber-500" /> 关键场景（{result.key_scenes.length}）
+                    <Play className="w-4 h-4 text-amber-500" /> 关键场景（{result.key_scenes.length}
+                    ）
                   </h3>
                   <div className="space-y-2">
                     {result.key_scenes.map((s, i) => (
                       <div key={i} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50">
-                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-mono">{s.timestamp}</span>
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs font-mono">
+                          {s.timestamp}
+                        </span>
                         <span className="text-sm text-gray-700 flex-1">{s.description}</span>
-                        <Badge color={s.importance === '高' ? 'red' : s.importance === '中' ? 'amber' : 'gray'}>{s.importance}</Badge>
+                        <Badge
+                          color={
+                            s.importance === '高' ? 'red' : s.importance === '中' ? 'amber' : 'gray'
+                          }
+                        >
+                          {s.importance}
+                        </Badge>
                       </div>
                     ))}
                   </div>
@@ -220,7 +295,9 @@ export default function VideoAnalyzerPage() {
                     </h3>
                     <ul className="space-y-1.5 text-sm text-gray-600">
                       {result.highlights.map((h, i) => (
-                        <li key={i} className="flex gap-2"><span className="text-yellow-500">✦</span> {h}</li>
+                        <li key={i} className="flex gap-2">
+                          <span className="text-yellow-500">✦</span> {h}
+                        </li>
                       ))}
                     </ul>
                   </Card>
@@ -232,7 +309,9 @@ export default function VideoAnalyzerPage() {
                     </h3>
                     <ul className="space-y-1.5 text-sm text-gray-600">
                       {result.recommendations.map((r, i) => (
-                        <li key={i} className="flex gap-2"><span className="text-emerald-500">▸</span> {r}</li>
+                        <li key={i} className="flex gap-2">
+                          <span className="text-emerald-500">▸</span> {r}
+                        </li>
                       ))}
                     </ul>
                   </Card>
@@ -246,12 +325,18 @@ export default function VideoAnalyzerPage() {
                     <span className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-gray-500" /> 模拟字幕
                     </span>
-                    <Button variant="secondary" size="sm" icon={Download}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Download}
                       onClick={() => {
                         const blob = new Blob([result.subtitles_text], { type: 'text/plain' })
-                        const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
-                        a.download = 'subtitles.txt'; a.click()
-                      }}>
+                        const a = document.createElement('a')
+                        a.href = URL.createObjectURL(blob)
+                        a.download = 'subtitles.txt'
+                        a.click()
+                      }}
+                    >
                       下载字幕
                     </Button>
                   </h3>
