@@ -32,12 +32,16 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 安装运行时依赖（ffmpeg：数字人/视频合成；中文字体：Noto CJK + 文泉驿简体）
+# 安装运行时依赖（ffmpeg：视频/语音合成；nodejs：游戏/代码沙箱校验；
+# 中文字体：Noto CJK + 文泉驿简体；emoji 字体：数字人贴纸/表情渲染）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
+    nodejs \
+    npm \
     fonts-noto-cjk \
     fonts-wqy-microhei \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制应用代码

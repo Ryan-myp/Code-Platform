@@ -96,11 +96,13 @@ def save_image(img: Image.Image, fmt: str = "PNG") -> str:
 
 
 def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
-    """获取字体"""
+    """获取字体（macOS PingFang → Linux 文泉驿/Noto CJK → 默认）"""
     font_paths = [
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",          # Linux：文泉驿（简体）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux：Noto CJK
     ]
     for fp in font_paths:
         if os.path.exists(fp):

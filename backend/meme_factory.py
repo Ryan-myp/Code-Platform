@@ -103,8 +103,13 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_w: int, max_lines
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
-    """获取中文字体（macOS PingFang），失败回退默认。"""
-    for fp in ["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/STHeiti Medium.ttc"]:
+    """获取中文字体（macOS PingFang → Linux 文泉驿/Noto CJK），失败回退默认。"""
+    for fp in [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",          # Linux：文泉驿（简体）
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux：Noto CJK
+    ]:
         if os.path.exists(fp):
             try:
                 return ImageFont.truetype(fp, size)
