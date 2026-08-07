@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Callable
@@ -418,6 +419,27 @@ def _audio_duration(path: str) -> float:
         return max(duration, 1.0)
     except Exception:
         return 0.0
+
+
+_VIDEO_ENCODER_CACHE: str | None = None
+
+def _pick_video_encoder() -> str:
+    """选择视频编码器：优先 Apple VideoToolbox 硬件编码（M 系列芯片媒体引擎），
+    检测不到则回退 libx264 CPU 编码（Linux 容器等环境）。结果进程级缓存。"""
+    global _VIDEO_ENCODER_CACHE
+    if _VIDEO_ENCODER_CACHE is None:
+        enc = "libx264"
+        try:
+            out = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if any("h264_videotoolbox" in line for line in out.stdout.splitlines()):
+                enc = "h264_videotoolbox"
+        except Exception:
+            pass
+        _VIDEO_ENCODER_CACHE = enc
+    return _VIDEO_ENCODER_CACHE
 
 
 def _build_portrait_src(avatar: dict):
@@ -1294,70 +1316,84 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
     text_lines = _wrap_text_lines(text, probe_draw, fonts["body"], right_w)
 
     frames_dir = tempfile.mkdtemp(prefix="dh_frames_")
+    # 水印字体只加载一次（原实现每帧重复加载字体文件）
+    wm_font = _load_font(int(18 * OUT_W / 1280), FONT_CANDIDATES) if watermark else None
+
+    def _render_one(f: int) -> None:
+        t = f / fps
+        progress = min(1.0, t / duration) if duration > 0 else 1.0
+        energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
+        mouth_shape = _mouth_shape_at(script_timeline, t)
+        frame = _render_frame(
+            avatar=avatar, bg_hex=bg_hex, fonts=fonts,
+            portrait=portrait, text_lines=text_lines,
+            t=t, progress=progress, width=RENDER_W, height=RENDER_H,
+            energy=energy, mouth_shape=mouth_shape, bg_img=bg_img,
+        )
+        # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
+        zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
+        win_w = int(RENDER_W / (1 + zoom))
+        win_h = int(RENDER_H / (1 + zoom))
+        pan_x = int(0.012 * RENDER_W * math.sin(t * 0.18))
+        pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
+        x0 = (RENDER_W - win_w) // 2 + pan_x
+        y0 = (RENDER_H - win_h) // 2 + pan_y
+        # 越界保护：裁剪窗口不允许超出画布
+        x0 = max(0, min(x0, RENDER_W - win_w))
+        y0 = max(0, min(y0, RENDER_H - win_h))
+        frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
+            (OUT_W, OUT_H), Image.LANCZOS,
+        )
+        # 开头淡入 / 结尾淡出
+        fade = 1.0
+        if t < 0.4:
+            fade = t / 0.4
+        elif t > duration - 0.4:
+            fade = max(0.0, (duration - t) / 0.4)
+        if fade < 1.0:
+            black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
+            frame = Image.blend(black, frame, fade)
+        # 商业水印：右下角半透明（不随淡入淡出消失，全程可见）
+        if watermark:
+            wm_text = WATERMARK_TEXT
+            wm_w = wm_font.getbbox(wm_text)[2]
+            wm_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
+            wm_draw = ImageDraw.Draw(wm_layer)
+            wm_x, wm_y = OUT_W - wm_w - int(24 * OUT_W / 1280), OUT_H - int(34 * OUT_H / 720)
+            # 深色描边提高任意背景下的可读性
+            wm_draw.text((wm_x - 1, wm_y - 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+            wm_draw.text((wm_x + 1, wm_y + 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+            wm_draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(255, 255, 255, 170))
+            frame.paste(wm_layer, (0, 0), wm_layer)
+        # JPG 帧序列（quality=95 视觉无损，比 PNG 快 10 倍+）
+        frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
+
     try:
-        for f in range(total_frames):
-            t = f / fps
-            progress = min(1.0, t / duration) if duration > 0 else 1.0
-            energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
-            mouth_shape = _mouth_shape_at(script_timeline, t)
-            frame = _render_frame(
-                avatar=avatar, bg_hex=bg_hex, fonts=fonts,
-                portrait=portrait, text_lines=text_lines,
-                t=t, progress=progress, width=RENDER_W, height=RENDER_H,
-                energy=energy, mouth_shape=mouth_shape, bg_img=bg_img,
-            )
-            # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
-            zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
-            win_w = int(RENDER_W / (1 + zoom))
-            win_h = int(RENDER_H / (1 + zoom))
-            pan_x = int(0.012 * RENDER_W * math.sin(t * 0.18))
-            pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
-            x0 = (RENDER_W - win_w) // 2 + pan_x
-            y0 = (RENDER_H - win_h) // 2 + pan_y
-            # 越界保护：裁剪窗口不允许超出画布
-            x0 = max(0, min(x0, RENDER_W - win_w))
-            y0 = max(0, min(y0, RENDER_H - win_h))
-            frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
-                (OUT_W, OUT_H), Image.LANCZOS,
-            )
-            # 开头淡入 / 结尾淡出
-            fade = 1.0
-            if t < 0.4:
-                fade = t / 0.4
-            elif t > duration - 0.4:
-                fade = max(0.0, (duration - t) / 0.4)
-            if fade < 1.0:
-                black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
-                frame = Image.blend(black, frame, fade)
-            # 商业水印：右下角半透明（不随淡入淡出消失，全程可见）
-            if watermark:
-                wm_font = _load_font(int(18 * OUT_W / 1280), FONT_CANDIDATES)
-                wm_text = WATERMARK_TEXT
-                wm_w = wm_font.getbbox(wm_text)[2]
-                wm_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
-                wm_draw = ImageDraw.Draw(wm_layer)
-                wm_x, wm_y = OUT_W - wm_w - int(24 * OUT_W / 1280), OUT_H - int(34 * OUT_H / 720)
-                # 深色描边提高任意背景下的可读性
-                wm_draw.text((wm_x - 1, wm_y - 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
-                wm_draw.text((wm_x + 1, wm_y + 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
-                wm_draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(255, 255, 255, 170))
-                frame.paste(wm_layer, (0, 0), wm_layer)
-            # JPG 帧序列（quality=95 视觉无损，比 PNG 快 10 倍+）
-            frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
+        # 帧渲染并行化：PIL/numpy 的 C 层操作释放 GIL，线程池可吃满多核（帧间无依赖）
+        render_workers = min(os.cpu_count() or 4, 8)
+        with ThreadPoolExecutor(max_workers=render_workers) as pool:
+            for _ in pool.map(_render_one, range(total_frames)):
+                pass
 
         # ffmpeg：帧序列 + 音频 → MP4
+        # 编码器自动选择：Apple 芯片用 VideoToolbox 硬件编码（快 5~10 倍），
+        # Linux 容器等无硬件编码器环境自动回退 libx264 CPU 编码
         try:
+            enc = _pick_video_encoder()
+            # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
+            # 去除 JPG 帧软糊感；libx264 用 crf 18，videotoolbox 不支持 qscale
+            # （ffmpeg 8.x 报错）改用目标码率模式保清晰
+            quality_args = (["-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M"]
+                            if enc == "h264_videotoolbox" else ["-crf", "18"])
             subprocess.run(
                 [
                     "ffmpeg", "-y",
                     "-framerate", str(fps),
                     "-i", os.path.join(frames_dir, "%04d.jpg"),
                     "-i", audio_path,
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
-                    # 去除 JPG 帧软糊感；crf 18（默认 23 偏糊）配合高码率保清晰
+                    "-c:v", enc, "-pix_fmt", "yuv420p",
                     "-vf", "unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
-                    "-crf", "18",
+                    *quality_args,
                     "-c:a", "aac", "-b:a", "128k",
                     "-shortest", "-movflags", "+faststart",
                     output_path,

@@ -538,8 +538,26 @@ class TestRenderRealism:
         finally:
             os.unlink(path)
 
+    def test_pick_video_encoder_detects_hardware(self):
+        """硬件编码器探测：ffmpeg 支持 h264_videotoolbox 时优先选用，否则回退 libx264。"""
+        import digital_human as dh
+        from unittest import mock
+        fake_out = mock.Mock()
+        fake_out.stdout = (
+            " V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)\n"
+            " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC\n"
+        )
+        dh._VIDEO_ENCODER_CACHE = None
+        with mock.patch.object(dh.subprocess, "run", return_value=fake_out):
+            assert dh._pick_video_encoder() == "h264_videotoolbox"
+        fake_out.stdout = " V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC\n"
+        dh._VIDEO_ENCODER_CACHE = None
+        with mock.patch.object(dh.subprocess, "run", return_value=fake_out):
+            assert dh._pick_video_encoder() == "libx264"
+        dh._VIDEO_ENCODER_CACHE = None  # 还原，避免影响其他测试
+
     def test_render_video_ffmpeg_filter_chain(self):
-        """编码滤镜链：unsharp 锐化 + eq 色彩分级 + crf 18 进入 ffmpeg 参数。"""
+        """编码链路：unsharp 锐化 + eq 色彩分级 + 编码器硬件/CPU 自动分支 + 帧渲染并行。"""
         import os
         import subprocess as sp
         import tempfile
@@ -549,7 +567,7 @@ class TestRenderRealism:
         audio = os.path.join(tmp, "t.wav")
         sp.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
                 "-ar", "22050", audio], capture_output=True, check=True)
-        calls = []
+        calls, seen = [], {}
         real_run = sp.run  # patch 前保存真实引用（patch 会替换全局 subprocess.run）
 
         def fake_run(cmd, *a, **kw):
@@ -557,19 +575,33 @@ class TestRenderRealism:
                 calls.append(cmd)
             return real_run(cmd, *a, **kw)  # 解码/探测保持真实
 
-        with mock.patch.object(dh.subprocess, "run", side_effect=fake_run):
-            dh._render_video(
-                "测试", {"id": "business-female", "name": "x", "style": "y"},
-                {"id": "tech", "type": "gradient", "color": "#667eea"},
-                audio, os.path.join(tmp, "out.mp4"),
-                resolution="720p", fps=8, watermark=False,
-            )
+        real_executor = dh.ThreadPoolExecutor
+
+        class SpyExecutor(real_executor):
+            def __init__(self, *args, **kwargs):
+                seen["max_workers"] = kwargs.get("max_workers")
+                super().__init__(*args, **kwargs)
+
+        with mock.patch.object(dh, "ThreadPoolExecutor", SpyExecutor):
+            with mock.patch.object(dh.subprocess, "run", side_effect=fake_run):
+                dh._render_video(
+                    "测试", {"id": "business-female", "name": "x", "style": "y"},
+                    {"id": "tech", "type": "gradient", "color": "#667eea"},
+                    audio, os.path.join(tmp, "out.mp4"),
+                    resolution="720p", fps=8, watermark=False,
+                )
         assert calls, "编码 ffmpeg 调用缺失"
         enc = calls[0]
         vf = enc[enc.index("-vf") + 1]
         assert "unsharp=5:5:0.6" in vf
         assert "eq=contrast=1.06" in vf
-        assert enc[enc.index("-crf") + 1] == "18"
+        codec = enc[enc.index("-c:v") + 1]
+        assert codec in ("libx264", "h264_videotoolbox")  # 硬件/CPU 自动选择
+        if codec == "libx264":
+            assert enc[enc.index("-crf") + 1] == "18"
+        else:
+            assert enc[enc.index("-b:v") + 1] == "6M"  # videotoolbox 不支持 qscale，用码率模式
+        assert seen.get("max_workers", 0) >= 2  # 帧渲染已并行化
 
     def test_scene_background_photo_like(self):
         """拟摄影背景：尺寸正确、确定性可复现、非纯色（照片质感）。"""
