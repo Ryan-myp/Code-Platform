@@ -388,7 +388,7 @@ class TestRenderRealism:
         return p.name
 
     def test_cover_crop_no_distortion(self):
-        """1:1 与横向图 cover 裁剪后恒为 640x800，杜绝拉伸变形。"""
+        """1:1 与横向图 cover 裁剪后恒为 800x1000，杜绝拉伸变形。"""
         import os
         from PIL import Image as PILImage
         from digital_human import _build_portrait_src
@@ -399,7 +399,7 @@ class TestRenderRealism:
                 avatar = {"id": "x", "is_custom": True, "local_image_path": path}
                 portrait = _build_portrait_src(avatar)
                 assert portrait is not None
-                assert portrait[2] == 640 and portrait[3] == 800
+                assert portrait[2] == 800 and portrait[3] == 1000
         finally:
             os.unlink(path)
 
@@ -476,13 +476,13 @@ class TestRenderRealism:
                      for k, s in (("title", 30), ("body", 18), ("tag", 14))}
             kw = dict(avatar=avatar, bg_hex="#1a1a2e", fonts=fonts, portrait=portrait,
                       text_lines=["测试文案"], t=1.0, progress=0.3,
-                      width=640, height=360, energy=0.8)
+                      width=640, height=600, energy=0.8)
             f_open = np.asarray(_render_frame(**kw, mouth_shape=(0.9, 0.5))).astype(int)
             f_closed = np.asarray(_render_frame(**kw, mouth_shape=(0.1, 0.2))).astype(int)
             assert np.abs(f_open - f_closed).mean() > 0.05  # 嘴在动
             kw2 = dict(avatar=avatar, bg_hex="#1a1a2e", fonts=fonts, portrait=None,
                        text_lines=["测试文案"], progress=0.3,
-                       width=640, height=360, energy=0.0, mouth_shape=(0.0, 0.5))
+                       width=640, height=600, energy=0.0, mouth_shape=(0.0, 0.5))
             b1 = np.asarray(_render_frame(**kw2, t=1.5)).astype(int)
             b2 = np.asarray(_render_frame(**kw2, t=2.5)).astype(int)
             assert np.abs(b1 - b2).mean() > 0.5  # 主光脉动
@@ -495,7 +495,7 @@ class TestRenderRealism:
             os.unlink(path)
 
     def test_render_video_ffmpeg_filter_chain(self):
-        """编码滤镜链：unsharp 锐化 + eq 色彩分级 + crf 21 进入 ffmpeg 参数。"""
+        """编码滤镜链：unsharp 锐化 + eq 色彩分级 + crf 18 进入 ffmpeg 参数。"""
         import os
         import subprocess as sp
         import tempfile
@@ -523,6 +523,27 @@ class TestRenderRealism:
         assert calls, "编码 ffmpeg 调用缺失"
         enc = calls[0]
         vf = enc[enc.index("-vf") + 1]
-        assert "unsharp=5:5:0.45" in vf
-        assert "eq=contrast=1.05" in vf
-        assert enc[enc.index("-crf") + 1] == "21"
+        assert "unsharp=5:5:0.6" in vf
+        assert "eq=contrast=1.06" in vf
+        assert enc[enc.index("-crf") + 1] == "18"
+
+    def test_scene_background_photo_like(self):
+        """拟摄影背景：尺寸正确、确定性可复现、非纯色（照片质感）。"""
+        import numpy as np
+        from digital_human import _make_scene_background
+        img1 = _make_scene_background("office", 640, 360)
+        assert img1.size == (640, 360)
+        a1 = np.asarray(img1)
+        assert a1.std() > 8  # 非纯色/非单一渐变（有明暗层次）
+        img2 = _make_scene_background("office", 640, 360)
+        assert np.abs(np.asarray(img1) - np.asarray(img2)).mean() == 0  # 固定种子可复现
+        img3 = _make_scene_background("nature", 640, 360)
+        assert np.abs(np.asarray(img1) - np.asarray(img3)).mean() > 3  # 场景各异
+
+    def test_build_bg_src_type_gating(self):
+        """image 类型背景 → 底图；gradient 类型 → None（不浪费渲染）。"""
+        from digital_human import _build_bg_src
+        assert _build_bg_src({"id": "tech", "type": "gradient"}, 640, 360) is None
+        assert _build_bg_src(None, 640, 360) is None
+        img = _build_bg_src({"id": "office", "type": "image"}, 640, 360)
+        assert img is not None and img.size == (640, 360)

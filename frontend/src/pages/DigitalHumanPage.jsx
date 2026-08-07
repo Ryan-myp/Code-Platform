@@ -33,7 +33,7 @@ export default function DigitalHumanPage() {
   const [generating, setGenerating] = useState(false)
   // 商业参数：分辨率 / 帧率 / 水印
   const [resolution, setResolution] = useState('720p')
-  const [fps, setFps] = useState(15)
+  const [fps, setFps] = useState(24)  // 默认 24fps 流畅档（画质优先，异步任务可等）
   const [watermark, setWatermark] = useState(false)  // 会员可开关；免费用户由后端强制加水印
   const [genPhase, setGenPhase] = useState('')   // 生成阶段提示文案
   const [quota, setQuota] = useState(null)       // 今日剩余额度

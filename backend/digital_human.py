@@ -340,7 +340,9 @@ def _build_portrait_src(avatar: dict):
         return None
     try:
         portrait = Image.open(portrait_path).convert("RGB")
-        target_w, target_h = 640, 800  # 4:5 半身像（较原 520x650 更高清）
+        target_w, target_h = 800, 1000  # 4:5 半身像：构图占比 62.5%（较 640x800 更饱满）
+        # 注意：target 即画布构图基准（人物占宽 = target_w/1280），不能随意增大撑满画面；
+        # 800x1000 相比 640x800 保留更多源写真信息（竖版 1024 源 → 78% vs 62.5%），1080p 下更清晰
         scale = max(target_w / portrait.width, target_h / portrait.height)
         nw, nh = int(round(portrait.width * scale)), int(round(portrait.height * scale))
         if (nw, nh) != portrait.size:
@@ -715,6 +717,56 @@ def _make_gradient(w: int, h: int, bg_hex: str, breath: float = 0.0) -> Image.Im
     return Image.fromarray(np.clip(base, 0, 255).astype(np.uint8), "RGB")
 
 
+# image 类型背景：程序化"拟摄影"底图（低分辨率模糊色块 + 纵向光感 + 噪点纹理）
+_SCENE_BG_CACHE: dict = {}
+
+
+def _make_scene_background(bg_id: str, w: int, h: int) -> Image.Image:
+    """程序化拟摄影背景：多层模糊色块模拟真实场景光感（办公室/演播室/自然）。
+
+    image 类型背景不再退化为纯色渐变——按场景调色板绘制大半径模糊椭圆色块
+    （模拟窗户光/聚光灯/树影），叠加纵向明暗与微弱噪点，获得"照片级"质感。
+    低分辨率绘制 + 放大，模糊成本可控；结果按 (bg_id, w, h) 缓存、固定种子可复现。
+    """
+    import random
+    import numpy as np
+    palettes = {
+        # 场景 → 基色 + [(色块颜色, 数量权重), ...]（权重高 = 色块更多更明显）
+        "office": [("#f5f0e6", 1.0), ("#e2d9c8", 0.8), ("#cbb99f", 0.5), ("#ffffff", 0.7)],
+        "studio": [("#17243f", 1.0), ("#2b4068", 0.7), ("#0e1728", 0.6), ("#5a7ec2", 0.35)],
+        "nature": [("#2d4b39", 1.0), ("#416f52", 0.7), ("#1c3025", 0.6), ("#e8f0d8", 0.4)],
+    }
+    colors = palettes.get(bg_id, palettes["studio"])
+    sw, sh = max(8, w // 4), max(8, h // 4)
+    rnd = random.Random(2026 + len(bg_id))
+    base = Image.new("RGB", (sw, sh), colors[0][0])
+    d = ImageDraw.Draw(base)
+    for color, weight in colors[1:]:
+        for _ in range(int(2 + 3 * weight)):
+            cw = rnd.uniform(0.25, 0.9) * sw
+            ch = rnd.uniform(0.2, 0.7) * sh
+            cx = rnd.uniform(-0.1, 1.1) * sw
+            cy = rnd.uniform(-0.1, 1.1) * sh
+            d.ellipse([cx - cw / 2, cy - ch / 2, cx + cw / 2, cy + ch / 2], fill=color)
+    base = base.filter(ImageFilter.GaussianBlur(max(sw, sh) // 6)).resize((w, h), Image.LANCZOS)
+    # 纵向光感：上方亮（天光/顶光）、下方压暗（地面层次）；弱噪点消除色带
+    arr = np.asarray(base).astype(np.float32)
+    yy = np.linspace(1.0, 0.78, h, dtype=np.float32)[:, None, None]
+    arr = np.clip(arr * yy, 0, 255)
+    arr += np.random.default_rng(42 + len(bg_id)).normal(0, 6, arr.shape)
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGB")
+
+
+def _build_bg_src(bg: dict, w: int, h: int) -> Image.Image | None:
+    """image 类型背景 → 拟摄影底图（按 (bg_id, w, h) 缓存）；渐变背景返回 None。"""
+    if not bg or bg.get("type") != "image":
+        return None
+    key = f"{bg.get('id')}:{w}x{h}"
+    if key not in _SCENE_BG_CACHE:
+        _SCENE_BG_CACHE[key] = _make_scene_background(bg.get("id", ""), w, h)
+    return _SCENE_BG_CACHE[key]
+
+
 _GLOW_CACHE = {}
 def _get_glow_template(radius: int = 150, scale: float = 1.0):
     """高斯柔光斑 RGBA 模板（按 (radius, scale) 缓存，避免每帧重复计算/resize）。"""
@@ -825,14 +877,19 @@ def _render_frame(
     portrait, text_lines: list,
     t: float, progress: float, width: int, height: int,
     energy: float = 0.0, mouth_shape: tuple = (0.0, 0.5),
+    bg_img: Image.Image | None = None,
 ) -> Image.Image:
-    """绘制一帧：动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
+    """绘制一帧：拟摄影/动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
     import math
     S = width / 1280.0  # 渲染缩放系数（Ken Burns 放大画布时保持坐标比例）
 
-    # ── 1. 动态渐变背景（亮度呼吸，模拟真实灯光变化）──
-    breath = 0.5 + 0.5 * math.sin(t * 0.8)
-    img = _make_gradient(width, height, bg_hex, breath)
+    # ── 1. 背景底图：image 类型用拟摄影底图（静态，动态感由光斑/光影承担），
+    #      渐变类型保持动态亮度呼吸 ──
+    if bg_img is not None:
+        img = bg_img.copy()
+    else:
+        breath = 0.5 + 0.5 * math.sin(t * 0.8)
+        img = _make_gradient(width, height, bg_hex, breath)
     # 半透明 UI 元素（粒子/名片/字幕/底条/进度条）画到独立 RGBA 图层：
     # ImageDraw 无 alpha 合成能力（RGBA 图上直接覆盖 RGB+写 alpha），
     # 画到底图会把半透明色覆盖成纯色（曾致底部 bar 纯黑盖住嘴部贴图）
@@ -1089,8 +1146,9 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
         raise RuntimeError("配音音频无效或为空，请重新生成")
     total_frames = max(int(duration * fps), 6)
 
-    # 写真预加载（避免每帧重复 IO/缩放）
+    # 写真预加载（避免每帧重复 IO/缩放）；image 类型背景预构建拟摄影底图
     portrait = _build_portrait_src(avatar)
+    bg_img = _build_bg_src(bg, RENDER_W, RENDER_H)
 
     # 音频能量曲线（按帧粒度，驱动身体律动；解码失败则回退静态呼吸）
     energy_curve = _audio_energy_curve(audio_path, duration, fps)
@@ -1114,7 +1172,7 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
                 avatar=avatar, bg_hex=bg_hex, fonts=fonts,
                 portrait=portrait, text_lines=text_lines,
                 t=t, progress=progress, width=RENDER_W, height=RENDER_H,
-                energy=energy, mouth_shape=mouth_shape,
+                energy=energy, mouth_shape=mouth_shape, bg_img=bg_img,
             )
             # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
             zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
@@ -1164,10 +1222,10 @@ def _render_video(text: str, avatar: dict, bg: dict, audio_path: str, output_pat
                     "-i", os.path.join(frames_dir, "%04d.jpg"),
                     "-i", audio_path,
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    # 画质滤镜链：轻微锐化（unsharp）+ 对比度/饱和度分级（eq），
-                    # 去除 JPG 帧的软糊感、增强肤质；crf 21 比默认 23 更清晰
-                    "-vf", "unsharp=5:5:0.45:5:5:0.0,eq=contrast=1.05:saturation=1.08",
-                    "-crf", "21",
+                    # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
+                    # 去除 JPG 帧软糊感；crf 18（默认 23 偏糊）配合高码率保清晰
+                    "-vf", "unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
+                    "-crf", "18",
                     "-c:a", "aac", "-b:a", "128k",
                     "-shortest", "-movflags", "+faststart",
                     output_path,
