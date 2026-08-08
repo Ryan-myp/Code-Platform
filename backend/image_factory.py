@@ -20,6 +20,8 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
+
+import numpy as np
 from datetime import datetime
 from io import BytesIO
 
@@ -73,24 +75,30 @@ def generate_id() -> str:
     return f"img_{int(time.time() * 1000)}"
 
 
-def save_image(img: Image.Image, fmt: str = "PNG") -> str:
-    """保存图像并返回文件名"""
+def save_image(img: Image.Image, fmt: str = "PNG", keep_alpha: bool = False) -> str:
+    """保存图像并返回文件名
+
+    keep_alpha=True 时保留 RGBA 透明通道（抠图/分割等透明输出场景，PNG 格式）。
+    """
     img_id = generate_id()
-    ext = ".png" if fmt == "PNG" else ".jpg"
+    ext = ".png" if (fmt == "PNG" or keep_alpha) else ".jpg"
     filename = f"{img_id}{ext}"
     filepath = os.path.join(IMAGE_DIR, filename)
 
-    # 转换为 RGB
+    # 转换为 RGB（keep_alpha 时保留透明通道）
     if img.mode in ("RGBA", "P"):
-        background = Image.new("RGB", img.size, (255, 255, 255))
-        if img.mode == "P":
-            img = img.convert("RGBA")
-        background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
-        img = background
+        if keep_alpha and img.mode == "RGBA":
+            pass  # 原样保存，透明背景保留
+        else:
+            background = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = background
     elif img.mode != "RGB":
         img = img.convert("RGB")
 
-    if fmt == "PNG":
+    if fmt == "PNG" or keep_alpha:
         img.save(filepath, "PNG")
     else:
         img.save(filepath, "JPEG", quality=95)
@@ -429,7 +437,7 @@ async def crop_image(
     crop_box = (int(x1 * w / 100), int(y1 * h / 100), int(x2 * w / 100), int(y2 * h / 100))
 
     cropped = img.crop(crop_box)
-    filename = save_image(cropped)
+    filename = await asyncio.to_thread(save_image, cropped)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}", "size": cropped.size}
 
 
@@ -446,7 +454,7 @@ async def resize_image(
     else:
         img = img.resize((width, height), Image.LANCZOS)
 
-    filename = save_image(img)
+    filename = await asyncio.to_thread(save_image, img)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}", "size": img.size}
 
 
@@ -469,23 +477,19 @@ async def remove_background(image: UploadFile = File(...)):
 
     bg_color = Counter(corner_colors).most_common(1)[0][0]
 
-    # 创建掩码
-    pixels = img.load()
-    mask = Image.new("L", (w, h), 0)
-    mask_pixels = mask.load()
-
-    for y in range(h):
-        for x in range(w):
-            px = pixels[x, y]
-            if abs(px[0] - bg_color[0]) < 30 and abs(px[1] - bg_color[1]) < 30 and abs(px[2] - bg_color[2]) < 30:
-                mask_pixels[x, y] = 0
-            else:
-                mask_pixels[x, y] = 255
+    # 创建掩码（numpy 向量化，O(1) 通道级运算替代逐像素循环）
+    arr = np.asarray(img.convert("RGB"))
+    bg_arr = np.array(bg_color[:3], dtype=arr.dtype)
+    # 与原逻辑等价：每个通道差都 < 30（取最大通道差 < 30）
+    distance = np.abs(arr.astype(np.int16) - bg_arr).max(axis=2)
+    mask_arr = np.where(distance < 30, 0, 255).astype(np.uint8)
+    mask = Image.fromarray(mask_arr, "L")
 
     result = img.copy()
     result.putalpha(mask)
 
-    filename = save_image(result)
+    # 透明抠图输出：保留 alpha 通道（save_image 默认白底合成，keep_alpha 跳过）
+    filename = await asyncio.to_thread(save_image, result, "PNG", True)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -496,7 +500,7 @@ async def blur_image(image: UploadFile = File(...), radius: int = Form(5)):
     img = Image.open(io.BytesIO(image_content))
 
     blurred = img.filter(ImageFilter.GaussianBlur(radius=radius))
-    filename = save_image(blurred)
+    filename = await asyncio.to_thread(save_image, blurred)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -531,7 +535,7 @@ async def text_overlay(
 
     # 合成
     result = Image.alpha_composite(img, overlay)
-    filename = save_image(result)
+    filename = await asyncio.to_thread(save_image, result)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -543,7 +547,7 @@ async def batch_resize(images: list[UploadFile] = File(...), width: int = Form(8
         content = await image.read()
         img = Image.open(io.BytesIO(content))
         img = img.resize((width, height), Image.LANCZOS)
-        filename = save_image(img)
+        filename = await asyncio.to_thread(save_image, img)
         results.append({"filename": filename, "url": f"/api/image-factory/images/{filename}"})
     return {"results": results, "total": len(results)}
 
@@ -554,7 +558,7 @@ async def rotate_image(image: UploadFile = File(...), angle: int = Form(0)):
     image_content = await image.read()
     img = Image.open(io.BytesIO(image_content))
     rotated = img.rotate(angle, expand=True)
-    filename = save_image(rotated)
+    filename = await asyncio.to_thread(save_image, rotated)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}", "angle": angle}
 
 
@@ -567,7 +571,7 @@ async def flip_image(image: UploadFile = File(...), direction: str = Form("horiz
         flipped = img.transpose(Image.FLIP_LEFT_RIGHT)
     else:
         flipped = img.transpose(Image.FLIP_TOP_BOTTOM)
-    filename = save_image(flipped)
+    filename = await asyncio.to_thread(save_image, flipped)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -598,7 +602,7 @@ async def apply_filter(
     else:
         result = img
 
-    filename = save_image(result)
+    filename = await asyncio.to_thread(save_image, result)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}", "filter": filter_type}
 
 
@@ -627,7 +631,7 @@ async def adjust_image(
     enhancer = ImageEnhance.Color(img)
     img = enhancer.enhance(saturation)
 
-    filename = save_image(img)
+    filename = await asyncio.to_thread(save_image, img)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -679,7 +683,7 @@ async def add_watermark(
 
     # 合成
     result = Image.alpha_composite(img, overlay)
-    filename = save_image(result)
+    filename = await asyncio.to_thread(save_image, result)
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
 
@@ -869,23 +873,11 @@ async def person_segmentation(image: UploadFile = File(...)):
             fill=255,
         )
 
-        # 保存掩码
-        mask_path = os.path.join(IMAGE_DIR, f"mask_{datetime.now().timestamp()}.png")
-        mask.save(mask_path)
+        # 应用分割：椭圆外透明（putalpha 通道级操作替代逐像素循环）
+        result = img.convert("RGBA")
+        result.putalpha(mask)
 
-        # 应用分割
-        result = img.copy()
-        result = result.convert("RGBA")
-
-        # 简单的边缘检测，增强轮廓
-        # 这里可以后续接入 rembg 或其他人像分割模型
-        for y in range(h):
-            for x in range(w):
-                mask_pixel = mask.getpixel((x, y))
-                if mask_pixel < 128:
-                    result.putpixel((x, y), (0, 0, 0, 0))  # 透明
-
-        filename = save_image(result)
+        filename = await asyncio.to_thread(save_image, result, "PNG", True)
         return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
     except Exception as e:
@@ -1169,7 +1161,7 @@ async def replace_background(
             person_scaled = img.resize((w, h))
             result.paste(person_scaled, (0, 0), person_scaled.split()[3] if img.mode == "RGBA" else None)
 
-        filename = save_image(result)
+        filename = await asyncio.to_thread(save_image, result)
         return {
             "id": filename,
             "url": f"/api/image-factory/images/{filename}",

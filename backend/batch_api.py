@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import _add_column_if_missing, get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json
+from common.llm import call_llm_async, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -276,7 +276,7 @@ async def _batch_translate_worker(payload: dict, progress: Callable | None = Non
             continue
         try:
             user_prompt = f"将以下{source_lang}文本翻译为{target_lang}：\n\n{text[:2000]}"
-            raw = call_llm(BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30)
+            raw = await call_llm_async(BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30)
             results.append({"index": i, "original": text[:200], "translated": raw.strip()})
         except Exception as e:
             results.append({"index": i, "original": text[:200], "translated": "", "error": str(e)})
@@ -314,7 +314,7 @@ async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = N
         try:
             text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(
+                raw = await call_llm_async(
                     BATCH_SUMMARY_SYSTEM,
                     f"文档：{file['filename']}\n\n内容：{text[:5000]}",
                     max_tokens=500,
@@ -391,7 +391,7 @@ async def _batch_process_worker(payload: dict, progress: Callable | None = None)
         try:
             text = extract_text(file["path"], file["filename"])
             if text and not text.startswith("["):
-                raw = call_llm(
+                raw = await call_llm_async(
                     task_prompt,
                     f"文件：{file['filename']}\n\n{text[:4000]}",
                     max_tokens=400,

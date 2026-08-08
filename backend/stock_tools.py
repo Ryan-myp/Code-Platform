@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm
+from common.llm import call_llm_async
 
 router = APIRouter()
 
@@ -321,7 +321,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
     )
 
     try:
-        result = call_llm("你是一个专业的股票分析师，请基于数据给出客观、专业的分析。", prompt)
+        result = await call_llm_async("你是一个专业的股票分析师，请基于数据给出客观、专业的分析。", prompt)
 
         # 保存分析记录
         conn = get_db()

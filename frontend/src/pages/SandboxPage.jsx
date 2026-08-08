@@ -17,6 +17,10 @@ import {
   Clock,
   Loader2,
   ExternalLink,
+  Database,
+  KeyRound,
+  Table2,
+  PlayCircle,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -32,34 +36,6 @@ import {
   PageHeader,
   ConfirmDialog,
 } from '../components/ui'
-
-// 预置服务模板（前端展示用，与后端 SERVICE_TEMPLATES 互补）
-const PRESET_SERVICES = [
-  {
-    id: 'python',
-    name: 'Python 环境',
-    image: 'python:3.11',
-    ports: '8000:8000',
-    desc: 'Python 3.11 开发环境',
-  },
-  {
-    id: 'node',
-    name: 'Node.js 环境',
-    image: 'node:20',
-    ports: '3000:3000',
-    desc: 'Node.js 20 LTS 环境',
-  },
-  { id: 'go', name: 'Go 环境', image: 'golang:1.21', ports: '8080:8080', desc: 'Go 1.21 开发环境' },
-  {
-    id: 'postgres',
-    name: 'PostgreSQL',
-    image: 'postgres:16',
-    ports: '5432:5432',
-    desc: 'PostgreSQL 16 数据库',
-  },
-  { id: 'redis', name: 'Redis', image: 'redis:7', ports: '6379:6379', desc: 'Redis 7 缓存' },
-  { id: 'mysql', name: 'MySQL', image: 'mysql:8', ports: '3306:3306', desc: 'MySQL 8 数据库' },
-]
 
 // 沙箱状态自定义映射
 const SANDBOX_STATUS_MAP = {
@@ -216,9 +192,10 @@ function LogModal({ project, onClose }) {
 }
 
 // 项目卡片
-function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
+function ProjectCard({ project, onStart, onStop, onDelete, onLogs, onConsole, viewMode }) {
   const isRunning = project.status === 'running'
   const ports = formatPorts(project.ports)
+  const consoleType = isRunning ? serviceTypeOf(project.image) : null
 
   if (viewMode === 'list') {
     return (
@@ -241,6 +218,15 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <AccessLink project={project} />
+          {consoleType && (
+            <button
+              onClick={() => onConsole(project)}
+              className="p-2 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+              title={`打开 ${SERVICE_TYPE_LABEL[consoleType]} 控制台`}
+            >
+              <Database className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={() => onLogs(project)}
             className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
@@ -310,6 +296,15 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
 
       <div className="flex items-center gap-2 pt-4 border-t border-gray-100 mt-auto">
         <AccessLink project={project} />
+        {consoleType && (
+          <button
+            onClick={() => onConsole(project)}
+            className="p-2 hover:bg-indigo-50 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+            title={`打开 ${SERVICE_TYPE_LABEL[consoleType]} 控制台`}
+          >
+            <Database className="w-4 h-4" />
+          </button>
+        )}
         <button
           onClick={() => onLogs(project)}
           className="p-2 hover:bg-gray-100 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
@@ -347,6 +342,318 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, viewMode }) {
         </button>
       </div>
     </div>
+  )
+}
+
+// 服务类型识别：根据镜像判断项目是否支持控制台及类型（6 种预制中间件全覆盖）
+function serviceTypeOf(image = '') {
+  const img = String(image || '').toLowerCase()
+  if (img.includes('redis')) return 'redis'
+  if (img.includes('mysql')) return 'mysql'
+  if (img.includes('postgres')) return 'postgres'
+  if (img.includes('mongo')) return 'mongo'
+  if (img.includes('rabbit')) return 'rabbitmq'
+  if (img.includes('nginx')) return 'nginx'
+  return null
+}
+
+const SERVICE_TYPE_LABEL = {
+  redis: 'Redis',
+  mysql: 'MySQL',
+  postgres: 'PostgreSQL',
+  mongo: 'MongoDB',
+  rabbitmq: 'RabbitMQ',
+  nginx: 'Nginx',
+}
+
+// 各服务控制台元信息：端点 / 输入占位 / 说明 / 快捷命令 / 渲染模式 / 徽标样式
+const CONSOLE_META = {
+  redis: {
+    endpoint: 'redis/command',
+    mode: 'redis',
+    badge: 'bg-red-50 text-red-600',
+    hint: '在容器内执行 redis-cli 安全命令（查看 / 修改 / 删除 Key）',
+    placeholder: '输入 redis-cli 命令，如 KEYS user:*',
+    quick: ['KEYS *', 'DBSIZE', 'PING'],
+    defaultInput: 'KEYS *',
+  },
+  mysql: {
+    endpoint: 'sql/query',
+    mode: 'sql',
+    badge: 'bg-blue-50 text-blue-600',
+    hint: '在容器内执行只读 SQL（SELECT / SHOW / DESC / EXPLAIN）',
+    placeholder: '输入只读 SQL，如 SELECT * FROM users LIMIT 10',
+    quick: ['SHOW TABLES;', 'SELECT 1;'],
+    defaultInput: 'SHOW TABLES;',
+  },
+  postgres: {
+    endpoint: 'sql/query',
+    mode: 'sql',
+    badge: 'bg-indigo-50 text-indigo-600',
+    hint: '在容器内执行只读 SQL（SELECT / SHOW / DESC / EXPLAIN）',
+    placeholder: '输入只读 SQL，如 SELECT * FROM users LIMIT 10',
+    quick: ['SELECT version();', 'SELECT 1;'],
+    defaultInput: 'SELECT version();',
+  },
+  mongo: {
+    endpoint: 'mongo/command',
+    mode: 'raw',
+    badge: 'bg-green-50 text-green-600',
+    hint: '在容器内执行 mongosh 只读命令（show dbs / use db / db.集合.find()）',
+    placeholder: '输入 mongosh 命令，如 show dbs / db.users.find().limit(5)',
+    quick: ['show dbs', 'show databases', 'db.stats()'],
+    defaultInput: 'show dbs',
+  },
+  rabbitmq: {
+    endpoint: 'rabbitmq/command',
+    mode: 'raw',
+    badge: 'bg-orange-50 text-orange-600',
+    hint: '在容器内执行 rabbitmqctl 只读命令（status / list_* 列表类）',
+    placeholder: '输入 rabbitmqctl 命令，如 list_queues name messages',
+    quick: ['status', 'list_queues', 'list_exchanges', 'list_users', 'list_connections'],
+    defaultInput: 'status',
+  },
+  nginx: {
+    endpoint: 'nginx/command',
+    mode: 'raw',
+    badge: 'bg-cyan-50 text-cyan-600',
+    hint: '在容器内执行 nginx 只读命令（版本 / 配置测试 / 配置转储）',
+    placeholder: '输入 nginx 命令，如 nginx -t',
+    quick: ['nginx -v', 'nginx -t', 'nginx -T'],
+    defaultInput: 'nginx -t',
+  },
+}
+
+// 服务控制台弹窗：全部预制中间件通用（Redis 命令 / SQL 只读查询 / Mongo & RabbitMQ & Nginx 只读命令）
+// 通过容器内客户端执行，无需开放额外端口；所有命令均经后端安全白名单
+function ServiceConsoleModal({ project, onClose }) {
+  const toast = useToast()
+  const type = project ? serviceTypeOf(project.image) : null
+  const meta = CONSOLE_META[type] || null
+  const [input, setInput] = useState('')
+  const [result, setResult] = useState(null) // { ok, output|columns|rows, error }
+  const [running, setRunning] = useState(false)
+  const [copiedKey, setCopiedKey] = useState('')
+
+  useEffect(() => {
+    if (project && meta) {
+      setResult(null)
+      setInput(meta.defaultInput || '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project])
+
+  const handleRun = async (rawCmd) => {
+    const c = (rawCmd ?? input).trim()
+    if (!c) return
+    setRunning(true)
+    setResult(null)
+    try {
+      const body = meta.mode === 'sql' ? { sql: c } : { command: c }
+      const res = await api.post(`/api/sandbox/projects/${project.id}/${meta.endpoint}`, body)
+      setResult(res.data)
+    } catch (e) {
+      toast.error(e.message)
+      setResult({ ok: false, error: e.message })
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  // Redis 输出按命令类型智能渲染：KEYS/DBSIZE → key 列表；GET/TTL/TYPE → 单值；其余 → 原始输出
+  const renderRedisOutput = () => {
+    if (!result) return null
+    if (!result.ok) {
+      return (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+          执行失败：{result.error}
+        </div>
+      )
+    }
+    const verb = (result.command || '').split(' ')[0].toUpperCase()
+    const lines = (result.output || '').split('\n').filter((l) => l.trim())
+    if (verb === 'KEYS' || verb === 'DBSIZE') {
+      return lines.length ? (
+        <div className="space-y-1.5">
+          {verb === 'KEYS' && (
+            <p className="text-xs text-gray-400">共 {lines.length} 个 Key，点击可查看值</p>
+          )}
+          {lines.map((k) => (
+            <div
+              key={k}
+              className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+            >
+              <span className="font-mono text-gray-800 truncate">{k}</span>
+              <span className="flex items-center gap-1.5 flex-shrink-0">
+                {copiedKey === k && <span className="text-[11px] text-emerald-600">已复制</span>}
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(k)
+                    setCopiedKey(k)
+                    setTimeout(() => setCopiedKey(''), 1500)
+                  }}
+                  className="px-2 py-1 bg-white border border-gray-200 rounded-md text-xs text-gray-500 hover:text-gray-800 hover:border-gray-300 transition-colors"
+                >
+                  复制
+                </button>
+                <button
+                  onClick={() => handleRun(`GET ${k}`)}
+                  className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 rounded-md text-xs text-indigo-600 hover:bg-indigo-100 transition-colors"
+                >
+                  GET 查看
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-400 py-4 text-center">（空，暂无 Key）</p>
+      )
+    }
+    if (verb === 'GET' || verb === 'TTL' || verb === 'TYPE' || verb === 'STRLEN') {
+      return (
+        <div className="p-4 rounded-xl bg-gray-900 text-emerald-400 font-mono text-sm break-all whitespace-pre-wrap">
+          {result.output || '（空值）'}
+        </div>
+      )
+    }
+    return (
+      <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[40vh] whitespace-pre-wrap">
+        {result.output || 'OK'}
+      </pre>
+    )
+  }
+
+  // SQL 结果表格渲染
+  const renderSqlResult = () => {
+    if (!result) return null
+    if (!result.ok) {
+      return (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+          查询失败：{result.error}
+        </div>
+      )
+    }
+    if (!result.columns || !result.columns.length) {
+      return (
+        <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-sm text-gray-500 text-center">
+          （查询完成，无结果集）
+        </div>
+      )
+    }
+    return (
+      <div className="overflow-auto max-h-[42vh] rounded-xl border border-gray-200">
+        <table className="w-full text-xs">
+          <thead className="bg-gray-100 sticky top-0">
+            <tr>
+              {result.columns.map((c) => (
+                <th key={c} className="px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap">
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {result.rows.length ? (
+              result.rows.map((r, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  {r.map((cell, j) => (
+                    <td key={j} className="px-3 py-1.5 font-mono text-gray-600 whitespace-nowrap max-w-[320px] truncate" title={cell}>
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={result.columns.length} className="px-3 py-4 text-center text-gray-400">
+                  （0 行）
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  // 原始文本输出（mongo / rabbitmq / nginx）
+  const renderRawOutput = () => {
+    if (!result) return null
+    if (!result.ok) {
+      return (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
+          执行失败：{result.error}
+        </div>
+      )
+    }
+    return (
+      <pre className="bg-gray-900 text-green-400 rounded-xl p-4 text-xs font-mono leading-relaxed overflow-auto max-h-[45vh] whitespace-pre-wrap">
+        {result.output || '（无输出）'}
+      </pre>
+    )
+  }
+
+  if (!meta) return null
+  const isSql = meta.mode === 'sql'
+  const isRedis = meta.mode === 'redis'
+
+  return (
+    <Modal open={!!project} onClose={onClose} size="lg" title={`服务控制台 - ${project?.name || ''}`}>
+      <div className="mb-4 flex items-center gap-2">
+        <span
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${meta.badge}`}
+        >
+          {isRedis ? <KeyRound className="w-3.5 h-3.5" /> : isSql ? <Table2 className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
+          {SERVICE_TYPE_LABEL[type]}
+        </span>
+        <span className="text-xs text-gray-400">{meta.hint}</span>
+      </div>
+
+      <div className="flex gap-2 mb-3">
+        {isSql ? (
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            rows={2}
+            placeholder={meta.placeholder}
+            className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none font-mono text-sm transition-all resize-none"
+          />
+        ) : (
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleRun()}
+            placeholder={meta.placeholder}
+            className="flex-1 px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none font-mono text-sm transition-all"
+          />
+        )}
+        <Button icon={running ? Loader2 : isSql ? Table2 : Play} loading={running} onClick={() => handleRun()}>
+          {isSql ? '查询' : '执行'}
+        </Button>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-4">
+        {meta.quick.map((q) => (
+          <button
+            key={q}
+            onClick={() => handleRun(q.trim())}
+            className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs font-mono text-gray-600 transition-colors"
+          >
+            {q.trim()}
+          </button>
+        ))}
+      </div>
+      {running ? (
+        <div className="py-10 text-center text-gray-400 text-sm">{isSql ? '查询中…' : '执行中…'}</div>
+      ) : isRedis ? (
+        renderRedisOutput()
+      ) : isSql ? (
+        renderSqlResult()
+      ) : (
+        renderRawOutput()
+      )}
+    </Modal>
   )
 }
 
@@ -575,6 +882,7 @@ export default function SandboxPage() {
 
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [logTarget, setLogTarget] = useState(null)
+  const [consoleTarget, setConsoleTarget] = useState(null)
 
   const [pullImage, setPullImage] = useState('')
   const [pulling, setPulling] = useState(false)
@@ -669,6 +977,25 @@ export default function SandboxPage() {
       toast.error(`添加失败：${e.message}`)
     } finally {
       setSavingService(false)
+    }
+  }
+
+  // 用预置模板一键创建沙箱项目（端口/环境变量取自模板，创建后切回项目列表）
+  const handleQuickCreate = async (service) => {
+    try {
+      const ports = Array.isArray(service.ports) ? service.ports : [String(service.ports || '')].filter(Boolean)
+      await api.post('/api/sandbox/projects', {
+        name: `${service.name} 实例`,
+        image: service.image,
+        ports,
+        env: service.env || [],
+        command: service.command || '',
+      })
+      toast.success(`「${service.name}」项目已创建`)
+      setActiveTab('projects')
+      fetchProjects(false)
+    } catch (e) {
+      toast.error(`创建失败：${e.message}`)
     }
   }
 
@@ -862,6 +1189,7 @@ export default function SandboxPage() {
                   onStop={(p) => handleAction(p, 'stop')}
                   onDelete={setDeleteTarget}
                   onLogs={setLogTarget}
+                  onConsole={setConsoleTarget}
                   viewMode="grid"
                 />
               ))}
@@ -876,6 +1204,7 @@ export default function SandboxPage() {
                   onStop={(p) => handleAction(p, 'stop')}
                   onDelete={setDeleteTarget}
                   onLogs={setLogTarget}
+                  onConsole={setConsoleTarget}
                   viewMode="list"
                 />
               ))}
@@ -884,7 +1213,7 @@ export default function SandboxPage() {
         </div>
       )}
 
-      {/* Services Tab */}
+      {/* Services Tab：单一数据源（后端 SERVICE_TEMPLATES），避免双份定义重复展示 */}
       {activeTab === 'services' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -898,54 +1227,57 @@ export default function SandboxPage() {
               添加服务
             </Button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {PRESET_SERVICES.map((service) => (
-              <div
-                key={service.id}
-                className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
-                    <Server className="w-5 h-5 text-white" />
+          {services.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-200">
+              <Empty icon={Server} title="暂无服务模板" description="点击「添加服务」自定义模板，或从项目列表直接创建" />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {services.map((service) => {
+                const consoleType = serviceTypeOf(service.image)
+                return (
+                  <div
+                    key={service.id}
+                    className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all flex flex-col"
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                        <Server className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-gray-900 truncate">{service.name}</h3>
+                        <p className="text-xs text-gray-500 truncate font-mono">{service.image}</p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-600 mb-4 flex-1">{service.description || '自定义服务'}</p>
+                    <div className="flex items-center gap-2 text-xs text-gray-500 mb-3">
+                      <span className="flex items-center gap-1">
+                        <Zap className="w-3 h-3" />
+                        {formatPorts(service.ports)}
+                      </span>
+                      {consoleType && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+                          <Database className="w-3 h-3" />
+                          支持控制台
+                        </span>
+                      )}
+                    </div>
+                    <div className="pt-3 border-t border-gray-100">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon={PlayCircle}
+                        className="w-full"
+                        onClick={() => handleQuickCreate(service)}
+                      >
+                        一键创建项目
+                      </Button>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">{service.name}</h3>
-                    <p className="text-xs text-gray-500">{service.image}</p>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-600 mb-4">{service.desc}</p>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    {service.ports}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {services.map((service) => (
-              <div
-                key={service.id}
-                className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-all"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                    <Server className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">{service.name}</h3>
-                    <p className="text-xs text-gray-500">{service.image}</p>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-600 mb-4">{service.description || '自定义服务'}</p>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <Zap className="w-3 h-3" />
-                    {formatPorts(service.ports)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1030,6 +1362,7 @@ export default function SandboxPage() {
       />
 
       <LogModal project={logTarget} onClose={() => setLogTarget(null)} />
+<ServiceConsoleModal project={consoleTarget} onClose={() => setConsoleTarget(null)} />
     </div>
   )
 }

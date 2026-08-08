@@ -322,7 +322,7 @@ export default function ToolHubPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-gradient-to-b from-gray-50 to-white">
+    <div className="flex-1 overflow-auto bg-gradient-to-b from-gray-50 to-white pb-16 md:pb-0">
       <div className="max-w-7xl mx-auto px-6 py-8">
         {/* Hero Section */}
         <div className="relative mb-10 overflow-hidden rounded-2xl bg-gradient-to-r from-brand-500 via-purple-500 to-pink-500 p-8 text-white">

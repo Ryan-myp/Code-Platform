@@ -267,6 +267,15 @@ class SandboxPullImageRequest(BaseModel):
     image: str = Field(..., min_length=1, description="镜像名")
 
 
+class SandboxRedisCommandRequest(BaseModel):
+    command: str = Field(..., min_length=1, description="redis-cli 命令，如 KEYS * / GET user:1 / SET user:1 hello")
+
+
+class SandboxSqlQueryRequest(BaseModel):
+    sql: str = Field(..., min_length=1, description="只读 SQL，如 SELECT * FROM users LIMIT 10")
+
+
+
 # ══════════════════════════════════════════════════════════════
 # 对话
 # ══════════════════════════════════════════════════════════════

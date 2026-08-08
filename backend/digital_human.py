@@ -6,6 +6,7 @@
 - GET  /api/digital-human/records   历史生成记录
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -483,6 +484,7 @@ def _audio_duration(path: str) -> float:
             ],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=15,
         )
         duration = float(out.stdout.strip())
@@ -508,6 +510,7 @@ def _pick_video_encoder() -> str:
                 ["ffmpeg", "-hide_banner", "-encoders"],
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
                 timeout=15,
             )
             lines = out.stdout.splitlines()
@@ -623,6 +626,7 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
         out = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
             capture_output=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=30,
         )
         import numpy as np
@@ -1570,6 +1574,7 @@ def _render_video(
                 ],
                 check=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
                 timeout=900,
             )
         except subprocess.CalledProcessError as e:
@@ -1762,10 +1767,14 @@ async def upload_custom_avatar(
     path = os.path.join(UPLOAD_DH_AVATAR_DIR, filename)
     try:
         # PIL 校验并统一转 RGB JPEG（透明/异常图片兜底）
-        img = Image.open(__import__("io").BytesIO(content))
-        img = img.convert("RGB")
-        img.thumbnail((1024, 1024), Image.LANCZOS)
-        img.save(path, "JPEG", quality=92)
+        # 图像解码/编码耗时操作放入线程池，避免阻塞事件循环
+        def _process_avatar() -> None:
+            img = Image.open(__import__("io").BytesIO(content))
+            img = img.convert("RGB")
+            img.thumbnail((1024, 1024), Image.LANCZOS)
+            img.save(path, "JPEG", quality=92)
+
+        await asyncio.to_thread(_process_avatar)
     except Exception as e:
         raise HTTPException(400, f"图片解析失败: {e}") from e
     image_url = f"/uploads/dh_avatars/{filename}"
@@ -1848,7 +1857,8 @@ async def upload_custom_voice(
     with open(path, "wb") as f:
         f.write(content)
     # ffprobe 校验时长（无效音频拦截，避免下游渲染失败）
-    duration = _audio_duration(path)
+    # 子进程调用放入线程池，避免阻塞事件循环
+    duration = await asyncio.to_thread(_audio_duration, path)
     if duration <= 0:
         os.remove(path)
         raise HTTPException(400, "音频文件无效或无法解析，请重新上传")
@@ -2044,7 +2054,7 @@ async def generate_portrait(avatar_id: str, current_user: dict = require_auth())
             "message": f"{avatar['name']} 写真已存在，直接使用缓存",
         }
 
-    result = _generate_portrait(avatar_id)
+    result = await asyncio.to_thread(_generate_portrait, avatar_id)
     if result:
         return {
             "avatar_id": avatar_id,
@@ -2073,7 +2083,7 @@ async def generate_all_portraits(current_user: dict = require_auth()):
                 }
             )
             continue
-        path = _generate_portrait(avatar["id"])
+        path = await asyncio.to_thread(_generate_portrait, avatar["id"])
         results.append(
             {
                 "avatar_id": avatar["id"],
@@ -2936,7 +2946,7 @@ _SCENE_STYLES = {
 
 
 @router.post("/script-assist")
-async def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth()):
+def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth()):
     """AI 口播文案助手：按主题/场景/平台生成 3 版口播脚本（LLM 失败自动回退模板）。"""
     scene_style = _SCENE_STYLES.get(req.scene_id, "产品介绍")
     platform_labels = {"douyin": "抖音", "kuaishou": "快手", "wechat": "公众号", "bilibili": "B站"}
@@ -3199,7 +3209,7 @@ async def regenerate_portraits(current_user: dict = require_auth()):
     ok, failed = [], []
     for avatar in AVATARS:
         try:
-            if _generate_portrait(avatar["id"]):
+            if await asyncio.to_thread(_generate_portrait, avatar["id"]):
                 ok.append(avatar["id"])
             else:
                 failed.append(avatar["id"])

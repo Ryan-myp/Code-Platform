@@ -5,7 +5,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -120,7 +120,7 @@ def test_run_agent(test_db_path):
 
     _seed_agent("agent_run_1", instructions="你是助手")
     with patch("chat_engine.call_llm", return_value="LLM 模拟回复"):
-        result = run(run_agent("agent_run_1", {"message": "你好"}))
+        result = run_agent("agent_run_1", {"message": "你好"})
 
     assert result["result"] == "LLM 模拟回复"
     assert result["agent_id"] == "agent_run_1"
@@ -133,7 +133,7 @@ def test_run_agent_no_message(test_db_path):
 
     _seed_agent("agent_run_2")
     with pytest.raises(HTTPException) as exc:
-        run(run_agent("agent_run_2", {"message": ""}))
+        run_agent("agent_run_2", {"message": ""})
     assert exc.value.status_code == 400
 
 
@@ -142,7 +142,7 @@ def test_run_agent_not_found(test_db_path):
     from chat_engine import run_agent
 
     with pytest.raises(Exception) as exc_info:
-        run(run_agent("nonexistent_agent", {"message": "你好"}))
+        run_agent("nonexistent_agent", {"message": "你好"})
     assert "404" in str(exc_info.value) or "不存在" in str(exc_info.value)
 
 
@@ -158,7 +158,7 @@ def test_run_team(test_db_path):
     _seed_agent("agent_member_1", name="MemberA", instructions="你是成员A")
     _seed_team("team_run_1", members=["agent_member_1"], instructions="团队指令")
 
-    with patch("chat_engine.call_llm", return_value="团队模拟回复"):
+    with patch("chat_engine.call_llm_async", new_callable=AsyncMock, return_value="团队模拟回复"):
         result = run(run_team("team_run_1", {"message": "执行任务"}))
 
     assert result["result"] == "团队模拟回复"

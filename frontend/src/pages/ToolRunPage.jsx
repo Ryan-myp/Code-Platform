@@ -95,6 +95,18 @@ export default function ToolRunPage() {
   const [fileContent, setFileContent] = useState('')
   const [showExamples, setShowExamples] = useState(false)
   const fileInputRef = React.useRef(null)
+  // 异步任务进度（后端 task 的 progress/stage 字段，轮询期间实时渲染）
+  const [taskId, setTaskId] = useState(null)
+  const [taskProgress, setTaskProgress] = useState(null)
+  // 卸载后停止轮询，避免对已卸载组件 setState
+  const mountedRef = React.useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const examples = TOOL_EXAMPLES[toolId] || []
 
@@ -147,19 +159,50 @@ export default function ToolRunPage() {
     }
     setLoading(true)
     setResult('')
+    setTaskId(null)
+    setTaskProgress(null)
     try {
       const res = await api.post('/api/tools/run', {
         tool_id: toolId,
         input: finalInput,
         params,
       })
-      setResult(res.data.result)
-      loadHistory()
-      toast.success('生成完成')
+      if (res.data.task_id) {
+        // 异步任务模式：慢 LLM（可达 5 分钟）不阻塞请求，轮询任务进度
+        const id = res.data.task_id
+        setTaskId(id)
+        setTaskProgress({ pct: 0, stage: '任务已提交，等待执行' })
+        for (let i = 0; i < 120; i += 1) {
+          if (!mountedRef.current) return
+          const t = await api.get(`/api/tasks/${id}`)
+          if (!mountedRef.current) return
+          setTaskProgress({ pct: t.data.progress || 0, stage: t.data.stage || '处理中...' })
+          if (t.data.status === 'success') {
+            setResult(t.data.result?.result || '')
+            loadHistory()
+            toast.success('生成完成')
+            return
+          }
+          if (t.data.status === 'failed') {
+            toast.error(t.data.error || '生成失败')
+            return
+          }
+          await new Promise((r) => setTimeout(r, 3000))
+        }
+        toast.error('生成超时，请稍后在任务中心查看')
+      } else if (res.data.result) {
+        setResult(res.data.result)
+        loadHistory()
+        toast.success('生成完成')
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || '生成失败')
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+        setTaskId(null)
+        setTaskProgress(null)
+      }
     }
   }
 
@@ -267,7 +310,7 @@ export default function ToolRunPage() {
   const toolParams = tool.params || {}
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
+    <div className="flex-1 overflow-auto bg-gray-50 pb-16 md:pb-0">
       <div className="max-w-7xl mx-auto px-6 py-6">
         {/* 头部 */}
         <div className="flex items-center gap-4 mb-6">
@@ -362,17 +405,27 @@ export default function ToolRunPage() {
                     {Object.entries(toolParams).map(([key, config]) => (
                       <div key={key}>
                         <label className="block text-xs text-gray-500 mb-1">{config.label}</label>
-                        <select
-                          value={params[key] || config.default}
-                          onChange={(e) => handleParamChange(key, e.target.value)}
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          {config.options.map((opt) => (
-                            <option key={opt} value={opt}>
-                              {opt}
-                            </option>
-                          ))}
-                        </select>
+                        {config.type === 'text' ? (
+                          <input
+                            type="text"
+                            value={params[key] || config.default || ''}
+                            placeholder={config.placeholder || ''}
+                            onChange={(e) => handleParamChange(key, e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        ) : (
+                          <select
+                            value={params[key] || config.default}
+                            onChange={(e) => handleParamChange(key, e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          >
+                            {config.options.map((opt) => (
+                              <option key={opt} value={opt}>
+                                {opt}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -420,8 +473,8 @@ export default function ToolRunPage() {
               </Card>
             )}
 
-            {/* 输入区 */}
-            <Card className="!p-0 overflow-hidden h-full flex flex-col">
+            {/* 输入区（h-full 仅桌面多列时生效，窄屏单列下自适应内容高度，防止拉伸溢出遮挡按钮） */}
+            <Card className="!p-0 overflow-hidden flex flex-col lg:h-full">
               <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-700">输入内容</span>
@@ -519,9 +572,28 @@ export default function ToolRunPage() {
               </div>
               <div className="flex-1 p-4 overflow-y-auto">
                 {loading ? (
-                  <div className="flex flex-col items-center justify-center h-full">
-                    <div className="animate-spin w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full mb-3" />
-                    <p className="text-sm text-gray-500">AI 正在生成中...</p>
+                  <div className="flex flex-col items-center justify-center h-full px-6">
+                    {taskId ? (
+                      <div className="w-full max-w-sm">
+                        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-brand-500 to-violet-500 rounded-full transition-all duration-500 ease-out"
+                            style={{ width: `${Math.max(2, taskProgress?.pct || 0)}%` }}
+                          />
+                        </div>
+                        <p className="mt-3 text-sm text-gray-600 text-center">
+                          {taskProgress?.stage || '处理中...'}
+                        </p>
+                        <p className="mt-1 text-[11px] text-gray-400 text-center break-all">
+                          任务 ID：{taskId}
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="animate-spin w-8 h-8 border-4 border-brand-500 border-t-transparent rounded-full mb-3" />
+                        <p className="text-sm text-gray-500">AI 正在生成中...</p>
+                      </>
+                    )}
                   </div>
                 ) : result ? (
                   <MarkdownRenderer content={result} />

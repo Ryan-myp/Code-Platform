@@ -10,7 +10,7 @@
 import asyncio
 import csv
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -69,7 +69,7 @@ def test_docqa_async_flow(setup_test_db, claim_and_run):
     finally:
         conn.close()
 
-    with patch("doc_qa.call_llm", return_value="根据文档，该产品支持远程升级。"):
+    with patch("doc_qa.call_llm_async", new_callable=AsyncMock, return_value="根据文档，该产品支持远程升级。"):
         task = create_task(
             "docqa_ask",
             {"doc_id": "doc-alice", "question": "支持远程升级吗？", "user_id": "u-alice"},
@@ -221,7 +221,7 @@ def test_web_search_async_flow(setup_test_db, claim_and_run):
     ]
     with (
         patch("web_search._search_ddg", return_value=fake_results),
-        patch("web_search.call_llm", return_value="2026 年 AI 市场持续增长，头部企业加速商业化。"),
+        patch("web_search.call_llm_async", new_callable=AsyncMock, return_value="2026 年 AI 市场持续增长，头部企业加速商业化。"),
     ):
         task = create_task(
             "web_search_query",

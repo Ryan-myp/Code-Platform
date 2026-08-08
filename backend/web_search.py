@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage
+from common.llm import call_llm_async, log_usage
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -224,7 +224,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
     if not results:
         # 纯LLM模式：无搜索结果时由LLM直接回答
         _report(40, "AI 整合回答")
-        raw = call_llm(
+        raw = await call_llm_async(
             "你是一个知识渊博的助手。用户问了一个问题，但搜索引擎没有返回结果。请基于你的知识回答。如果不知道就说不知道。",
             f"问题：{query}",
             max_tokens=800,
@@ -241,7 +241,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
 
     _report(45, "AI 整合摘要中")
     system_prompt = SEARCH_SUMMARY_SYSTEM.replace("{search_results}", search_context)
-    raw = call_llm(system_prompt, query, max_tokens=1000, temperature=0.3, timeout=60)
+    raw = await call_llm_async(system_prompt, query, max_tokens=1000, temperature=0.3, timeout=60)
     summary = raw.strip()
     log_usage("web_search", len(query), len(summary), 0)
 

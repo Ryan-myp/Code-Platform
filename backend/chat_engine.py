@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 
 from common.config import load_config
 from common.db import get_db
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, call_llm_async, log_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["对话执行"])
@@ -113,7 +113,7 @@ def get_agent_system_prompt(agent_id: str) -> str:
 
 
 @router.post("/api/agents/{agent_id}/run")
-async def run_agent(agent_id: str, req: dict):
+def run_agent(agent_id: str, req: dict):
     """运行 Agent - 调用 LLM"""
     message = (req.get("message") or "").strip()
     if not message:
@@ -194,7 +194,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
         if extra_context:
             prompt += f"\n\n前序成员产出（供参考）：\n{extra_context}"
         try:
-            result = call_llm(system, prompt, max_tokens=2000)
+            result = await call_llm_async(system, prompt, max_tokens=2000)
             return {"agent_id": agent["id"], "name": agent["name"], "result": result}
         except Exception as e:
             return {"agent_id": agent["id"], "name": agent["name"], "result": f"（执行失败：{e}）", "error": str(e)}
@@ -203,7 +203,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
     coordinator_result = ""
     if not agents:
         # 无成员：直接用团队指令执行
-        result = call_llm(team_instructions, message, max_tokens=2000)
+        result = await call_llm_async(team_instructions, message, max_tokens=2000)
         coordinator_result = result
     elif mode == "sequential":
         # 顺序执行：上一步输出作为下一步上下文
@@ -226,7 +226,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
             f"你是团队协调者。请汇总以下团队成员对任务的产出，给出统一的最终答案。\n"
             f"## 团队协作规则\n{team_instructions}"
         )
-        coordinator_result = call_llm(
+        coordinator_result = await call_llm_async(
             coordinator_system,
             f"团队任务：{message}\n\n## 成员产出\n{digest}",
             max_tokens=2000,
@@ -363,7 +363,7 @@ async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
         node_desc = "\n".join(f"- {n.get('type')}: {n.get('name')}" for n in nodes[:10])
     system = "你是工作流执行引擎，根据工作流定义和输入，直接给出执行结果。"
     prompt = f"工作流: {wf['name']}\n节点: {node_desc or '（无节点定义）'}\n\n输入: {message}"
-    result = call_llm(system, prompt, max_tokens=2000)
+    result = await call_llm_async(system, prompt, max_tokens=2000)
     return {"result": result, "workflow_id": workflow_id, "engine": "simple"}
 
 

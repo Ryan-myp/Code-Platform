@@ -9,14 +9,35 @@ from datetime import datetime
 # 沙箱状态
 SANDBOX_STATUS = {"ready": "ready", "running": "running", "stopped": "stopped", "error": "error"}
 
-# 预置服务模板
+# 预置服务模板（唯一数据源：环境模板 + 中间件服务，前端直接渲染本表，避免双份定义重复展示）
 SERVICE_TEMPLATES = {
+    "python": {
+        "name": "Python 环境",
+        "image": "python:3.11",
+        "ports": ["8000:8000"],
+        "command": None,
+        "description": "Python 3.11 开发环境",
+    },
+    "node": {
+        "name": "Node.js 环境",
+        "image": "node:20",
+        "ports": ["3000:3000"],
+        "command": None,
+        "description": "Node.js 20 LTS 环境",
+    },
+    "go": {
+        "name": "Go 环境",
+        "image": "golang:1.21",
+        "ports": ["8080:8080"],
+        "command": None,
+        "description": "Go 1.21 开发环境",
+    },
     "redis": {
         "name": "Redis",
         "image": "redis:7-alpine",
         "ports": ["6379:6379"],
         "command": None,
-        "description": "Redis 缓存服务",
+        "description": "Redis 缓存服务（支持控制台操作 Key）",
     },
     "postgres": {
         "name": "PostgreSQL",
@@ -24,7 +45,7 @@ SERVICE_TEMPLATES = {
         "ports": ["5432:5432"],
         "env": ["POSTGRES_PASSWORD=password", "POSTGRES_USER=postgres", "POSTGRES_DB=sandbox"],
         "command": None,
-        "description": "PostgreSQL 数据库",
+        "description": "PostgreSQL 数据库（支持控制台查询）",
     },
     "mysql": {
         "name": "MySQL",
@@ -32,7 +53,7 @@ SERVICE_TEMPLATES = {
         "ports": ["3306:3306"],
         "env": ["MYSQL_ROOT_PASSWORD=password", "MYSQL_DATABASE=sandbox"],
         "command": None,
-        "description": "MySQL 数据库",
+        "description": "MySQL 数据库（支持控制台查询）",
     },
     "rabbitmq": {
         "name": "RabbitMQ",
@@ -76,8 +97,8 @@ class ContainerManager:
             raise RuntimeError(f"{self.runtime} 未安装") from None
 
     def _run_cmd(self, cmd: list, timeout: int = 30) -> subprocess.CompletedProcess:
-        """运行命令"""
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        """运行命令（stdin 重定向，防后台环境继承 tty 触发 SIGTTIN 进程组停止）"""
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
 
     def list_images(self) -> list[dict]:
         """列出本地镜像"""
@@ -191,6 +212,28 @@ class ContainerManager:
             del self.containers[project_id]
 
         return {"status": "success"}
+
+    def exec_command(self, project_id: str, cmd: list, timeout: int = 30) -> dict:
+        """在项目容器内执行命令（服务控制台入口：Redis-cli / SQL 客户端等）。
+
+        容器名与项目绑定（sandbox-{project_id}）；deploy 部署的容器名为 sandbox-{name}，需去掉前缀。
+        """
+        if project_id.startswith("deploy-"):
+            container = f"sandbox-{project_id[len('deploy-'):]}"
+        else:
+            container = f"sandbox-{project_id}"
+        try:
+            result = self._run_cmd([self.runtime, "exec", container, *cmd], timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"status": "error", "message": f"命令执行超时（{timeout}s）"}
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "").strip()
+            return {"status": "error", "message": err or f"命令执行失败（exit {result.returncode}）"}
+        # 部分命令（nginx -v / -t 等）把结果写到 stderr，成功时合并返回，避免输出丢失
+        merged = result.stdout or ""
+        if result.stderr:
+            merged += result.stderr
+        return {"status": "success", "output": merged}
 
     def get_status(self, project_id: str) -> dict | None:
         """获取容器状态"""

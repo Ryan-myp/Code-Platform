@@ -7,6 +7,7 @@
 - 代码只能读取沙箱内预置的 data.csv；图表由执行器自动收集，禁止代码内 open/网络
 """
 
+import asyncio
 import csv
 import io
 import re
@@ -95,7 +96,7 @@ async def data_analyzer_upload(file: UploadFile = File(...), current_user: dict 
         try:
             import openpyxl
 
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            wb = await asyncio.to_thread(openpyxl.load_workbook, io.BytesIO(content), read_only=True, data_only=True)
             ws = wb.active
             out = io.StringIO()
             writer = csv.writer(out)

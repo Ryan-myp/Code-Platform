@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
-from common.llm import call_llm, parse_llm_json
+from common.llm import call_llm, call_llm_async, parse_llm_json
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -2038,7 +2038,7 @@ async def stop_auto_run(run_id: str, current_user: dict = require_auth()):
 
 
 @router.post("/api/code/generate")
-async def generate_code(data: CodeGenRequest, current_user: dict = require_auth()):
+def generate_code(data: CodeGenRequest, current_user: dict = require_auth()):
     """AI 代码生成"""
     try:
         system_prompt = f"""你是一位资深{data.language}开发工程师，拥有10年+生产级项目经验。
@@ -2087,7 +2087,7 @@ async def list_code_generations(current_user: dict = require_auth()):
 
 
 @router.post("/api/code/review")
-async def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
+def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
     """AI 代码审查"""
     try:
         system_prompt = f"""你是资深{data.language}代码审查专家，负责把关生产级代码质量。
@@ -2134,7 +2134,7 @@ async def review_code(data: CodeReviewRequest, current_user: dict = require_auth
 
 
 @router.post("/api/code/improve")
-async def improve_code(data: CodeImproveRequest, current_user: dict = require_auth()):
+def improve_code(data: CodeImproveRequest, current_user: dict = require_auth()):
     """AI 根据代码审查意见修改代码：审查结果 → 修改后的完整代码。"""
     try:
         system_prompt = (
@@ -2256,7 +2256,7 @@ async def update_pipeline(pid: str, data: PipelineUpdate, current_user: dict = r
 
 
 @router.post("/api/pipelines/{pid}/run")
-async def run_pipeline(pid: str, current_user: dict = require_auth()):
+def run_pipeline(pid: str, current_user: dict = require_auth()):
     """执行流水线：deploy 类型真实构建并部署沙箱；其余类型按模拟日志执行。"""
     conn = get_db()
     try:
@@ -2384,7 +2384,7 @@ async def auto_fix_pipeline(pid: str, current_user: dict = require_auth()):
 
 
 @router.post("/api/sandbox/projects/{project_id}/logs/analyze")
-async def analyze_sandbox_logs(project_id: str, current_user: dict = require_auth()):
+def analyze_sandbox_logs(project_id: str, current_user: dict = require_auth()):
     """AI 分析沙箱容器日志：拉取日志 → LLM 定位问题根因 → 返回诊断报告。"""
     import subprocess as _sp
 
@@ -3074,7 +3074,7 @@ async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     if payload.get("outline"):
         prompt += f"\n大纲：{payload['outline']}"
     _report(30, "AI 生成大纲中")
-    result = call_llm(_PPT_SYSTEM_PROMPT, prompt)
+    result = await call_llm_async(_PPT_SYSTEM_PROMPT, prompt)
     _report(55, "解析大纲结构")
     outline_data = _parse_ppt_outline(result)
     _report(70, "排版 PPTX 文件")
@@ -3160,7 +3160,7 @@ async def list_ppt_history(current_user: dict = require_auth()):
 
 
 @router.post("/api/excel/operate")
-async def excel_operate(data: ExcelRequest, current_user: dict = require_auth()):
+def excel_operate(data: ExcelRequest, current_user: dict = require_auth()):
     """Excel 操作"""
     conn = get_db()
     try:

@@ -194,7 +194,7 @@ class TopicSuggestRequest(BaseModel):
 
 
 @router.post("/topic-suggest")
-async def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_auth()):
+def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_auth()):
     """选中热点 → AI 生成选题角度建议。"""
     if req.platform not in PLATFORM_LABELS:
         raise HTTPException(400, f"未知平台: {req.platform}")

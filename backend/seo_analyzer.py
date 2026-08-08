@@ -145,7 +145,7 @@ class KeywordResearchRequest(BaseModel):
 
 
 @router.post("/analyze")
-async def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth()):
+def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth()):
     """内容SEO多维度评分：标题吸引力、关键词覆盖、可读性、结构化、情感、字数。"""
     start = datetime.now()
 
@@ -177,7 +177,7 @@ async def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth(
 
 
 @router.post("/keywords")
-async def research_keywords(req: KeywordResearchRequest, current_user: dict = require_auth()):
+def research_keywords(req: KeywordResearchRequest, current_user: dict = require_auth()):
     """关键词研究：相关词、长尾词、问题型关键词、主题簇。"""
     start = datetime.now()
 

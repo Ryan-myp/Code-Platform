@@ -87,7 +87,7 @@ CODE_SYSTEM = """你是一位高级开发工程师，擅长编写高质量可运
 
 
 @router.post("/api/prd/generate")
-async def generate_prd(req: dict):
+def generate_prd(req: dict):
     """AI 生成 PRD"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
@@ -105,7 +105,7 @@ async def generate_prd(req: dict):
 
 
 @router.post("/api/prd/review")
-async def review_prd(req: dict):
+def review_prd(req: dict):
     """PRD 审查 - 优先用 biz-delivery ReviewEngine，失败 fallback LLM"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
@@ -143,7 +143,7 @@ async def review_prd(req: dict):
 
 
 @router.post("/api/prd/technical-design")
-async def technical_design(req: dict):
+def technical_design(req: dict):
     """技术方案生成 - 优先用 biz-delivery TDEngine"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
@@ -178,7 +178,7 @@ async def technical_design(req: dict):
 
 
 @router.post("/api/prd/test-cases")
-async def test_cases(req: dict):
+def test_cases(req: dict):
     """测试用例生成 - 优先用 biz-delivery TestEngine"""
     prd_text = (req.get("prd_text") or "").strip()
     tech_design = (req.get("tech_design") or "").strip()
@@ -210,7 +210,7 @@ async def test_cases(req: dict):
 
 
 @router.post("/api/prd/generate-code")
-async def generate_code(req: dict):
+def generate_code(req: dict):
     """根据技术方案生成代码"""
     tech_design = (req.get("tech_design") or "").strip()
     language = (req.get("language") or "python").strip()
@@ -226,7 +226,7 @@ async def generate_code(req: dict):
 
 
 @router.post("/api/prd/code-chat")
-async def code_chat(req: dict):
+def code_chat(req: dict):
     """代码对话 - 追问/修改代码"""
     message = (req.get("message") or "").strip()
     language = (req.get("language") or "python").strip()
@@ -782,7 +782,7 @@ async def prompt_history():
 
 
 @router.post("/api/evolution/optimize-prompts")
-async def optimize_prompts(req: dict):
+def optimize_prompts(req: dict):
     """自进化 - 优化提示词模板"""
     target = req.get("target") or "all"
     conn = get_db()

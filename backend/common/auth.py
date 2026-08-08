@@ -923,14 +923,55 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),  # noqa: B008
 ) -> dict[str, Any]:
-    """FastAPI 依赖：解析 Bearer token 返回用户信息。"""
-    payload = decode_access_token(credentials.credentials)
+    """FastAPI 依赖：解析 Bearer token 返回用户信息。
+
+    支持两种凭证：
+    - JWT（网页登录会话）
+    - API Key（xt- 前缀，对外开发者 API 集成，见 _auth_by_api_key）
+    """
+    token = credentials.credentials
+    if token.startswith("xt-"):
+        return _auth_by_api_key(token)
+    payload = decode_access_token(token)
     return {
         "user_id": payload.get("user_id"),
         "username": payload.get("sub"),
         "role": payload.get("role", "viewer"),
         "scope": payload.get("scope", ["read"]),
     }
+
+
+def _auth_by_api_key(raw_key: str) -> dict[str, Any]:
+    """API Key 认证：sha256 比对 api_keys 表，返回绑定用户身份并刷新 last_used。
+
+    开发者通过 /api/api-keys 创建 key 后，可用 Bearer xt-xxx 直接调用
+    平台所有 require_auth 端点（配额随绑定用户走），实现外部程序集成。
+    """
+    from common.db import get_db
+
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT k.user_id, k.id, u.username, u.role, u.active FROM api_keys k "
+            "JOIN users u ON u.id = k.user_id WHERE k.key_hash=?",
+            (key_hash,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的 API Key")
+        if not row["active"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已禁用")
+        conn.execute("UPDATE api_keys SET last_used=? WHERE id=?", (datetime.now().isoformat(), row["id"]))
+        conn.commit()
+        return {
+            "user_id": row["user_id"],
+            "username": row["username"],
+            "role": row["role"],
+            "scope": ["read", "write"],
+            "auth_mode": "api_key",
+        }
+    finally:
+        conn.close()
 
 
 def require_auth(dependency=Depends(get_current_user)):  # noqa: B008

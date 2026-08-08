@@ -41,7 +41,17 @@ export function connectWs(channel, handlers = {}) {
     if (entry.listeners.size === 0 && entry.openCbs.size === 0 && entry.closeCbs.size === 0) {
       entry.closed = true
       if (entry.timer) clearInterval(entry.timer)
-      if (entry.ws) entry.ws.close()
+      if (entry.ws) {
+        try {
+          if (entry.ws.readyState === WebSocket.CONNECTING) {
+            // 连接尚未建立时直接 close 会触发 "closed before established" 警告
+            // （React StrictMode 双挂载场景）；挂 onopen 后立即关闭，避免泄漏
+            entry.ws.onopen = () => { try { entry.ws.close() } catch { /* ignore */ } }
+          } else if (entry.ws.readyState === WebSocket.OPEN || entry.ws.readyState === WebSocket.CLOSING) {
+            entry.ws.close()
+          }
+        } catch { /* ignore */ }
+      }
       conns.delete(channel)
     }
   }

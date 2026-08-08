@@ -10,7 +10,7 @@
 import asyncio
 import json
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -133,7 +133,7 @@ _PPT_OUTLINE = json.dumps(
 def test_ppt_async_flow_with_pptx_file(setup_test_db, claim_and_run, monkeypatch, tmp_path):
     """PPT：异步任务 → 大纲解析 → 真实 PPTX 文件生成 → 记录含下载路径。"""
     monkeypatch.setattr(extended_api, "PPTX_DIR", str(tmp_path))
-    with patch("extended_api.call_llm", return_value=_PPT_OUTLINE):
+    with patch("extended_api.call_llm_async", new_callable=AsyncMock, return_value=_PPT_OUTLINE):
         task = create_task(
             "ppt_generate",
             {"title": "AI 商业化之路", "outline": "参考大纲", "user_id": "u-carl"},

@@ -12,12 +12,12 @@ import os
 from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json
+from common.llm import call_llm_async, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -177,7 +177,7 @@ def extract_text(filepath: str, filename: str) -> str:  # noqa: C901
 
 
 @router.post("/upload")
-async def upload_doc(file: UploadFile = File(...), current_user: dict = require_auth()):
+async def upload_doc(file: UploadFile = File(...), background: BackgroundTasks = BackgroundTasks(), current_user: dict = require_auth()):
     """上传文档，自动提取文本并生成摘要。"""
     if not file.filename:
         raise HTTPException(400, "未选择文件")
@@ -197,25 +197,10 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
     # 提取文本
     text = extract_text(save_path, file.filename)
 
-    # AI 摘要
-    summary = {}
+    # AI 摘要：后台异步生成，上传立即返回（LLM 慢时不再阻塞上传 60s+）
+    placeholder = {"title": file.filename, "type": "文档", "summary": "摘要生成中…", "key_points": []}
     if text and not text.startswith("["):
-        try:
-            raw = call_llm(
-                DOC_EXTRACT_SYSTEM,
-                f"文档文本（前3000字）：\n{text[:3000]}",
-                max_tokens=1000,
-                temperature=0.3,
-                timeout=60,
-            )
-            raw = raw.strip()
-            if raw.startswith("```"):
-                lines = raw.split("\n")
-                raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-            summary = parse_llm_json(raw)
-        except Exception as e:
-            logger.warning(f"doc summary failed: {e}")
-            summary = {"title": file.filename, "type": "文档", "summary": "自动摘要生成失败", "key_points": []}
+        background.add_task(_summarize_doc_async, did, text[:3000], file.filename)
 
     with get_db_context() as conn:
         conn.execute(
@@ -227,7 +212,7 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
                 len(content),
                 text,
                 len(text),
-                json.dumps(summary, ensure_ascii=False),
+                json.dumps(placeholder, ensure_ascii=False),
                 "ready",
                 str(current_user.get("user_id", "")),
                 datetime.now().isoformat(),
@@ -240,9 +225,34 @@ async def upload_doc(file: UploadFile = File(...), current_user: dict = require_
         "file_size": len(content),
         "text_length": len(text),
         "text_preview": text[:300],
-        "summary": summary,
-        "message": f"文档上传成功，已提取 {len(text)} 字符",
+        "summary": placeholder,
+        "message": f"文档上传成功，已提取 {len(text)} 字符，摘要生成中…",
     }
+
+
+async def _summarize_doc_async(did: str, text: str, filename: str) -> None:
+    """后台生成文档摘要并回写记录（失败降级占位，不影响主流程）。"""
+    summary = {"title": filename, "type": "文档", "summary": "自动摘要生成失败", "key_points": []}
+    try:
+        raw = await call_llm_async(
+            DOC_EXTRACT_SYSTEM,
+            f"文档文本（前3000字）：\n{text[:3000]}",
+            max_tokens=1000,
+            temperature=0.3,
+            timeout=120,
+        )
+        raw = raw.strip()
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        summary = parse_llm_json(raw)
+    except Exception as e:
+        logger.warning(f"doc summary failed: {e}")
+    try:
+        with get_db_context() as conn:
+            conn.execute("UPDATE doc_qa_records SET summary=? WHERE id=?", (json.dumps(summary, ensure_ascii=False), did))
+    except Exception as e:
+        logger.warning(f"doc summary persist failed: {e}")
 
 
 # ── 异步任务：文档问答（进度/自动重试/并发控制）──
@@ -277,7 +287,9 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
     user_prompt = f"{history_text}用户：{payload.get('question', '')}"
 
     _report(50, "AI 回答中")
-    answer = call_llm(system_prompt, user_prompt, max_tokens=800, temperature=0.4, timeout=60).strip()
+    # 注意：必须 (await …) 整体括起再 strip，否则 .strip() 会作用在协程对象上；
+    # timeout=120：上游 LLM 慢时（实测可超 60s）避免误判失败
+    answer = (await call_llm_async(system_prompt, user_prompt, max_tokens=800, temperature=0.4, timeout=120)).strip()
     _report(90, "记录用量")
     log_usage("doc_qa", len(user_prompt), len(answer), 0)
     _report(100, "完成")

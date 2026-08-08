@@ -4,6 +4,7 @@
 - POST /api/voice-chat/tts         文字转语音
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -78,7 +79,7 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/respond")
-async def voice_respond(req: RespondRequest, current_user: dict = require_auth()):
+def voice_respond(req: RespondRequest, current_user: dict = require_auth()):
     """LLM智能语音回复：根据用户输入生成适合语音朗读的回复。"""
     start = datetime.now()
 
@@ -117,7 +118,8 @@ async def text_to_speech(req: TTSRequest, current_user: dict = require_auth()):
     try:
         from voice_factory import _tts_one
 
-        audio_bytes = _tts_one(req.text, req.voice_id, speed=1.0)
+        # 同步 TTS（网络请求 30-120s）在独立线程执行，避免阻塞事件循环
+        audio_bytes = await asyncio.to_thread(_tts_one, req.text, req.voice_id, 1.0)
         filename = f"tts_{int(datetime.now().timestamp() * 1000)}.mp3"
         filepath = os.path.join(tts_dir, filename)
         with open(filepath, "wb") as f:

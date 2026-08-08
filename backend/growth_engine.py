@@ -113,7 +113,7 @@ class BatchScheduleRequest(BaseModel):
 
 
 @router.post("/batch")
-async def batch_generate(req: BatchGenerateRequest, current_user: dict = require_auth()):
+def batch_generate(req: BatchGenerateRequest, current_user: dict = require_auth()):
     """主题 → LLM 批量生成 N 组内容变体（标题/正文/话题/封面风格）。"""
     if req.platform not in PLATFORM_LABELS:
         raise HTTPException(400, f"未知平台: {req.platform}")
@@ -524,7 +524,7 @@ REVIEW_SYSTEM = """你是资深内容运营与增长数据分析师，拥有5年
 
 
 @router.post("/review")
-async def ai_review(
+def ai_review(
     platform: str = "",
     days: int = 30,
     current_user: dict = require_auth(),
@@ -688,7 +688,7 @@ REPLY_SYSTEM = """你是一位资深社区运营专家，擅长用真实、有�
 
 
 @router.post("/comments/{comment_id}/reply")
-async def ai_reply_suggest(comment_id: str, current_user: dict = require_auth()):
+def ai_reply_suggest(comment_id: str, current_user: dict = require_auth()):
     """AI 生成评论回复建议（不自动发送，用户确认后手动粘贴回复）。"""
     conn = get_db()
     _ensure_comments_table(conn)

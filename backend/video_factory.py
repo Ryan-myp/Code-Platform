@@ -270,7 +270,8 @@ async def get_video_result(video_id: str, project_id: str = ""):
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     try:
-        response = requests.get(
+        response = await asyncio.to_thread(
+            requests.get,
             f"{AGNES_API_BASE}/agnesapi",
             params={"video_id": video_id},
             headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
@@ -288,7 +289,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
             if not video_url:
                 raise HTTPException(500, "视频生成完成但未找到视频URL")
 
-            video_resp = requests.get(video_url, timeout=120)
+            video_resp = await asyncio.to_thread(requests.get, video_url, timeout=120)
             if video_resp.status_code != 200:
                 raise HTTPException(500, "下载视频失败")
 

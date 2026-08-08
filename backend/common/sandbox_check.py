@@ -140,6 +140,7 @@ def run_sandbox_python(
             [sys.executable, "-E", "-c", code],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=timeout,
             cwd=workdir,
             env={"HOME": workdir, "TMPDIR": workdir, "PYTHONIOENCODING": "utf-8"},

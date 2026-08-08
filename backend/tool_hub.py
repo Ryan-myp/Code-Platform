@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """效率工具箱 API v2 - 专业级工具平台"""
 
+import asyncio
 import json
 import os
+import re
 import uuid
 from datetime import datetime
+from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from task_queue import create_task, register_handler
+
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm
+from common.llm import call_llm, call_llm_async
 from permissions import access_status, get_visibility_map, load_user_ctx
 
 router = APIRouter()
@@ -38,6 +43,7 @@ TOOL_DEFINITIONS = {
 - 语言风格：{tone}
 - 详细程度：{detail_level}
 - 输出语言：{language}
+- 会议类型：{meeting_type}
 
 ## 输出格式要求
 
@@ -295,6 +301,18 @@ TOOL_DEFINITIONS = {
                 "label": "报告类型",
                 "options": ["周报", "日报", "月报", "季度总结"],
                 "default": "周报",
+            },
+            "period": {
+                "type": "select",
+                "label": "汇报周期",
+                "options": ["本周", "今日", "本月", "本季度"],
+                "default": "本周",
+            },
+            "next_period": {
+                "type": "select",
+                "label": "计划周期",
+                "options": ["下周", "明日", "下月", "下季度"],
+                "default": "下周",
             },
             "tone": {
                 "type": "select",
@@ -647,6 +665,7 @@ TOOL_DEFINITIONS = {
             },
         ],
         "params": {
+            "product_name": {"type": "text", "label": "产品名称", "placeholder": "如：团队任务管理工具", "default": ""},
             "product_type": {
                 "type": "select",
                 "label": "产品类型",
@@ -7497,8 +7516,12 @@ async def get_tool(tool_id: str, current_user: dict = require_auth()):
 
 
 @router.post("/api/tools/run")
-async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
-    """运行效率工具"""
+async def run_tool(
+    data: ToolRunRequest,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务模式"),
+    current_user: dict = require_auth(),
+):
+    """运行效率工具（默认异步任务：进度跟踪/失败自动重试/不阻塞事件循环；sync=true 兼容老客户端）"""
     if data.tool_id not in TOOL_DEFINITIONS:
         raise HTTPException(404, "工具不存在")
 
@@ -7512,81 +7535,124 @@ async def run_tool(data: ToolRunRequest, current_user: dict = require_auth()):
         raise HTTPException(403, "该工具暂未对你开放")
 
     tool = TOOL_DEFINITIONS[data.tool_id]
-
     if tool.get("type") == "app":
         raise HTTPException(400, "该工具需要使用专属页面")
 
-    # 构建提示词
-    prompt_template = tool.get("prompt_template", tool.get("prompt", ""))
+    payload = {
+        "tool_id": data.tool_id,
+        "input": data.input,
+        "params": data.params or {},
+        "model": data.model or "",
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
+    }
+    if sync:
+        # 同步模式：直接执行（Long LLM 生成会阻塞本请求，仅供脚本/兼容场景）
+        return await _run_tool_worker(payload)
+    # 异步任务模式：提交即返回，慢 LLM（实测可达 300s+）不阻塞请求
+    task = create_task(
+        "tool_run",
+        payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"], "message": "工具执行任务已提交，可在任务中心或当前页面查看进度"}
+
+
+async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """工具执行 worker：构建提示词 → LLM 生成 → 保存记录/统计（线程池执行，不阻塞事件循环）。"""
+    tool_id = payload.get("tool_id", "")
+    tool = TOOL_DEFINITIONS.get(tool_id)
+    if not tool:
+        raise HTTPException(404, "工具不存在")
+    if tool.get("type") == "app":
+        raise HTTPException(400, "该工具需要使用专属页面")
+
+    input_text = payload.get("input", "") or ""
+    params = payload.get("params") or {}
+    uid = payload.get("user_id") or "default"
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    _report(10, "解析工具配置")
 
     # 合并默认参数和用户参数
-    params = {}
+    merged = {}
     for param_name, param_config in tool.get("params", {}).items():
-        params[param_name] = data.params.get(param_name, param_config.get("default", ""))
+        merged[param_name] = params.get(param_name, param_config.get("default", ""))
 
-    # 渲染提示词
+    # 渲染提示词（容错）：模板变量缺定义/未传参时不抛异常降级，
+    # 缺失变量替换为空串（LLM 会据 input 推断），避免把 {xxx} 字面量喂给 LLM
+    prompt_template = tool.get("prompt_template", tool.get("prompt", ""))
     try:
-        prompt = prompt_template.format(input=data.input, **params)
-    except KeyError:
-        prompt = prompt_template.replace("{input}", data.input)
+        prompt = prompt_template.format(input=input_text, **merged)
+    except (KeyError, IndexError, ValueError):
+        prompt = re.sub(r"\{(\w+)\}", lambda m: str(merged.get(m.group(1), "")), prompt_template)
+        prompt = prompt.replace("{input}", input_text)
 
+    _report(35, "构建提示词")
+    # 注入真实当前日期：模板中的 [当前日期] 若不注入，LLM 会幻觉日期（实测出现 2024 年）
+    system_prompt = (
+        "你是一个专业的AI助手，请根据用户的要求生成高质量内容。输出格式要清晰、结构化的Markdown。\n"
+        f"今天是 {datetime.now().strftime('%Y年%m月%d日')}（星期{'一二三四五六日'[datetime.now().weekday()]}）。"
+    )
+    _report(50, "AI 生成中")
+    result = await call_llm_async(system_prompt, prompt, model=payload.get("model") or None)
+    _report(85, "保存记录")
+
+    # 保存记录
+    conn = get_db()
     try:
-        result = call_llm(
-            "你是一个专业的AI助手，请根据用户的要求生成高质量内容。输出格式要清晰、结构化的Markdown。",
-            prompt,
-            model=data.model or None,
+        record_id = f"tool_{uuid.uuid4().hex[:12]}"
+        conn.execute(
+            """INSERT INTO tool_records (id, tool_id, input, result, model, created_at, user_id)
+               VALUES (?,?,?,?,?,?,?) """,
+            (
+                record_id,
+                tool_id,
+                json.dumps({"input": input_text, "params": params}),
+                result,
+                payload.get("model") or "",
+                datetime.now().isoformat(),
+                uid,
+            ),
         )
-
-        # 保存记录
-        conn = get_db()
-        try:
-            record_id = f"tool_{uuid.uuid4().hex[:12]}"
-            # require_auth 依赖返回 user_id 字段（旧代码误用 id，恒为 default）
-            uid = current_user.get("user_id") or "default"
+        # 更新使用统计
+        stats_id = f"stat_{uuid.uuid4().hex[:12]}"
+        existing_stat = conn.execute(
+            "SELECT id, use_count FROM tool_usage_stats WHERE user_id=? AND tool_id=?", (uid, tool_id)
+        ).fetchone()
+        if existing_stat:
             conn.execute(
-                """INSERT INTO tool_records (id, tool_id, input, result, model, created_at, user_id)
-                   VALUES (?,?,?,?,?,?,?) """,
-                (
-                    record_id,
-                    data.tool_id,
-                    json.dumps({"input": data.input, "params": data.params}),
-                    result,
-                    data.model,
-                    datetime.now().isoformat(),
-                    uid,
-                ),
+                "UPDATE tool_usage_stats SET use_count=use_count+1, last_used_at=? WHERE id=?",
+                (datetime.now().isoformat(), existing_stat["id"]),
             )
-            # 更新使用统计
-            user_id = uid
-            stats_id = f"stat_{uuid.uuid4().hex[:12]}"
-            existing_stat = conn.execute(
-                "SELECT id, use_count FROM tool_usage_stats WHERE user_id=? AND tool_id=?", (user_id, data.tool_id)
-            ).fetchone()
-            if existing_stat:
-                conn.execute(
-                    "UPDATE tool_usage_stats SET use_count=use_count+1, last_used_at=? WHERE id=?",
-                    (datetime.now().isoformat(), existing_stat["id"]),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO tool_usage_stats (id, user_id, tool_id, use_count, last_used_at) VALUES (?,?,?,1,?)",
-                    (stats_id, user_id, data.tool_id, datetime.now().isoformat()),
-                )
-            conn.commit()
-        finally:
-            conn.close()
+        else:
+            conn.execute(
+                "INSERT INTO tool_usage_stats (id, user_id, tool_id, use_count, last_used_at) VALUES (?,?,?,1,?)",
+                (stats_id, uid, tool_id, datetime.now().isoformat()),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
-        return {
-            "ok": True,
-            "id": record_id,
-            "result": result,
-            "metadata": {
-                "tool_name": tool["name"],
-                "params_used": params,
-            },
-        }
-    except Exception as e:
-        raise HTTPException(500, f"工具执行失败: {str(e)}") from e
+    return {
+        "ok": True,
+        "id": record_id,
+        "result": result,
+        "metadata": {
+            "tool_name": tool["name"],
+            "params_used": merged,
+        },
+    }
+
+
+async def _tool_run_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装工具执行，回报进度。"""
+    return await _run_tool_worker(payload, progress=update)
 
 
 @router.get("/api/tools/{tool_id}/history")
@@ -7679,7 +7745,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
             try:
                 import openpyxl
 
-                wb = openpyxl.load_workbook(tmp_path)
+                wb = await asyncio.to_thread(openpyxl.load_workbook, tmp_path)
                 sheets_data = []
                 for sheet_name in wb.sheetnames:
                     ws = wb[sheet_name]
@@ -7829,3 +7895,7 @@ async def toggle_favorite(tool_id: str, current_user: dict = require_auth()):
             return {"ok": True, "favorited": True}
     finally:
         conn.close()
+
+
+# ── 异步任务处理器注册 ──
+register_handler("tool_run", _tool_run_handler, user_limit=2, max_attempts=1)

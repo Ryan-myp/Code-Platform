@@ -75,6 +75,8 @@ from common.models import (  # noqa: E402
     RegisterRequest,
     SandboxProjectCreateRequest,
     SandboxPullImageRequest,
+    SandboxRedisCommandRequest,
+    SandboxSqlQueryRequest,
     ShareCreateRequest,
     SkillCreateRequest,
     SkillUpdateRequest,
@@ -291,18 +293,31 @@ async def quota_middleware(request: Request, call_next):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             try:
-                payload = decode_access_token(auth_header[7:])
+                token = auth_header[7:]
+                if token.startswith("xt-"):
+                    # API Key 调用：随绑定用户配额（见 common.auth._auth_by_api_key）
+                    from common.auth import _auth_by_api_key
+
+                    payload = _auth_by_api_key(token)
+                else:
+                    payload = decode_access_token(token)
                 user_id = payload.get("user_id")
                 if user_id:
                     result = consume_quota(user_id)
                     charged = bool(result.get("charged"))  # admin/vip 不扣费，无需退
                     if not result.get("allowed"):
                         # 402 分层引导：free 用户促升级 / pro 用户提示明日恢复，文案与会员体系对齐
-                        membership = (get_quota_info(user_id) or {}).get("membership") or "free"
+                        # 配额数字取用户实际配置（管理员可调整 daily_quota），避免硬编码误导
+                        qinfo = get_quota_info(user_id) or {}
+                        membership = qinfo.get("membership") or "free"
+                        daily = qinfo.get("daily_quota") or 30
                         if membership == "pro":
-                            detail = "今日专业版 200 次额度已用完，明日 0 点自动恢复；升级至尊版可无限使用"
+                            detail = f"今日专业版 {daily} 次额度已用完，明日 0 点自动恢复；升级至尊版可无限使用"
                         else:
-                            detail = "今日免费额度已用完（30 次/日）。升级专业版解锁每日 200 次，或邀请好友得额度"
+                            detail = (
+                                f"今日免费额度已用完（{daily} 次/日）。"
+                                "升级专业版解锁每日 200 次，或邀请好友得额度"
+                            )
                         return JSONResponse(
                             status_code=402,
                             content={"detail": detail, "membership": membership},
@@ -511,7 +526,7 @@ async def showcase(limit: int = 12):
             """SELECT share_code, title, content_type, views, created_at,
                       substr(content, 1, 200) AS preview
                FROM shares
-               WHERE content != '' AND length(content) >= 10
+               WHERE content != '' AND length(content) >= 10 AND is_test = 0
                ORDER BY views DESC, created_at DESC
                LIMIT ?""",
             (min(limit, 30),),
@@ -2246,7 +2261,14 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()): 
         prog = cmd.split()[0]
         if not (shutil.which(prog) or os.path.exists(prog)):
             return {"ok": False, "error": f"找不到可执行命令：{prog}"}
-        return {"ok": True, "detail": f"命令可执行：{cmd}", "tools": []}
+        # 真实连接测试：启动进程 → JSON-RPC initialize 握手 → tools/list
+        # （放线程池执行，避免同步子进程 I/O 阻塞事件循环）
+        try:
+            args = json.loads(d.get("args") or "[]") or []
+            env = {**os.environ, **(json.loads(d.get("env") or "{}") or {})}
+        except (ValueError, TypeError):
+            args, env = [], {**os.environ}
+        return await asyncio.to_thread(_mcp_stdio_test, cmd, args, env)
 
     url = (d.get("url") or "").strip()
     if not url:
@@ -2300,6 +2322,70 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()): 
         return {"ok": False, "error": f"连接失败：{e}"}
 
 
+def _mcp_stdio_test(cmd: str, args: list, env: dict) -> dict:
+    """MCP stdio 真实连接测试：启动子进程 → initialize 握手 → tools/list。
+
+    一次性写入 initialize / initialized / tools/list 三个 JSON-RPC 请求（
+    服务器按序处理），从 stdout 解析 id=1 与 id=2 的响应；stderr 用于报错诊断。
+    15s 超时兜底，进程始终清理，绝不残留。
+    """
+    import subprocess
+
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [cmd, *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            text=True,
+        )
+        reqs = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "xiaotuan", "version": "1.0"},
+                },
+            },
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        ]
+        payload = "".join(json.dumps(r) + "\n" for r in reqs)
+        out, err = proc.communicate(input=payload, timeout=15)
+    except subprocess.TimeoutExpired:
+        if proc:
+            proc.kill()
+        return {"ok": False, "error": "连接超时（服务器 15s 无响应）"}
+    except Exception as e:
+        return {"ok": False, "error": f"启动失败：{e}"}
+    finally:
+        if proc and proc.poll() is None:
+            proc.kill()
+    init_data = tools_data = None
+    for line in (out or "").splitlines():
+        if not line.strip():
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get("id") == 1:
+            init_data = d
+        elif d.get("id") == 2:
+            tools_data = d
+    if not init_data or "result" not in init_data:
+        detail = (err or out or "无输出")[:200]
+        return {"ok": False, "error": f"未收到 initialize 响应：{detail}"}
+    tools = [t.get("name", "?") for t in (tools_data or {}).get("result", {}).get("tools", [])] or []
+    name = init_data.get("result", {}).get("serverInfo", {}).get("name", "") or "MCP 服务"
+    return {"ok": True, "detail": f"initialize 握手成功（{name}），发现 {len(tools)} 个工具", "tools": tools}
+
+
 # ── 沙箱管理 ───────────────────────────────────────────────────
 @app.get("/api/sandbox/images")
 async def sandbox_list_images(current_user: dict = require_auth()):
@@ -2324,6 +2410,209 @@ async def sandbox_services(current_user: dict = require_auth()):
 
     # 转 list 返回并补充 id（前端以 id 作 React key）
     return {"services": [{**v, "id": k} for k, v in SERVICE_TEMPLATES.items()]}
+
+
+# Redis 控制台安全白名单：仅允许数据操作命令，禁止 FLUSHALL/FLUSHDB/SHUTDOWN/CONFIG/EVAL 等危险命令
+REDIS_SAFE_COMMANDS = {
+    "PING", "ECHO", "DBSIZE", "KEYS", "EXISTS", "TYPE", "TTL", "PTTL", "GET", "MGET", "SET", "MSET",
+    "APPEND", "DEL", "EXPIRE", "PERSIST", "RENAME", "INCR", "DECR", "INCRBY", "DECRBY",
+    "HSET", "HGET", "HDEL", "HGETALL", "HLEN", "HEXISTS",
+    "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN",
+    "SADD", "SREM", "SMEMBERS", "SCARD", "SISMEMBER",
+    "ZADD", "ZREM", "ZRANGE", "ZCARD", "ZSCORE",
+    "GETRANGE", "SETEX", "STRLEN", "OBJECT",
+}
+
+
+def _sandbox_project_env(project_id: str) -> dict:
+    """读取沙箱项目创建配置中的环境变量（服务控制台凭据：MYSQL_ROOT_PASSWORD 等）"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT image, config FROM sandbox_projects WHERE id=?", (project_id,)
+    ).fetchone()
+    conn.close()
+    env_map = {}
+    if row:
+        try:
+            cfg = json.loads(row["config"] or "{}")
+            for e in (cfg.get("env") or []):
+                if isinstance(e, str) and "=" in e:
+                    k, _, v = e.partition("=")
+                    env_map[k.strip()] = v.strip()
+        except Exception:
+            pass
+    return env_map
+
+
+@app.post("/api/sandbox/projects/{project_id}/redis/command")
+def sandbox_redis_command(project_id: str, req: SandboxRedisCommandRequest, current_user: dict = require_auth()):
+    """Redis 控制台：在项目容器内执行 redis-cli 安全命令（查看/修改/删除 Key）"""
+    from sandbox import process_manager
+
+    cmd = req.command.strip()
+    if not cmd:
+        raise HTTPException(400, "命令不能为空")
+    verb = cmd.split()[0].upper()
+    if verb not in REDIS_SAFE_COMMANDS:
+        raise HTTPException(400, f"命令 {verb} 不在安全白名单内（仅支持数据操作，禁止 FLUSH/CONFIG/SHUTDOWN 等）")
+    # 命令按空白拆分为 argv，避免注入（redis-cli 接收参数数组，无 shell 解释）
+    result = process_manager.exec_command(project_id, ["redis-cli", *cmd.split()], timeout=30)
+    if result["status"] != "success":
+        raise HTTPException(500, result["message"])
+    return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
+
+
+# SQL 控制台白名单：仅允许只读查询（沙箱内数据浏览，禁止写操作）
+SQL_SAFE_VERBS = {"SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN"}
+
+
+@app.post("/api/sandbox/projects/{project_id}/sql/query")
+def sandbox_sql_query(project_id: str, req: SandboxSqlQueryRequest, current_user: dict = require_auth()):
+    """SQL 控制台：在项目容器内执行只读查询（MySQL/PostgreSQL），返回结构化表格"""
+    from sandbox import process_manager
+
+    sql = req.sql.strip().rstrip(";")
+    if not sql:
+        raise HTTPException(400, "SQL 不能为空")
+    verb = sql.split()[0].upper()
+    if verb not in SQL_SAFE_VERBS:
+        raise HTTPException(400, f"仅支持只读查询（SELECT/SHOW/DESC/EXPLAIN），禁止 {verb} 写操作")
+    if ";" in sql:
+        raise HTTPException(400, "一次只能执行一条 SQL")
+
+    # 从项目镜像与创建配置（env）确定数据库客户端与凭据：
+    # 沙箱项目创建时可自定义密码（如 MYSQL_ROOT_PASSWORD），不可硬编码默认值
+    conn = get_db()
+    row = conn.execute(
+        "SELECT image FROM sandbox_projects WHERE id=?", (project_id,)
+    ).fetchone()
+    conn.close()
+    image = (row["image"] if row else "") or ""
+    image_l = image.lower()
+    env_map = _sandbox_project_env(project_id)
+    if "mysql" in image_l:
+        pwd = env_map.get("MYSQL_ROOT_PASSWORD", "password")
+        # 不加 -N：非交互 -e 模式自带表头（tab 分隔），解析器以首行为列名；-N 会吞掉首行数据
+        argv = ["mysql", "-uroot", f"-p{pwd}", "--default-character-set=utf8mb4", "-e", sql]
+    elif "postgres" in image_l or "postgresql" in image_l:
+        # 密码经连接串传递（容器内 stdin 为 /dev/null，无法交互输入，PGPASSWORD 需 -e 注入）
+        pwd = env_map.get("POSTGRES_PASSWORD", "password")
+        user = env_map.get("POSTGRES_USER", "postgres")
+        db = env_map.get("POSTGRES_DB", "sandbox")
+        # -A 禁用对齐装饰、-F 指定 tab 分隔；保留表头（不用 -t），与 mysql 行为对齐，解析器以首行为列名
+        argv = ["psql", f"postgresql://{user}:{pwd}@localhost/{db}", "-A", "-F", "\t", "-c", sql]
+    else:
+        raise HTTPException(400, "该项目不是 MySQL/PostgreSQL 数据库服务，无法执行 SQL")
+
+    result = process_manager.exec_command(project_id, argv, timeout=30)
+    if result["status"] != "success":
+        # 过滤 mysql 客户端的“命令行密码不安全”警告行，保留真实错误
+        err_lines = [l for l in result["message"].split("\n") if "Using a password on the command line" not in l]
+        raise HTTPException(500, "\n".join(err_lines).strip() or "SQL 执行失败")
+    raw = result["output"].rstrip("\n")
+    # 过滤 mysql 客户端的“命令行密码不安全”警告行（成功时也可能出现在 stderr 合并输出中）
+    raw = "\n".join(l for l in raw.split("\n") if "Using a password on the command line" not in l)
+    # 解析 tab 分隔输出为结构化表格（首行表头）
+    columns: list[str] = []
+    rows: list[list] = []
+    if raw.strip():
+        lines = raw.split("\n")
+        columns = [c for c in lines[0].split("\t") if c != ""]
+        rows = [
+            [c for c in line.split("\t")]
+            for line in lines[1:]
+            if line.strip() and line.strip() != "(0 rows)"
+        ]
+    return {"ok": True, "sql": sql, "columns": columns, "rows": rows, "raw": raw}
+
+
+# MongoDB 控制台：mongosh 只读白名单（正则匹配允许模式 + 全局禁词双重拦截）
+MONGO_SAFE_PATTERNS = [
+    re.compile(r"^(show|use)\s+(dbs|databases|collections|tables|[a-zA-Z0-9_\-]+)$"),
+    re.compile(r"^db\.\w+\.(find|findOne|count|countDocuments|distinct|listIndexes)\(.*\)$"),
+    re.compile(r"^db\.(stats|getName|getCollectionNames|getCollectionInfos)\(.*\)$"),
+    re.compile(r"^db\.\w+\.getIndexes\(\)$"),
+]
+# 写操作/危险操作禁词（大小写不敏感，命中即拒绝）
+MONGO_BLOCKED = [
+    "insert", "update", "delete", "remove", "drop", "create", "rename", "aggregate",
+    "eval(", "runcommand", "admincommand", "$out", "$merge", "copytodatabase",
+]
+
+
+@app.post("/api/sandbox/projects/{project_id}/mongo/command")
+def sandbox_mongo_command(project_id: str, req: SandboxRedisCommandRequest, current_user: dict = require_auth()):
+    """MongoDB 控制台：在项目容器内执行 mongosh 只读命令（show dbs / db.collection.find 等）"""
+    from sandbox import process_manager
+
+    cmd = req.command.strip()
+    if not cmd:
+        raise HTTPException(400, "命令不能为空")
+    cmd_l = cmd.lower()
+    if any(b in cmd_l for b in MONGO_BLOCKED):
+        raise HTTPException(400, "仅支持只读操作（禁止 insert/update/delete/drop/create/aggregate 等）")
+    if not any(p.match(cmd) for p in MONGO_SAFE_PATTERNS):
+        raise HTTPException(400, "命令格式不在允许范围（支持 show dbs / use db / db.集合.find(...) / db.stats() 等只读操作）")
+
+    # 凭据从项目创建配置读取（模板默认 admin/password）
+    env_map = _sandbox_project_env(project_id)
+    user = env_map.get("MONGO_INITDB_ROOT_USERNAME", "admin")
+    pwd = env_map.get("MONGO_INITDB_ROOT_PASSWORD", "password")
+    argv = ["mongosh", "--quiet", "-u", user, "-p", pwd, "--authenticationDatabase", "admin", "--eval", cmd]
+    result = process_manager.exec_command(project_id, argv, timeout=30)
+    if result["status"] != "success":
+        raise HTTPException(500, result["message"])
+    return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
+
+
+# RabbitMQ 控制台：rabbitmqctl 只读白名单（状态/列表类命令）
+RABBITMQ_SAFE_VERBS = {
+    "status", "ping", "list_queues", "list_exchanges", "list_bindings", "list_connections",
+    "list_channels", "list_users", "list_permissions", "list_vhosts", "list_policies", "list_consumers",
+}
+RABBITMQ_FIELD_RE = re.compile(r"^[a-zA-Z0-9_ ]*$")
+
+
+@app.post("/api/sandbox/projects/{project_id}/rabbitmq/command")
+def sandbox_rabbitmq_command(project_id: str, req: SandboxRedisCommandRequest, current_user: dict = require_auth()):
+    """RabbitMQ 控制台：在项目容器内执行 rabbitmqctl 只读命令（status / list_queues 等）"""
+    from sandbox import process_manager
+
+    cmd = req.command.strip()
+    if not cmd:
+        raise HTTPException(400, "命令不能为空")
+    parts = cmd.split()
+    verb = parts[0]
+    if verb not in RABBITMQ_SAFE_VERBS:
+        raise HTTPException(400, f"命令 {verb} 不在安全白名单内（支持 status / list_queues / list_exchanges / list_users 等只读命令）")
+    # 参数仅允许字段名（如 name messages），防止注入
+    if len(parts) > 1 and not RABBITMQ_FIELD_RE.match(" ".join(parts[1:])):
+        raise HTTPException(400, "参数格式不合法")
+    result = process_manager.exec_command(project_id, ["rabbitmqctl", *parts], timeout=30)
+    if result["status"] != "success":
+        raise HTTPException(500, result["message"])
+    return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
+
+
+# Nginx 控制台：只读参数白名单（版本/配置测试/配置转储）
+NGINX_SAFE_ARGS = {"-v", "-V", "-t", "-T"}
+
+
+@app.post("/api/sandbox/projects/{project_id}/nginx/command")
+def sandbox_nginx_command(project_id: str, req: SandboxRedisCommandRequest, current_user: dict = require_auth()):
+    """Nginx 控制台：在项目容器内执行 nginx 只读命令（-v 版本 / -t 配置测试 / -T 配置转储）"""
+    from sandbox import process_manager
+
+    cmd = req.command.strip()
+    if not cmd:
+        raise HTTPException(400, "命令不能为空")
+    args = cmd.split()
+    if args[0] != "nginx" or len(args) != 2 or args[1] not in NGINX_SAFE_ARGS:
+        raise HTTPException(400, "仅支持 nginx -v / nginx -V / nginx -t / nginx -T 只读命令")
+    result = process_manager.exec_command(project_id, ["nginx", args[1]], timeout=30)
+    if result["status"] != "success":
+        raise HTTPException(500, result["message"])
+    return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
 
 
 @app.get("/api/sandbox/projects")
@@ -2388,7 +2677,7 @@ async def sandbox_get_project(project_id: str, current_user: dict = require_auth
 
 
 @app.post("/api/sandbox/projects/{project_id}/start")
-async def sandbox_start_project(project_id: str, current_user: dict = require_auth()):
+def sandbox_start_project(project_id: str, current_user: dict = require_auth()):
     """启动沙箱项目"""
     # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
     if project_id.startswith("deploy-"):
@@ -2396,7 +2685,7 @@ async def sandbox_start_project(project_id: str, current_user: dict = require_au
         from datetime import datetime
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        r = subprocess.run(["podman", "start", container], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["podman", "start", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
@@ -2413,7 +2702,7 @@ async def sandbox_start_project(project_id: str, current_user: dict = require_au
 
 
 @app.post("/api/sandbox/projects/{project_id}/stop")
-async def sandbox_stop_project(project_id: str, current_user: dict = require_auth()):
+def sandbox_stop_project(project_id: str, current_user: dict = require_auth()):
     """停止沙箱项目"""
     # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
     if project_id.startswith("deploy-"):
@@ -2421,7 +2710,7 @@ async def sandbox_stop_project(project_id: str, current_user: dict = require_aut
         from datetime import datetime
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        r = subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
@@ -2438,15 +2727,15 @@ async def sandbox_stop_project(project_id: str, current_user: dict = require_aut
 
 
 @app.delete("/api/sandbox/projects/{project_id}")
-async def sandbox_delete_project(project_id: str, current_user: dict = require_auth()):
+def sandbox_delete_project(project_id: str, current_user: dict = require_auth()):
     """删除沙箱项目"""
     # deploy 部署的容器由 CI/CD 创建（容器名 sandbox-{name}，记录 id 为 deploy-{name}），走真实容器管理
     if project_id.startswith("deploy-"):
         import subprocess
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        subprocess.run(["podman", "stop", container], capture_output=True, text=True, timeout=30)
-        subprocess.run(["podman", "rm", container], capture_output=True, text=True, timeout=30)
+        subprocess.run(["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        subprocess.run(["podman", "rm", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         conn = get_db()
         conn.execute("DELETE FROM sandbox_projects WHERE id=?", (project_id,))
         conn.commit()
@@ -2463,7 +2752,7 @@ async def sandbox_delete_project(project_id: str, current_user: dict = require_a
 
 
 @app.get("/api/sandbox/projects/{project_id}/logs")
-async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: dict = require_auth()):
+def sandbox_project_logs(project_id: str, tail: int = 200, current_user: dict = require_auth()):
     """获取沙箱项目/部署容器日志（tail 默认 200 行）"""
     import subprocess as _sp
 
@@ -2486,7 +2775,7 @@ async def sandbox_project_logs(project_id: str, tail: int = 200, current_user: d
 
 
 @app.post("/api/sandbox/execute")
-async def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
+def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
     """AI 代码解释器：安全子进程执行 Python 代码。
 
     安全措施：

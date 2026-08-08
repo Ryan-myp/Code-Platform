@@ -195,7 +195,9 @@ def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
         args = [sys.executable, worker, text, voice, rate, tmp]
         if pitch:
             args.append(f"{pitch:+d}Hz")
-        result = subprocess.run(args, capture_output=True, timeout=45)
+        # stdin=DEVNULL：nohup 后台环境下父进程 fd 0 可能无效，子进程继承后
+        # Python 3.13 初始化标准流崩溃（Fatal Python error: init_sys_streams）
+        result = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, timeout=45)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode(errors="replace")[:200] or f"exit {result.returncode}")
         with open(tmp, "rb") as f:
@@ -220,6 +222,7 @@ def _merge_mp3(seg_files: list[str], out_path: str) -> None:
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
             capture_output=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=120,
         )
     finally:
@@ -243,7 +246,7 @@ def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
         cmd += ["-codec:a", "pcm_s16le", "-ar", "44100", out_path]
     else:
         cmd += ["-codec:a", "libmp3lame", "-b:a", "256k", "-ar", "44100", out_path]
-    subprocess.run(cmd, capture_output=True, timeout=180, check=True)
+    subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=180, check=True)
 
 
 def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
@@ -263,16 +266,28 @@ def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
         f.write("\n".join(lines))
 
 
+# ffprobe 结果缓存（path → (mtime, duration)）：列表接口每个文件一次子进程开销大，
+# 文件未变更时直接命中缓存
+_duration_cache: dict[str, tuple[float, float]] = {}
+
+
 def _audio_duration(path: str) -> float:
-    """ffprobe 读取音频真实时长（秒）。"""
+    """ffprobe 读取音频真实时长（秒），带 mtime 缓存。"""
     try:
+        mtime = os.path.getmtime(path)
+        cached = _duration_cache.get(path)
+        if cached and cached[0] == mtime:
+            return cached[1]
         out = subprocess.run(
             ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
             capture_output=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             text=True,
             timeout=30,
         )
-        return round(float(out.stdout.strip()), 1)
+        dur = round(float(out.stdout.strip()), 1)
+        _duration_cache[path] = (mtime, dur)
+        return dur
     except Exception:
         return 0.0
 
@@ -516,9 +531,13 @@ async def list_voices(
     meta = _artifact_meta()
     items = []
     if os.path.exists(VOICE_DIR):
-        for f in sorted(os.listdir(VOICE_DIR), reverse=True):
-            if not f.endswith((".mp3", ".wav")):
-                continue
+        files = [f for f in sorted(os.listdir(VOICE_DIR), reverse=True) if f.endswith((".mp3", ".wav"))]
+        # 时长探测（ffprobe 子进程）在独立线程并发执行，避免逐文件阻塞事件循环；
+        # mtime 缓存保证二次访问零子进程开销
+        durations = await asyncio.gather(
+            *(asyncio.to_thread(_audio_duration, os.path.join(VOICE_DIR, f)) for f in files)
+        )
+        for f, duration in zip(files, durations, strict=False):
             filepath = os.path.join(VOICE_DIR, f)
             stat = os.stat(filepath)
             m = meta.get(f, {})
@@ -529,7 +548,7 @@ async def list_voices(
                 "id": f,
                 "url": f"/api/voice/audios/{f}",
                 "size": stat.st_size,
-                "duration": _audio_duration(filepath),
+                "duration": duration,
                 "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "title": m.get("title") or (text[:30] + ("…" if len(text) > 30 else "")) or f,
                 "text": text,

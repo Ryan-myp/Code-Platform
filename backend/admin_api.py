@@ -40,6 +40,12 @@ class AdminUserUpdateRequest(BaseModel):
     role: str | None = None
 
 
+class ShareTestMarkRequest(BaseModel):
+    """分享测试标记：is_test=True 隐藏（案例墙过滤），False 恢复。"""
+
+    is_test: bool = True
+
+
 @router.get("/stats")
 async def admin_stats(current_user: dict = require_auth()):
     """总体统计：用户 / 调用 / 工具 / 分享。"""
@@ -532,5 +538,62 @@ async def admin_order_stats(days: int = 30, current_user: dict = require_auth())
             "plan_dist": plan_dist,
             "coupon_orders": coupon_usage,
         }
+    finally:
+        conn.close()
+
+
+@router.get("/shares")
+async def admin_shares(
+    search: str = "",
+    limit: int = 50,
+    current_user: dict = require_auth(),
+):
+    """分享内容治理列表（含测试标记，按浏览量倒序）。"""
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        sql = """SELECT s.id, s.share_code, s.title, s.content_type, s.views, s.is_test, s.created_at, u.username
+                 FROM shares s JOIN users u ON u.id = s.user_id"""
+        params: list = []
+        if search:
+            sql += " WHERE s.title LIKE ? OR u.username LIKE ?"
+            params = [f"%{search}%", f"%{search}%"]
+        sql += " ORDER BY s.views DESC, s.created_at DESC LIMIT ?"
+        params.append(min(limit, 200))
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.post("/shares/{share_id}/mark-test")
+async def admin_mark_share_test(share_id: str, req: ShareTestMarkRequest, current_user: dict = require_auth()):
+    """标记分享为测试内容（is_test=1，从案例墙隐藏）或恢复（is_test=0）。"""
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id FROM shares WHERE id=?", (share_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "分享不存在")
+        conn.execute("UPDATE shares SET is_test=? WHERE id=?", (1 if req.is_test else 0, share_id))
+        conn.commit()
+        return {"success": True, "id": share_id, "is_test": req.is_test}
+    finally:
+        conn.close()
+
+
+@router.delete("/shares/{share_id}")
+async def admin_delete_share(share_id: str, current_user: dict = require_auth()):
+    """删除违规/测试分享（级联清理访问埋点）。"""
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id FROM shares WHERE id=?", (share_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "分享不存在")
+        conn.execute("DELETE FROM shares WHERE id=?", (share_id,))
+        conn.execute("DELETE FROM share_visits WHERE share_id=?", (share_id,))
+        conn.commit()
+        return {"success": True, "id": share_id}
     finally:
         conn.close()

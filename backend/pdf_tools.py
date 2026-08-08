@@ -296,7 +296,7 @@ async def extract_table(
 
 
 @router.post("/contract-review")
-async def contract_review(req: ContractReviewRequest, current_user: dict = require_auth()):
+def contract_review(req: ContractReviewRequest, current_user: dict = require_auth()):
     """AI合同审查：逐条风险分析 + 修改建议 + 签署建议。"""
     start = datetime.now()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
@@ -341,7 +341,7 @@ async def contract_review(req: ContractReviewRequest, current_user: dict = requi
 
 
 @router.post("/resume-optimize")
-async def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_auth()):
+def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_auth()):
     """AI简历优化：修改建议、亮点提炼、各维度评分。"""
     start = datetime.now()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""

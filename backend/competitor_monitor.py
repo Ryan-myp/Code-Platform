@@ -217,7 +217,7 @@ async def delete_competitor(comp_id: str, current_user: dict = require_auth()):
 
 
 @router.post("/analyze")
-async def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()):
+def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()):
     """AI分析竞品内容策略 + 生成对比雷达图。"""
     start = datetime.now()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""

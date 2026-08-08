@@ -106,7 +106,7 @@ class SaveDashboardRequest(BaseModel):
 
 
 @router.post("/nl-query")
-async def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
+def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
     """自然语言 → ECharts图表配置。
 
     示例查询：

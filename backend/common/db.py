@@ -107,7 +107,8 @@ _SCHEMA_STATEMENTS = [
         user_id TEXT NOT NULL, content_type TEXT DEFAULT 'text',
         title TEXT DEFAULT '', content TEXT DEFAULT '',
         created_at TEXT, views INTEGER DEFAULT 0,
-        rewarded INTEGER DEFAULT 0, reward_quota INTEGER DEFAULT 0
+        rewarded INTEGER DEFAULT 0, reward_quota INTEGER DEFAULT 0,
+        is_test INTEGER DEFAULT 0
     )""",
     # ── 会员订单（商业版：支付闭环） ────────────────────────
     """CREATE TABLE IF NOT EXISTS orders (
@@ -599,6 +600,8 @@ def migrate() -> None:
         _add_column_if_missing(conn, "shares", "rewarded", "INTEGER DEFAULT 0")
         _add_column_if_missing(conn, "shares", "reward_quota", "INTEGER DEFAULT 0")
         _add_column_if_missing(conn, "share_visits", "visitor_key", "TEXT DEFAULT ''")
+        # 分享内容治理：测试/违规分享标记（案例墙过滤 + 管理员管理）
+        _add_column_if_missing(conn, "shares", "is_test", "INTEGER DEFAULT 0")
         # v9.5：MCP 授权验证 / 知识库连接配置
         _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
         _add_column_if_missing(conn, "mcp_servers", "auth_config", "TEXT DEFAULT '{}'")

@@ -262,16 +262,28 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
         user_prompt += f"\n\n重点分析列：{target_column}"
 
     _report(30, "AI 统计分析中")
-    try:
-        raw = call_llm(FORECAST_SYSTEM, user_prompt, max_tokens=3000, temperature=0.3, timeout=90)
-        raw = raw.strip()
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = parse_llm_json(raw)
-    except Exception as e:
-        logger.exception("forecast analyze failed")
-        raise HTTPException(500, f"数据预测失败：{e}") from e
+    # 解析失败自动重试一次（LLM 长输出偶发非法 JSON，实测首轮失败率高）；
+    # 重试时追加严格格式约束，仍失败才报错（用户无需手动重跑）
+    raw = ""
+    for attempt in range(2):
+        try:
+            raw = call_llm(FORECAST_SYSTEM, user_prompt, max_tokens=3000, temperature=0.3, timeout=90)
+            raw = raw.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+            result = parse_llm_json(raw)
+            break
+        except Exception as e:
+            if attempt == 0:
+                logger.warning("forecast LLM 输出解析失败，自动重试: %s", str(e)[:150])
+                user_prompt += (
+                    "\n\n（注意：上次返回的内容无法解析为 JSON。请严格只输出一个合法的 JSON 对象："
+                    "不要 ``` 代码块围栏、不要注释、不要尾逗号、不要省略号，键和字符串统一使用双引号。）"
+                )
+            else:
+                logger.exception("forecast analyze failed")
+                raise HTTPException(500, f"数据预测失败：{e}") from e
 
     _report(70, "生成预测图表")
     log_usage("data_forecast", len(user_prompt), len(raw), 0)

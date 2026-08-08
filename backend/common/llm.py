@@ -21,7 +21,7 @@ def call_llm(
     user_prompt: str,
     max_tokens: int = 4000,
     temperature: float = 0.4,
-    timeout: int = 120,
+    timeout: int = 300,
     model: str | None = None,
 ) -> str:
     """调用 LLM（OpenAI 兼容 /chat/completions），按模型路由到对应供应商。
@@ -58,8 +58,10 @@ def call_llm(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"LLM call exception: {e}")
-        raise HTTPException(500, f"LLM 调用异常: {str(e)}") from e
+        logger.error(f"LLM call exception: {e}", exc_info=True)
+        # 连接类异常（EOFError/ConnectionResetError 等）str 常为空，兜底为可读文案，避免用户看到空白错误
+        detail = str(e) or f"{type(e).__name__}（连接异常），请稍后重试"
+        raise HTTPException(500, f"LLM 调用异常: {detail}") from e
 
 
 # 同步版本的别名（向后兼容）
@@ -71,7 +73,7 @@ async def call_llm_async(
     user_prompt: str,
     max_tokens: int = 4000,
     temperature: float = 0.4,
-    timeout: int = 120,
+    timeout: int = 300,
     model: str | None = None,
 ) -> str:
     """异步调用 LLM（使用 httpx.AsyncClient 非阻塞），按模型路由到对应供应商。
@@ -107,8 +109,11 @@ async def call_llm_async(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"LLM async call exception: {e}")
-        raise HTTPException(500, f"LLM 调用异常: {str(e)}") from e
+        # exc_info 打印完整 traceback：连接类异常（EOFError/ConnectionResetError 等）str 常为空，
+        # 只记消息会导致线上无法定位根因；同时给用户可读的兜底文案而非空白
+        logger.error(f"LLM async call exception: {e}", exc_info=True)
+        detail = str(e) or f"{type(e).__name__}（连接异常），请稍后重试"
+        raise HTTPException(500, f"LLM 调用异常: {detail}") from e
 
 
 def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, success: bool = True) -> None:
@@ -129,9 +134,9 @@ def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, s
 def parse_llm_json(raw: str) -> dict:
     """解析 LLM 返回的 JSON（多级容错，保证生产可用性）。
 
-    LLM 输出经常带 ```json 围栏、前后说明文字、尾逗号、单引号等，
+    LLM 输出经常带 ```json 围栏、前后说明文字、尾逗号、单引号、注释等，
     长文本场景下直接 json.loads 失败率高，这里按序降级重试：
-    1. 去代码块围栏 → 2. 提取首个 { 至最后一个 } 片段 → 3. 修复尾逗号 → 4. 修复单引号。
+    1. 去代码块围栏 → 2. 提取首个 { 至最后一个 } 片段 → 3. 剥离注释 → 4. 修复尾逗号 → 5. 修复单引号。
     全部失败时抛出带原始内容摘要的异常，便于定位。
     """
     import json
@@ -154,7 +159,8 @@ def parse_llm_json(raw: str) -> dict:
     for candidate in candidates:
         for fix in (
             lambda s: s,  # 原样
-            lambda s: re.sub(r",(\s*[}\]])", r"\1", s),  # 尾逗号
+            lambda s: _strip_json_comments(s),  # 剥离 // 与 /* */ 注释（字符串内不受影响）
+            lambda s: _strip_json_comments(re.sub(r",(\s*[}\]])", r"\1", s)),  # 注释 + 尾逗号
             lambda s: re.sub(r"'([^']*)'\s*:", r'"\1":', s),  # 单引号 key
             lambda s: re.sub(r"'([^']*)'", r'"\1"', s),  # 单引号字符串
         ):
@@ -165,3 +171,40 @@ def parse_llm_json(raw: str) -> dict:
 
     snippet = text[:120].replace("\n", " ")
     raise ValueError(f"LLM 返回无法解析为 JSON（内容开头：{snippet}…）")
+
+
+def _strip_json_comments(s: str) -> str:
+    """安全剥离 JSON 中的 // 行注释与 /* */ 块注释（跳过字符串字面量内部，避免误伤 URL 等）。"""
+    out = []
+    i, n = 0, len(s)
+    in_str = False
+    while i < n:
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(s[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and s[i + 1] == "/":
+            while i < n and s[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and i + 1 < n and s[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (s[i] == "*" and s[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)

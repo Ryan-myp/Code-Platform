@@ -9,7 +9,7 @@
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -41,7 +41,7 @@ def test_batch_handlers_registered(setup_test_db):
 
 def test_batch_translate_async_flow(setup_test_db, claim_and_run):
     """批量翻译：异步任务逐条处理 → 结果 + batch_jobs 落库（带用户归属）。"""
-    with patch("batch_api.call_llm", side_effect=["Hello world", "Good morning"]):
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, side_effect=["Hello world", "Good morning"]):
         task = create_task(
             "batch_translate",
             {"texts": ["你好世界", "早上好"], "target_lang": "en", "user_id": "u-alice"},
@@ -71,7 +71,7 @@ def test_batch_translate_async_flow(setup_test_db, claim_and_run):
 
 def test_batch_translate_skips_empty(setup_test_db, claim_and_run):
     """空文本直接标记失败，不调用 LLM。"""
-    with patch("batch_api.call_llm", return_value="x") as mock_llm:
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, return_value="x") as mock_llm:
         task = create_task(
             "batch_translate",
             {"texts": ["有效文本", "   "], "target_lang": "en", "user_id": "u-bob"},
@@ -103,7 +103,7 @@ def test_batch_doc_summary_async_flow(setup_test_db, claim_and_run, tmp_path):
     doc_path = tmp_path / "report.md"
     doc_path.write_text("# 双11 复盘\nGMV 同比增长 32%。", encoding="utf-8")
 
-    with patch("batch_api.call_llm", return_value=_SUMMARY_RAW):
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, return_value=_SUMMARY_RAW):
         task = create_task(
             "batch_doc_summary",
             {"files": [{"path": str(doc_path), "filename": "report.md", "size": 40}], "user_id": "u-carol"},
@@ -135,7 +135,7 @@ def test_batch_doc_summary_failure_isolated(setup_test_db, claim_and_run, tmp_pa
             return '{"title": "好文档", "summary": "摘要", "key_points": []}'
         raise RuntimeError("LLM 超时")
 
-    with patch("batch_api.call_llm", side_effect=_fake_llm):
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, side_effect=_fake_llm):
         task = create_task(
             "batch_doc_summary",
             {
@@ -163,7 +163,7 @@ def test_batch_process_async_flow(setup_test_db, claim_and_run, tmp_path):
     doc_path = tmp_path / "doc.txt"
     doc_path.write_text("平台 AI 工具覆盖内容创作与办公效率。", encoding="utf-8")
 
-    with patch("batch_api.call_llm", return_value="AI,内容创作,办公效率"):
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, return_value="AI,内容创作,办公效率"):
         task = create_task(
             "batch_process",
             {
@@ -238,7 +238,7 @@ def test_batch_post_endpoints_creates_task(setup_test_db):
 
 def test_batch_translate_sync_mode(setup_test_db):
     """sync=1 直接执行，返回完整结果（兼容旧调用）。"""
-    with patch("batch_api.call_llm", return_value="Translated"):
+    with patch("batch_api.call_llm_async", new_callable=AsyncMock, return_value="Translated"):
         resp = asyncio.run(
             batch_api.batch_translate(
                 batch_api.BatchTextRequest(texts=["原文"]),
