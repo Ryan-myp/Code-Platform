@@ -87,6 +87,20 @@ const PROMPT_TEMPLATES = [
   },
 ]
 
+// 艺术风格预设（选择后自动追加英文风格关键词到提示词，可再次点击取消）
+const ART_STYLES = [
+  { id: 'photoreal', label: '写实摄影', icon: '📷', keyword: 'photorealistic, professional photography, sharp focus, natural lighting, 8k' },
+  { id: 'anime', label: '动漫', icon: '🎨', keyword: 'anime style, vibrant colors, detailed anime illustration, clean lineart' },
+  { id: '3d', label: '3D渲染', icon: '🧊', keyword: '3D render, octane render, soft global illumination, high detail' },
+  { id: 'oil', label: '油画', icon: '🖼️', keyword: 'oil painting, impressionist brushstrokes, rich texture, canvas texture' },
+  { id: 'watercolor', label: '水彩', icon: '💧', keyword: 'watercolor painting, soft washes, delicate paper texture, pastel palette' },
+  { id: 'pixel', label: '像素', icon: '👾', keyword: 'pixel art, 8-bit style, retro game sprite, crisp pixels' },
+  { id: 'cyberpunk', label: '赛博朋克', icon: '🌃', keyword: 'cyberpunk, neon glow, rain-soaked city, cinematic, high contrast' },
+  { id: 'minimal', label: '极简', icon: '⬜', keyword: 'minimalist, clean composition, negative space, muted color palette' },
+  { id: 'chinese', label: '国风水墨', icon: '🏮', keyword: 'Chinese ink wash painting, shuimo style, elegant brushwork, rice paper' },
+  { id: 'vaporwave', label: '蒸汽波', icon: '🌴', keyword: 'vaporwave aesthetic, retro 80s, pastel gradients, glitch art' },
+]
+
 // 尺寸选项（label 区分语义，ratio 展示实际分辨率避免歧义）
 const SIZES = [
   { label: '正方形', value: '1024x1024', ratio: '1:1 · 1024×1024' },
@@ -137,12 +151,16 @@ export default function ImageFactoryPage() {
     prompt: '',
     selectedSize: '1024x1024',
     batchSize: 1,
+    artStyle: '',
+    negativePrompt: '',
   })
-  const { activeTab, prompt, selectedSize, batchSize } = inputs
+  const { activeTab, prompt, selectedSize, batchSize, artStyle, negativePrompt } = inputs
   const setActiveTab = (v) => setInputs((p) => ({ ...p, activeTab: v }))
   const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
   const setSelectedSize = (v) => setInputs((p) => ({ ...p, selectedSize: v }))
   const setBatchSize = (v) => setInputs((p) => ({ ...p, batchSize: v }))
+  const setArtStyle = (v) => setInputs((p) => ({ ...p, artStyle: v ?? '' }))
+  const setNegativePrompt = (v) => setInputs((p) => ({ ...p, negativePrompt: v ?? '' }))
   const [images, setImages] = useState([])
   const [templates, setTemplates] = useState([])
   const [stats, setStats] = useState({ total_images: 0, total_templates: 0, api_configured: false })
@@ -287,10 +305,12 @@ export default function ImageFactoryPage() {
     setGeneratedImages([])
     setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
     const form = new FormData()
-    form.append('prompt', prompt)
+    const styleKw = ART_STYLES.find((s) => s.id === artStyle)?.keyword
+    form.append('prompt', styleKw ? `${prompt}, ${styleKw}` : prompt)
     form.append('size', selectedSize)
     form.append('batch_size', batchSize)
     form.append('n', 1)
+    if (negativePrompt.trim()) form.append('negative', negativePrompt.trim())
     await submitTask('/api/image-factory/generate/text-to-image', form, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
@@ -373,6 +393,7 @@ export default function ImageFactoryPage() {
     form.append('image', img2imgFile)
     form.append('size', img2imgSize)
     form.append('strength', img2imgStrength)
+    if (negativePrompt.trim()) form.append('negative', negativePrompt.trim())
     await submitTask('/api/image-factory/generate/image-to-image', form, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
@@ -745,6 +766,47 @@ export default function ImageFactoryPage() {
                     }
                   }}
                   className="w-full h-36 px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none transition-all"
+                />
+                {negativePrompt && (
+                  <p className="mt-1.5 text-[11px] text-violet-500">已启用负面提示词：{negativePrompt}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">艺术风格</label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {ART_STYLES.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setArtStyle(artStyle === s.id ? '' : s.id)}
+                      title={s.keyword}
+                      className={`px-1.5 py-2 rounded-lg border text-center transition-all text-[11px] ${
+                        artStyle === s.id
+                          ? 'border-violet-500 bg-violet-50 text-violet-700 font-medium'
+                          : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                      }`}
+                    >
+                      <div className="text-base leading-none mb-1">{s.icon}</div>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  选择后自动追加风格关键词到提示词，再次点击取消；当前风格：
+                  <span className="text-violet-500">
+                    {ART_STYLES.find((s) => s.id === artStyle)?.label || '无（自由发挥）'}
+                  </span>
+                </p>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">负面提示词（可选）</label>
+                <textarea
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  rows={2}
+                  placeholder="排除不想要的元素，如：low quality, blurry, watermark, distorted hands（支持中文）"
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
                 />
               </div>
 

@@ -233,6 +233,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
     batch_size = max(1, min(4, int(payload.get("batch_size") or 1)))
     n = max(1, min(4, int(payload.get("n") or 1)))
     project_id = payload.get("project_id") or ""
+    negative = payload.get("negative") or ""
     if not prompt:
         raise HTTPException(400, "请输入图片描述")
 
@@ -256,6 +257,8 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
             "size": size_str,
             "n": n,
         }
+        if negative:
+            api_payload["negative_prompt"] = negative
         try:
             resp = await asyncio.to_thread(requests.post, url, headers=headers, json=api_payload, timeout=180)
             resp.raise_for_status()
@@ -294,6 +297,7 @@ async def text_to_image(
     batch_size: int = Form(1),
     n: int = Form(1),
     project_id: str = Form(""),
+    negative: str = Form("", description="负面提示词（不想要的元素，如 low quality, blurry）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
@@ -307,6 +311,7 @@ async def text_to_image(
     - batch_size: 批量生成数量 (1-4)
     - n: 每批次生成数量
     - project_id: 关联项目 ID（可选，写入 artifacts 表用于项目空间聚合）
+    - negative: 负面提示词（可选，排除不想要的元素）
     """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
@@ -320,6 +325,7 @@ async def text_to_image(
         "batch_size": batch_size,
         "n": n,
         "project_id": project_id,
+        "negative": negative,
     }
     if sync:
         return await _image_t2i_worker(payload)
@@ -350,6 +356,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     strength = float(payload.get("strength") or 0.35)
     model = payload.get("model") or "agnes-image-2.1-flash"
     project_id = payload.get("project_id") or ""
+    negative = payload.get("negative") or ""
     image_content = _read_file_field(payload, "image")
     if not image_content:
         raise HTTPException(400, "请上传参考图片")
@@ -358,6 +365,8 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}"}
     files = {"image": ("input.png", image_content, "image/png")}
     data = {"model": model, "prompt": prompt, "size": size, "strength": strength, "n": 1}
+    if negative:
+        data["negative_prompt"] = negative
 
     _report(20, "AI 正在基于参考图生成…")
     try:
@@ -397,6 +406,7 @@ async def image_to_image(
     strength: float = Form(0.35),
     model: str = Form("agnes-image-2.1-flash"),
     project_id: str = Form(""),
+    negative: str = Form("", description="负面提示词（不想要的元素）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
@@ -409,7 +419,7 @@ async def image_to_image(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id}
+    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative}
     if sync:
         payload["image"] = base64.b64encode(image_content).decode()
         return await _image_i2i_worker(payload)
