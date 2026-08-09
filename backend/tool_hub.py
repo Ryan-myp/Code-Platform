@@ -6,19 +6,18 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
-
-from task_queue import create_task, register_handler
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, call_llm_async
+from common.llm import call_llm_async
 from permissions import access_status, get_visibility_map, load_user_ctx
+from task_queue import create_task, register_handler
 
 router = APIRouter()
 

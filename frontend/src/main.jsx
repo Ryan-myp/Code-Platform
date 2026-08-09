@@ -20,3 +20,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </React.StrictMode>
 )
+
+// PWA：仅生产构建注册 Service Worker（开发模式避免缓存干扰 HMR）
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service Worker 注册失败（不影响使用）:', err)
+    })
+  })
+}

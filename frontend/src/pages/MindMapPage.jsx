@@ -10,6 +10,7 @@ import {
   Minimize2,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -234,6 +235,12 @@ export default function MindMapPage() {
               onChange={(e) => setTopic(e.target.value)}
               placeholder="输入思维导图主题，如：新能源汽车市场分析、Python学习路线..."
               rows={3}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !task) {
+                  e.preventDefault()
+                  generate()
+                }
+              }}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none resize-none mb-3"
             />
             <div className="flex items-center gap-2 mb-3">
@@ -325,6 +332,11 @@ export default function MindMapPage() {
                   <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>
                     导出PNG
                   </Button>
+                  <ShareButton
+                    content={`# ${result.title || result.topic || '思维导图'}\n\n${result.description || ''}\n\n> 由小团智能平台 AI 思维导图生成 · ${new Date().toLocaleString()}`}
+                    title={`思维导图：${result.title || result.topic}`}
+                    contentType="mindmap"
+                  />
                   <Button
                     variant="ghost"
                     size="sm"

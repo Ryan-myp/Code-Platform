@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -36,6 +36,7 @@ load_dotenv()
 
 import skills_store  # noqa: E402
 from admin_api import router as admin_api_router  # noqa: E402
+from ai_video_api import router as ai_video_router  # noqa: E402
 from apikey_api import router as apikey_api_router  # noqa: E402
 from batch_api import router as batch_api_router  # noqa: E402
 from chat_engine import router as chat_engine_router  # noqa: E402
@@ -57,6 +58,8 @@ from common.auth import (  # noqa: E402
     submit_voucher,
     update_user_profile,
 )
+from common.backup import ensure_daily_backup  # noqa: E402
+from common.backup import router as backup_router  # noqa: E402
 from common.config import ALLOWED_ORIGINS, validate_security_config  # noqa: E402
 from common.db import get_db, init_schema  # noqa: E402
 from common.llm import call_llm_async, log_usage  # noqa: E402
@@ -85,10 +88,16 @@ from common.models import (  # noqa: E402
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
+from common.observability import (  # noqa: E402
+    RequestContextMiddleware,
+    get_metrics_snapshot,
+    uptime_seconds,
+)
 from common.sandbox_check import MAX_CODE_LEN, check_sandbox_code, run_sandbox_python  # noqa: E402
 from competitor_monitor import router as competitor_monitor_router  # noqa: E402
 from content_strategy import router as content_strategy_router  # noqa: E402
 from data_forecast import router as data_forecast_router  # noqa: E402
+from dh_gateway import router as dh_gateway_router  # noqa: E402
 from digital_human import router as digital_human_router  # noqa: E402
 from doc_qa import router as doc_qa_router  # noqa: E402
 from drafts import router as drafts_router  # noqa: E402
@@ -103,6 +112,7 @@ from mindmap import router as mindmap_router  # noqa: E402
 from miniapp import router as miniapp_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
 from notify_api import router as notify_api_router  # noqa: E402
+from openai_gateway import router as openai_gateway_router  # noqa: E402
 from pdf_tools import router as pdf_tools_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
 from publishing import router as publishing_router  # noqa: E402
@@ -120,6 +130,7 @@ from templates_market import router as templates_market_router  # noqa: E402
 from video_analyzer import router as video_analyzer_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
 from voice_chat import router as voice_chat_router  # noqa: E402
+from voice_factory import _tts_health_check as _tts_prewarm  # noqa: E402
 from voice_factory import router as voice_factory_router  # noqa: E402
 from web_search import router as web_search_router  # noqa: E402
 
@@ -136,6 +147,11 @@ _is_test = os.environ.get("APP_ENV") == "test"
 limiter = Limiter(key_func=get_remote_address, default_limits=[] if _is_test else ["200 per minute"])
 
 
+def _rl(rate: str) -> str:
+    """装饰器级限流：测试环境放宽到 10000/min（default_limits 不影响 @limiter.limit）。"""
+    return "10000 per minute" if _is_test else rate
+
+
 # ── 数据库初始化（保留 init_db 名字供 conftest 调用） ─────────
 def init_db():
     """委托给 common.db.init_schema（24 表 + 迁移 + admin 用户）。"""
@@ -150,6 +166,8 @@ async def lifespan(app: FastAPI):
     init_db()
     seed_if_empty()
     skills_store.migrate_legacy()
+    # v12.0 数据可靠性：每日自动备份（按日期去重）
+    ensure_daily_backup()
     # 发布排期后台自动执行（每 60s 扫描到期 pending 排期）
     from publishing import _run_due_schedules
 
@@ -170,6 +188,10 @@ async def lifespan(app: FastAPI):
     _realtime_set_loop(_asyncio.get_running_loop())
     recover_interrupted_tasks()
     start_workers()
+    # v13.1 数字人稳定性：启动即预热 edge-tts 通道探活（后台线程，不阻塞启动）
+    import threading as _threading
+
+    _threading.Thread(target=_tts_prewarm, args=(True,), daemon=True, name="tts-prewarm").start()
     logger.info("Smart R&D Platform v8.0 started")
     yield
     stop_workers()
@@ -178,7 +200,7 @@ async def lifespan(app: FastAPI):
 
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
-app = FastAPI(title="小团智能平台 v8.0", version="8.0.0", lifespan=lifespan)
+app = FastAPI(title="小团智能平台 v12.0", version="12.0.0", lifespan=lifespan)
 
 # 支付凭证上传目录（静态可访问，管理后台预览）
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -200,7 +222,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "服务器内部错误，请稍后重试或联系管理员"})
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "服务器内部错误，请稍后重试或联系管理员",
+            "request_id": getattr(request.state, "request_id", ""),
+        },
+    )
 
 
 def _safe_serializable(obj):
@@ -240,6 +268,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# v12.0 可观测性：request-id 注入 + 结构化访问日志 + 运行指标（最外层，覆盖全部请求）
+app.add_middleware(RequestContextMiddleware)
 
 
 # ── 额度扣减中间件（商业版） ─────────────────────────────────
@@ -333,10 +363,68 @@ async def quota_middleware(request: Request, call_next):
     return response
 
 
-# ── 健康检查 ──────────────────────────────────────────────────
+# ── 健康检查（v12.0：四维探活 DB/LLM/磁盘/Uptime） ──────────
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "timestamp": datetime.now().isoformat(), "version": "8.0.0"}
+    import shutil
+
+    db_ok = True
+    try:
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except Exception:
+        db_ok = False
+    llm_ok = False
+    try:
+        from common.config import get_model_config
+
+        llm_ok = bool(get_model_config().get("api_key"))
+    except Exception:
+        llm_ok = False
+    try:
+        disk = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
+        disk_free_gb = round(disk.free / 1e9, 1)
+    except Exception:
+        disk_free_gb = None
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "timestamp": datetime.now().isoformat(),
+        "version": app.version,
+        "uptime_seconds": uptime_seconds(),
+        "db": "ok" if db_ok else "error",
+        "llm": "ok" if llm_ok else "not_configured",
+        "disk_free_gb": disk_free_gb,
+    }
+
+
+# ── 运行指标（v12.0：请求画像 + LLM 调用统计） ───────────────
+@app.get("/api/ops/stats")
+async def ops_stats():
+    stats = get_metrics_snapshot()
+    # LLM 调用统计（usage_logs 聚合：总调用/成功率/平均耗时/今日）
+    try:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(success),0) AS ok_n, COALESCE(AVG(response_time),0) AS avg_t "
+            "FROM usage_logs"
+        ).fetchone()
+        today = datetime.now().strftime("%Y-%m-%d")
+        trow = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(success),0) AS ok_n FROM usage_logs WHERE timestamp LIKE ?",
+            (f"{today}%",),
+        ).fetchone()
+        conn.close()
+        stats["llm"] = {
+            "total_calls": row["n"] if row else 0,
+            "success_calls": row["ok_n"] if row else 0,
+            "avg_response_ms": round((row["avg_t"] if row else 0) * 1000, 1),
+            "today_calls": trow["n"] if trow else 0,
+            "today_success": trow["ok_n"] if trow else 0,
+        }
+    except Exception:
+        stats["llm"] = {"total_calls": 0, "success_calls": 0, "avg_response_ms": 0, "today_calls": 0, "today_success": 0}
+    return stats
 
 
 # 分享访问埋点
@@ -383,13 +471,13 @@ def _record_share_visit(share_id: str, source: str, referer: str, visitor_key: s
 
 # ── 认证 ──────────────────────────────────────────────────────
 @app.post("/api/auth/login")
-@limiter.limit("5 per minute")
+@limiter.limit(_rl("5 per minute"))
 async def login(request: Request, req: LoginRequest):
     return login_user(req.username, req.password)
 
 
 @app.post("/api/auth/register")
-@limiter.limit("3 per minute")
+@limiter.limit(_rl("3 per minute"))
 async def register(request: Request, req: RegisterRequest):
     """注册新用户（可选邀请码/分享来源，各自触发奖励或转化统计）。"""
     try:
@@ -454,7 +542,7 @@ _ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小�
 
 
 @app.post("/api/assistant/chat")
-@limiter.limit("10 per minute")
+@limiter.limit(_rl("10 per minute"))
 async def assistant_chat(request: Request, req: AssistantChatRequest, current_user: dict = require_auth()):
     """全局浮动机器人对话：基于平台知识回答用户问题。"""
     message = req.message.strip()
@@ -512,11 +600,78 @@ async def quota(current_user: dict = require_auth()):
 
 
 # ── 结果分享（商业版：引流传播） ─────────────────────────────
+# 首页案例墙预置示例成果：平台暂无真实分享时展示（is_demo 标记，前端点击直达工具页）
+_DEMO_SHOWCASE = [
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/ppt-factory",
+        "content_type": "PPT 演示",
+        "title": "2026年智能家居行业趋势分析",
+        "preview": "AI 原生、无感互联、绿色能源三大趋势拆解，含市场数据、竞争格局与战略建议，12 页结构化演示文稿。",
+        "views": 0,
+        "created_at": "",
+    },
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/image-factory",
+        "content_type": "AI 图片",
+        "title": "高端香水商业摄影",
+        "preview": "金色时刻布光 + 纯白背景，专业级产品摄影提示词生成效果。",
+        "views": 0,
+        "created_at": "",
+    },
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/data-analyzer",
+        "content_type": "数据分析",
+        "title": "电商销售数据分析报告",
+        "preview": "区域 × 品类交叉分析、趋势对比与 Top 排名，自动生成图表与可执行建议。",
+        "views": 0,
+        "created_at": "",
+    },
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/voice-dubbing",
+        "content_type": "AI 配音",
+        "title": "短视频口播配音（晓晓 · 1.0x）",
+        "preview": "多音色场景化配音，支持语速/音调微调，一键导出 mp3。",
+        "views": 0,
+        "created_at": "",
+    },
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/video-factory",
+        "content_type": "AI 视频",
+        "title": "文生视频：城市夜景延时",
+        "preview": "提示词直接生成 5s 视频片段，支持分辨率/帧率/时长自定义。",
+        "views": 0,
+        "created_at": "",
+    },
+    {
+        "share_code": "",
+        "is_demo": True,
+        "route": "/code-sandbox",
+        "content_type": "代码运行",
+        "title": "Python 销售数据分析沙箱",
+        "preview": "在线编写并运行 pandas 分析代码，即时输出结果与可视化图表。",
+        "views": 0,
+        "created_at": "",
+    },
+]
+
+
 @app.get("/api/showcase")
 async def showcase(limit: int = 12):
     """公开成果精选：用户主动分享的内容中挑高浏览案例（首页案例墙，无需登录）。
 
     分享内容本身即公开（分享页无鉴权），此处仅聚合展示，点击跳转分享页形成传播闭环。
+    当平台暂无真实分享时，返回系统精选示例成果（is_demo: true，点击直达对应工具页），
+    让新用户/访客首页不空、可感知平台能力；一旦出现真实分享，示例自动让位。
     """
     from common.db import get_db
 
@@ -536,6 +691,9 @@ async def showcase(limit: int = 12):
             item = dict(r)
             item["preview"] = (item.get("preview") or "").replace("\n", " ").strip()[:120]
             items.append(item)
+        # 无真实分享时：返回系统精选示例成果（标记 is_demo，前端跳工具页）
+        if not items:
+            items = _DEMO_SHOWCASE[: min(limit, len(_DEMO_SHOWCASE))]
         return {"items": items}
     finally:
         conn.close()
@@ -625,6 +783,107 @@ async def share_seo_page(share_code: str):
 </body>
 </html>"""
     return HTMLResponse(html)
+
+
+# ── SEO 基础设施（获客：robots / sitemap） ─────────────────────
+# 按请求 Host 动态生成绝对 URL，适配任意部署域名；nginx / serve_frontend 将
+# /robots.txt、/sitemap.xml 代理到本端点，避免 SPA fallback 吞掉。
+
+# 主要公开页面（工具/能力入口，登录后运营页不收录）
+_SEO_PAGES = [
+    ("/", "小团智能平台 - AI 赋能各行各业", "0.9"),
+    ("/tool-hub", "工具箱 - 30+ AI 效率工具", "0.9"),
+    ("/ppt-factory", "AI PPT 演示文稿生成器", "0.8"),
+    ("/image-factory", "AI 图片创作工厂", "0.8"),
+    ("/video-factory", "AI 视频生成工厂", "0.8"),
+    ("/music-factory", "AI 音乐生成工厂", "0.8"),
+    ("/copywriting", "AI 文案创作", "0.8"),
+    ("/translation", "AI 翻译", "0.8"),
+    ("/voice-dubbing", "AI 配音（多音色）", "0.8"),
+    ("/meme-factory", "AI 表情包工坊", "0.7"),
+    ("/digital-human", "AI 数字人视频", "0.8"),
+    ("/mindmap", "AI 思维导图", "0.7"),
+    ("/forecast", "AI 数据预测", "0.7"),
+    ("/doc-qa", "AI 文档问答", "0.7"),
+    ("/pdf-tools", "PDF 工具箱", "0.7"),
+    ("/web-search", "AI 联网搜索", "0.7"),
+    ("/batch-process", "AI 批量处理", "0.7"),
+    ("/code-interpreter", "AI 代码解释器", "0.7"),
+    ("/data-analyzer", "AI 数据分析", "0.8"),
+    ("/excel", "Excel 智能处理", "0.7"),
+    ("/stock", "AI 股票分析", "0.7"),
+    ("/miniapp", "小程序工坊", "0.7"),
+    ("/publish", "内容发布中心", "0.7"),
+    ("/templates", "行业模板库", "0.7"),
+    ("/gallery", "灵感画廊", "0.7"),
+    ("/api-platform", "开放 API 平台", "0.6"),
+    ("/help", "帮助中心", "0.5"),
+]
+
+
+async def _site_base(request: Request) -> str:
+    """按请求 Host 构造站点绝对地址（跟随 X-Forwarded-Proto，适配反代）。"""
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    host = request.headers.get("host", "localhost:8888")
+    return f"{scheme}://{host}"
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+async def robots_txt(request: Request):
+    """爬虫规则：公开页可抓，运营/账号页禁抓；声明 sitemap 绝对地址。"""
+    base = await _site_base(request)
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /admin\n"
+        "Disallow: /login\n"
+        "Disallow: /profile\n"
+        "Disallow: /membership\n"
+        "Disallow: /tasks\n"
+        "Disallow: /records\n"
+        "Disallow: /usage-analytics\n"
+        "Disallow: /scheduler\n"
+        "Disallow: /notifications\n"
+        "Disallow: /favorites\n"
+        f"\nSitemap: {base}/sitemap.xml\n"
+    )
+    return PlainTextResponse(body)
+
+
+@app.get("/sitemap.xml", response_class=Response, include_in_schema=False)
+async def sitemap_xml(request: Request):
+    """站点地图：核心工具页 + 公开分享内容（浏览量/时效排序，最多 100 条）。"""
+    from xml.sax.saxutils import escape
+
+    base = await _site_base(request)
+    urls = []
+    for path, _title, priority in _SEO_PAGES:
+        urls.append(
+            f"<url><loc>{escape(base + path)}</loc><changefreq>weekly</changefreq>"
+            f"<priority>{priority}</priority></url>"
+        )
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        rows = conn.execute(
+            """SELECT share_code, created_at FROM shares
+               WHERE content != '' AND length(content) >= 10 AND is_test = 0
+               ORDER BY views DESC, created_at DESC LIMIT 100"""
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            lastmod = (r["created_at"] or "")[:10]
+            urls.append(
+                f"<url><loc>{escape(base + '/share/' + r['share_code'])}</loc>"
+                + (f"<lastmod>{lastmod}</lastmod>" if lastmod else "")
+                + "<changefreq>monthly</changefreq><priority>0.6</priority></url>"
+            )
+    except Exception:
+        pass  # 分享表不可用时仅返回静态页
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(urls) + "\n</urlset>"
+    return Response(content=xml, media_type="application/xml")
 
 
 # ── 会员套餐 / 订单（商业版：支付闭环） ─────────────────────
@@ -2322,7 +2581,7 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()): 
         return {"ok": False, "error": f"连接失败：{e}"}
 
 
-def _mcp_stdio_test(cmd: str, args: list, env: dict) -> dict:
+def _mcp_stdio_test(cmd: str, args: list, env: dict) -> dict:  # noqa: C901
     """MCP stdio 真实连接测试：启动子进程 → initialize 握手 → tools/list。
 
     一次性写入 initialize / initialized / tools/list 三个 JSON-RPC 请求（
@@ -2507,11 +2766,11 @@ def sandbox_sql_query(project_id: str, req: SandboxSqlQueryRequest, current_user
     result = process_manager.exec_command(project_id, argv, timeout=30)
     if result["status"] != "success":
         # 过滤 mysql 客户端的“命令行密码不安全”警告行，保留真实错误
-        err_lines = [l for l in result["message"].split("\n") if "Using a password on the command line" not in l]
+        err_lines = [ln for ln in result["message"].split("\n") if "Using a password on the command line" not in ln]
         raise HTTPException(500, "\n".join(err_lines).strip() or "SQL 执行失败")
     raw = result["output"].rstrip("\n")
     # 过滤 mysql 客户端的“命令行密码不安全”警告行（成功时也可能出现在 stderr 合并输出中）
-    raw = "\n".join(l for l in raw.split("\n") if "Using a password on the command line" not in l)
+    raw = "\n".join(ln for ln in raw.split("\n") if "Using a password on the command line" not in ln)
     # 解析 tab 分隔输出为结构化表格（首行表头）
     columns: list[str] = []
     rows: list[list] = []
@@ -2800,14 +3059,19 @@ def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
         return {"output": "", "error": blocked, "duration": 0.0, "exit_code": -1}
 
     result = run_sandbox_python(code)
+    output = result["output"]
+    # 沙箱自动收集工作目录内落盘的 PNG（如 plt.savefig 输出），统一转 [IMAGE] 标记供前端渲染
+    for _name, b64 in result.get("files", {}).items():
+        output += f"\n[IMAGE]{b64}[/IMAGE]"
     return {
-        "output": result["output"],
+        "output": output,
         "error": result["error"],
         "duration": result["duration"],
         "exit_code": result["exit_code"],
     }
 
 
+app.include_router(ai_video_router)
 app.include_router(image_factory_router)
 app.include_router(video_factory_router)
 app.include_router(music_factory_router)
@@ -2846,6 +3110,9 @@ app.include_router(favorites_api_router)
 app.include_router(apikey_api_router)
 app.include_router(search_api_router)
 app.include_router(scheduler_router)
+app.include_router(openai_gateway_router)
+app.include_router(dh_gateway_router)
+app.include_router(backup_router)
 app.include_router(notify_api_router)
 
 # v9.0: Platform API

@@ -32,6 +32,7 @@ import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
 import { Modal, Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 
 // 节点类型定义（与后端 workflows/executor.py 支持的节点一一对应）
 const NODE_TYPES = {
@@ -602,6 +603,11 @@ export default function WorkflowEditorPage() {
           <Button variant="secondary" size="sm" icon={Download} onClick={exportWorkflow}>
             <span className="hidden sm:inline">导出</span>
           </Button>
+          <ShareButton
+            content={JSON.stringify({ nodes, edges, version: '1.0', name: workflow?.name }, null, 2)}
+            title={`工作流：${workflow?.name || '未命名'}`}
+            contentType="workflow"
+          />
           <Button
             variant="primary"
             size="sm"

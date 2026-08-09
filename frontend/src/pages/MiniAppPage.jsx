@@ -22,6 +22,7 @@ import {
   Smartphone as PhoneIcon,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { wxmlToHtml } from '../lib/wxml-preview'
@@ -441,6 +442,14 @@ export default function MiniAppPage() {
                       >
                         查看
                       </Button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <ShareButton
+                          content={`# 小程序：${p.name}\n\n需求：${p.requirement || ''}\n\n> 由小团智能平台 AI 小程序工坊生成 · ${new Date().toLocaleString()}`}
+                          title={`小程序：${p.name}`}
+                          contentType="miniapp"
+                          className="!p-1.5"
+                        />
+                      </span>
                       <button
                         onClick={(e) => removeProject(p, e)}
                         className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"

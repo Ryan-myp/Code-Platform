@@ -308,6 +308,12 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // 边界校验：后端单文件上限 20MB，前端提前拦截避免上传中断
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('文件过大：单次上传请控制在 20MB 以内')
+      e.target.value = ''
+      return
+    }
     setUploading(true)
     try {
       const fd = new FormData()

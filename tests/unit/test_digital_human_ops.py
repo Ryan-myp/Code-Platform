@@ -15,9 +15,31 @@ from main import app
 client = TestClient(app)
 
 
+_QUICK_TTS_BYTES = None
+
+
 def _quick_tts(*args, **kwargs):
-    """假 TTS：直接返回合法 mp3 头（下游只检查文件大小 ≥512B）。"""
-    return b"\xff\xfb" * 1024
+    """假 TTS：进程内用 ffmpeg 生成一次有效 mp3（2s 正弦波），后续复用。
+
+    有效音频才能通过 _render_video 的 ffprobe 时长检查（真实渲染链路测试需要），
+    纯 mp3 帧头（0xFFFB）会被 ffprobe 判为无效数据。
+    """
+    global _QUICK_TTS_BYTES
+    if _QUICK_TTS_BYTES is None:
+        import os
+        import subprocess
+        import tempfile
+
+        tmp = tempfile.mktemp(suffix=".mp3")
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-ar", "22050", tmp],
+            capture_output=True,
+            check=True,
+        )
+        with open(tmp, "rb") as f:
+            _QUICK_TTS_BYTES = f.read()
+        os.unlink(tmp)
+    return _QUICK_TTS_BYTES
 
 
 def _fake_render(*args, **kwargs):
@@ -107,8 +129,9 @@ class TestBatchPipeline:
         real_render = digital_human._render_video
 
         def _flaky_render(**kwargs):
-            if not getattr(_flaky_render, "failed", False):
-                _flaky_render.failed = True
+            # _generate_one 内置自动重试 1 次：连续失败 2 次才真正落 failed
+            if getattr(_flaky_render, "failed", 0) < 2:
+                _flaky_render.failed = getattr(_flaky_render, "failed", 0) + 1
                 raise RuntimeError("模拟渲染进程崩溃")
             real_render(**kwargs)
 

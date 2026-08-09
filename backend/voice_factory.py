@@ -102,6 +102,33 @@ SCENES = [
 MAX_SEGMENT_CHARS = 400  # 单段最大字符数（edge-tts 长文本会内部限速，分段更稳）
 MAX_TEXT_CHARS = 10000  # 总文本上限
 
+# ── edge-tts 通道健康状态（v13.0：探活防抖，通道挂掉时直接走中转站） ──
+_TTS_CHANNEL_STATE = {"edge_ok": True, "checked_at": 0.0}
+_TTS_CHECK_INTERVAL = 600  # 每 10 分钟探活一次（合成 1s 测试音）
+_TTS_EDGE_TIMEOUT = 30  # edge-tts 子进程超时（秒）
+_TTS_RELAY_TIMEOUT = 30  # 中转站 API 超时（秒）
+
+
+def _tts_health_check(force: bool = False) -> bool:
+    """探活 edge-tts 免费通道，返回是否可用。
+
+    - 每 _TTS_CHECK_INTERVAL 秒合成一次 1s 测试音（失败标记通道不可用）
+    - force=True 强制探活（供 main.py lifespan 启动预热）
+    - 探活结果影响 _tts_one 的通道优先级：edge 挂时直接走中转站，避免反复等待超时
+    """
+    global _TTS_CHANNEL_STATE
+    now = time.time()
+    if not force and now - _TTS_CHANNEL_STATE["checked_at"] < _TTS_CHECK_INTERVAL:
+        return _TTS_CHANNEL_STATE["edge_ok"]
+    _TTS_CHANNEL_STATE["checked_at"] = now
+    try:
+        _tts_edge("你好", "zh-CN-XiaoxiaoNeural", 1.0)
+        _TTS_CHANNEL_STATE["edge_ok"] = True
+    except Exception as e:
+        _TTS_CHANNEL_STATE["edge_ok"] = False
+        logger.warning(f"edge-tts 健康检查失败（标记通道不可用，后续直接走中转站）: {e}")
+    return _TTS_CHANNEL_STATE["edge_ok"]
+
 
 def _split_text(text: str) -> list[str]:
     """按句子边界切分长文本为多段（每段 ≤ MAX_SEGMENT_CHARS）。"""
@@ -135,7 +162,7 @@ def _split_text(text: str) -> list[str]:
     return final
 
 
-def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
+def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:  # noqa: C901 — 多通道降级逻辑，复杂度可控
     """单段 TTS 合成，返回 mp3 字节。
 
     优先 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
@@ -158,7 +185,9 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
         raise last
 
     try:
-        return _edge_with_retry(3)
+        if _tts_health_check():
+            return _edge_with_retry(3)
+        logger.warning("edge-tts 健康检查不通过，直接走中转站通道")
     except Exception:
         logger.warning("edge-tts 全部失败，回退中转站 API")
     if not AGNES_API_KEY:
@@ -168,7 +197,7 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
             f"{AGNES_API_BASE}/audio/speech",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
             json={"model": "tts-1", "input": text, "voice": voice, "speed": speed},
-            timeout=90,
+            timeout=_TTS_RELAY_TIMEOUT,
         )
         if resp.status_code == 200:
             return resp.content
@@ -197,7 +226,7 @@ def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
             args.append(f"{pitch:+d}Hz")
         # stdin=DEVNULL：nohup 后台环境下父进程 fd 0 可能无效，子进程继承后
         # Python 3.13 初始化标准流崩溃（Fatal Python error: init_sys_streams）
-        result = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, timeout=45)
+        result = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, timeout=_TTS_EDGE_TIMEOUT)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.decode(errors="replace")[:200] or f"exit {result.returncode}")
         with open(tmp, "rb") as f:
@@ -694,4 +723,4 @@ async def _voice_generate_handler(task_id: str, payload: dict, update: Callable,
     return await _voice_generate_worker(payload, progress=update)
 
 
-register_handler("voice_generate", _voice_generate_handler, user_limit=2)
+register_handler("voice_generate", _voice_generate_handler, user_limit=2, max_attempts=2)

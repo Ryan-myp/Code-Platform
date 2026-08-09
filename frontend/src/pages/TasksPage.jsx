@@ -22,7 +22,7 @@ import {
   BarChart3,
   Trash2,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, Modal } from '../components/ui'
+import { Card, Button, Badge, Empty, Modal, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { connectWs } from '../lib/ws'
@@ -115,6 +115,7 @@ export default function TasksPage() {
   const [hasMore, setHasMore] = useState(false)
   const [stats, setStats] = useState(null)
   const [detail, setDetail] = useState(null)
+  const [loadError, setLoadError] = useState('')
   const timerRef = useRef(null)
   const offsetRef = useRef(0)
 
@@ -148,8 +149,10 @@ export default function TasksPage() {
       try {
         const res = await api.get('/api/tasks', { params: buildParams(0) })
         applyPage(res.data, false)
+        setLoadError('')
       } catch {
-        // 静默失败，避免弹窗轰炸
+        // 静默失败，避免弹窗轰炸（首次/手动加载时展示错误态）
+        if (!silent) setLoadError('任务列表加载失败，请检查网络后重试')
       } finally {
         setLoading(false)
       }
@@ -411,6 +414,10 @@ export default function TasksPage() {
         <div className="flex items-center justify-center h-32">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-500" />
         </div>
+      ) : loadError ? (
+        <Card>
+          <ErrorState message={loadError} onRetry={() => loadFirst(false)} />
+        </Card>
       ) : tasks.length === 0 ? (
         <Card>
           <Empty

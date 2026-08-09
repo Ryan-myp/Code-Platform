@@ -820,8 +820,13 @@ async def list_tasks_api(
         where.append("created_by=?")
         args.append(user)
     if type.strip():
-        where.append("type=?")
-        args.append(type.strip())
+        types = [t.strip() for t in type.split(",") if t.strip()]
+        if len(types) > 1:
+            where.append(f"type IN ({','.join('?' * len(types))})")
+            args.extend(types)
+        else:
+            where.append("type=?")
+            args.append(types[0])
     if status.strip():
         where.append("status=?")
         args.append(status.strip())

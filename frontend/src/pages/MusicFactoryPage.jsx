@@ -27,7 +27,9 @@ import {
   PageHeader,
   ConfirmDialog,
 } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -150,7 +152,24 @@ const TABS = [
 
 export default function MusicFactoryPage() {
   const toast = useToast()
-  const [activeTab, setActiveTab] = useState('lyrics')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('music_factory_inputs', {
+    activeTab: 'lyrics',
+    theme: '',
+    style: 'pop',
+    language: 'zh',
+    length: 'medium',
+    mood: 'happy',
+    musicDuration: 30,
+  })
+  const { activeTab, theme, style, language, length, mood, musicDuration } = inputs
+  const setActiveTab = (v) => setInputs((p) => ({ ...p, activeTab: v }))
+  const setTheme = (v) => setInputs((p) => ({ ...p, theme: v ?? '' }))
+  const setStyle = (v) => setInputs((p) => ({ ...p, style: v }))
+  const setLanguage = (v) => setInputs((p) => ({ ...p, language: v }))
+  const setLength = (v) => setInputs((p) => ({ ...p, length: v }))
+  const setMood = (v) => setInputs((p) => ({ ...p, mood: v }))
+  const setMusicDuration = (v) => setInputs((p) => ({ ...p, musicDuration: v }))
   const [stats, setStats] = useState({ total_tracks: 0, api_configured: false })
   const [audios, setAudios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -160,18 +179,12 @@ export default function MusicFactoryPage() {
   const [lyricExamples, setLyricExamples] = useState({})
 
   // 歌词
-  const [theme, setTheme] = useState('')
-  const [style, setStyle] = useState('pop')
-  const [language, setLanguage] = useState('zh')
-  const [length, setLength] = useState('medium')
   const [lyrics, setLyrics] = useState('')
   const [generatingLyrics, setGeneratingLyrics] = useState(false)
   const [lyricsError, setLyricsError] = useState('')
 
   // 音乐
   const [selectedLyrics, setSelectedLyrics] = useState('')
-  const [mood, setMood] = useState('happy')
-  const [musicDuration, setMusicDuration] = useState(30)
   const [generatingMusic, setGeneratingMusic] = useState(false)
   const [musicResult, setMusicResult] = useState(null)
 
@@ -907,6 +920,14 @@ export default function MusicFactoryPage() {
                   >
                     <Download className="w-4 h-4" />
                   </button>
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <ShareButton
+                      content={`# 音乐作品：${audio.filename}\n\n- 文件：${audio.filename}\n- 大小：${formatBytes(audio.size)}\n\n> 由小团智能平台 AI 音乐工坊生成 · ${new Date().toLocaleString()}`}
+                      title={`音乐作品：${audio.filename}`}
+                      contentType="music"
+                      className="!p-2"
+                    />
+                  </span>
                   <button
                     onClick={() => setDeleteTarget(audio)}
                     className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"

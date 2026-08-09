@@ -20,9 +20,11 @@ import {
   Copy,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const STYLES = [
   { id: 'yellow', name: '经典黄底', desc: 'Doge 经典黄', swatch: 'bg-[#FFD84D]', text: '#000000' },
@@ -98,11 +100,20 @@ const SUGGESTS = [
 
 export default function MemePage() {
   const toast = useToast()
-  const [style, setStyle] = useState('yellow')
-  const [topText, setTopText] = useState('')
-  const [bottomText, setBottomText] = useState('')
-  const [aiPrompt, setAiPrompt] = useState('')
-  const [aiStyle, setAiStyle] = useState('flat')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿；bgUpload 图片数据不持久化）
+  const [inputs, setInputs] = usePersistentToolState('meme_inputs', {
+    style: 'yellow',
+    topText: '',
+    bottomText: '',
+    aiPrompt: '',
+    aiStyle: 'flat',
+  })
+  const { style, topText, bottomText, aiPrompt, aiStyle } = inputs
+  const setStyle = (v) => setInputs((p) => ({ ...p, style: v }))
+  const setTopText = (v) => setInputs((p) => ({ ...p, topText: v ?? '' }))
+  const setBottomText = (v) => setInputs((p) => ({ ...p, bottomText: v ?? '' }))
+  const setAiPrompt = (v) => setInputs((p) => ({ ...p, aiPrompt: v ?? '' }))
+  const setAiStyle = (v) => setInputs((p) => ({ ...p, aiStyle: v }))
   const [bgUpload, setBgUpload] = useState('')
   const [decoration, setDecoration] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -128,7 +139,7 @@ export default function MemePage() {
     loadList()
   }, [])
 
-  // 进入页面恢复草稿
+  // 进入页面恢复草稿（仅挂载时执行一次，setter 均为函数式更新）
   useEffect(() => {
     api
       .get('/api/drafts/meme')
@@ -145,7 +156,7 @@ export default function MemePage() {
         }
       })
       .catch(() => {})
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 输入防抖自动保存草稿
   useEffect(() => {
@@ -684,6 +695,12 @@ export default function MemePage() {
                     placeholder={
                       '举例：\n我太难了 / 生活终于对我下手了\n好的呢 / 微笑中透露着疲惫\n在？ / 出来聊五毛钱的天'
                     }
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !generating) {
+                        e.preventDefault()
+                        generateBatch()
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
                   />
                   <p className="text-[11px] text-gray-400 mt-1">
@@ -853,6 +870,14 @@ export default function MemePage() {
                       >
                         <Download className="w-4 h-4" />
                       </button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <ShareButton
+                          content={`# 表情包：${item.title}\n\n风格：${item.style_label || '未标记'}\n\n> 由小团智能平台表情包工坊生成 · ${new Date().toLocaleString()}`}
+                          title={`表情包：${item.title}`}
+                          contentType="meme"
+                          className="!p-1 !text-white !bg-transparent"
+                        />
+                      </span>
                       <select
                         onChange={(e) => {
                           if (e.target.value) downloadSize(item, e.target.value)

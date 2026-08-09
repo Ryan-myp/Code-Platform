@@ -57,6 +57,12 @@ import {
   Activity,
   BookOpen,
   ListTodo,
+  Heart,
+  HelpCircle,
+  Crown,
+  Radar,
+  User,
+  History,
 } from 'lucide-react'
 import api from '../lib/api'
 
@@ -411,6 +417,14 @@ const COMMANDS = [
     path: '/batch-process',
     category: '办公',
   },
+  {
+    id: 'nav-data-analyzer',
+    label: '数据分析',
+    description: '上传数据智能分析洞察',
+    icon: BarChart3,
+    path: '/data-analyzer',
+    category: '办公',
+  },
 
   // 运营分析
   {
@@ -435,6 +449,30 @@ const COMMANDS = [
     description: '个人AI使用统计与趋势',
     icon: Activity,
     path: '/usage-analytics',
+    category: '运营',
+  },
+  {
+    id: 'nav-strategy',
+    label: '内容策略',
+    description: 'AI 内容营销策略规划',
+    icon: Target,
+    path: '/strategy',
+    category: '运营',
+  },
+  {
+    id: 'nav-monitor',
+    label: '竞品监控',
+    description: '竞品动态持续追踪',
+    icon: Radar,
+    path: '/monitor',
+    category: '运营',
+  },
+  {
+    id: 'nav-records',
+    label: '用量记录',
+    description: '历史用量与账单记录',
+    icon: History,
+    path: '/records',
     category: '运营',
   },
 
@@ -469,6 +507,38 @@ const COMMANDS = [
     description: '浏览插件',
     icon: Puzzle,
     path: '/plugins',
+    category: '系统',
+  },
+  {
+    id: 'nav-help',
+    label: '帮助中心',
+    description: '使用指南与常见问题',
+    icon: HelpCircle,
+    path: '/help',
+    category: '系统',
+  },
+  {
+    id: 'nav-profile',
+    label: '个人中心',
+    description: '账号信息与偏好设置',
+    icon: User,
+    path: '/profile',
+    category: '系统',
+  },
+  {
+    id: 'nav-membership',
+    label: '会员中心',
+    description: '升级会员解锁更多额度',
+    icon: Crown,
+    path: '/membership',
+    category: '系统',
+  },
+  {
+    id: 'nav-favorites',
+    label: '收藏中心',
+    description: '收藏的模板与内容',
+    icon: Heart,
+    path: '/favorites',
     category: '系统',
   },
 

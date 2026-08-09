@@ -1,16 +1,27 @@
 import React, { useMemo, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import mermaid from 'mermaid'
 
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'neutral',
-  securityLevel: 'strict', // strict：禁止图表内嵌 HTML，防止 LLM 生成内容 XSS
-  fontFamily: 'inherit',
-  flowchart: { useMaxWidth: true, htmlLabels: true },
-  sequence: { useMaxWidth: true },
-})
+// mermaid 按需加载：仅在渲染 mermaid 代码块时拉取（-500KB+ 主 bundle），
+// 避免全局同步导入把 mermaid 打进所有引用 MarkdownRenderer 的页面 chunk。
+let _mermaidPromise = null
+function loadMermaid() {
+  if (!_mermaidPromise) {
+    _mermaidPromise = import('mermaid').then((mod) => {
+      const mermaid = mod.default
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'neutral',
+        securityLevel: 'strict', // strict：禁止图表内嵌 HTML，防止 LLM 生成内容 XSS
+        fontFamily: 'inherit',
+        flowchart: { useMaxWidth: true, htmlLabels: true },
+        sequence: { useMaxWidth: true },
+      })
+      return mermaid
+    })
+  }
+  return _mermaidPromise
+}
 
 /** 渲染 mermaid 图：源码 → SVG。渲染失败时回退显示源码。 */
 function MermaidBlock({ code }) {
@@ -22,6 +33,7 @@ function MermaidBlock({ code }) {
     setError('')
     const render = async () => {
       try {
+        const mermaid = await loadMermaid()
         const id = `mmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const { svg } = await mermaid.render(id, code)
         if (!cancelled && ref.current) {

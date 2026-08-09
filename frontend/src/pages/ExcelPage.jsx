@@ -17,6 +17,7 @@ import {
   Sparkles,
   Trash2,
   Lightbulb,
+  Download,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -311,6 +312,12 @@ export default function ExcelPage() {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="例如：根据A列的销售额计算提成，阶梯比例：10万以下5%，10-50万8%，50万以上12%"
                     rows={5}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !loading) {
+                        e.preventDefault()
+                        execute()
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500 outline-none"
                   />
                 </div>
@@ -396,6 +403,23 @@ export default function ExcelPage() {
               </h3>
               {result && (
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Download}
+                    onClick={() => {
+                      const blob = new Blob([result], { type: 'text/markdown;charset=utf-8' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `Excel处理结果_${new Date().toISOString().slice(0, 10)}.md`
+                      a.click()
+                      URL.revokeObjectURL(url)
+                      toast.success('结果已导出')
+                    }}
+                  >
+                    导出
+                  </Button>
                   <ShareButton content={result} title="Excel 处理结果" contentType="excel" />
                   <Button
                     variant="ghost"

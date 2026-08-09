@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Clock, Plus, Trash2, Play, Pause, Settings, Calendar, RefreshCw, Zap } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog } from '../components/ui'
+import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog, ErrorState, SkeletonList } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -24,6 +24,7 @@ export default function SchedulerPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteId, setDeleteId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
 
   const [form, setForm] = useState({
     name: '',
@@ -38,11 +39,16 @@ export default function SchedulerPage() {
   }, [])
 
   const loadJobs = async () => {
+    setLoading(true)
+    setLoadError('')
     try {
       const res = await api.get('/api/scheduler')
       setJobs(res.data || [])
     } catch (e) {
+      setLoadError(e?.message || '定时任务加载失败')
       toast.error(`加载失败：${e.message}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -213,7 +219,11 @@ export default function SchedulerPage() {
       )}
 
       {/* 任务列表 */}
-      {jobs.length === 0 ? (
+      {loading ? (
+        <SkeletonList count={3} />
+      ) : loadError ? (
+        <ErrorState message={loadError} onRetry={loadJobs} />
+      ) : jobs.length === 0 ? (
         <Empty
           icon={Clock}
           title="暂无定时任务"

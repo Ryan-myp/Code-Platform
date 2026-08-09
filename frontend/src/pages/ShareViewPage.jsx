@@ -1,8 +1,43 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Calendar, Eye, Loader2, Sparkles, Home } from 'lucide-react'
+import { Calendar, Copy, Check, Eye, Loader2, Sparkles, Home } from 'lucide-react'
 import api from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import { copyToClipboard } from '../lib/format'
+
+// 分享类型 → 中文标签（公开页友好展示）
+const TYPE_LABELS = {
+  chat: 'AI 对话',
+  forecast: '数据预测',
+  stock: '股票分析',
+  web_search: '联网搜索',
+  batch: '批量处理',
+  sandbox: '代码沙箱',
+  analyzer: '数据分析',
+  doc_qa: '文档问答',
+  video_analyzer: '视频理解',
+  monitor: '竞品监控',
+  strategy: '内容策略',
+  game: '小游戏',
+  miniapp: '小程序',
+  music: '音乐',
+  video: '视频',
+  image: '图片',
+  voice: '配音',
+  meme: '表情包',
+  excel: 'Excel 处理',
+  artifact: '研发成果',
+  mindmap: '思维导图',
+  workflow: '工作流',
+  digital_human: '数字人',
+  'ai-workspace': 'AI 工作台',
+  publishing: '发布内容',
+  copywriting: '文案',
+  translation: '翻译',
+  ppt: 'PPT',
+  pdf: 'PDF',
+  growth: '增长策略',
+}
 
 /**
  * 公开分享查看页（无需登录）。
@@ -13,6 +48,15 @@ export default function ShareViewPage() {
   const [share, setShare] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const copyContent = async () => {
+    const ok = await copyToClipboard(share?.content || '')
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -122,8 +166,21 @@ export default function ShareViewPage() {
                   {share.views} 次浏览
                 </span>
                 <span className="px-2 py-0.5 bg-purple-50 text-purple-600 rounded-full">
-                  {share.content_type}
+                  {TYPE_LABELS[share.content_type] || share.content_type}
                 </span>
+              </div>
+              {/* 内容统计 + 复制 */}
+              <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                <span className="text-xs text-gray-400">
+                  {share.content?.length || 0} 字 · {share.content?.split('\n').filter((l) => l.trim()).length || 0} 行
+                </span>
+                <button
+                  onClick={copyContent}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? '已复制' : '复制全文'}
+                </button>
               </div>
             </div>
 

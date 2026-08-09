@@ -39,8 +39,10 @@ import {
   XCircle,
   Loader2,
   AlertTriangle,
+  LayoutGrid,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
 import { friendlyError } from '../lib/errors'
@@ -97,12 +99,15 @@ export default function DigitalHumanPage() {
   const [voiceId, setVoiceId] = useState('zh-CN-XiaoxiaoNeural')
   const [bgId, setBgId] = useState('tech')
   const [sceneId, setSceneId] = useState('product')
+  const [templateId, setTemplateId] = useState('') // 行业模板（选模板自动填充场景/背景/音色/字幕样式）
+  const [templates, setTemplates] = useState([]) // 行业模板库
   const [speed, setSpeed] = useState(1.0)
   const [generating, setGenerating] = useState(false)
   // 商业参数：分辨率 / 帧率 / 水印
   const [resolution, setResolution] = useState('720p')
   const [fps, setFps] = useState(24) // 默认 24fps 流畅档（画质优先，异步任务可等）
   const [watermark, setWatermark] = useState(false) // 会员可开关；免费用户由后端强制加水印
+  const [engine, setEngine] = useState('2d') // 引擎：2d=基础渲染，live_portrait=照片数字人
   const [genPhase, setGenPhase] = useState('') // 生成阶段提示文案
   const [quota, setQuota] = useState(null) // 今日剩余额度
   const [storage, setStorage] = useState(null) // 我的存储用量（记录数/占用/保留期）
@@ -142,8 +147,26 @@ export default function DigitalHumanPage() {
   const [customVoices, setCustomVoices] = useState([])
   const [showAvatarModal, setShowAvatarModal] = useState(false)
   const [showVoiceModal, setShowVoiceModal] = useState(false)
+  const [showPhotoModal, setShowPhotoModal] = useState(false) // 照片数字人 （口型同步）上传
+  const [showAiVideoModal, setShowAiVideoModal] = useState(false) // AI 视频（可灵大模型生成）
+  const [showAiAvatarModal, setShowAiAvatarModal] = useState(false) // AI 形象（文生图→口型同步）
+  const [aiVideoForm, setAiVideoForm] = useState({
+    mode: 'text2video',
+    prompt: '',
+    imageUrl: '',
+    audioUrl: '',
+    duration: 5,
+    resolution: '720p',
+  }) // AI 视频表单
+  const [aiAvatarForm, setAiAvatarForm] = useState({ prompt: '', name: 'AI 形象' }) // AI 形象表单
+  const [aiSubmitting, setAiSubmitting] = useState(false) // AI 任务提交中
+  const [aiGatewayCfg, setAiGatewayCfg] = useState(null) // AI 网关配置状态（价格/可用性）
+  const [showCloneModal, setShowCloneModal] = useState(false) // 声音克隆（参数近似）上传
   const [avatarForm, setAvatarForm] = useState({ name: '', desc: '', file: null, preview: '' })
+  const [photoForm, setPhotoForm] = useState({ name: '', file: null, preview: '' })
   const [voiceForm, setVoiceForm] = useState({ name: '', desc: '', file: null })
+  const [cloneForm, setCloneForm] = useState({ name: '', file: null, authorized: false })
+  const [cloning, setCloning] = useState(false) // 声音克隆任务中
   const [uploading, setUploading] = useState(false)
 
   // 云端素材：场景预设 + 写真画廊
@@ -191,6 +214,11 @@ export default function DigitalHumanPage() {
   // 挂载时加载历史生成任务；卸载时停止轮询
   useEffect(() => {
     loadTasks()
+    // AI 视频网关状态（价格/是否已配置）
+    api
+      .get('/api/ai-video/config')
+      .then((r) => setAiGatewayCfg(r.data))
+      .catch(() => setAiGatewayCfg({ configured: false }))
   }, [])
   useEffect(() => () => clearInterval(taskTimerRef.current), [])
 
@@ -211,7 +239,9 @@ export default function DigitalHumanPage() {
     }
   }
 
-  const isMember = () => quota?.membership === 'vip' || quota?.membership === 'pro'
+  // 会员或管理员（管理员后端豁免水印/1080p/额度限制，前端同步放行）
+  const isMember = () =>
+    quota?.membership === 'vip' || quota?.membership === 'pro' || quota?.role === 'admin'
 
   // 我的存储用量（/api/digital-human/storage → 记录数/文件数/磁盘占用/保留期）
   const loadStorage = async () => {
@@ -233,6 +263,10 @@ export default function DigitalHumanPage() {
       api
         .get('/api/digital-human/scenes')
         .then((res) => setCloudScenes(res.data?.scenes || []))
+        .catch(() => {})
+      api
+        .get('/api/digital-human/templates')
+        .then((res) => setTemplates(res.data?.templates || []))
         .catch(() => {})
       api
         .get('/api/digital-human/portraits')
@@ -320,6 +354,106 @@ export default function DigitalHumanPage() {
     }
   }
 
+  // ★ 提交 AI 视频生成任务（可灵大模型：文生视频/图生视频/口型同步）
+  const submitAiVideo = async () => {
+    if (!aiVideoForm.prompt.trim()) {
+      toast.error('请输入视频内容描述')
+      return
+    }
+    if (!aiGatewayCfg?.configured) {
+      toast.error('AI 视频网关未配置（需 DASHSCOPE_API_KEY），请联系平台管理员')
+      return
+    }
+    if (aiVideoForm.mode === 'lipsync' && !aiVideoForm.audioUrl) {
+      toast.error('口型同步模式需填写配音音频地址（先在有声数字人生成后复制音频链接）')
+      return
+    }
+    setAiSubmitting(true)
+    try {
+      const res = await api.post('/api/ai-video/generate', aiVideoForm)
+      toast.success(res.data?.message || 'AI 视频任务已提交')
+      setShowAiVideoModal(false)
+      loadTasks()
+    } catch (e) {
+      toast.error(friendlyError(e) || '提交失败')
+    } finally {
+      setAiSubmitting(false)
+    }
+  }
+
+  // ★ 提交 AI 形象生成任务（万相文生图 → 自动创建照片数字人形象）
+  const submitAiAvatar = async () => {
+    if (aiAvatarForm.prompt.trim().length < 8) {
+      toast.error('请至少输入 8 个字描述形象（如：一位 30 岁中国女性职场精英，正脸证件照风格）')
+      return
+    }
+    if (!aiGatewayCfg?.configured) {
+      toast.error('AI 形象网关未配置（需 DASHSCOPE_API_KEY），请联系平台管理员')
+      return
+    }
+    setAiSubmitting(true)
+    try {
+      const res = await api.post('/api/ai-video/avatar-image', aiAvatarForm)
+      toast.success(res.data?.message || 'AI 形象任务已提交（约 30-60 秒）')
+      setShowAiAvatarModal(false)
+      loadTasks()
+    } catch (e) {
+      toast.error(friendlyError(e) || '提交失败')
+    } finally {
+      setAiSubmitting(false)
+    }
+  }
+
+  // ★ 从生成记录复制音频链接（供 AI 视频口型同步模式使用）
+  const copyAudioUrl = () => {
+    if (!audioUrl) {
+      toast.error('暂无配音音频链接（先生成一次数字人视频）')
+      return
+    }
+    navigator.clipboard?.writeText(audioUrl.replace(API_BASE, '').replace(/^\/+/, '/'))
+    toast.success('音频链接已复制（可在 AI 视频口型同步模式粘贴）')
+  }
+
+  // ★ 上传照片数字人形象（正脸照片 → 口型同步引擎）
+  const uploadPhotoAvatar = async () => {
+    if (!photoForm.file) {
+      toast.error('请选择照片')
+      return
+    }
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', photoForm.file)
+      fd.append('name', photoForm.name.trim() || '我的照片形象')
+      const res = await api.post('/api/digital-human/photo-avatar', fd)
+      const av = res.data?.avatar
+      setShowPhotoModal(false)
+      setPhotoForm({ name: '', file: null, preview: '' })
+      // 刷新自定义形象列表（含照片形象）
+      try {
+        const cRes = await api.get('/api/digital-human/custom-avatars')
+        const list = cRes.data?.avatars || []
+        setCustomAvatars(list)
+        const pm = {}
+        list.forEach((a) => {
+          if (a.image_url) pm[a.id] = a.image_url
+        })
+        setPortraitMap((prev) => ({ ...prev, ...pm }))
+      } catch {
+        /* 静默失败，不阻塞上传流程 */
+      }
+      if (av?.id) {
+        setAvatarId(av.id) // 上传后直接选中
+        setEngine('live_portrait') // 照片形象自动切换照片引擎
+      }
+      toast.success(`照片数字人「${av?.name || '我的照片形象'}」已创建，可生成口型同步视频`)
+    } catch (e) {
+      toast.error(`上传失败：${e.message}`)
+    } finally {
+      setUploading(false)
+    }
+  }
+
   // ★ 上传自定义声音（自己的录音/音频 → 数字人配音）
   const uploadCustomVoice = async () => {
     if (!voiceForm.file) {
@@ -367,6 +501,69 @@ export default function DigitalHumanPage() {
       setCustomVoices((prev) => prev.filter((v) => v.id !== id))
       if (voiceId === id) setVoiceId('zh-CN-XiaoxiaoNeural')
       toast.success('已删除自定义声音')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  // ★ 声音克隆（上传 10-60s 人声样本 → AI 分析基频 → 匹配音色+音调补偿；合规必选声明）
+  const submitVoiceClone = async () => {
+    if (!cloneForm.file) {
+      toast.error('请先选择人声样本（mp3/wav/m4a，10-60 秒）')
+      return
+    }
+    if (!cloneForm.name.trim()) {
+      toast.error('请输入克隆声音名称')
+      return
+    }
+    if (!cloneForm.authorized) {
+      toast.error('请先勾选「本人声音或已获授权」声明（合规必选）')
+      return
+    }
+    setCloning(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', cloneForm.file)
+      fd.append('voice_name', cloneForm.name.trim())
+      fd.append('declare_authorized', 'true')
+      const res = await api.post('/api/digital-human/voice-clone', fd)
+      const taskId = res.data?.task_id
+      toast.success('声音克隆任务已提交，正在分析人声特征…')
+      // 轮询异步任务（分析 10-60s 样本约 1-3s，最多等 60s；任务终态为 success/failed）
+      for (let i = 0; i < 60; i += 1) {
+        await new Promise((r) => setTimeout(r, 1000))
+        const tRes = await api.get(`/api/tasks/${taskId}`)
+        const t = tRes.data
+        if (t?.status === 'success') {
+          setShowCloneModal(false)
+          setCloneForm({ name: '', file: null, authorized: false })
+          // 刷新声音列表（克隆声音自动并入 custom-voices）
+          const cRes = await api.get('/api/digital-human/custom-voices')
+          setCustomVoices(cRes.data?.voices || [])
+          if (t?.result?.voice_id) setVoiceId(t.result.voice_id) // 完成后直接选中
+          toast.success(`克隆声音「${cloneForm.name.trim()}」已创建，可直接用于数字人配音`)
+          return
+        }
+        if (['failed', 'canceled', 'interrupted'].includes(t?.status)) {
+          throw new Error(t?.error || '声音克隆任务失败，请重试')
+        }
+      }
+      throw new Error('声音克隆分析超时，请稍后在声音列表查看')
+    } catch (e) {
+      toast.error(`克隆失败：${e.message}`)
+    } finally {
+      setCloning(false)
+    }
+  }
+
+  // ★ 吊销克隆音色（合规风控：授权撤销/滥用后立即停用并删除样本）
+  const revokeVoiceClone = async (id) => {
+    if (!window.confirm('吊销后该克隆音色立即停用且样本文件被删除，确认吊销？')) return
+    try {
+      await api.post(`/api/digital-human/voice-clones/${id}/revoke`)
+      setCustomVoices((prev) => prev.filter((v) => v.id !== id))
+      if (voiceId === id) setVoiceId('zh-CN-XiaoxiaoNeural')
+      toast.success('克隆音色已吊销，不可再用于生成')
     } catch (e) {
       toast.error(e.message)
     }
@@ -470,7 +667,9 @@ export default function DigitalHumanPage() {
 
   const loadTasks = async () => {
     try {
-      const res = await api.get('/api/tasks', { params: { type: 'dh_generate', limit: 8 } })
+      const res = await api.get('/api/tasks', {
+        params: { type: 'dh_generate,ai_video,ai_avatar_image', limit: 8 },
+      })
       setTaskList(res.data?.tasks || [])
     } catch {
       /* 静默失败，不阻塞 UI */
@@ -556,6 +755,20 @@ export default function DigitalHumanPage() {
     }, 2000)
   }
 
+  // 行业模板：一键套用场景/背景/音色/字幕样式（字幕样式与片头片尾由后端按模板渲染）
+  const applyTemplate = (t) => {
+    setTemplateId(t.id)
+    setSceneId(t.scene_id)
+    setBgId(t.background_id)
+    if (t.voice_hint) setVoiceId(t.voice_hint)
+    if (t.speed_hint) setSpeed(t.speed_hint)
+    toast.success(`已套用「${t.name}」模板：场景/背景/音色/字幕样式已按模板填充`)
+  }
+  const clearTemplate = () => {
+    setTemplateId('')
+    toast.info('已退出模板模式，恢复手动配置')
+  }
+
   // 提交生成任务（普通生成 / 生成+录制共用）
   const submitTask = async (recordAfterDone) => {
     if (!text.trim()) {
@@ -575,10 +788,12 @@ export default function DigitalHumanPage() {
         voice_id: voiceId,
         background_id: bgId,
         scene_id: sceneId,
+        template_id: templateId,
         speed,
         resolution,
         fps,
         watermark,
+        engine,
       })
       if (res.data?.task_id) {
         // 异步任务模式：立即返回 task_id，后台 worker 执行
@@ -882,6 +1097,7 @@ export default function DigitalHumanPage() {
       const res = await api.post('/api/digital-human/script-assist', {
         ...scriptForm,
         scene_id: sceneId,
+        template_id: templateId,
       })
       setScriptList(res.data?.scripts || [])
       if (!res.data?.scripts?.length) toast.error('生成失败，请重试')
@@ -984,6 +1200,44 @@ export default function DigitalHumanPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左列：配置面板 */}
         <div className="space-y-4">
+          {/* 行业模板库：一键套用场景/背景/音色/字幕样式 + 片头片尾 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <LayoutGrid className="w-4 h-4 text-amber-500" /> 行业模板库
+              <span className="text-[10px] text-gray-400 font-normal">选模板自动填充全部配置</span>
+            </h3>
+            <div className="space-y-1.5">
+              {(templates.length > 0 ? templates : []).map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => applyTemplate(t)}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-xs transition-all ${
+                    templateId === t.id
+                      ? 'bg-amber-50 border border-amber-300 text-amber-800 font-medium'
+                      : 'border border-gray-100 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-base">{t.emoji}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium">{t.name}</div>
+                    <div className="text-[10px] text-gray-400 truncate">{t.desc}</div>
+                  </div>
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">
+                    {t.subtitle?.position === 'center' ? '底部大字' : '右侧字幕'} · 片头片尾
+                  </span>
+                </button>
+              ))}
+              {templateId && (
+                <button
+                  onClick={clearTemplate}
+                  className="w-full text-[10px] text-gray-400 hover:text-red-500 text-center py-1"
+                >
+                  退出模板（恢复手动配置）
+                </button>
+              )}
+            </div>
+          </Card>
+
           {/* 场景模板 */}
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -1059,6 +1313,36 @@ export default function DigitalHumanPage() {
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => {
+                    setAiVideoForm({ mode: 'text2video', prompt: '', imageUrl: '', audioUrl: '', duration: 5, resolution: '720p' })
+                    setShowAiVideoModal(true)
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100 transition-all"
+                  title="可灵大模型生成视频（文生视频/图生视频/口型同步），按条付费"
+                >
+                  <Sparkles className="w-3 h-3" /> AI 视频
+                </button>
+                <button
+                  onClick={() => {
+                    setAiAvatarForm({ prompt: '', name: 'AI 形象' })
+                    setShowAiAvatarModal(true)
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-cyan-200 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 transition-all"
+                  title="AI 生成高清形象图，自动创建照片数字人（可口型同步）"
+                >
+                  <Sparkles className="w-3 h-3" /> AI 形象
+                </button>
+                <button
+                  onClick={() => {
+                    setPhotoForm({ name: '', file: null, preview: '' })
+                    setShowPhotoModal(true)
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all"
+                  title="上传真实照片，生成口型同步数字人视频"
+                >
+                  <Camera className="w-3 h-3" /> 照片数字人
+                </button>
+                <button
+                  onClick={() => {
                     setAvatarForm({ name: '', desc: '', file: null, preview: '' })
                     setShowAvatarModal(true)
                   }}
@@ -1077,11 +1361,15 @@ export default function DigitalHumanPage() {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              {/* 自定义形象（用户上传，带删除） */}
+              {/* 自定义形象（用户上传，带删除）；照片数字人形象带引擎标记 */}
               {customAvatars.map((a) => (
                 <div key={a.id} className="relative group">
                   <button
-                    onClick={() => setAvatarId(a.id)}
+                    onClick={() => {
+                      setAvatarId(a.id)
+                      // 照片数字人形象自动切换引擎，普通自定义形象回退 2D
+                      setEngine(a.style === '照片数字人' ? 'live_portrait' : '2d')
+                    }}
                     className={`relative w-full flex flex-col items-center gap-1.5 p-2.5 rounded-xl border transition-all ${
                       avatarId === a.id
                         ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-500/20'
@@ -1092,7 +1380,9 @@ export default function DigitalHumanPage() {
                       <img src={a.image_url} alt={a.name} className="w-full h-full object-cover" />
                     </div>
                     <div className="text-xs font-medium text-gray-800">{a.name}</div>
-                    <div className="text-[10px] text-blue-500">我的形象</div>
+                    <div className="text-[10px] text-blue-500">
+                      {a.style === '照片数字人' ? '照片数字人 · 口型同步' : '我的形象'}
+                    </div>
                   </button>
                   <button
                     onClick={() => deleteCustomAvatar(a.id)}
@@ -1109,7 +1399,10 @@ export default function DigitalHumanPage() {
                 return (
                   <button
                     key={a.id}
-                    onClick={() => setAvatarId(a.id)}
+                    onClick={() => {
+                      setAvatarId(a.id)
+                      setEngine('2d') // 内置形象仅支持 2D 基础引擎
+                    }}
                     className={`relative flex flex-col items-center gap-1.5 p-2.5 rounded-xl border transition-all ${
                       avatarId === a.id
                         ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-500/20'
@@ -1167,6 +1460,36 @@ export default function DigitalHumanPage() {
                 )
               })}
             </div>
+            {/* 引擎状态条：照片形象自动切换 live_portrait，也可手动选择 */}
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-gray-400">引擎：</span>
+              {[
+                { id: '2d', label: '2D 基础（卡通渲染·免费）' },
+                { id: 'live_portrait', label: '照片数字人（口型同步）' },
+              ].map((e) => (
+                <button
+                  key={e.id}
+                  onClick={() => {
+                    setEngine(e.id)
+                    if (e.id === 'live_portrait' && !customAvatars.some((a) => a.style === '照片数字人')) {
+                      toast.info('请先上传正脸照片创建照片数字人形象')
+                    }
+                  }}
+                  className={`px-2 py-1 text-[10px] font-medium rounded-lg border transition-all ${
+                    engine === e.id
+                      ? 'border-rose-400 bg-rose-50 text-rose-600'
+                      : 'border-gray-200 text-gray-500 hover:border-rose-200'
+                  }`}
+                >
+                  {e.label}
+                </button>
+              ))}
+              {engine === 'live_portrait' && (
+                <span className="text-[10px] text-rose-500">
+                  照片数字人需搭配照片形象使用，失败自动降级 2D 保证出片
+                </span>
+              )}
+            </div>
           </Card>
 
           {/* 声音选择 */}
@@ -1184,9 +1507,18 @@ export default function DigitalHumanPage() {
               >
                 <Upload className="w-3 h-3" /> 上传我的声音
               </button>
+              <button
+                onClick={() => {
+                  setCloneForm({ name: '', file: null, authorized: false })
+                  setShowCloneModal(true)
+                }}
+                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded-lg border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100 transition-all"
+              >
+                <Mic2 className="w-3 h-3" /> 克隆我的声音
+              </button>
             </div>
             <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-              {/* 自定义声音（用户上传录音，直接作为配音） */}
+              {/* 自定义声音：上传录音（直接用样本配音）/ 克隆声音（AI 匹配音色合成） */}
               {customVoices.map((v) => (
                 <div key={v.id} className="relative group">
                   <button
@@ -1197,11 +1529,15 @@ export default function DigitalHumanPage() {
                         : 'border border-pink-100 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    <span className="text-base">🎙️</span>
+                    <span className="text-base">{v.is_clone ? '🔊' : '🎙️'}</span>
                     <div className="flex-1 text-left">
-                      <div className="font-medium">{v.name} · 我的声音</div>
+                      <div className="font-medium">
+                        {v.name} · {v.is_clone ? '克隆声音' : '我的声音'}
+                      </div>
                       <div className="text-[10px] text-gray-400">
-                        {v.desc || `时长 ${Math.round(v.duration || 0)}s 的录音，直接作为配音`}
+                        {v.is_clone
+                          ? v.desc || `基频 ${Math.round(v.f0_mean || 0)}Hz，AI 匹配音色合成配音`
+                          : v.desc || `时长 ${Math.round(v.duration || 0)}s 的录音，直接作为配音`}
                       </div>
                     </div>
                     {voiceId === v.id && (
@@ -1209,9 +1545,9 @@ export default function DigitalHumanPage() {
                     )}
                   </button>
                   <button
-                    onClick={() => deleteCustomVoice(v.id)}
+                    onClick={() => (v.is_clone ? revokeVoiceClone(v.id) : deleteCustomVoice(v.id))}
                     className="absolute top-1 right-7 p-1 rounded-full bg-red-500 text-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="删除该声音"
+                    title={v.is_clone ? '吊销该克隆音色' : '删除该声音'}
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -1524,9 +1860,27 @@ export default function DigitalHumanPage() {
                   : `批量生成 ${batchTexts.split('\n').filter((t) => t.trim()).length} 条视频`}
               </Button>
               {batchTask?.status === 'done' && batchTask.success > 0 && (
-                <Button variant="secondary" size="sm" icon={Download} onClick={downloadBatch}>
-                  打包下载 ZIP
-                </Button>
+                <>
+                  <Button variant="secondary" size="sm" icon={Download} onClick={downloadBatch}>
+                    打包下载 ZIP
+                  </Button>
+                  <ShareButton
+                    content={`# 数字人批量生产任务
+
+文案 ${batchTask.total} 条 · 成功 ${batchTask.success} 条 · 失败 ${batchTask.failed} 条
+
+${batchTexts
+                      .split('\n')
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                      .map((t, i) => `${i + 1}. ${t}`)
+                      .join('\n')}
+
+> 由小团智能平台数字人工厂批量生成 · ${new Date().toLocaleString()}`}
+                    title="数字人批量生产任务"
+                    contentType="digital-human"
+                  />
+                </>
               )}
               {(batchTask?.status === 'done' || batchTask?.status === 'interrupted') &&
                 batchTask.failed > 0 && (
@@ -2411,6 +2765,221 @@ export default function DigitalHumanPage() {
         </div>
       </Modal>
 
+      {/* 上传照片数字人 Modal（正脸照片 → 口型同步引擎） */}
+      <Modal
+        open={showPhotoModal}
+        onClose={() => setShowPhotoModal(false)}
+        title="上传照片数字人"
+        size="sm"
+      >
+        <p className="text-xs text-gray-400 mb-3">
+          上传一张<b className="text-gray-600">正面免冠、光线充足</b>的真实人像照片（≥512px），
+          即可生成口型同步的数字人口播视频——照片自动检测正脸，漫画/截图/无正脸将被拒绝
+        </p>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="w-16 h-16 rounded-xl border-2 border-dashed border-gray-300 hover:border-rose-400 cursor-pointer overflow-hidden flex items-center justify-center bg-gray-50 flex-shrink-0">
+              {photoForm.preview ? (
+                <img src={photoForm.preview} alt="预览" className="w-full h-full object-cover" />
+              ) : (
+                <Camera className="w-5 h-5 text-gray-400" />
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  setPhotoForm((prev) => ({ ...prev, file: f, preview: URL.createObjectURL(f) }))
+                }}
+              />
+            </label>
+            <div className="flex-1 space-y-2">
+              <input
+                value={photoForm.name}
+                placeholder="形象名称（如：我的真人形象）"
+                maxLength={20}
+                onChange={(e) => setPhotoForm((prev) => ({ ...prev, name: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none"
+              />
+              <div className="text-[10px] text-gray-400 leading-relaxed">
+                提示：使用照片即代表你拥有该肖像的使用权；生成失败将自动降级 2D 引擎，不会白等
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowPhotoModal(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Camera}
+              loading={uploading}
+              onClick={uploadPhotoAvatar}
+            >
+              检测正脸并创建
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* AI 视频 Modal（可灵大模型生成：文生视频/图生视频/口型同步） */}
+      <Modal
+        open={showAiVideoModal}
+        onClose={() => setShowAiVideoModal(false)}
+        title="AI 视频生成（可灵大模型）"
+        size="md"
+      >
+        <p className="text-xs text-gray-400 mb-3">
+          大模型直接生成视频：镜头/光影/场景效果顶级。
+          <b className="text-gray-600">口型同步模式</b>需先复制数字人配音音频链接（在下方生成记录/预览处点击「复制音频」）
+          {aiGatewayCfg?.pricing && (
+            <span className="text-violet-500 font-medium">
+              价格：{aiGatewayCfg.pricing.text2video_720p} 元/条（720p）·{' '}
+              {aiGatewayCfg.pricing.text2video_1080p} 元/条（1080p）
+            </span>
+          )}
+        </p>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            {[
+              { id: 'text2video', label: '文生视频' },
+              { id: 'image2video', label: '图生视频' },
+              { id: 'lipsync', label: '口型同步' },
+            ].map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setAiVideoForm((p) => ({ ...p, mode: m.id }))}
+                className={`flex-1 px-2 py-1.5 text-xs font-medium rounded-lg border transition-all ${
+                  aiVideoForm.mode === m.id
+                    ? 'border-violet-500 bg-violet-50 text-violet-600'
+                    : 'border-gray-200 text-gray-500 hover:border-violet-300'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={aiVideoForm.prompt}
+            onChange={(e) => setAiVideoForm((p) => ({ ...p, prompt: e.target.value }))}
+            placeholder={
+              aiVideoForm.mode === 'lipsync'
+                ? '口播内容描述，如：一位职场女性介绍新产品，语速适中'
+                : '视频内容描述，如：一只小猫在月光下奔跑，电影感，特写镜头'
+            }
+            rows={3}
+            maxLength={1000}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none"
+          />
+          {aiVideoForm.mode === 'image2video' && (
+            <input
+              value={aiVideoForm.imageUrl}
+              onChange={(e) => setAiVideoForm((p) => ({ ...p, imageUrl: e.target.value }))}
+              placeholder="参考图地址（平台 /uploads 路径或 http(s) URL）"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+            />
+          )}
+          {aiVideoForm.mode === 'lipsync' && (
+            <div className="space-y-2">
+              <input
+                value={aiVideoForm.audioUrl}
+                onChange={(e) => setAiVideoForm((p) => ({ ...p, audioUrl: e.target.value }))}
+                placeholder="配音音频地址（平台 /uploads 路径）"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+              />
+              <button
+                onClick={copyAudioUrl}
+                className="text-[10px] text-violet-500 hover:text-violet-700 underline"
+              >
+                复制当前配音音频链接
+              </button>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <select
+              value={aiVideoForm.duration}
+              onChange={(e) => setAiVideoForm((p) => ({ ...p, duration: Number(e.target.value) }))}
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none bg-white"
+            >
+              <option value={5}>5 秒</option>
+              <option value={10}>10 秒</option>
+            </select>
+            <select
+              value={aiVideoForm.resolution}
+              onChange={(e) => setAiVideoForm((p) => ({ ...p, resolution: e.target.value }))}
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none bg-white"
+            >
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowAiVideoModal(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Sparkles}
+              loading={aiSubmitting}
+              onClick={submitAiVideo}
+            >
+              {aiGatewayCfg?.configured ? '提交生成' : '未配置网关'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* AI 形象 Modal（万相文生图 → 照片数字人） */}
+      <Modal
+        open={showAiAvatarModal}
+        onClose={() => setShowAiAvatarModal(false)}
+        title="AI 形象生成"
+        size="sm"
+      >
+        <p className="text-xs text-gray-400 mb-3">
+          AI 生成高清人像图并自动创建<b className="text-gray-600">照片数字人形象</b>
+          （支持口型同步）。建议描述：年龄/性别/职业/着装/正脸证件照风格。
+          {aiGatewayCfg?.pricing && (
+            <span className="text-cyan-500 font-medium">价格：{aiGatewayCfg.pricing.avatar_image} 元/张</span>
+          )}
+        </p>
+        <div className="space-y-3">
+          <textarea
+            value={aiAvatarForm.prompt}
+            onChange={(e) => setAiAvatarForm((p) => ({ ...p, prompt: e.target.value }))}
+            placeholder="如：一位 30 岁中国女性职场精英，深色西装，正脸证件照风格，棚拍灯光，高清"
+            rows={3}
+            maxLength={500}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 outline-none resize-none"
+          />
+          <input
+            value={aiAvatarForm.name}
+            onChange={(e) => setAiAvatarForm((p) => ({ ...p, name: e.target.value }))}
+            placeholder="形象名称（如：AI 职场女性）"
+            maxLength={20}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 outline-none"
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowAiAvatarModal(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Sparkles}
+              loading={aiSubmitting}
+              onClick={submitAiAvatar}
+            >
+              {aiGatewayCfg?.configured ? '生成形象' : '未配置网关'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
       {/* 上传自定义声音 Modal */}
       <Modal
         open={showVoiceModal}
@@ -2465,6 +3034,66 @@ export default function DigitalHumanPage() {
               onClick={uploadCustomVoice}
             >
               上传并创建
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 声音克隆 Modal（上传 10-60s 人声样本 → AI 分析匹配音色 + 音调补偿） */}
+      <Modal
+        open={showCloneModal}
+        onClose={() => setShowCloneModal(false)}
+        title="克隆我的声音"
+        size="sm"
+      >
+        <p className="text-xs text-gray-400 mb-3">
+          上传 10-60 秒干净人声样本（无背景音乐/噪音），AI 分析声音特征后自动匹配最接近的合成音色并做音调补偿——
+          之后的数字人配音将带上你的声音气质（样本仅用于分析，不直接作为配音）
+        </p>
+        <div className="space-y-3">
+          <label className="flex items-center justify-center gap-2 px-3 py-4 rounded-xl border-2 border-dashed border-gray-300 hover:border-violet-400 cursor-pointer bg-gray-50">
+            <Mic2 className="w-4 h-4 text-gray-400" />
+            <span className="text-xs text-gray-500">
+              {cloneForm.file
+                ? `${cloneForm.file.name}（${(cloneForm.file.size / 1024 / 1024).toFixed(1)}MB）`
+                : '点击选择人声样本（10-60 秒）'}
+            </span>
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (!f) return
+                setCloneForm((prev) => ({ ...prev, file: f }))
+              }}
+            />
+          </label>
+          <input
+            value={cloneForm.name}
+            placeholder="克隆声音名称（如：我的播客音色）"
+            maxLength={20}
+            onChange={(e) => setCloneForm((prev) => ({ ...prev, name: e.target.value }))}
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+          />
+          <label className="flex items-start gap-2 p-3 rounded-lg bg-violet-50 border border-violet-100 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cloneForm.authorized}
+              onChange={(e) => setCloneForm((prev) => ({ ...prev, authorized: e.target.checked }))}
+              className="mt-0.5 w-4 h-4 accent-violet-500"
+            />
+            <span className="text-xs text-violet-700 leading-relaxed">
+              我声明：样本为<strong>本人声音</strong>或<strong>已获得授权</strong>使用，同意用于声音克隆合成
+              （合规必选，平台保留吊销权利）
+            </span>
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowCloneModal(false)}>
+              取消
+            </Button>
+            <Button variant="primary" size="sm" icon={Upload} loading={cloning} onClick={submitVoiceClone}>
+              开始克隆
             </Button>
           </div>
         </div>

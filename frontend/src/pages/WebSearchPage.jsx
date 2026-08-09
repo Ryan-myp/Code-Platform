@@ -1,14 +1,19 @@
 import React, { useState } from 'react'
-import { Search, Globe, ExternalLink, Clock, Sparkles, FileText, Loader2, Zap } from 'lucide-react'
+import { Search, Globe, ExternalLink, Clock, Sparkles, FileText, Loader2, Zap, Copy, Download, RefreshCw } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 export default function WebSearchPage() {
   const toast = useToast()
   const { submitTask } = useAsyncTask()
-  const [query, setQuery] = useState('')
+  // 输入态持久化：刷新不丢搜索词
+  const [state, setState] = usePersistentToolState('web_search_input', { query: '' }, { version: 1 })
+  const query = state.query
+  const setQuery = (v) => setState((s) => ({ ...s, query: v }))
   const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -29,13 +34,15 @@ export default function WebSearchPage() {
     }
   }
 
-  const handleSearch = async () => {
-    if (!query.trim() || task) return
+  const handleSearch = async (queryOverride) => {
+    // queryOverride：推荐词/相关搜索点击时显式传词，避免 setState 异步导致搜旧词
+    const q = (queryOverride || query).trim()
+    if (!q || task) return
     setResult(null)
     setError(null)
     await submitTask(
       '/api/search/web',
-      { query: query.trim() },
+      { query: q },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
@@ -50,6 +57,43 @@ export default function WebSearchPage() {
         },
       }
     )
+  }
+
+  // 结果 → Markdown（复制/导出/分享复用）
+  const buildSummaryMd = (res) => {
+    if (!res) return ''
+    const lines = [`# AI 搜索摘要：${query}`, '', res.summary || '', '']
+    if (res.sources?.length) {
+      lines.push('## 信息来源', '')
+      res.sources.forEach((s, i) => lines.push(`${i + 1}. [${s.title}](${s.url})`))
+      lines.push('')
+    }
+    lines.push(`> 由小团智能平台 AI 联网搜索生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+
+  const copySummary = async () => {
+    const md = buildSummaryMd(result)
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('摘要已复制，可直接粘贴到文档/微信')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
+    }
+  }
+
+  const exportSummary = () => {
+    const md = buildSummaryMd(result)
+    if (!md) return
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `AI搜索摘要_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('摘要已导出')
   }
 
   return (
@@ -109,7 +153,7 @@ export default function WebSearchPage() {
                   key={q}
                   onClick={() => {
                     setQuery(q)
-                    setTimeout(() => handleSearch, 50)
+                    setTimeout(() => handleSearch(q), 50)
                   }}
                   className="px-3 py-1.5 bg-gray-50 hover:bg-cyan-50 text-xs text-gray-600 hover:text-cyan-700 rounded-lg transition-colors"
                 >
@@ -174,13 +218,29 @@ export default function WebSearchPage() {
             <>
               {/* AI摘要 */}
               <Card className="border-cyan-200">
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-cyan-500" /> AI智能摘要
                   </h3>
-                  <span className="text-xs text-gray-400">
-                    {result.mode === 'web_search' ? '联网搜索' : 'AI知识库'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">
+                      {result.mode === 'web_search' ? '联网搜索' : 'AI知识库'}
+                    </span>
+                    <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => handleSearch()}>
+                      重新搜索
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Copy} onClick={copySummary}>
+                      复制
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Download} onClick={exportSummary}>
+                      导出
+                    </Button>
+                    <ShareButton
+                      content={buildSummaryMd(result)}
+                      title={`AI搜索摘要：${query}`}
+                      contentType="web_search"
+                    />
+                  </div>
                 </div>
                 <div className="prose prose-sm max-w-none text-gray-700 whitespace-pre-wrap leading-relaxed">
                   {result.summary}
@@ -227,7 +287,7 @@ export default function WebSearchPage() {
                         key={i}
                         onClick={() => {
                           setQuery(r)
-                          setTimeout(() => handleSearch, 50)
+                          setTimeout(() => handleSearch(r), 50)
                         }}
                         className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-xs text-amber-700 rounded-lg transition-colors"
                       >

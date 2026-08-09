@@ -525,7 +525,7 @@ export default function ToolHubPage() {
         {activeTab === 'all' && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 overflow-x-auto pb-2">
+              <div className="flex flex-wrap items-center gap-2 pb-2">
                 <button
                   onClick={() => setSelectedCategory('全部')}
                   className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${

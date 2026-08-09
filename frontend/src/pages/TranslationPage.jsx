@@ -22,14 +22,15 @@ import {
   ListOrdered,
   BookMarked,
   Plus,
-  Download,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
+import ExportButton from '../components/ExportButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const LANGS = [
   '中文',
@@ -95,11 +96,20 @@ const TEMPLATES = [
 export default function TranslationPage() {
   const toast = useToast()
   const { submitTask } = useAsyncTask()
-  const [text, setText] = useState('')
-  const [sourceLang, setSourceLang] = useState('中文')
-  const [targetLang, setTargetLang] = useState('English')
-  const [domain, setDomain] = useState('general')
-  const [style, setStyle] = useState('free')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('translation_inputs', {
+    text: '',
+    sourceLang: '中文',
+    targetLang: 'English',
+    domain: 'general',
+    style: 'free',
+  })
+  const { text, sourceLang, targetLang, domain, style } = inputs
+  const setText = (v) => setInputs((p) => ({ ...p, text: v ?? '' }))
+  const setSourceLang = (v) => setInputs((p) => ({ ...p, sourceLang: v }))
+  const setTargetLang = (v) => setInputs((p) => ({ ...p, targetLang: v }))
+  const setDomain = (v) => setInputs((p) => ({ ...p, domain: v }))
+  const setStyle = (v) => setInputs((p) => ({ ...p, style: v }))
   const [result, setResult] = useState('')
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
@@ -186,22 +196,6 @@ export default function TranslationPage() {
     navigator.clipboard.writeText(content)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }
-
-  const downloadResult = () => {
-    const content =
-      result ||
-      batchResults
-        .map((r) => `## ${r.original.slice(0, 40)}\n\n${r.translated}`)
-        .join('\n\n---\n\n')
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `翻译结果-${sourceLang}到${targetLang}.md`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('已下载翻译文件')
   }
 
   const applyTemplate = (tpl) => {
@@ -638,9 +632,13 @@ export default function TranslationPage() {
               </h3>
               {(result || batchResults.length > 0) && (
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>
-                    下载
-                  </Button>
+                  <ExportButton
+                    content={
+                      result ||
+                      batchResults.map((r) => `**${r.original}**\n\n${r.translated}`).join('\n\n---\n\n')
+                    }
+                    title="翻译结果"
+                  />
                   <ShareButton
                     content={
                       result ||

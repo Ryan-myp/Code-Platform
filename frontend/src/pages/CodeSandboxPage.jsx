@@ -1,6 +1,11 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Play, Terminal, Trash2, Clock, Download, Copy, Code, Loader2, Zap } from 'lucide-react'
+
+const STORAGE_KEY = 'codesandbox_history_v1'
+const MAX_HISTORY = 20
 import { Card, Button, Empty, PageHeader } from '../components/ui'
+import ShareButton from '../components/ShareButton'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -78,11 +83,34 @@ plt.close()`,
 
 export default function CodeSandboxPage() {
   const toast = useToast()
-  const [code, setCode] = useState(TEMPLATES[0].code)
+  // 编辑器内容持久化：刷新/关闭不丢代码
+  const [codeState, setCode] = usePersistentToolState(
+    'code_sandbox_editor',
+    { code: TEMPLATES[0].code },
+    { version: 1, maxBytes: 200 * 1024 }
+  )
+  const code = codeState.code
+  const setCodeValue = (v) => setCode((s) => ({ ...s, code: typeof v === 'function' ? v(s.code) : v }))
   const [output, setOutput] = useState('')
   const [running, setRunning] = useState(false)
-  const [history, setHistory] = useState([])
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
   const outputRef = useRef(null)
+
+  // 运行历史持久化：刷新/重开页面不丢失
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)))
+    } catch {
+      /* 存储不可用时静默降级 */
+    }
+  }, [history])
 
   const runCode = async () => {
     if (!code.trim()) return
@@ -94,7 +122,7 @@ export default function CodeSandboxPage() {
       setOutput(result)
       setHistory((prev) => [
         { code: code.trim(), output: result, time: new Date().toISOString() },
-        ...prev.slice(0, 19),
+        ...prev.slice(0, MAX_HISTORY - 1),
       ])
     } catch (e) {
       setOutput(`执行失败：${e.message}`)
@@ -104,30 +132,55 @@ export default function CodeSandboxPage() {
 
   const clearOutput = () => setOutput('')
 
+  const downloadCode = () => {
+    if (!code.trim()) return
+    const blob = new Blob([code], { type: 'text/x-python;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sandbox_${Date.now()}.py`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('代码已下载为 .py 文件')
+  }
+
   const renderOutput = (text) => {
     if (!text) return null
-    // 处理内嵌图片
-    const imgMatch = text.match(/\[IMAGE\]([\s\S]*?)\[\/IMAGE\]/)
-    if (imgMatch) {
-      const before = text.slice(0, text.indexOf('[IMAGE]'))
-      const after = text.slice(text.indexOf('[/IMAGE]') + 9)
-      return (
-        <div>
-          {before && (
-            <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{before}</pre>
-          )}
-          <img
-            src={`data:image/png;base64,${imgMatch[1]}`}
-            alt="chart"
-            className="max-w-full rounded-lg my-2"
-          />
-          {after && (
-            <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{after}</pre>
-          )}
-        </div>
+    // 支持多个 [IMAGE] 图表块（文本与图片分段渲染）
+    const parts = []
+    const regex = /\[IMAGE\]([\s\S]*?)\[\/IMAGE\]/g
+    let last = 0
+    let m
+    let idx = 0
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index > last) {
+        parts.push(
+          <pre key={idx++} className="text-green-400 whitespace-pre-wrap font-mono text-xs">
+            {text.slice(last, m.index)}
+          </pre>
+        )
+      }
+      parts.push(
+        <img
+          key={idx++}
+          src={`data:image/png;base64,${m[1]}`}
+          alt="chart"
+          className="max-w-full rounded-lg my-2"
+        />
+      )
+      last = m.index + m[0].length
+    }
+    if (last < text.length) {
+      parts.push(
+        <pre key={idx++} className="text-green-400 whitespace-pre-wrap font-mono text-xs">
+          {text.slice(last)}
+        </pre>
       )
     }
-    return <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{text}</pre>
+    if (parts.length === 0) {
+      return <pre className="text-green-400 whitespace-pre-wrap font-mono text-xs">{text}</pre>
+    }
+    return <div>{parts}</div>
   }
 
   return (
@@ -150,7 +203,7 @@ export default function CodeSandboxPage() {
               {TEMPLATES.map((t, i) => (
                 <button
                   key={i}
-                  onClick={() => setCode(t.code)}
+                  onClick={() => setCodeValue(t.code)}
                   className="w-full text-left px-3 py-2 rounded-lg bg-gray-50 hover:bg-amber-50 text-sm text-gray-700 hover:text-amber-700 transition-colors"
                 >
                   <Code className="w-3 h-3 inline mr-1.5 text-gray-400" />
@@ -161,9 +214,19 @@ export default function CodeSandboxPage() {
           </Card>
 
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-gray-500" /> 运行历史（{history.length}）
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-gray-500" /> 运行历史（{history.length}）
+              </h3>
+              {history.length > 0 && (
+                <button
+                  onClick={() => setHistory([])}
+                  className="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-400 hover:text-red-500 rounded-md transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" /> 清空
+                </button>
+              )}
+            </div>
             {history.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
             ) : (
@@ -172,7 +235,7 @@ export default function CodeSandboxPage() {
                   <button
                     key={i}
                     onClick={() => {
-                      setCode(h.code)
+                      setCodeValue(h.code)
                       setOutput(h.output)
                     }}
                     className="w-full text-left p-2 rounded-lg hover:bg-gray-50 text-xs"
@@ -207,6 +270,10 @@ export default function CodeSandboxPage() {
                 >
                   复制
                 </Button>
+                <Button variant="secondary" size="sm" icon={Download} onClick={downloadCode}>
+                  下载
+                </Button>
+                <ShareButton content={code} title="Python 代码分享" contentType="code" />
                 <Button
                   variant="primary"
                   size="sm"
@@ -220,7 +287,7 @@ export default function CodeSandboxPage() {
             </div>
             <textarea
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => setCodeValue(e.target.value)}
               placeholder="输入Python代码..."
               rows={14}
               spellCheck={false}
@@ -234,9 +301,22 @@ export default function CodeSandboxPage() {
                 <Terminal className="w-4 h-4 text-gray-700" /> 输出
               </h3>
               {output && (
-                <Button variant="ghost" size="sm" icon={Trash2} onClick={clearOutput}>
-                  清空
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Copy}
+                    onClick={() => {
+                      navigator.clipboard.writeText(output)
+                      toast.success('输出已复制')
+                    }}
+                  >
+                    复制输出
+                  </Button>
+                  <Button variant="ghost" size="sm" icon={Trash2} onClick={clearOutput}>
+                    清空
+                  </Button>
+                </div>
               )}
             </div>
             {!output ? (

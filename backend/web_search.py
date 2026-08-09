@@ -222,7 +222,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
         results.extend(wiki_results)
 
     if not results:
-        # 纯LLM模式：无搜索结果时由LLM直接回答
+        # 纯LLM模式：无搜索结果时由LLM直接回答（同样写入历史，保证记录闭环）
         _report(40, "AI 整合回答")
         raw = await call_llm_async(
             "你是一个知识渊博的助手。用户问了一个问题，但搜索引擎没有返回结果。请基于你的知识回答。如果不知道就说不知道。",
@@ -232,8 +232,34 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
             timeout=30,
         )
         log_usage("web_search_noresults", len(query), len(raw), 0)
+        summary = raw.strip()
+        # 无搜索结果时补充相关搜索推荐（中文查询也可获得推荐词）
+        related = []
+        try:
+            raw_related = await call_llm_async(
+                "你是搜索推荐引擎。为用户的搜索词推荐 3 个相关搜索词，每行一个，只输出词本身，不要序号和多余文字。",
+                f"搜索词：{query}",
+                max_tokens=60,
+                temperature=0.5,
+                timeout=15,
+            )
+            related = [line.strip() for line in raw_related.strip().splitlines() if line.strip()][:3]
+        except Exception:  # noqa: BLE001 — 推荐词失败不影响主流程
+            related = []
+        sid = f"sch_{uuid.uuid4().hex[:12]}"
+        with get_db_context() as conn:
+            conn.execute(
+                "INSERT INTO search_history (id, query, results, user_id, created_at) VALUES (?,?,?,?,?)",
+                (
+                    sid,
+                    query,
+                    json.dumps({"summary": summary, "sources": []}, ensure_ascii=False),
+                    payload.get("user_id", ""),
+                    datetime.now().isoformat(),
+                ),
+            )
         _report(100, "完成")
-        return {"query": query, "mode": "llm_only", "summary": raw.strip(), "sources": [], "related": []}
+        return {"query": query, "mode": "llm_only", "summary": summary, "sources": [], "related": related}
 
     search_context = ""
     for i, r in enumerate(results):

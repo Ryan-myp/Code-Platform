@@ -10,10 +10,11 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from common.config import load_config
 from common.db import get_db
-from common.llm import call_llm, call_llm_async, log_usage
+from common.llm import build_conversation_messages, call_llm, call_llm_async, log_usage, stream_llm_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["对话执行"])
@@ -37,6 +38,14 @@ async def list_conversations(agent_id: str):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """序列化 SSE 事件：``event: {event}\ndata: {json}\n\n``。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
 @router.post("/api/agents/{agent_id}/conversations")
@@ -84,6 +93,7 @@ async def get_conversation_messages(conv_id: str):
 
 @router.post("/api/conversations/{conv_id}/messages")
 async def add_conversation_message(conv_id: str, req: dict):
+    """发送消息。v12.0：支持 ``stream: true`` 走 SSE 流式（打字机增量 + 自动落库 assistant）。"""
     role = req.get("role", "user")
     content = req.get("content", "")
     if not content:
@@ -92,14 +102,66 @@ async def add_conversation_message(conv_id: str, req: dict):
     conn = get_db()
     cur = conn.execute(
         """INSERT INTO messages (conversation_id, role, content, timestamp)
-           VALUES (?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?) """,
         (conv_id, role, content, now),
     )
     conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
     conn.commit()
     msg_id = cur.lastrowid
+
+    # v12.0 流式对话：写入用户消息后，自动调用 Agent 并以 SSE 增量返回
+    if req.get("stream") and role == "user":
+        conn.close()  # 生成器内使用独立连接，避免跨请求复用
+        system = _conversation_system_prompt(conv_id)
+        messages = build_conversation_messages(conv_id, system)
+        start = time.time()
+
+        async def gen():
+            try:
+                full = ""
+                async for delta, full in stream_llm_async(messages=messages, max_tokens=2000):  # noqa: B007 — full 为累计文本，循环结束后用于落库与 done 事件
+                    yield _sse_event("delta", {"text": delta})
+                # 自动落库 assistant 回复
+                try:
+                    c2 = get_db()
+                    now2 = datetime.now().isoformat()
+                    c2.execute(
+                        """INSERT INTO messages (conversation_id, role, content, timestamp)
+                           VALUES (?, ?, ?, ?) """,
+                        (conv_id, "assistant", full, now2),
+                    )
+                    c2.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now2, conv_id))
+                    c2.commit()
+                    c2.close()
+                except Exception:
+                    pass
+                log_usage("conversation_stream", len(content), len(full), time.time() - start)
+                yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2)})
+            except HTTPException as e:
+                yield _sse_event("error", {"detail": e.detail})
+            except Exception as e:
+                logger.exception("conversation stream failed")
+                yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
+
+        return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
     conn.close()
     return {"id": msg_id}
+
+
+def _conversation_system_prompt(conv_id: str) -> str:
+    """取会话所属 Agent 的系统指令（无 Agent 时回退默认）。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT agent_id FROM conversations WHERE id=?", (conv_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["agent_id"]:
+        return "你是一个智能助手"
+    try:
+        return get_agent_system_prompt(row["agent_id"])
+    except HTTPException:
+        return "你是一个智能助手"
 
 
 def get_agent_system_prompt(agent_id: str) -> str:
@@ -114,26 +176,39 @@ def get_agent_system_prompt(agent_id: str) -> str:
 
 @router.post("/api/agents/{agent_id}/run")
 def run_agent(agent_id: str, req: dict):
-    """运行 Agent - 调用 LLM"""
+    """运行 Agent - 调用 LLM（v12.0：携带 conversation_id 时使用多轮上下文）"""
     message = (req.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "消息不能为空")
 
     start = time.time()
     system = get_agent_system_prompt(agent_id)
-    result = call_llm(system, message, max_tokens=2000)
+    conv_id = req.get("conversation_id")
+    session_id = req.get("session_id")
+    if conv_id:
+        result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system))
+    elif session_id:
+        result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(session_id=session_id, system_prompt=system))
+    else:
+        result = call_llm(system, message, max_tokens=2000)
 
     # 记录消息到最新会话（若有）
-    conv_id = req.get("conversation_id")
-    if conv_id:
+    if conv_id or session_id:
         try:
             conn = get_db()
             now = datetime.now().isoformat()
-            conn.execute(
-                """INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?)""",
-                (conv_id, "assistant", result, now),
-            )
-            conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+            if conv_id:
+                conn.execute(
+                    """INSERT INTO messages (conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?)""",
+                    (conv_id, "assistant", result, now),
+                )
+                conn.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+            else:
+                conn.execute(
+                    """INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)""",
+                    (session_id, "assistant", result, now),
+                )
+                conn.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, session_id))
             conn.commit()
             conn.close()
         except Exception:
@@ -141,6 +216,66 @@ def run_agent(agent_id: str, req: dict):
 
     log_usage("agent_run", len(message), len(result), time.time() - start)
     return {"result": result, "agent_id": agent_id, "elapsed": round(time.time() - start, 2)}
+
+
+@router.post("/api/agents/{agent_id}/run/stream")
+async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
+    """运行 Agent（SSE 流式）— 打字机增量输出，携带 conversation_id/session_id 时自动落库并支持多轮上下文。
+
+    事件流：``delta``（增量文本）→ ``done``（完整结果）或 ``error``（失败详情）。
+    """
+    message = (req.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "消息不能为空")
+
+    conv_id = req.get("conversation_id")
+    session_id = req.get("session_id")
+    system = get_agent_system_prompt(agent_id)
+    start = time.time()
+
+    async def gen():
+        try:
+            full = ""
+            if conv_id:
+                messages = build_conversation_messages(conversation_id=conv_id, system_prompt=system)
+            elif session_id:
+                messages = build_conversation_messages(session_id=session_id, system_prompt=system)
+            else:
+                messages = [{"role": "system", "content": system}, {"role": "user", "content": message}]
+            async for delta, full in stream_llm_async(messages=messages, max_tokens=2000):  # noqa: B007 — full 为累计文本，循环结束后用于落库与 done 事件
+                yield _sse_event("delta", {"text": delta})
+            # 落库 assistant 回复（若有会话）
+            if conv_id or session_id:
+                try:
+                    c2 = get_db()
+                    now2 = datetime.now().isoformat()
+                    if conv_id:
+                        c2.execute(
+                            """INSERT INTO messages (conversation_id, role, content, timestamp)
+                               VALUES (?, ?, ?, ?) """,
+                            (conv_id, "assistant", full, now2),
+                        )
+                        c2.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now2, conv_id))
+                    else:
+                        c2.execute(
+                            """INSERT INTO messages (session_id, role, content, timestamp)
+                               VALUES (?, ?, ?, ?) """,
+                            (session_id, "assistant", full, now2),
+                        )
+                        c2.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now2, session_id))
+                    c2.commit()
+                    c2.close()
+                except Exception:
+                    pass
+            log_usage("agent_run_stream", len(message), len(full), time.time() - start)
+            yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2)})
+        except HTTPException as e:
+            yield _sse_event("error", {"detail": e.detail})
+        except Exception as e:
+            logger.exception("agent stream failed")
+            yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 # ══════════════════════════════════════════════════════════════

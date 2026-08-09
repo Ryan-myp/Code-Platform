@@ -44,6 +44,8 @@ backend/voice_factory/
 backend/video_factory/
 backend/music_factory/
 backend/.hermes/
+backend/backups/
+backend/models/
 *.db-shm
 *.db-wal
 

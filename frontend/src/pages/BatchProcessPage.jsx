@@ -11,8 +11,10 @@ import {
   FileSpreadsheet,
   Sparkles,
   ChevronDown,
+  Copy,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -52,6 +54,17 @@ export default function BatchProcessPage() {
 
   const handleFileSelect = (e) => {
     const selected = Array.from(e.target.files || [])
+    // 边界校验：后端单文件上限 20MB，前端提前拦截避免上传中断
+    const oversized = selected.find((f) => f.size > 20 * 1024 * 1024)
+    if (oversized) {
+      toast.error(`「${oversized.name}」超过 20MB 上限，已忽略`)
+      const ok = selected.filter((f) => f.size <= 20 * 1024 * 1024)
+      setFiles(ok)
+      setResults(null)
+      toast.success(ok.length ? `已选择 ${ok.length} 个文件` : '请重新选择文件')
+      e.target.value = ''
+      return
+    }
     setFiles(selected)
     setResults(null)
     toast.success(`已选择 ${selected.length} 个文件`)
@@ -106,6 +119,49 @@ export default function BatchProcessPage() {
         },
       }
     )
+  }
+
+  // 结果 → 文本（导出/复制/分享复用）
+  const buildResultsText = (res) => {
+    if (!res?.results?.length) return ''
+    const lines = [`# 批量处理结果（${res.task || 'batch'}）`, '']
+    res.results.forEach((r, i) => {
+      const name = r.filename || `项目${i + 1}`
+      lines.push(`## ${name}`)
+      if (r.error) lines.push(`> 失败：${r.error}`)
+      if (r.original) lines.push(`原文：${r.original}`)
+      if (r.translated) lines.push(`翻译：${r.translated}`)
+      if (r.title) lines.push(`标题：${r.title}`)
+      if (r.summary) lines.push(`摘要：${r.summary}`)
+      if (r.result) lines.push(`${r.result}`)
+      if (r.key_points?.length) lines.push(`要点：${r.key_points.join('；')}`)
+      lines.push('')
+    })
+    return lines.join('\n')
+  }
+
+  const exportResults = () => {
+    const text = buildResultsText(results)
+    if (!text) return
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `批量处理结果_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('结果已导出')
+  }
+
+  const copyResults = async () => {
+    const text = buildResultsText(results)
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success('全部结果已复制')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
+    }
   }
 
   return (
@@ -261,11 +317,24 @@ export default function BatchProcessPage() {
             />
           ) : (
             <Card>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
                 <h3 className="font-semibold text-gray-900">
                   处理结果（{results.results?.length || 0} 项）
                 </h3>
-                <Badge color="green">{results.task}</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge color="green">{results.task}</Badge>
+                  <Button variant="ghost" size="sm" icon={Download} onClick={exportResults}>
+                    导出全部
+                  </Button>
+                  <Button variant="ghost" size="sm" icon={Copy} onClick={copyResults}>
+                    复制全部
+                  </Button>
+                  <ShareButton
+                    content={buildResultsText(results)}
+                    title="批量处理结果"
+                    contentType="batch_process"
+                  />
+                </div>
               </div>
               <div className="space-y-3 max-h-[600px] overflow-y-auto">
                 {results.results?.map((r, i) => (

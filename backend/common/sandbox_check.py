@@ -8,6 +8,7 @@
 import base64
 import glob
 import os
+import re
 import resource
 import shutil
 import subprocess
@@ -88,8 +89,24 @@ ALLOWED_IMPORTS = {
 }
 
 MAX_CODE_LEN = 20000
-MAX_OUTPUT_LEN = 20000
+MAX_OUTPUT_LEN = 300 * 1024  # 300KB：容纳 base64 图表（图表以 [IMAGE] 标记内嵌）
 DEFAULT_TIMEOUT = 30
+
+
+def truncate_output(text: str, limit: int = MAX_OUTPUT_LEN) -> str:
+    """截断输出，优先保证 [IMAGE] 图表块完整（避免闭合标签丢失导致前端无法渲染）。"""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    if "[IMAGE]" in head and "[/IMAGE]" not in head:
+        # 截断点落在图片块内：向后找闭合标签，保证至少一张完整图
+        close = text.find("[/IMAGE]", limit)
+        if close != -1:
+            return text[: close + len("[/IMAGE]")]
+        # 无闭合标签（损坏块）：丢弃半截图片，保留前面文本
+        last_open = head.rfind("[IMAGE]")
+        return text[:last_open] if last_open > 0 else head
+    return head
 
 
 def check_sandbox_code(code: str) -> str | None:
@@ -107,6 +124,24 @@ def check_sandbox_code(code: str) -> str | None:
     return None
 
 
+def _make_headless_safe(code: str) -> str:
+    """无头环境适配：matplotlib 强制 Agg 后端，plt.show() 改写为自动保存 PNG。
+
+    演示/教学代码习惯用 plt.show()，在无显示环境（macOS 默认 MacOSX 后端）会
+    阻塞进程直到超时；改写为 plt.savefig 后图表落盘，由沙箱自动收集并以
+    [IMAGE] 标记渲染到前端。
+    """
+    if "matplotlib" in code or "plt." in code:
+        counter = {"n": 0}
+
+        def _repl(_m):
+            counter["n"] += 1
+            return f"plt.savefig('_auto_show_{counter['n']}.png')"
+
+        code = re.sub(r"plt\.show\s*\(\s*\)", _repl, code)
+    return code
+
+
 def run_sandbox_python(
     code: str,
     timeout: int = DEFAULT_TIMEOUT,
@@ -118,6 +153,7 @@ def run_sandbox_python(
     执行后自动收集工作目录内生成的 PNG 图片并以 base64 返回（数据分析图表）。
     返回 {output, error, duration, exit_code, files: {文件名: base64}}。
     """
+    code = _make_headless_safe(code)
     workdir = tempfile.mkdtemp(prefix="sandbox_exec_")
     start = time.time()
 
@@ -143,7 +179,12 @@ def run_sandbox_python(
             stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=timeout,
             cwd=workdir,
-            env={"HOME": workdir, "TMPDIR": workdir, "PYTHONIOENCODING": "utf-8"},
+            env={
+                "HOME": workdir,
+                "TMPDIR": workdir,
+                "PYTHONIOENCODING": "utf-8",
+                "MPLBACKEND": "Agg",  # 无显示环境强制非交互后端，杜绝 plt.show() 阻塞
+            },
             preexec_fn=_limits,
         )
         files = {}
@@ -154,8 +195,8 @@ def run_sandbox_python(
             except Exception:
                 pass
         return {
-            "output": (r.stdout or "")[:MAX_OUTPUT_LEN],
-            "error": (r.stderr or "")[:MAX_OUTPUT_LEN],
+            "output": truncate_output(r.stdout or ""),
+            "error": truncate_output(r.stderr or ""),
             "duration": round(time.time() - start, 2),
             "exit_code": r.returncode,
             "files": files,

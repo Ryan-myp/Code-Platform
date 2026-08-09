@@ -20,11 +20,10 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
-
-import numpy as np
 from datetime import datetime
 from io import BytesIO
 
+import numpy as np
 import requests
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse

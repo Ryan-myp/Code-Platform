@@ -44,6 +44,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
 
@@ -1083,9 +1084,16 @@ export default function PublishingPage() {
                     )}
                     发布结果
                   </h3>
-                  <Badge color={MODE_BADGE[result.mode]?.color}>
-                    {MODE_BADGE[result.mode]?.label}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <ShareButton
+                      content={`# 发布结果：${result.title || '未命名'}\n\n平台：${result.platform_label || '—'} · 内容类型：${result.content_type || '—'} · 模式：${MODE_BADGE[result.mode]?.label || result.mode}\n\n${result.content || ''}\n\n> 由小团智能平台发布中心生成 · ${new Date().toLocaleString()}`}
+                      title="发布结果"
+                      contentType="publishing"
+                    />
+                    <Badge color={MODE_BADGE[result.mode]?.color}>
+                      {MODE_BADGE[result.mode]?.label}
+                    </Badge>
+                  </div>
                 </div>
 
                 {result.mode === 'auto' ? (

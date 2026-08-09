@@ -7,6 +7,7 @@ import {
   Code2,
   TestTube2,
   Send,
+  Square,
   Loader2,
   BookOpen,
   MessageSquare,
@@ -35,9 +36,11 @@ import {
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
+import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, copyToClipboard } from '../lib/format'
 import { Button, Empty, PageHeader, Modal } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 
 const PIPELINE = ['prd', 'review', 'td', 'test', 'code', 'review_code']
 
@@ -685,7 +688,7 @@ function ArtifactsModal({ open, onClose, requirement, testRuns, testLoading, onR
 
   return (
     <Modal open={open} onClose={onClose} title={`需求产物 - ${requirement?.name || ''}`} size="lg">
-      <div className="flex items-center gap-1.5 border-b border-gray-200 pb-3 mb-4 overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200 pb-3 mb-4">
         {ARTIFACT_FIELDS.map((s) => {
           const has = !!requirement?.[s.field]
           const st = stageStatus[s.key]?.status
@@ -998,6 +1001,7 @@ export default function AIWorkspacePage() {
   const [testRuns, setTestRuns] = useState([])
   const [testLoading, setTestLoading] = useState(false)
   const messagesEndRef = useRef(null)
+  const abortRef = useRef(null)
 
   const s = state[tab]
   const update = (patch) => setState((prev) => ({ ...prev, [tab]: { ...prev[tab], ...patch } }))
@@ -1232,46 +1236,139 @@ export default function AIWorkspacePage() {
     }
   }
 
-  const handleChatSend = async () => {
+  // v12.0 流式发送核心：按 tab 组装请求 → SSE 打字机增量渲染，可中断、失败保留部分内容
+  const runChatStream = (chatTab, text, historyText) => {
+    let url, body
+    if (chatTab === 'prd') {
+      url = '/api/prd/generate'
+      body = { prd_text: historyText }
+    } else if (chatTab === 'review') {
+      url = '/api/prd/review'
+      body = { prd_text: historyText, repo_path: state[chatTab].repoPath }
+    } else if (chatTab === 'td') {
+      url = '/api/prd/technical-design'
+      body = { prd_text: historyText, repo_path: state[chatTab].repoPath }
+    } else if (chatTab === 'test') {
+      url = '/api/prd/test-cases'
+      body = { prd_text: historyText, tech_design: state[chatTab].techDesign }
+    } else if (chatTab === 'review_code') {
+      url = '/api/code/review'
+      body = { language: state[chatTab].language, code: historyText }
+    } else {
+      url = '/api/prd/code-chat'
+      body = { message: historyText, language: state[chatTab].language }
+    }
+    body.stream = true
+
+    // 占位 assistant 气泡：流式增量写入该消息
+    setState((prev) => ({
+      ...prev,
+      [chatTab]: {
+        ...prev[chatTab],
+        messages: [
+          ...prev[chatTab].messages,
+          { role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true },
+        ],
+      },
+    }))
+
+    // 更新最后一条流式消息（防并发覆盖：函数式更新）
+    const patchStream = (updater) => {
+      setState((prev) => {
+        const cur = prev[chatTab]
+        const msgs = [...cur.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || !last.streaming) return prev
+        msgs[msgs.length - 1] = { ...last, ...updater(last) }
+        return { ...prev, [chatTab]: { ...cur, messages: msgs } }
+      })
+    }
+
+    abortRef.current = fetchSSE(url, {
+      body,
+      onEvent: (event, data) => {
+        if (event === 'delta') {
+          patchStream((last) => ({ content: last.content + data.text }))
+        } else if (event === 'done') {
+          patchStream((last) => ({ content: data.full || last.content, streaming: false }))
+        } else if (event === 'error') {
+          patchStream((last) => ({
+            streaming: false,
+            error: true,
+            content: last.content || `> ⚠️ 处理失败：${data.detail || '未知错误'}`,
+          }))
+        }
+      },
+      onError: (err) => {
+        // 已有部分内容则保留并追加提示，否则整条展示错误
+        patchStream((last) => ({
+          streaming: false,
+          error: true,
+          content: last.content
+            ? `${last.content}\n\n> ⚠️ ${err.message}`
+            : `> ⚠️ 处理失败：${err.message}`,
+        }))
+      },
+      onClose: () => {
+        abortRef.current = null
+        setState((prev) => {
+          const cur = prev[chatTab]
+          if (!cur) return prev
+          return { ...prev, [chatTab]: { ...cur, loading: false } }
+        })
+      },
+    })
+  }
+
+  // 聊天发送（回车触发）— v12.0 流式：打字机增量 + 可中断 + 失败可重试
+  const handleChatSend = () => {
     const text = (s.chatInput || '').trim()
     if (!text || s.loading) return
     update({ chatInput: '', loading: true })
     addMessage('user', text)
-    try {
-      const historyText =
-        s.messages
-          .map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`)
-          .join('\n\n') +
-        '\n\n用户最新指令: ' +
-        text
-      let url, body
-      if (tab === 'prd') {
-        url = '/api/prd/generate'
-        body = { prd_text: historyText }
-      } else if (tab === 'review') {
-        url = '/api/prd/review'
-        body = { prd_text: historyText, repo_path: s.repoPath }
-      } else if (tab === 'td') {
-        url = '/api/prd/technical-design'
-        body = { prd_text: historyText, repo_path: s.repoPath }
-      } else if (tab === 'test') {
-        url = '/api/prd/test-cases'
-        body = { prd_text: historyText, tech_design: s.techDesign }
-      } else if (tab === 'review_code') {
-        url = '/api/code/review'
-        body = { language: s.language, code: historyText }
-      } else {
-        url = '/api/prd/code-chat'
-        body = { message: historyText, language: s.language }
+    const historyText =
+      s.messages
+        .map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`)
+        .join('\n\n') +
+      '\n\n用户最新指令: ' +
+      text
+    runChatStream(tab, text, historyText)
+  }
+
+  // 停止生成：中断 SSE 流，保留已生成内容
+  const handleStop = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setState((prev) => {
+      const cur = prev[tab]
+      const msgs = [...cur.messages]
+      const last = msgs[msgs.length - 1]
+      if (last?.streaming) msgs[msgs.length - 1] = { ...last, streaming: false }
+      return { ...prev, [tab]: { ...cur, messages: msgs, loading: false } }
+    })
+  }
+
+  // 错误重试：移除失败回复，重新发送对应的用户消息
+  const handleRetry = (errIdx) => {
+    if (s.loading) return
+    let userIdx = -1
+    for (let i = errIdx - 1; i >= 0; i--) {
+      if (s.messages[i].role === 'user') {
+        userIdx = i
+        break
       }
-      const result = await callApi(url, body)
-      addMessage('assistant', result)
-    } catch (e) {
-      addMessage('assistant', '❌ 处理失败：' + e.message)
-      toast.error(`处理失败：${e.message}`)
-    } finally {
-      update({ loading: false })
     }
+    if (userIdx < 0) return
+    const userMsg = s.messages[userIdx]
+    const baseMsgs = s.messages.filter((_, idx) => idx !== errIdx)
+    const historyText =
+      baseMsgs
+        .map((m) => `${m.role === 'user' ? '用户' : 'AI'}: ${stripImages(m.content)}`)
+        .join('\n\n') +
+      '\n\n用户最新指令: ' +
+      userMsg.content
+    setState((prev) => ({ ...prev, [tab]: { ...prev[tab], messages: baseMsgs, loading: true } }))
+    runChatStream(tab, userMsg.content, historyText)
   }
 
   const goNext = () => {
@@ -1460,49 +1557,43 @@ export default function AIWorkspacePage() {
           <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium flex-shrink-0">
             <GitBranch className="w-3.5 h-3.5" /> 流水线进度
           </div>
-          <div className="flex-1 flex items-center gap-1 overflow-x-auto">
-            {PIPELINE_STAGES.map((stage, idx) => {
-              const st = stageStatus(stage.key)
-              const active = tab === stage.key
-              return (
-                <React.Fragment key={stage.key}>
-                  {idx > 0 && (
-                    <div
-                      className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`}
-                    />
-                  )}
-                  <button
-                    onClick={() => handleTabChange(stage.key)}
-                    title={
-                      st === 'stale'
-                        ? '上游已变更，此阶段产物建议重新生成'
-                        : st === 'done'
-                          ? '已有产物，可查看或重新生成'
-                          : '尚未生成'
-                    }
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
-                      active
-                        ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
-                        : 'hover:bg-gray-50 text-gray-600'
-                    }`}
-                  >
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        st === 'stale'
-                          ? 'bg-amber-500'
-                          : st === 'done'
-                            ? 'bg-emerald-500'
-                            : 'bg-gray-300'
-                      }`}
-                    />
-                    {stage.label}
-                    {st === 'stale' && (
-                      <span className="text-[10px] text-amber-600 font-semibold">需更新</span>
+          <div className="relative flex-1">
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {PIPELINE_STAGES.map((stage, idx) => {
+                const st = stageStatus(stage.key)
+                const active = tab === stage.key
+                return (
+                  <React.Fragment key={stage.key}>
+                    {idx > 0 && (
+                      <div
+                        className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`}
+                      />
                     )}
-                  </button>
-                </React.Fragment>
-              )
-            })}
+                    <button
+                      onClick={() => handleTabChange(stage.key)}
+                      title={
+                        st === 'stale'
+                          ? '上游已变更，此阶段产物建议重新生成'
+                          : st === 'done'
+                            ? '已有产物，可查看或重新生成'
+                            : '尚未生成'
+                      }
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${active ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'}`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${st === 'stale' ? 'bg-amber-500' : st === 'done' ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                      />
+                      {stage.label}
+                      {st === 'stale' && (
+                        <span className="text-[10px] text-amber-600 font-semibold">需更新</span>
+                      )}
+                    </button>
+                  </React.Fragment>
+                )
+              })}
+            </div>
+            {/* 右缘渐隐：提示还有更多阶段可滚动查看 */}
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-white to-transparent" />
           </div>
           <button
             onClick={openArtifacts}
@@ -1520,27 +1611,29 @@ export default function AIWorkspacePage() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
-        {PIPELINE.map((key) => {
-          const t = TABS[key]
-          const TColor = COLOR_MAP[t.color]
-          return (
-            <button
-              key={key}
-              onClick={() => handleTabChange(key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                tab === key ? TColor.active : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <t.icon className="w-4 h-4" /> {t.label}
-              {stageStatus(key) === 'stale' && (
-                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">
-                  需更新
-                </span>
-              )}
-            </button>
-          )
-        })}
+      <div className="relative bg-white">
+        <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+          {PIPELINE.map((key) => {
+            const t = TABS[key]
+            const TColor = COLOR_MAP[t.color]
+            return (
+              <button
+                key={key}
+                onClick={() => handleTabChange(key)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${tab === key ? TColor.active : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                <t.icon className="w-4 h-4" /> {t.label}
+                {stageStatus(key) === 'stale' && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                    需更新
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {/* 右缘渐隐：提示还有更多 Tab 可滚动查看 */}
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white to-transparent" />
       </div>
 
       {/* 需求加载失败提示 */}
@@ -1655,12 +1748,41 @@ export default function AIWorkspacePage() {
               )}
             </div>
             {s.messages.length > 0 && (
-              <button
-                onClick={() => update({ messages: [] })}
-                className="text-xs text-gray-400 hover:text-red-500"
-              >
-                清空
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const md = s.messages
+                      .map((m) => (m.role === 'user' ? `### 我\n\n${m.content}` : `### AI\n\n${m.content}`))
+                      .join('\n\n---\n\n')
+                    const blob = new Blob([`# AI 工作台对话记录\n\n${md}`], {
+                      type: 'text/markdown;charset=utf-8',
+                    })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `AI工作台对话_${new Date().toISOString().slice(0, 10)}.md`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                    toast.success('对话已导出')
+                  }}
+                  className="text-xs text-gray-400 hover:text-purple-600 flex items-center gap-1"
+                >
+                  <Download className="w-3 h-3" /> 导出
+                </button>
+                <ShareButton
+                  content={`# AI 工作台对话记录（${s.messages.length} 条）\n\n${s.messages
+                    .map((m) => `### ${m.role === 'user' ? '我' : 'AI'}\n\n${m.content}`)
+                    .join('\n\n---\n\n')}\n\n> 由小团智能平台 AI 工作台生成 · ${new Date().toLocaleString()}`}
+                  title="AI 工作台对话记录"
+                  contentType="ai-workspace"
+                />
+                <button
+                  onClick={() => update({ messages: [] })}
+                  className="text-xs text-gray-400 hover:text-red-500"
+                >
+                  清空
+                </button>
+              </div>
             )}
           </div>
 
@@ -1799,7 +1921,16 @@ export default function AIWorkspacePage() {
                           className={`text-sm leading-relaxed ${msg.role === 'user' ? 'whitespace-pre-wrap' : ''}`}
                         >
                           {msg.role === 'assistant' ? (
-                            <MarkdownRenderer content={msg.content} />
+                            <div>
+                              {msg.content ? (
+                                <MarkdownRenderer content={msg.content} />
+                              ) : (
+                                msg.streaming && <span className="text-gray-400">正在思考…</span>
+                              )}
+                              {msg.streaming && (
+                                <span className="inline-block w-0.5 h-4 bg-purple-500/70 animate-pulse ml-0.5 align-middle" />
+                              )}
+                            </div>
                           ) : (
                             msg.content
                           )}
@@ -1810,6 +1941,14 @@ export default function AIWorkspacePage() {
                       >
                         {formatRelativeTime(msg.timestamp)}
                       </div>
+                      {msg.error && (
+                        <button
+                          onClick={() => handleRetry(idx)}
+                          className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-red-50 border border-red-200 text-red-600 text-xs font-medium rounded-lg hover:bg-red-100 transition-colors"
+                        >
+                          <RefreshCw className="w-3 h-3" /> 重试
+                        </button>
+                      )}
                       {tab === 'code' && msg.role === 'assistant' && s.language === 'python' && (
                         <div className="mt-2.5">
                           <button
@@ -1845,7 +1984,7 @@ export default function AIWorkspacePage() {
                 </div>
               ))
             )}
-            {s.loading && (
+            {s.loading && !abortRef.current && (
               <div className="flex items-center gap-2 text-gray-500">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm">AI 正在思考…</span>
@@ -1869,16 +2008,22 @@ export default function AIWorkspacePage() {
                 className="flex-1 p-2.5 border border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 resize-none text-sm bg-white outline-none"
                 rows={2}
               />
-              <Button
-                variant="gradient"
-                icon={Send}
-                loading={s.loading}
-                disabled={!s.chatInput.trim()}
-                onClick={handleChatSend}
-                className="self-end"
-              >
-                <span className="hidden sm:inline">发送</span>
-              </Button>
+              {s.loading && abortRef.current ? (
+                <Button variant="danger" icon={Square} onClick={handleStop} className="self-end">
+                  <span className="hidden sm:inline">停止</span>
+                </Button>
+              ) : (
+                <Button
+                  variant="gradient"
+                  icon={Send}
+                  loading={s.loading}
+                  disabled={!s.chatInput.trim()}
+                  onClick={handleChatSend}
+                  className="self-end"
+                >
+                  <span className="hidden sm:inline">发送</span>
+                </Button>
+              )}
             </div>
           </div>
         </div>

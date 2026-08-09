@@ -18,6 +18,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
+import { sanitizeHtml } from '../lib/sanitize'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import {
@@ -103,7 +104,7 @@ function RequirementCard({ req, projects, onView, onEdit, onDelete, onPipeline }
       <div
         className="text-sm text-gray-500 line-clamp-2 mb-3 prose prose-sm max-w-none"
         dangerouslySetInnerHTML={{
-          __html: req.description || '<span class="text-gray-400">暂无描述</span>',
+          __html: sanitizeHtml(req.description) || '<span class="text-gray-400">暂无描述</span>',
         }}
       />
 
@@ -273,7 +274,7 @@ function RequirementDetailModal({ req, onClose }) {
           <div
             className="prose prose-sm max-w-none p-3 bg-gray-50 rounded-lg border border-gray-200"
             dangerouslySetInnerHTML={{
-              __html: req.description || '<span class="text-gray-400">暂无描述</span>',
+              __html: sanitizeHtml(req.description) || '<span class="text-gray-400">暂无描述</span>',
             }}
           />
         </div>

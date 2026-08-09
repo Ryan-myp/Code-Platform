@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Bot,
   Send,
+  Square,
   Plus,
   Trash2,
   ArrowLeft,
@@ -13,9 +14,11 @@ import {
   Menu,
   Cpu,
   MessageSquare,
+  RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
+import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatDateTime } from '../lib/format'
 import { Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
@@ -56,6 +59,7 @@ export default function AgentExecutePage() {
 
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
+  const abortRef = useRef(null)
 
   // 加载 Agent 信息
   const loadAgent = useCallback(async () => {
@@ -133,7 +137,51 @@ export default function AgentExecutePage() {
     }
   }
 
-  // 发送消息（回车触发）
+  // v12.0 单 Agent SSE 流式执行：打字机增量 + 可中断（assistant 由后端自动落库）
+  const streamToAgent = (text, sessionId) => {
+    // 更新最后一条流式消息（防并发覆盖：函数式更新）
+    const patchStream = (updater) => {
+      setMessages((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (!last || !last.streaming) return prev
+        next[next.length - 1] = { ...last, ...updater(last) }
+        return next
+      })
+    }
+    abortRef.current = fetchSSE(`/api/agents/${agentId}/run/stream`, {
+      body: { message: text, session_id: sessionId },
+      onEvent: (event, data) => {
+        if (event === 'delta') {
+          patchStream((last) => ({ content: last.content + data.text }))
+        } else if (event === 'done') {
+          patchStream((last) => ({ content: data.full || last.content, streaming: false }))
+        } else if (event === 'error') {
+          patchStream((last) => ({
+            streaming: false,
+            error: true,
+            content: last.content || `> ⚠️ 回复失败：${data.detail || '未知错误'}`,
+          }))
+        }
+      },
+      onError: (err) => {
+        // 已有部分内容则保留并追加提示，否则整条展示错误
+        patchStream((last) => ({
+          streaming: false,
+          error: true,
+          content: last.content
+            ? `${last.content}\n\n> ⚠️ ${err.message}`
+            : `> ⚠️ 回复失败：${err.message}`,
+        }))
+      },
+      onClose: () => {
+        abortRef.current = null
+        setSending(false)
+      },
+    })
+  }
+
+  // 发送消息（回车触发）— v12.0 流式：SSE 打字机增量渲染 + 可中断
   const sendMessage = async () => {
     const text = input.trim()
     if (!text || !currentSession || sending) return
@@ -147,43 +195,78 @@ export default function AgentExecutePage() {
     setInput('')
     setSending(true)
 
+    // 占位 assistant 气泡：流式增量写入该消息
+    const assistantMsg = {
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString(),
+      streaming: true,
+    }
+    setMessages((prev) => [...prev, assistantMsg])
+
     try {
-      // 持久化用户消息
-      await api.post(`/api/sessions/${currentSession.id}/messages`, {
-        role: 'user',
-        content: text,
-      })
-
-      // 调用 Agent 运行接口获取真实 LLM 回复
-      const runRes = await api.post(`/api/agents/${agentId}/run`, { message: text })
-      const reply = runRes.data.result || '（无回复）'
-
-      const assistantMessage = {
-        role: 'assistant',
-        content: reply,
-        created_at: new Date().toISOString(),
+      // 持久化用户消息（失败不阻塞流式）
+      try {
+        await api.post(`/api/sessions/${currentSession.id}/messages`, {
+          role: 'user',
+          content: text,
+        })
+      } catch {
+        /* 忽略持久化失败 */
       }
-      setMessages((prev) => [...prev, assistantMessage])
-
-      // 持久化助手回复
-      await api.post(`/api/sessions/${currentSession.id}/messages`, {
-        role: 'assistant',
-        content: reply,
-      })
+      streamToAgent(text, currentSession.id)
     } catch (e) {
-      toast.error(`发送失败：${e.message}`)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: `> ⚠️ 回复失败：${e.message}`,
-          created_at: new Date().toISOString(),
-          error: true,
-        },
-      ])
-    } finally {
+      // 兜底：恢复可发送状态并展示错误
+      setMessages((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last?.streaming) {
+          next[next.length - 1] = {
+            ...last,
+            streaming: false,
+            error: true,
+            content: last.content || `> ⚠️ 回复失败：${e.message}`,
+          }
+        }
+        return next
+      })
       setSending(false)
     }
+  }
+
+  // 错误重试：恢复失败消息为流式占位，重新生成
+  const handleRetry = (msgIdx) => {
+    if (sending || !currentSession) return
+    let userIdx = -1
+    for (let i = msgIdx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userIdx = i
+        break
+      }
+    }
+    if (userIdx < 0) return
+    const userMsg = messages[userIdx]
+    // 恢复为流式占位（不清空已生成的部分内容），重新发起
+    setMessages((prev) => {
+      const next = [...prev]
+      next[msgIdx] = { ...next[msgIdx], content: '', error: false, streaming: true }
+      return next
+    })
+    setSending(true)
+    streamToAgent(userMsg.content, currentSession.id)
+  }
+
+  // 停止生成：中断 SSE 流，保留已生成内容
+  const handleStop = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setMessages((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last?.streaming) next[next.length - 1] = { ...last, streaming: false }
+      return next
+    })
+    setSending(false)
   }
 
   // 删除会话
@@ -370,36 +453,32 @@ export default function AgentExecutePage() {
                           </span>
                         </div>
                         {msg.role === 'assistant' ? (
-                          <MarkdownRenderer content={msg.content} />
+                          <div>
+                            {msg.content ? (
+                              <MarkdownRenderer content={msg.content} />
+                            ) : (
+                              msg.streaming && (
+                                <span className="text-sm text-gray-400">正在思考…</span>
+                              )
+                            )}
+                            {msg.streaming && (
+                              <span className="inline-block w-0.5 h-4 bg-purple-500/70 animate-pulse ml-0.5 align-middle" />
+                            )}
+                          </div>
                         ) : (
                           <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                        )}
+                        {msg.error && (
+                          <button
+                            onClick={() => handleRetry(idx)}
+                            className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-red-50 border border-red-200 text-red-600 text-xs font-medium rounded-lg hover:bg-red-100 transition-colors"
+                          >
+                            <RefreshCw className="w-3 h-3" /> 重试
+                          </button>
                         )}
                       </div>
                     </div>
                   ))}
-                  {sending && (
-                    <div className="flex justify-start">
-                      <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-1">
-                            <span
-                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
-                              style={{ animationDelay: '0ms' }}
-                            />
-                            <span
-                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
-                              style={{ animationDelay: '150ms' }}
-                            />
-                            <span
-                              className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
-                              style={{ animationDelay: '300ms' }}
-                            />
-                          </div>
-                          <span className="text-sm text-gray-500">{agent.name} 正在思考…</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   <div ref={messagesEndRef} />
                 </div>
               )}
@@ -417,15 +496,20 @@ export default function AgentExecutePage() {
                   rows={1}
                   className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all resize-none max-h-32 overflow-y-auto text-sm"
                 />
-                <Button
-                  variant="primary"
-                  icon={Send}
-                  onClick={sendMessage}
-                  loading={sending}
-                  disabled={!input.trim() || !currentSession}
-                >
-                  <span className="hidden sm:inline">发送</span>
-                </Button>
+                {sending ? (
+                  <Button variant="danger" icon={Square} onClick={handleStop}>
+                    <span className="hidden sm:inline">停止</span>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    icon={Send}
+                    onClick={sendMessage}
+                    disabled={!input.trim() || !currentSession}
+                  >
+                    <span className="hidden sm:inline">发送</span>
+                  </Button>
+                )}
               </div>
             </div>
           </>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button, Badge, Empty } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 import {
   Search,
   TrendingUp,
@@ -18,6 +20,8 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  Copy,
+  Download,
 } from 'lucide-react'
 import {
   LineChart as RechartsLine,
@@ -34,12 +38,20 @@ import {
 } from 'recharts'
 
 export default function StockAnalysisPage() {
-  const [symbol, setSymbol] = useState('')
+  // 输入态持久化：刷新/关闭不丢股票代码与周期
+  const [state, setState] = usePersistentToolState(
+    'stock_analysis_input',
+    { symbol: '', period: '3mo' },
+    { version: 1 }
+  )
+  const symbol = state.symbol
+  const period = state.period
+  const setSymbol = (v) => setState((s) => ({ ...s, symbol: v }))
+  const setPeriod = (v) => setState((s) => ({ ...s, period: v }))
   const [stockData, setStockData] = useState(null)
   const [analysis, setAnalysis] = useState('')
   const [loading, setLoading] = useState(false)
   const [analysisType] = useState('comprehensive')
-  const [period, setPeriod] = useState('3mo')
   const [portfolio, setPortfolio] = useState(null)
   const [tradeAction, setTradeAction] = useState('buy')
   const [tradeQty, setTradeQty] = useState('')
@@ -121,6 +133,29 @@ export default function StockAnalysisPage() {
       loadPortfolio()
     } catch {
       toast.error('重置失败')
+    }
+  }
+
+  // AI 分析报告 → 复制 / 导出 / 分享
+  const exportAnalysis = () => {
+    if (!analysis) return
+    const blob = new Blob([analysis], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${symbol}_AI分析报告_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('分析报告已导出')
+  }
+
+  const copyAnalysis = async () => {
+    if (!analysis) return
+    try {
+      await navigator.clipboard.writeText(analysis)
+      toast.success('报告已复制，可直接粘贴到文档/微信')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
     }
   }
 
@@ -425,10 +460,24 @@ export default function StockAnalysisPage() {
             {/* AI 分析结果 */}
             {analysis && (
               <Card className="mb-6">
-                <h3 className="font-medium text-gray-900 mb-4 flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4" />
-                  AI 分析报告
-                </h3>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+                  <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" />
+                    AI 分析报告
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => handleAnalyze()}>
+                      重新分析
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Copy} onClick={copyAnalysis}>
+                      复制
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Download} onClick={exportAnalysis}>
+                      导出
+                    </Button>
+                    <ShareButton content={analysis} title={`${symbol} AI 股票分析报告`} contentType="stock_analysis" />
+                  </div>
+                </div>
                 <MarkdownRenderer content={analysis} />
               </Card>
             )}

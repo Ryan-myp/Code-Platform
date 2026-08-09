@@ -9,8 +9,10 @@ import {
   Sparkles,
   FileText,
   Eye,
+  Copy,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -100,6 +102,72 @@ export default function ForecastPage() {
       toast.success('已删除')
     } catch (err) {
       toast.error(err.message)
+    }
+  }
+
+  // 结果 → Markdown 报告（导出/复制/分享复用同一份内容）
+  const buildReportMd = (res) => {
+    if (!res) return ''
+    const lines = [
+      '# AI 数据预测报告',
+      '',
+      `> 数据：${res.overview?.record_count || '-'} 条记录 · ${res.overview?.columns?.length || '-'} 列 · 预测方法：${res.predictions?.method || '-'}`,
+      '',
+      '## 数据概览',
+      '',
+      res.overview?.summary || '-',
+      '',
+    ]
+    if (res.trend_analysis) {
+      lines.push('## 趋势分析', '')
+      lines.push(`- 整体趋势：${res.trend_analysis.overall_trend || '-'}`)
+      if (res.trend_analysis.seasonal_patterns) {
+        lines.push(`- 季节性：${res.trend_analysis.seasonal_patterns}`)
+      }
+      ;(res.trend_analysis.key_findings || []).forEach((f) => lines.push(`- 发现：${f}`))
+      lines.push('')
+    }
+    if (res.predictions?.forecast_values?.length) {
+      lines.push('## 预测结果', '')
+      lines.push('| 周期 | 预测值 | 区间 |')
+      lines.push('|---|---|---|')
+      res.predictions.forecast_values.forEach((fv) => {
+        lines.push(`| ${fv.period} | ${fv.value?.toLocaleString?.() || fv.value} | ${fv.low} ~ ${fv.high} |`)
+      })
+      lines.push('')
+    }
+    if (res.recommendations?.length) {
+      lines.push('## 行动建议', '')
+      res.recommendations.forEach((r) => {
+        lines.push(`- **[${r.level || r.priority}]** ${r.action}${r.expected_impact ? `（预期：${r.expected_impact}）` : ''}`)
+      })
+      lines.push('')
+    }
+    lines.push('---', '由小团智能平台 AI 数据预测生成', new Date().toLocaleString())
+    return lines.join('\n')
+  }
+
+  const downloadReport = () => {
+    const md = buildReportMd(result)
+    if (!md) return
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `预测报告_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('报告已导出')
+  }
+
+  const copyReport = async () => {
+    const md = buildReportMd(result)
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('报告已复制，可直接粘贴到文档/微信')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
     }
   }
 
@@ -292,10 +360,28 @@ export default function ForecastPage() {
           ) : (
             <>
               <Card className="border-emerald-200">
-                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-emerald-500" /> 数据概览
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-emerald-500" /> 数据概览
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => handleAnalyze()}>
+                      重新分析
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Download} onClick={downloadReport}>
+                      导出报告
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Copy} onClick={copyReport}>
+                      复制
+                    </Button>
+                    <ShareButton
+                      content={buildReportMd(result)}
+                      title="AI 数据预测报告"
+                      contentType="data_forecast"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   <div className="p-3 bg-emerald-50 rounded-lg text-center">
                     <div className="text-2xl font-bold text-emerald-600">
                       {result.overview?.record_count}

@@ -8,7 +8,6 @@ import {
   Sparkles,
   Upload,
   X,
-  Download,
   FileText,
   TrendingUp,
   Share2,
@@ -23,10 +22,12 @@ import {
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
+import ExportButton from '../components/ExportButton'
 import { Card, Button, Badge, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const TYPES = [
   { value: 'marketing', label: '营销文案', icon: Megaphone, color: 'pink' },
@@ -59,58 +60,67 @@ const TEMPLATES = [
     name: '新品上市',
     icon: '🚀',
     prompt:
-      '为一款全新的[产品名称]撰写上市营销文案，核心卖点包括[卖点1]、[卖点2]，目标受众是[人群]，希望突出[差异化优势]',
+      '为一款全新的智能降噪耳机撰写上市营销文案，核心卖点包括主动降噪、40小时续航、轻量佩戴，目标受众是通勤上班族，希望突出性价比优势',
   },
   {
     name: '节日促销',
     icon: '🎉',
     prompt:
-      '为[节日名称]促销活动撰写文案，折扣力度[XX折]，活动时间[日期]，主推产品[产品名]，营造紧迫感和购买欲',
+      '为国庆黄金周促销活动撰写文案，折扣力度全场8折，活动时间10月1日-7日，主推产品家电焕新系列，营造紧迫感和购买欲',
   },
   {
     name: '小红书种草',
     icon: '📕',
     prompt:
-      '写一篇小红书种草笔记，产品是[产品名]，使用体验[感受]，适合[场景]，语气要真实自然，带emoji',
+      '写一篇小红书种草笔记，产品是便携咖啡机，使用体验是3分钟出杯、口感接近咖啡馆，适合办公室与出差场景，语气要真实自然，带emoji',
   },
   {
     name: '朋友圈文案',
     icon: '💬',
-    prompt: '写一条朋友圈营销文案，产品/服务是[名称]，要简短有力，引发互动，不超过100字',
+    prompt: '写一条朋友圈营销文案，产品/服务是精品咖啡月卡，要简短有力，引发互动，不超过100字',
   },
   {
     name: '邮件营销',
     icon: '📧',
-    prompt: '写一封营销邮件，目的是[目的]，收件人是[人群]，核心信息是[内容]，需要包含CTA行动号召',
+    prompt: '写一封营销邮件，目的是邀请参加新品体验会，收件人是老客户，核心信息是限时免费体验名额，需要包含CTA行动号召',
   },
   {
     name: '品牌故事',
     icon: '📖',
     prompt:
-      '为品牌[品牌名]撰写品牌故事，品牌创立于[时间]，核心理念是[理念]，要打动人心，传递品牌价值',
+      '为品牌山野茶舍撰写品牌故事，品牌创立于2016年，核心理念是回归自然的慢生活方式，要打动人心，传递品牌价值',
   },
   {
     name: 'SEO长文',
     icon: '🔍',
     prompt:
-      '围绕关键词[关键词]撰写一篇SEO优化文章，目标读者是[人群]，需要覆盖[子话题1]和[子话题2]，字数1000字以上',
+      '围绕关键词家用净水器选购指南撰写一篇SEO优化文章，目标读者是新手家庭，需要覆盖滤芯类型对比和安装注意事项，字数1000字以上',
   },
   {
     name: '产品详情',
     icon: '📦',
     prompt:
-      '为产品[产品名]撰写详情页文案，包含：产品亮点、规格参数、使用场景、用户评价摘要、购买理由',
+      '为产品智能扫地机器人撰写详情页文案，包含：产品亮点、规格参数、使用场景、用户评价摘要、购买理由',
   },
 ]
 
 export default function CopywritingPage() {
   const toast = useToast()
   const { submitTask } = useAsyncTask()
-  const [prompt, setPrompt] = useState('')
-  const [type, setType] = useState('marketing')
-  const [title, setTitle] = useState('')
-  const [tone, setTone] = useState('professional')
-  const [length, setLength] = useState('medium')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('copywriting_inputs', {
+    prompt: '',
+    type: 'marketing',
+    title: '',
+    tone: 'professional',
+    length: 'medium',
+  })
+  const { prompt, type, title, tone, length } = inputs
+  const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
+  const setType = (v) => setInputs((p) => ({ ...p, type: v }))
+  const setTitle = (v) => setInputs((p) => ({ ...p, title: v ?? '' }))
+  const setTone = (v) => setInputs((p) => ({ ...p, tone: v }))
+  const setLength = (v) => setInputs((p) => ({ ...p, length: v }))
   const [result, setResult] = useState('')
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
@@ -178,18 +188,6 @@ export default function CopywritingPage() {
     navigator.clipboard.writeText(result)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }
-
-  const downloadResult = () => {
-    const name = (title || 'AI文案').replace(/[\\/:*?"<>|]/g, '_')
-    const blob = new Blob([result], { type: 'text/markdown;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name}.md`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('已下载 Markdown 文件')
   }
 
   const applyTemplate = (tpl) => {
@@ -410,6 +408,12 @@ export default function CopywritingPage() {
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="描述你的文案需求，如：为一款新的智能手表写营销文案，突出健康监测功能..."
                   rows={5}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !task) {
+                      e.preventDefault()
+                      generate()
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 outline-none"
                 />
               </div>
@@ -509,9 +513,7 @@ export default function CopywritingPage() {
               </h3>
               {result && (
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" icon={Download} onClick={downloadResult}>
-                    下载
-                  </Button>
+                  <ExportButton content={result} title="文案生成结果" />
                   <ShareButton content={result} title="文案生成结果" contentType="copywriting" />
                   <Button
                     variant="ghost"

@@ -24,9 +24,11 @@ import {
   SlidersHorizontal,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonList } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const SCENES = [
   {
@@ -104,12 +106,22 @@ function fmtSize(bytes) {
 
 export default function VoicePage() {
   const toast = useToast()
-  const [scene, setScene] = useState('shortvideo')
-  const [text, setText] = useState('')
-  const [voice, setVoice] = useState('zh-CN-XiaoxiaoNeural')
-  const [speed, setSpeed] = useState(1.0)
-  const [pitch, setPitch] = useState(0)
-  const [format, setFormat] = useState('mp3')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('voice_inputs', {
+    scene: 'shortvideo',
+    text: '',
+    voice: 'zh-CN-XiaoxiaoNeural',
+    speed: 1.0,
+    pitch: 0,
+    format: 'mp3',
+  })
+  const { scene, text, voice, speed, pitch, format } = inputs
+  const setScene = (v) => setInputs((p) => ({ ...p, scene: v }))
+  const setText = (v) => setInputs((p) => ({ ...p, text: v ?? '' }))
+  const setVoice = (v) => setInputs((p) => ({ ...p, voice: v }))
+  const setSpeed = (v) => setInputs((p) => ({ ...p, speed: v }))
+  const setPitch = (v) => setInputs((p) => ({ ...p, pitch: v }))
+  const setFormat = (v) => setInputs((p) => ({ ...p, format: v }))
   const [previewing, setPreviewing] = useState('')
   const [generating, setGenerating] = useState(false)
   const [items, setItems] = useState([])
@@ -133,7 +145,7 @@ export default function VoicePage() {
     loadList()
   }, [])
 
-  // 进入页面恢复草稿
+  // 进入页面恢复草稿（仅挂载时执行一次，setter 均为函数式更新）
   useEffect(() => {
     api
       .get('/api/drafts/voice')
@@ -148,7 +160,7 @@ export default function VoicePage() {
         }
       })
       .catch(() => {})
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 输入防抖自动保存草稿
   useEffect(() => {
@@ -815,6 +827,14 @@ export default function VoicePage() {
                       >
                         <Download className="w-4 h-4" />
                       </button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <ShareButton
+                          content={`# 配音作品：${item.title}\n\n文本：${item.text || ''}\n音色：${item.voice_name || ''} · 场景：${item.scene_label || ''}\n\n> 由小团智能平台 AI 配音工坊生成 · ${new Date().toLocaleString()}`}
+                          title={`配音：${item.title}`}
+                          contentType="voice"
+                          className="!p-1.5"
+                        />
+                      </span>
                       <button
                         onClick={() => remove(item)}
                         title="删除"

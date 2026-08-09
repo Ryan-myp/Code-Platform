@@ -10,7 +10,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -72,7 +72,7 @@ async def get_draft(tool_id: str, current_user: dict = require_auth()):
     ).fetchone()
     conn.close()
     if not row:
-        raise HTTPException(404, "无草稿")
+        return None  # 无草稿返回 200 + null，避免前端轮询产生 404 控制台噪音
     d = dict(row)
     d["content"] = json.loads(d.get("content") or "{}")
     meta = TOOL_META.get(d["tool_id"], {})

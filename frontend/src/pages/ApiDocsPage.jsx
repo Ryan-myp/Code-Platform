@@ -13,7 +13,7 @@ import {
   EyeOff,
   Zap,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog } from '../components/ui'
+import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -26,6 +26,8 @@ export default function ApiDocsPage() {
   const [deleteId, setDeleteId] = useState(null)
   const [showFullKey, setShowFullKey] = useState({})
   const [loaded, setLoaded] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createLabel, setCreateLabel] = useState('')
 
   const loadData = async () => {
     try {
@@ -46,11 +48,12 @@ export default function ApiDocsPage() {
   }, [])
 
   const createKey = async () => {
-    const label = prompt('输入备注标签（可选）：') || ''
     setCreating(true)
     try {
-      const res = await api.post('/api/api-keys', { label })
+      const res = await api.post('/api/api-keys', { label: createLabel.trim() })
       setNewKey(res.data)
+      setCreateOpen(false)
+      setCreateLabel('')
       loadData()
       toast.success('API Key 创建成功')
     } catch (e) {
@@ -142,7 +145,7 @@ export default function ApiDocsPage() {
               variant="primary"
               icon={Plus}
               loading={creating}
-              onClick={createKey}
+              onClick={() => setCreateOpen(true)}
               className="w-full mt-3"
             >
               创建新 Key
@@ -242,6 +245,40 @@ export default function ApiDocsPage() {
         confirmLabel="确认吊销"
         icon={Trash2}
       />
+
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="创建 API Key"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              取消
+            </Button>
+            <Button variant="primary" loading={creating} onClick={createKey}>
+              创建
+            </Button>
+          </>
+        }
+      >
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1.5">
+            备注标签（可选，便于区分用途）
+          </label>
+          <input
+            value={createLabel}
+            onChange={(e) => setCreateLabel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && createKey()}
+            autoFocus
+            placeholder="如：我的小程序 / 数据分析脚本"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+          />
+          <p className="text-xs text-gray-400 mt-2">
+            Key 创建后通过 Bearer 认证调用平台 AI 能力，配额随你的账号额度，也可用于 OpenAI 兼容接口（/v1/chat/completions）。
+          </p>
+        </div>
+      </Modal>
     </div>
   )
 }

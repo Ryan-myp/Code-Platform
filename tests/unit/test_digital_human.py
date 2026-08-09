@@ -733,7 +733,7 @@ class TestRenderRealism:
         if codec == "libx264":
             assert enc[enc.index("-crf") + 1] == "18"
         else:
-            assert enc[enc.index("-b:v") + 1] == "6M"  # videotoolbox 不支持 qscale，用码率模式
+            assert enc[enc.index("-b:v") + 1] == "5M"  # videotoolbox 不支持 qscale，用码率模式（720p 分级 5M，1080p 为 6M）
         assert seen.get("max_workers", 0) >= 2  # 帧渲染已并行化
 
     def test_scene_background_photo_like(self):
@@ -759,3 +759,1040 @@ class TestRenderRealism:
         assert _build_bg_src(None, 640, 360) is None
         img = _build_bg_src({"id": "office", "type": "image"}, 640, 360)
         assert img is not None and img.size == (640, 360)
+
+
+# ══════════════════════════════════════════════════════════════
+# v13.0 稳定性：失败自动重试 / stage 埋点 / TTS 通道健康检查
+# ══════════════════════════════════════════════════════════════
+
+
+def _make_dh_req(**overrides):
+    """构造最小合法 GenerateRequest。"""
+    from digital_human import GenerateRequest
+
+    return GenerateRequest(text="大家好，今天分享一个实用技巧，希望对你有帮助。", **overrides)
+
+
+def _patch_dh_deps(tmp_path, monkeypatch):
+    """把音频/视频输出目录指向临时目录，返回 (mock 工厂)。"""
+    import digital_human
+
+    monkeypatch.setattr(digital_human, "UPLOAD_AUDIO_DIR", str(tmp_path / "audio"))
+    monkeypatch.setattr(digital_human, "UPLOAD_VIDEO_DIR", str(tmp_path / "videos"))
+    (tmp_path / "audio").mkdir(exist_ok=True)
+    (tmp_path / "videos").mkdir(exist_ok=True)
+    return digital_human
+
+
+def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
+    """TTS 第一次失败、第二次成功 → 生成成功；配额只扣一次、不重复扣费。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {"tts": 0, "quota": 0, "render": 0}
+
+    def fake_tts(*a, **k):
+        calls["tts"] += 1
+        if calls["tts"] == 1:
+            raise RuntimeError("edge-tts 网络抖动")
+        return b"x" * 2048  # ≥512 字节才被视为有效音频
+
+    def fake_quota(uid):
+        calls["quota"] += 1
+        return {"allowed": True, "remaining": 9}
+
+    def fake_render(**k):
+        calls["render"] += 1
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake mp4")
+
+    from unittest.mock import patch
+
+    with patch("common.auth.consume_quota", side_effect=fake_quota), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(_make_dh_req(), "tester", "uid_retry1")
+
+    assert result["status"] == "done"
+    assert calls["tts"] == 2  # 自动重试 1 次
+    assert calls["quota"] == 1  # 配额只扣一次（重试不重复扣费）
+    assert calls["render"] == 1
+
+
+def test_render_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
+    """渲染第一次失败、第二次成功 → 成功；音频复用，不重复 TTS。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {"tts": 0, "render": 0}
+
+    def fake_tts(*a, **k):
+        calls["tts"] += 1
+        return b"x" * 2048
+
+    def fake_render(**k):
+        calls["render"] += 1
+        if calls["render"] == 1:
+            raise RuntimeError("视频编码失败（ffmpeg exit 1）")
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake mp4")
+
+    from unittest.mock import patch
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(_make_dh_req(), "tester", "uid_retry2")
+
+    assert result["status"] == "done"
+    assert calls["render"] == 2  # 渲染重试 1 次
+    assert calls["tts"] == 1  # 音频已缓存，不重复 TTS
+
+
+def test_tts_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
+    """TTS 连续失败 → status=failed 且 error 带 [stage:tts] 前缀（诊断埋点）。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+
+    from unittest.mock import patch
+
+    def fake_tts(*a, **k):
+        raise RuntimeError("TTS 通道均不可用")
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts):
+        result = digital_human._generate_one(_make_dh_req(), "tester", "uid_stage1")
+
+    assert result["status"] == "failed"
+    assert "[stage:tts]" in (result.get("error") or "")
+
+
+def test_render_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
+    """渲染连续失败 → status=audio_only 且 error 带 [stage:render] 前缀。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+
+    from unittest.mock import patch
+
+    def fake_tts(*a, **k):
+        return b"x" * 2048
+
+    def fake_render(**k):
+        raise RuntimeError("帧渲染超时")
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(_make_dh_req(), "tester", "uid_stage2")
+
+    assert result["status"] == "audio_only"
+    assert "[stage:render]" in (result.get("error") or "")
+    assert result.get("audio_url")  # 音频已生成
+
+
+def test_tts_health_check_switch(monkeypatch):
+    """健康检查：edge 通道失败标记不可用，恢复后重新可用。"""
+    import voice_factory
+
+    monkeypatch.setitem(voice_factory._TTS_CHANNEL_STATE, "checked_at", 0.0)
+
+    def fake_edge_fail(*a, **k):
+        raise RuntimeError("edge-tts 不可用")
+
+    def fake_edge_ok(*a, **k):
+        return b"x" * 512
+
+    monkeypatch.setattr(voice_factory, "_tts_edge", fake_edge_fail)
+    assert voice_factory._tts_health_check(force=True) is False
+    assert voice_factory._TTS_CHANNEL_STATE["edge_ok"] is False
+
+    monkeypatch.setattr(voice_factory, "_tts_edge", fake_edge_ok)
+    assert voice_factory._tts_health_check(force=True) is True
+    assert voice_factory._TTS_CHANNEL_STATE["edge_ok"] is True
+
+
+# ══════════════════════════════════════════════════════════════
+# v13.0 照片数字人（engine=live_portrait）：引擎校验 / 成功 / 降级 2D
+# ══════════════════════════════════════════════════════════════
+
+
+def _make_photo_avatar(tmp_path) -> dict:
+    """构造照片形象（带本地原图路径）。"""
+    photo = tmp_path / "photo_avatar.jpg"
+    photo.write_bytes(b"fake jpeg")
+    return {
+        "id": "custom_photo1",
+        "name": "我的照片形象",
+        "is_custom": True,
+        "local_image_path": str(photo),
+        "emoji": "📷",
+    }
+
+
+def test_live_portrait_requires_photo_avatar(test_db_path, tmp_path, monkeypatch):
+    """engine=live_portrait 必须使用照片形象，内置形象/普通自定义形象直接 400。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    monkeypatch.setattr(digital_human, "_load_custom_avatars", lambda user: {"custom_photo1": _make_photo_avatar(tmp_path)})
+
+    from fastapi import HTTPException
+
+    # 内置形象（非自定义）→ 400
+    try:
+        digital_human._generate_one(_make_dh_req(engine="live_portrait"), "tester", "uid_lp1")
+        raise AssertionError("应抛出 HTTPException")
+    except HTTPException as e:
+        assert e.status_code == 400
+        assert "照片形象" in str(e.detail)
+
+    # 照片形象 → 进入生成流程（配额 mock 后应成功）
+    from unittest.mock import patch
+
+    with patch(
+        "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
+    ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
+        "voice_factory._tts_one", return_value=b"x" * 2048
+    ), patch(
+        "digital_human._render_video"
+    ) as fake_render:
+        # 手动渲染成功（写假 mp4），避免触发真实生成
+        def _fake_render(**k):
+            with open(k["output_path"], "wb") as f:
+                f.write(b"fake mp4")
+
+        fake_render.side_effect = _fake_render
+        result = digital_human._generate_one(
+            _make_dh_req(avatar_id="custom_photo1", engine="live_portrait"), "tester", "uid_lp1"
+        )
+    assert result["status"] == "done"
+
+
+def test_live_portrait_success(test_db_path, tmp_path, monkeypatch):
+    """engine=live_portrait 且照片引擎成功 → done，记录 engine=live_portrait。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    monkeypatch.setattr(digital_human, "_load_custom_avatars", lambda user: {"custom_photo1": _make_photo_avatar(tmp_path)})
+
+    from unittest.mock import patch
+
+    def fake_photo_engine(**k):
+        # 照片引擎成功产出视频
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake live portrait mp4")
+        return {"duration": 8.0, "frames": 200, "fps": 25}
+
+    with patch(
+        "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
+    ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
+        "voice_factory._tts_one", return_value=b"x" * 2048
+    ), patch(
+        "live_portrait_engine.generate_from_photo", side_effect=fake_photo_engine
+    ), patch("digital_human._render_video") as fake_2d:
+        result = digital_human._generate_one(
+            _make_dh_req(avatar_id="custom_photo1", engine="live_portrait"), "tester", "uid_lp2"
+        )
+    assert result["status"] == "done"
+    assert result["engine"] == "live_portrait"  # 未降级
+    assert result.get("video_url")
+    fake_2d.assert_not_called()  # 2D 引擎未使用
+
+
+def test_live_portrait_fallback_to_2d(test_db_path, tmp_path, monkeypatch):
+    """照片引擎失败 → 自动降级 2D 基础引擎，仍然出片（engine 记录实际值 2d）。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    monkeypatch.setattr(digital_human, "_load_custom_avatars", lambda user: {"custom_photo1": _make_photo_avatar(tmp_path)})
+
+    from unittest.mock import patch
+
+    def fake_photo_engine(**k):
+        raise RuntimeError("照片数字人模型推理失败")
+
+    def fake_render(**k):
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake 2d mp4")
+
+    with patch(
+        "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
+    ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
+        "voice_factory._tts_one", return_value=b"x" * 2048
+    ), patch(
+        "live_portrait_engine.generate_from_photo", side_effect=fake_photo_engine
+    ), patch("digital_human._render_video", side_effect=fake_render):
+        result = digital_human._generate_one(
+            _make_dh_req(avatar_id="custom_photo1", engine="live_portrait"), "tester", "uid_lp3"
+        )
+    assert result["status"] == "done"
+    assert result["engine"] == "2d"  # 降级后如实记录
+    assert result.get("video_url")
+    assert not (result.get("error") or "")  # 降级成功无 error
+
+
+# ══════════════════════════════════════════════════════════════
+# v13.0 照片数字人引擎（live_portrait_engine 独立模块）
+# ══════════════════════════════════════════════════════════════
+
+
+def test_engine_missing_model_error(tmp_path, monkeypatch):
+    """模型权重缺失 → 明确错误提示（含安装指引），不崩溃。"""
+    pytest.importorskip("torch")
+    pytest.importorskip("cv2")
+    pytest.importorskip("librosa")
+    pytest.importorskip("mediapipe")
+    import live_portrait_engine
+
+    monkeypatch.setattr(live_portrait_engine, "_MODEL_PATH", str(tmp_path / "not_exists.pth"))
+
+    with pytest.raises(RuntimeError) as ei:
+        live_portrait_engine.generate_from_photo(
+            photo_path=str(tmp_path / "p.jpg"),
+            audio_path=str(tmp_path / "a.mp3"),
+            output_path=str(tmp_path / "o.mp4"),
+        )
+    assert "模型权重缺失" in str(ei.value)
+
+
+def test_engine_photo_missing(tmp_path, monkeypatch):
+    """照片文件不存在 → 明确错误。"""
+    pytest.importorskip("torch")
+    pytest.importorskip("cv2")
+    import live_portrait_engine
+
+    monkeypatch.setattr(live_portrait_engine, "_require_deps", lambda: None)
+
+    with pytest.raises(RuntimeError) as ei:
+        live_portrait_engine.generate_from_photo(
+            photo_path=str(tmp_path / "no.jpg"),
+            audio_path=str(tmp_path / "a.mp3"),
+            output_path=str(tmp_path / "o.mp4"),
+        )
+    assert "照片文件不存在" in str(ei.value)
+
+
+def test_engine_mel_chunks_shape(tmp_path):
+    """mel 分块：每帧 (80,16) 窗口，帧数 ≈ 音频秒数 × 25fps。"""
+    pytest.importorskip("librosa")
+    import numpy as np
+    from scipy.io import wavfile
+
+    import live_portrait_engine
+
+    sr = 16000
+    t = np.linspace(0, 1.0, sr, endpoint=False)
+    wav = (np.sin(2 * np.pi * 220 * t) * 0.3 * 32767).astype(np.int16)
+    wav_path = str(tmp_path / "tone.wav")
+    wavfile.write(wav_path, sr, wav)
+
+    chunks = live_portrait_engine._mel_chunks(wav_path)
+    assert len(chunks) >= 24  # 1s 音频 ≈ 25 帧
+    assert all(c.shape == (80, 16) for c in chunks)
+    assert all(c.min() >= -4.01 and c.max() <= 4.01 for c in chunks)  # 归一化范围 [-4,4]
+
+
+def test_engine_concurrent_slot(test_db_path, tmp_path, monkeypatch):
+    """全局推理并发锁：同批次串行（Semaphore=1），获取超时抛明确错误。"""
+    import threading
+
+    import live_portrait_engine
+
+    assert isinstance(live_portrait_engine._LIVE_PORTRAIT_SLOT, threading.BoundedSemaphore)
+    assert live_portrait_engine._LIVE_PORTRAIT_SLOT._value == 1  # 全局串行防显存争抢
+
+
+# ══════════════════════════════════════════════════════════════
+# v14.0 声音克隆（voice_clone）：基频分析 / 音色匹配 / 合规 / 吊销 / 生成透传
+# ══════════════════════════════════════════════════════════════
+
+
+def _make_sample_wav(path, freq=220.0, seconds=12, sr=16000):
+    """合成正弦波人声样本（基频可调），返回时长秒。"""
+    import numpy as np
+    from scipy.io import wavfile
+
+    t = np.linspace(0, seconds, int(sr * seconds), endpoint=False)
+    y = 0.5 * np.sin(2 * np.pi * freq * t) + 0.05 * np.sin(2 * np.pi * freq * 2 * t)
+    wavfile.write(str(path), sr, (y * 32767).astype(np.int16))
+    return seconds
+
+
+def _seed_clone_record(conn, clone_id="clone_test1", user="tester", status="active"):
+    """直接落库一条克隆声音记录（绕过分析任务，供链路测试）。"""
+    from digital_human import _ensure_tables
+
+    _ensure_tables(conn)
+    conn.execute(
+        "INSERT INTO voice_clones (id, user_id, voice_name, sample_path, sample_duration,"
+        " f0_mean, gender, edge_voice, pitch_hz, speed, status, declare_authorized, engine, created_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            clone_id,
+            user,
+            "我的克隆音",
+            "/tmp/sample_220.wav",
+            12.0,
+            220.0,
+            "女",
+            "zh-CN-XiaoyiNeural",
+            5,
+            1.0,
+            status,
+            1,
+            "pitch_fit",
+            "2026-08-01T10:00:00",
+        ),
+    )
+    conn.commit()
+
+
+def test_voice_clone_analyze_sample(tmp_path):
+    """正弦波样本 → f0_mean≈设定基频、性别判定正确、时长上报。"""
+    pytest.importorskip("librosa")
+    from voice_clone import analyze_sample
+
+    for freq, gender in [(220.0, "女"), (140.0, "男")]:
+        p = tmp_path / f"s{int(freq)}.wav"
+        _make_sample_wav(p, freq)
+        a = analyze_sample(str(p))
+        assert abs(a["f0_mean"] - freq) < 5, f"f0={a['f0_mean']} vs {freq}"
+        assert a["gender"] == gender
+        assert a["duration"] == pytest.approx(12, abs=1)
+
+
+def test_voice_clone_analyze_short_sample(tmp_path):
+    """样本过短（<10s）→ 明确报错（接口层同样拦截）。"""
+    pytest.importorskip("librosa")
+    from voice_clone import analyze_sample
+
+    p = tmp_path / "short.wav"
+    _make_sample_wav(p, 220.0, seconds=3)
+    with pytest.raises(ValueError, match="10-60"):
+        analyze_sample(str(p))
+
+
+def test_voice_clone_fit_voice_matches_pool():
+    """基频 → 同性别音色池最近匹配；pitch 补偿限幅 ±20。"""
+    from voice_clone import fit_voice
+
+    fit = fit_voice(220.0)
+    assert fit["gender"] == "女"
+    assert fit["edge_voice"].startswith("zh-CN-")
+    assert fit["edge_voice"] == "zh-CN-XiaoyiNeural"  # 220Hz → 基准 215 的晓伊（比 230 的晓晓更近）
+    assert abs(fit["pitch_hz"]) <= 20  # 补偿限幅内
+    # 音色池仅收录 edge-tts 服务端当前验证可用的音色（其余已 NoAudioReceived）
+    from voice_clone import VOICE_POOL
+
+    assert len(VOICE_POOL) >= 6
+    assert all(v[2] in ("女", "男") for v in VOICE_POOL)
+    # 极端基频：pitch 仍被限幅在 ±20（edge-tts 官方 ±50，保守取 ±20）
+    assert fit_voice(400.0)["gender"] == "女" and fit_voice(400.0)["pitch_hz"] <= 20
+    assert fit_voice(60.0)["gender"] == "男" and fit_voice(60.0)["pitch_hz"] >= -20
+    # 中性音域（175-185）：全池最近匹配
+    assert fit_voice(180.0)["edge_voice"] in {v[0] for v in VOICE_POOL}
+
+
+def test_voice_clone_route_requires_declare(tmp_path, auth_headers):
+    """合规必选：未声明「本人声音或已获授权」→ 400，不创建任务/不落文件。"""
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    p = tmp_path / "s.wav"
+    _make_sample_wav(p, 220.0)
+    client = TestClient(app)
+    with open(p, "rb") as f:
+        resp = client.post(
+            "/api/digital-human/voice-clone",
+            headers=auth_headers,
+            data={"voice_name": "测试克隆", "declare_authorized": ""},
+            files={"file": ("s.wav", f, "audio/wav")},
+        )
+    assert resp.status_code == 400
+    assert "声明" in resp.json()["detail"]
+
+
+def test_voice_clone_route_duration_window(tmp_path, auth_headers, monkeypatch):
+    """时长窗口 10-60s：超窗样本 → 400 且清理落盘文件。"""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    p = tmp_path / "s.wav"
+    _make_sample_wav(p, 220.0, seconds=3)
+    client = TestClient(app)
+    # mock ffprobe 时长：3s 样本 → 直接返回 3（真实 ffprobe 也可，mock 保证 CI 稳定）
+    with patch("digital_human._audio_duration", return_value=3.0):
+        with open(p, "rb") as f:
+            resp = client.post(
+                "/api/digital-human/voice-clone",
+                headers=auth_headers,
+                data={"voice_name": "测试克隆", "declare_authorized": "true"},
+                files={"file": ("s.wav", f, "audio/wav")},
+            )
+    assert resp.status_code == 400
+    assert "10-60" in resp.json()["detail"]
+
+
+def test_voice_clone_handler_inserts_record(test_db_path, tmp_path, monkeypatch):
+    """克隆任务：基频分析 + 音色匹配 → 入库 active（含合规标记与 engine 预留字段）。"""
+    from common.db import get_db
+    from digital_human import _dh_voice_clone_handler, _load_custom_voices
+
+    sample = tmp_path / "s.wav"
+    _make_sample_wav(sample, 220.0)
+    monkeypatch.setattr("voice_clone.analyze_sample", lambda p: {
+        "duration": 12.0, "f0_mean": 220.0, "voiced_ratio": 0.9, "gender": "女",
+    })
+    monkeypatch.setattr("voice_clone.fit_voice", lambda f: {
+        "edge_voice": "zh-CN-XiaoyiNeural", "voice_name": "晓伊", "gender": "女",
+        "pitch_hz": 5, "speed": 1.0, "base_f0": 215.0, "style": "温柔知性",
+    })
+    progress = []
+    result = _dh_voice_clone_handler(
+        "task_vc1",
+        {"clone_id": "clone_test1", "sample_path": str(sample), "voice_name": "我的克隆音"},
+        lambda p, s: progress.append((p, s)),
+        {"username": "tester", "user_id": "uid_vc1"},
+    )
+    assert result["clone_id"] == "clone_test1"
+    assert result["pitch_hz"] == 5 and result["edge_voice"] == "zh-CN-XiaoyiNeural"
+    assert progress[-1][0] == 100
+    # 入库后可被声音链路加载（is_clone 标记、名称/描述友好化）
+    voices = _load_custom_voices("tester")
+    v = voices["clone_test1"]
+    assert v["is_clone"] is True and v["is_custom"] is True
+    assert v["status"] == "active" and v["declare_authorized"] == 1
+    assert v["engine"] == "pitch_fit"
+    assert "女声" in v["desc"] and v["emoji"] == "🔊"
+    conn = get_db()
+    row = conn.execute("SELECT * FROM voice_clones WHERE id='clone_test1'").fetchone()
+    conn.close()
+    assert row["user_id"] == "tester"  # 与 records/custom_voices 一致：存 username
+
+
+def test_voice_clone_handler_failure_cleans_sample(test_db_path, tmp_path, monkeypatch):
+    """分析失败 → 任务抛错且样本文件被清理（不留垃圾文件）。"""
+    from digital_human import _dh_voice_clone_handler
+
+    sample = tmp_path / "s.wav"
+    _make_sample_wav(sample, 220.0)
+    monkeypatch.setattr(
+        "voice_clone.analyze_sample", lambda p: (_ for _ in ()).throw(ValueError("未检测到清晰人声"))
+    )
+    with pytest.raises(ValueError):
+        _dh_voice_clone_handler(
+            "task_vc2",
+            {"clone_id": "clone_fail", "sample_path": str(sample), "voice_name": "x"},
+            lambda p, s: None,
+            {"username": "tester", "user_id": "uid_vc2"},
+        )
+    assert not sample.exists()  # 失败清理
+
+
+def test_voice_clone_generate_pitch_passthrough(test_db_path, tmp_path, monkeypatch):
+    """克隆声音生成：TTS 收到匹配音色 + pitch 补偿（不用样本直配），成功出片。"""
+    from unittest.mock import patch
+
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        digital_human, "_load_custom_voices",
+        lambda user: {"clone_test1": {
+            "id": "clone_test1", "is_custom": True, "is_clone": True,
+            "edge_voice": "zh-CN-XiaoyiNeural", "pitch_hz": 5,
+            "name": "我的克隆音", "emoji": "🔊",
+        }},
+    )
+
+    def fake_render(**k):
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake mp4")
+
+    calls = {}
+
+    def fake_tts(text, voice, speed, pitch=0):
+        calls.update(voice=voice, speed=speed, pitch=pitch)
+        return b"x" * 2048
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(
+            _make_dh_req(voice_id="clone_test1"), "tester", "uid_vc3"
+        )
+    assert result["status"] == "done"
+    assert calls["voice"] == "zh-CN-XiaoyiNeural"  # 匹配音色
+    assert calls["pitch"] == 5  # 基频补偿透传
+    assert calls["speed"] == 1.0
+
+
+def test_voice_clone_revoked_not_in_voices(test_db_path, tmp_path, monkeypatch):
+    """吊销（status=revoked）后：不再进入声音列表，生成链路直接 400 未知声音。"""
+    from fastapi import HTTPException
+
+    import digital_human
+    from common.db import get_db
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    conn = get_db()
+    _seed_clone_record(conn, user="tester", status="active")
+    _seed_clone_record(conn, clone_id="clone_revoked", user="tester", status="revoked")
+    conn.close()
+    voices = digital_human._load_custom_voices("tester")
+    assert "clone_test1" in voices
+    assert "clone_revoked" not in voices  # 吊销项不可用
+    from unittest.mock import patch
+
+    with patch("common.auth.get_quota_info", return_value={"membership": "pro", "remaining_today": 9}):
+        with pytest.raises(HTTPException, match="未知声音"):
+            digital_human._precheck_generate(_make_dh_req(voice_id="clone_revoked"), "uid_x", "tester")
+
+
+def test_voice_clone_revoke_api(test_db_path, tmp_path, auth_headers):
+    """吊销接口端到端：active → revoked + 样本删除 + 生成链路不可用。"""
+    from fastapi.testclient import TestClient
+
+    import digital_human
+    from common.db import get_db
+    from main import app
+
+    sample = tmp_path / "s.wav"
+    _make_sample_wav(sample, 220.0)
+    conn = get_db()
+    _seed_clone_record(conn, user="admin")
+    conn.execute("UPDATE voice_clones SET sample_path=? WHERE id='clone_test1'", (str(sample),))
+    conn.commit()
+    conn.close()
+
+    client = TestClient(app)
+    resp = client.post("/api/digital-human/voice-clones/clone_test1/revoke", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    conn = get_db()
+    row = conn.execute("SELECT status FROM voice_clones WHERE id='clone_test1'").fetchone()
+    conn.close()
+    assert row["status"] == "revoked"
+    assert not sample.exists()  # 样本已删除
+    # 吊销后不再出现在可用声音列表
+    assert "clone_test1" not in digital_human._load_custom_voices("admin")
+    # 未授权访问 → 401（鉴权在依赖注入层拦截）
+    resp2 = client.post(
+        "/api/digital-human/voice-clones/clone_test1/revoke",
+        headers={"Authorization": "Bearer bad-token"},
+    )
+    assert resp2.status_code == 401
+
+
+# ══════════════════════════════════════════════════════════════
+# p4a 行业模板库：模板常量 / 渲染样式参数化 / 脚本助手结构
+# ══════════════════════════════════════════════════════════════
+
+
+def test_templates_api_returns_five_industries(auth_headers):
+    """行业模板库：5 类模板齐备，每模板含场景背景/字幕样式/片头片尾/文案结构。"""
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app)
+    resp = client.get("/api/digital-human/templates", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    templates = resp.json()["templates"]
+    ids = [t["id"] for t in templates]
+    assert ids == ["live_shopping", "knowledge", "news", "course", "brand"]
+    for t in templates:
+        assert t["name"] and t["emoji"] and t["desc"]
+        assert t["scene_id"] in {"product", "course", "news", "livestream", "story"}
+        assert t["background_id"] and t["voice_hint"] and 0.5 <= t["speed_hint"] <= 2.0
+        sub = t["subtitle"]
+        assert sub["position"] in ("right", "center")
+        assert sub["color"].startswith("#") and 20 <= sub["font_size"] <= 48
+        assert t["opening"] and t["closing"] and "→" in t["script_structure"]
+
+
+def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatch):
+    """选模板生成：_render_video 收到字幕样式/片头片尾，记录落库 template_id。"""
+    from unittest.mock import patch
+
+    import digital_human
+    from common.db import get_db
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {}
+
+    def fake_render(**k):
+        calls.update(
+            subtitle_style=k.get("subtitle_style"),
+            opening=k.get("opening"),
+            closing=k.get("closing"),
+        )
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake mp4")
+
+    def fake_tts(text, voice, speed, pitch=0):
+        return b"x" * 2048
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", side_effect=fake_tts), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(
+            _make_dh_req(template_id="live_shopping"), "tester", "uid_tpl1"
+        )
+    assert result["status"] == "done"
+    assert calls["subtitle_style"] == {"position": "center", "color": "#ffb84d", "font_size": 34}
+    assert calls["opening"] == "好物严选 · 真实测评"
+    assert calls["closing"] == "点击关注，好物不错过"
+    conn = get_db()
+    row = conn.execute("SELECT template_id FROM digital_human_records WHERE id=?", (result["record_id"],)).fetchone()
+    conn.close()
+    assert row and row["template_id"] == "live_shopping"
+
+
+def test_generate_without_template_keeps_default(test_db_path, tmp_path, monkeypatch):
+    """未选模板：_render_video 收到 None 样式（保持原渲染，不回归）。"""
+    from unittest.mock import patch
+
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {}
+
+    def fake_render(**k):
+        calls["subtitle_style"] = k.get("subtitle_style")
+        with open(k["output_path"], "wb") as f:
+            f.write(b"fake mp4")
+
+    with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
+        "common.auth.get_quota_info", return_value={"membership": "pro"}
+    ), patch("voice_factory._tts_one", return_value=b"x" * 2048), patch(
+        "digital_human._render_video", side_effect=fake_render
+    ):
+        result = digital_human._generate_one(_make_dh_req(), "tester", "uid_tpl2")
+    assert result["status"] == "done"
+    assert calls["subtitle_style"] is None
+
+
+def test_generate_unknown_template_rejected(test_db_path, tmp_path, monkeypatch):
+    """未知模板 ID → 400（不消耗配额）。"""
+    from fastapi import HTTPException
+
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    with pytest.raises(HTTPException, match="未知行业模板"):
+        digital_human._generate_one(_make_dh_req(template_id="no_such_tpl"), "tester", "uid_tpl3")
+
+
+def test_render_frame_center_subtitle_layout():
+    """center 字幕模式：底部居中布局可渲染，无模板时右侧布局不变。"""
+    import digital_human as dh
+
+    fonts = {
+        "title": dh._load_font(36, dh._FONT_CANDIDATES) if hasattr(dh, "_FONT_CANDIDATES") else dh._load_font(36, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "name": dh._load_font(28, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "body": dh._load_font(20, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "tag": dh._load_font(18, ["/System/Library/Fonts/Helvetica.ttc"]),
+    }
+    avatar = {"id": "business-female", "name": "晓琳", "style": "职业女性"}
+    lines = ["大家好，今天分享一个实用技巧。", "希望对你有帮助，记得点赞收藏。"]
+    sub_font = dh._load_font(34, ["/System/Library/Fonts/Helvetica.ttc"])
+    # center：底部居中大字（带货种草模板样式）
+    img = dh._render_frame(
+        avatar=avatar,
+        bg_hex="#1a1a2e",
+        fonts=fonts,
+        portrait=None,
+        text_lines=lines,
+        t=0.5,
+        progress=0.3,
+        width=1280,
+        height=720,
+        subtitle_style={"position": "center", "color": "#ffb84d", "font_size": 34},
+        sub_font=sub_font,
+    )
+    assert img.size == (1280, 720)
+    # 默认（无模板）：右侧布局不报错
+    img2 = dh._render_frame(
+        avatar=avatar,
+        bg_hex="#1a1a2e",
+        fonts=fonts,
+        portrait=None,
+        text_lines=lines,
+        t=0.5,
+        progress=0.3,
+        width=1280,
+        height=720,
+    )
+    assert img2.size == (1280, 720)
+
+
+def test_script_assist_uses_template_structure():
+    """脚本助手：带 template_id 时 prompt 注入模板推荐文案结构。"""
+    from unittest.mock import patch
+
+    import digital_human
+
+    seen = {}
+
+    def fake_llm(system, user_prompt, **kw):
+        seen["prompt"] = user_prompt
+        return '["第一版文案内容，结构完整。","第二版文案内容。","第三版文案内容。"]'
+
+    with patch("digital_human.call_llm", side_effect=fake_llm), patch("digital_human.log_usage"):
+        resp = digital_human.script_assist(
+            digital_human.ScriptAssistRequest(topic="新能源车", template_id="news"),
+            current_user={"username": "tester"},
+        )
+    assert resp["source"] == "ai" and len(resp["scripts"]) == 3
+    assert "文案结构：导语" in seen["prompt"]  # 新闻播报模板结构
+    assert "产品介绍" in seen["prompt"]  # 场景风格（scene_id 独立于 template_id，由前端按模板填充）
+    # 未选模板：无结构注入
+    with patch("digital_human.call_llm", side_effect=fake_llm), patch("digital_human.log_usage"):
+        digital_human.script_assist(
+            digital_human.ScriptAssistRequest(topic="新能源车"),
+            current_user={"username": "tester"},
+        )
+    assert "文案结构" not in seen["prompt"]
+
+
+# ══════════════════════════════════════════════════════════════
+# v14.0 出片提速：音频缓存 / 字幕静态帧跳过重绘 / 批量 TTS 预热
+# ══════════════════════════════════════════════════════════════
+
+
+def test_tts_cache_reuses_same_key(test_db_path, tmp_path, monkeypatch):
+    """音频缓存：同文案+同音色+同语速第二次命中，不重复合成。"""
+    import os
+
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {"tts": 0}
+
+    def fake_tts(*a, **k):
+        calls["tts"] += 1
+        return b"\xff\xfb" * 2048
+
+    from unittest.mock import patch
+
+    with patch("voice_factory._tts_one", side_effect=fake_tts):
+        p1, u1 = digital_human._tts_cached("大家好，缓存测试文案", "zh-CN-XiaoxiaoNeural", 1.0)
+        p2, u2 = digital_human._tts_cached("大家好，缓存测试文案", "zh-CN-XiaoxiaoNeural", 1.0)
+    assert calls["tts"] == 1  # 第二次命中缓存
+    assert p1 == p2 and u1 == u2
+    assert os.path.exists(p1) and os.path.getsize(p1) >= 512
+    assert "tts_cache" in u1
+
+
+def test_tts_cache_distinct_key_separate(test_db_path, tmp_path, monkeypatch):
+    """音频缓存：音色/语速任一不同 → 各自合成，互不串用。"""
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    calls = {"tts": 0}
+
+    def fake_tts(*a, **k):
+        calls["tts"] += 1
+        return b"\xff\xfb" * 2048
+
+    from unittest.mock import patch
+
+    with patch("voice_factory._tts_one", side_effect=fake_tts):
+        digital_human._tts_cached("大家好，缓存区分测试", "zh-CN-XiaoxiaoNeural", 1.0)
+        digital_human._tts_cached("大家好，缓存区分测试", "zh-CN-YunjianNeural", 1.0)
+        digital_human._tts_cached("大家好，缓存区分测试", "zh-CN-XiaoxiaoNeural", 1.2)
+        digital_human._tts_cached("大家好，缓存区分测试", "zh-CN-XiaoxiaoNeural", 1.0, pitch=5)
+    assert calls["tts"] == 4
+
+
+def test_tts_cache_clears_stale_rows(test_db_path, tmp_path, monkeypatch):
+    """缓存行数超限：按最后命中时间清理最旧条目（连同文件）。"""
+    import os
+
+    import digital_human
+
+    _patch_dh_deps(tmp_path, monkeypatch)
+    monkeypatch.setattr(digital_human, "_TTS_CACHE_MAX_ROWS", 2)
+    from unittest.mock import patch
+
+    with patch("voice_factory._tts_one", return_value=b"\xff\xfb" * 2048):
+        p1, _ = digital_human._tts_cached("文案一：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
+        p2, _ = digital_human._tts_cached("文案二：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
+        p3, _ = digital_human._tts_cached("文案三：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
+    assert os.path.exists(p2) and os.path.exists(p3)
+    assert not os.path.exists(p1)  # 最旧的被清理（含文件）
+
+
+def test_karaoke_cur_idx_progress():
+    """卡拉OK进度 → 当前行下标：跨行推进与末行封顶。"""
+    import digital_human as dh
+
+    lines = ["第一行内容", "第二行内容", "第三行内容"]
+    assert dh._karaoke_cur_idx(lines, 0.0) == 0
+    assert dh._karaoke_cur_idx(lines, 0.5) == 1  # 5/15 字 → 第二行
+    assert dh._karaoke_cur_idx(lines, 1.0) == 2  # 封顶末行
+    assert dh._karaoke_cur_idx([], 0.5) == 0
+
+
+def test_render_frame_subtitle_layer_cache():
+    """字幕静态帧跳过重绘：进度未变化时复用缓存字幕层（层对象同一实例）。"""
+    import threading
+
+    import digital_human as dh
+
+    fonts = {
+        "title": dh._load_font(36, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "name": dh._load_font(28, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "body": dh._load_font(20, ["/System/Library/Fonts/Helvetica.ttc"]),
+        "tag": dh._load_font(18, ["/System/Library/Fonts/Helvetica.ttc"]),
+    }
+    avatar = {"id": "business-female", "name": "晓琳", "style": "职业女性"}
+    lines = ["大家好，今天分享一个实用技巧。", "希望对你有帮助，记得点赞收藏。"]
+    sub_font = dh._load_font(34, ["/System/Library/Fonts/Helvetica.ttc"])
+    sub_cache = {"sig": None, "layer": None, "lock": threading.Lock()}
+    kwargs = dict(
+        avatar=avatar,
+        bg_hex="#1a1a2e",
+        fonts=fonts,
+        portrait=None,
+        text_lines=lines,
+        t=0.5,
+        progress=0.3,
+        width=1280,
+        height=720,
+        subtitle_style={"position": "center", "color": "#ffb84d", "font_size": 34},
+        sub_font=sub_font,
+        sub_cache=sub_cache,
+    )
+    dh._render_frame(**kwargs)
+    first_layer = sub_cache["layer"]
+    assert first_layer is not None
+    # 同进度（t 不同但当前行相同）→ 命中缓存层，不再重绘
+    kwargs["t"] = 0.6
+    dh._render_frame(**kwargs)
+    assert sub_cache["layer"] is first_layer
+    # 进度推进 → 重绘新层
+    kwargs["progress"] = 0.9
+    dh._render_frame(**kwargs)
+    assert sub_cache["layer"] is not first_layer
+
+
+def test_batch_worker_prefetches_tts(test_db_path, auth_headers):
+    """批量流水线：渲染前并行预热全部文案 TTS（预热 + 命中覆盖全部合法文案）。"""
+    import time
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app)
+    warmed = []
+
+    def fake_cached(text, voice, speed, pitch=0):
+        warmed.append(text[:10])
+        p = f"/tmp/fake_tts_{len(warmed)}.mp3"
+        with open(p, "wb") as f:
+            f.write(b"\xff\xfb" * 1024)
+        return p, f"/uploads/audio/tts_cache/fake_{len(warmed)}.mp3"
+
+    def fake_render(**k):
+        with open(k["output_path"], "wb") as f:
+            f.write(b"FAKE_MP4" * 64)
+
+    texts = [f"批量预热文案第{i}条，内容足够长用于生成测试。" for i in range(4)]
+    with (
+        patch("digital_human._tts_cached", side_effect=fake_cached),
+        patch("digital_human._render_video", side_effect=fake_render),
+    ):
+        resp = client.post("/api/digital-human/batch", json={"texts": texts}, headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        batch_id = resp.json()["batch_id"]
+        for _ in range(150):
+            r = client.get(f"/api/digital-human/batch/{batch_id}", headers=auth_headers)
+            if r.json()["status"] == "done":
+                break
+            time.sleep(0.1)
+    done = client.get(f"/api/digital-human/batch/{batch_id}", headers=auth_headers).json()
+    assert done["status"] == "done" and done["success"] == 4, done
+    assert {w for w in warmed} >= {t[:10] for t in texts}  # 预热覆盖全部合法文案
+
+
+class TestStabilityAutoRetry:
+    """v13.1 稳定性攻坚：TTS 瞬时抖动自动重试（不重复扣费，最终失败退费）。
+
+    dh_generate / voice_generate 注册了 max_attempts=2（首试 + 1 次自动重试），
+    由 task_queue._mark_failed 的指数退避重试路径保证：重试不扣费、最终失败退费。
+    """
+
+    def test_dh_generate_registered_with_auto_retry(self):
+        from task_queue import _MAX_ATTEMPTS
+
+        assert _MAX_ATTEMPTS.get("dh_generate") == 2
+
+    def test_voice_generate_registered_with_auto_retry(self):
+        from task_queue import _MAX_ATTEMPTS
+
+        assert _MAX_ATTEMPTS.get("voice_generate") == 2
+
+    def test_voice_clone_keeps_no_auto_retry(self):
+        # 声音克隆失败会清理样本文件，自动重试需重新上传，保持不自动重试
+        from task_queue import _MAX_ATTEMPTS
+
+        assert _MAX_ATTEMPTS.get("dh_voice_clone", 0) == 0
+
+
+class TestUsageLogErrorField:
+    """v13.1 诊断埋点：usage_logs.error 记录失败原因（含 [stage:xxx] 阶段标记）。"""
+
+    def test_log_usage_records_error(self, setup_test_db):
+        from common.llm import log_usage
+        from common.db import get_db_context
+
+        log_usage("digital_human", 10, 5, 1.2, success=False, error="[stage:tts] EDGE_TTS_ERROR")
+        with get_db_context() as conn:
+            row = conn.execute(
+                "SELECT success, error FROM usage_logs WHERE task_type='digital_human' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        assert row["success"] == 0
+        assert row["error"] == "[stage:tts] EDGE_TTS_ERROR"
+
+    def test_log_usage_error_truncated_to_500(self, setup_test_db):
+        from common.llm import log_usage
+        from common.db import get_db_context
+
+        log_usage("digital_human", 10, 5, 0.5, success=False, error="x" * 2000)
+        with get_db_context() as conn:
+            row = conn.execute(
+                "SELECT error FROM usage_logs WHERE task_type='digital_human' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        assert len(row["error"]) == 500
+
+    def test_log_usage_success_has_empty_error(self, setup_test_db):
+        from common.llm import log_usage
+        from common.db import get_db_context
+
+        log_usage("digital_human", 10, 5, 0.5)
+        with get_db_context() as conn:
+            row = conn.execute(
+                "SELECT success, error FROM usage_logs WHERE task_type='digital_human' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        assert row["success"] == 1
+        assert row["error"] == ""

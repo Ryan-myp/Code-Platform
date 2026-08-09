@@ -3,6 +3,7 @@ import { Mic, MicOff, Volume2, Send, Trash2, Bot, User, Zap, Clock } from 'lucid
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
+import MarkdownRenderer from '../components/MarkdownRenderer'
 
 export default function VoiceChatPage() {
   const toast = useToast()
@@ -12,6 +13,12 @@ export default function VoiceChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const recognitionRef = useRef(null)
+  const chatRef = useRef(null)
+
+  // 新消息/回复中自动滚动到底部
+  useEffect(() => {
+    chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages, loading])
 
   // ── 浏览器语音识别 ──
   useEffect(() => {
@@ -175,7 +182,7 @@ export default function VoiceChatPage() {
         <div className="lg:col-span-2 space-y-4">
           <Card className="flex flex-col" style={{ minHeight: '500px' }}>
             {/* 消息列表 */}
-            <div className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-[500px] pr-2">
+            <div className="flex-1 overflow-y-auto space-y-3 mb-4 max-h-[500px] pr-2" ref={chatRef}>
               {messages.length === 0 ? (
                 <Empty
                   icon={Mic}
@@ -197,15 +204,32 @@ export default function VoiceChatPage() {
                           : 'bg-gray-100 text-gray-800 rounded-bl-md'
                       }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                      <p
-                        className={`text-[10px] mt-1 ${m.role === 'user' ? 'text-white/60' : 'text-gray-400'}`}
-                      >
-                        {new Date(m.time).toLocaleTimeString('zh-CN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </p>
+                      {m.role === 'user' ? (
+                        <p className="text-sm whitespace-pre-wrap">{m.content}</p>
+                      ) : (
+                        <MarkdownRenderer content={m.content} className="text-sm" />
+                      )}
+                      <div className="flex items-center justify-between mt-1">
+                        <p
+                          className={`text-[10px] ${m.role === 'user' ? 'text-white/60' : 'text-gray-400'}`}
+                        >
+                          {new Date(m.time).toLocaleTimeString('zh-CN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </p>
+                        {m.role === 'assistant' && (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(m.content)
+                              toast.success('已复制回复')
+                            }}
+                            className="text-[10px] text-gray-400 hover:text-blue-600 transition-colors"
+                          >
+                            复制
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {m.role === 'user' && (
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0">

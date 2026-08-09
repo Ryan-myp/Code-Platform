@@ -2,18 +2,103 @@
 """LLM 调用 + 使用统计 — 单一来源。
 
 替代 prd_engine.py 与 chat_engine.py 中重复的 call_llm 定义。
+
+v12.0 工程化升级：
+- 多轮 messages 支持（替代固定 system+user 两段，支撑真实对话上下文）
+- 指数退避自动重试（429 / 5xx / 网络类异常，默认 2 次）
+- 备用模型自动降级（主模型重试耗尽后切换到 fallback_models，或自动补全同源模型）
+- SSE 流式输出（stream_llm_async，供聊天打字机效果）
+- 对话历史组装（build_conversation_messages，多轮窗口裁剪）
 """
 
+import asyncio
+import json
 import logging
+import time
 from datetime import datetime
 
 import httpx
 import requests
 from fastapi import HTTPException
 
-from common.config import get_model_config
+from common.config import AGNES_API_KEY, MODEL_NAME, get_model_config, get_model_list
 
 logger = logging.getLogger(__name__)
+
+# 可重试的 HTTP 状态码：429 限流 + 5xx 服务端瞬时故障
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# 不可重试（请求类）状态码：直接抛出，不降级不重试
+_NON_RETRYABLE_STATUS = {400, 401, 403, 404, 422}
+# 网络/传输类异常（连接断开、超时、EOF 等），全部可重试
+_NETWORK_EXC = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.TransportError,
+    httpx.RemoteProtocolError,
+    requests.RequestException,
+)
+
+
+def _build_messages(
+    system_prompt: str, user_prompt: str, messages: list[dict] | None
+) -> list[dict]:
+    """统一构建 messages：优先使用调用方传入的多轮 messages，否则回退 system+user 两段。"""
+    if messages:
+        return list(messages)
+    msgs = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    if user_prompt:
+        msgs.append({"role": "user", "content": user_prompt})
+    return msgs
+
+
+def _fallback_candidates(model: str | None, fallback_models: list[str] | None) -> list[str]:
+    """生成候选模型序列：主模型 → 显式备用 → 自动补全已配置模型（最多 4 个）。
+
+    自动补全规则：模型列表中 api_key 已配置，或 base_url 留空（继承全局 key）的模型。
+    """
+    candidates = [model or MODEL_NAME]
+    for m in fallback_models or []:
+        if m and m not in candidates:
+            candidates.append(m)
+    for m in get_model_list():
+        name = (m.get("name") or "").strip()
+        if not name or name in candidates:
+            continue
+        has_key = bool((m.get("api_key") or "").strip())
+        inherits_global = not (m.get("base_url") or "").strip() and bool(AGNES_API_KEY)
+        if has_key or inherits_global:
+            candidates.append(name)
+    return candidates[:4]
+
+
+def _extract_content(resp_json: dict) -> str:
+    """从 OpenAI 兼容响应中提取文本内容（兼容非标准返回结构）。"""
+    try:
+        return resp_json["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        pass
+    if isinstance(resp_json.get("content"), str):
+        return resp_json["content"]
+    raise HTTPException(502, f"LLM 响应格式异常: {str(resp_json)[:200]}")
+
+
+def _retry_delay(attempt: int) -> float:
+    """指数退避：1s → 2s → 4s …（attempt 从 1 开始）。"""
+    return 2 ** attempt
+
+
+def _readable_error(exc: Exception) -> str:
+    """连接类异常 str 常为空，兜底为可读文案，避免用户看到空白错误。"""
+    return str(exc) or f"{type(exc).__name__}（连接异常），请稍后重试"
+
+
+# ══════════════════════════════════════════════════════════════
+# 同步版（向后兼容：签名不变，新增可选参数）
+# ══════════════════════════════════════════════════════════════
 
 
 def call_llm(
@@ -23,49 +108,83 @@ def call_llm(
     temperature: float = 0.4,
     timeout: int = 300,
     model: str | None = None,
+    messages: list[dict] | None = None,
+    retries: int = 2,
+    fallback_models: list[str] | None = None,
 ) -> str:
-    """调用 LLM（OpenAI 兼容 /chat/completions），按模型路由到对应供应商。
+    """同步调用 LLM（OpenAI 兼容 /chat/completions），按模型路由到对应供应商。
 
-    model 参数可覆盖全局模型（None 时使用全局配置）。
-    每个模型可在模型列表配置独立的 base_url / api_key（多供应商接入）。
-    统一了旧 prd_engine(max_tokens=4000, temp=0.4) 与 chat_engine(max_tokens=2000) 两版实现。
+    v12.0：支持多轮 messages、指数退避重试（默认 2 次）、备用模型降级。
     """
-    cfg = get_model_config(model)
-    api_key, api_base, model = cfg["api_key"], cfg["api_base"], cfg["model"]
-    if not api_key:
-        raise HTTPException(400, f"未配置模型 {model} 的 API Key（可在系统配置-模型列表中设置）")
+    msgs = _build_messages(system_prompt, user_prompt, messages)
+    if not msgs:
+        raise HTTPException(400, "prompt 不能为空")
 
-    url = f"{api_base}/chat/completions"
-    try:
-        resp = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
-            timeout=timeout,
-        )
-        if resp.status_code != 200:
-            logger.error(f"LLM call failed: {resp.status_code} {resp.text[:400]}")
-            raise HTTPException(500, f"LLM 调用失败: {resp.status_code} {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"LLM call exception: {e}", exc_info=True)
-        # 连接类异常（EOFError/ConnectionResetError 等）str 常为空，兜底为可读文案，避免用户看到空白错误
-        detail = str(e) or f"{type(e).__name__}（连接异常），请稍后重试"
-        raise HTTPException(500, f"LLM 调用异常: {detail}") from e
+    candidates = _fallback_candidates(model, fallback_models)
+    last_error: Exception | None = None
+    for idx, mname in enumerate(candidates):
+        cfg = get_model_config(mname)
+        if not cfg["api_key"]:
+            continue
+        try:
+            return _call_one_sync(cfg, msgs, max_tokens, temperature, timeout, retries)
+        except HTTPException as e:
+            if e.status_code in _NON_RETRYABLE_STATUS:
+                raise
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM model {mname} failed, fallback to next: {e.detail}")
+        except Exception as e:
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM model {mname} exception, fallback to next: {e}")
+
+    if isinstance(last_error, HTTPException):
+        raise last_error
+    raise HTTPException(502, f"LLM 调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
+
+
+def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
+    """单模型同步调用，内置指数退避重试。"""
+    url = f"{cfg['api_base']}/chat/completions"
+    payload = {
+        "model": cfg["model"],
+        "messages": msgs,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+    attempt = 0
+    while True:
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            if resp.status_code != 200:
+                body = resp.text[:400]
+                if resp.status_code in _RETRYABLE_STATUS and attempt < retries:
+                    attempt += 1
+                    time.sleep(_retry_delay(attempt))
+                    continue
+                logger.error(f"LLM call failed: {resp.status_code} {body}")
+                raise HTTPException(502, f"LLM 调用失败: {resp.status_code} {body}")
+            return _extract_content(resp.json())
+        except HTTPException:
+            raise
+        except Exception as e:
+            if isinstance(e, _NETWORK_EXC) and attempt < retries:
+                attempt += 1
+                time.sleep(_retry_delay(attempt))
+                continue
+            logger.error(f"LLM call exception: {e}", exc_info=True)
+            raise HTTPException(502, f"LLM 调用异常: {_readable_error(e)}") from e
 
 
 # 同步版本的别名（向后兼容）
 call_llm_sync = call_llm
+
+
+# ══════════════════════════════════════════════════════════════
+# 异步版（FastAPI async 端点应使用此版本，避免阻塞事件循环）
+# ══════════════════════════════════════════════════════════════
 
 
 async def call_llm_async(
@@ -75,57 +194,263 @@ async def call_llm_async(
     temperature: float = 0.4,
     timeout: int = 300,
     model: str | None = None,
+    messages: list[dict] | None = None,
+    retries: int = 2,
+    fallback_models: list[str] | None = None,
 ) -> str:
-    """异步调用 LLM（使用 httpx.AsyncClient 非阻塞），按模型路由到对应供应商。
+    """异步调用 LLM（httpx.AsyncClient 非阻塞）。
 
-    model 参数可覆盖全局模型（None 时使用全局配置）。
-    在 async FastAPI 端点中应使用此版本以避免阻塞事件循环。
+    v12.0：支持多轮 messages、指数退避重试（默认 2 次）、备用模型降级。
     """
-    cfg = get_model_config(model)
-    api_key, api_base, model = cfg["api_key"], cfg["api_base"], cfg["model"]
-    if not api_key:
-        raise HTTPException(400, f"未配置模型 {model} 的 API Key（可在系统配置-模型列表中设置）")
+    msgs = _build_messages(system_prompt, user_prompt, messages)
+    if not msgs:
+        raise HTTPException(400, "prompt 不能为空")
 
-    url = f"{api_base}/chat/completions"
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                },
-            )
-            if resp.status_code != 200:
-                logger.error(f"LLM async call failed: {resp.status_code} {resp.text[:400]}")
-                raise HTTPException(500, f"LLM 调用失败: {resp.status_code} {resp.text[:300]}")
-            return resp.json()["choices"][0]["message"]["content"]
-    except HTTPException:
-        raise
-    except Exception as e:
-        # exc_info 打印完整 traceback：连接类异常（EOFError/ConnectionResetError 等）str 常为空，
-        # 只记消息会导致线上无法定位根因；同时给用户可读的兜底文案而非空白
-        logger.error(f"LLM async call exception: {e}", exc_info=True)
-        detail = str(e) or f"{type(e).__name__}（连接异常），请稍后重试"
-        raise HTTPException(500, f"LLM 调用异常: {detail}") from e
+    candidates = _fallback_candidates(model, fallback_models)
+    last_error: Exception | None = None
+    for idx, mname in enumerate(candidates):
+        cfg = get_model_config(mname)
+        if not cfg["api_key"]:
+            continue
+        try:
+            return await _call_one_async(cfg, msgs, max_tokens, temperature, timeout, retries)
+        except HTTPException as e:
+            if e.status_code in _NON_RETRYABLE_STATUS:
+                raise
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM model {mname} failed, fallback to next: {e.detail}")
+        except Exception as e:
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM model {mname} exception, fallback to next: {e}")
+
+    if isinstance(last_error, HTTPException):
+        raise last_error
+    raise HTTPException(502, f"LLM 调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
 
 
-def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, success: bool = True) -> None:
-    """记录使用统计到 usage_logs。失败静默（不影响主流程）。"""
+async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
+    """单模型异步调用，内置指数退避重试。"""
+    url = f"{cfg['api_base']}/chat/completions"
+    payload = {
+        "model": cfg["model"],
+        "messages": msgs,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+    attempt = 0
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        while True:
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code != 200:
+                    body = resp.text[:400]
+                    if resp.status_code in _RETRYABLE_STATUS and attempt < retries:
+                        attempt += 1
+                        await asyncio.sleep(_retry_delay(attempt))
+                        continue
+                    logger.error(f"LLM async call failed: {resp.status_code} {body}")
+                    raise HTTPException(502, f"LLM 调用失败: {resp.status_code} {body}")
+                return _extract_content(resp.json())
+            except HTTPException:
+                raise
+            except Exception as e:
+                if isinstance(e, _NETWORK_EXC) and attempt < retries:
+                    attempt += 1
+                    await asyncio.sleep(_retry_delay(attempt))
+                    continue
+                logger.error(f"LLM async call exception: {e}", exc_info=True)
+                raise HTTPException(502, f"LLM 调用异常: {_readable_error(e)}") from e
+
+
+# ══════════════════════════════════════════════════════════════
+# 流式版（SSE / Server-Sent Events）
+# ══════════════════════════════════════════════════════════════
+
+
+async def stream_llm_async(  # noqa: C901
+    system_prompt: str = "",
+    user_prompt: str = "",
+    messages: list[dict] | None = None,
+    max_tokens: int = 4000,
+    temperature: float = 0.4,
+    timeout: int = 300,
+    model: str | None = None,
+    retries: int = 2,
+    fallback_models: list[str] | None = None,
+):
+    """SSE 流式调用 LLM，异步生成器逐块产出 ``(delta_text, accumulated_text)``。
+
+    - 支持多轮 messages / 重试 / 备用模型降级（与 call_llm_async 一致）
+    - 调用方：``async for delta, full in stream_llm_async(...):``
+    - 中断/降级发生时通过异常向上抛出，由端点层决定 SSE error 事件
+    """
+    msgs = _build_messages(system_prompt, user_prompt, messages)
+    if not msgs:
+        raise HTTPException(400, "prompt 不能为空")
+
+    candidates = _fallback_candidates(model, fallback_models)
+    last_error: Exception | None = None
+    for idx, mname in enumerate(candidates):
+        cfg = get_model_config(mname)
+        if not cfg["api_key"]:
+            continue
+        try:
+            async for item in _stream_one(cfg, msgs, max_tokens, temperature, timeout, retries):
+                yield item
+            return  # 流式成功结束
+        except HTTPException as e:
+            if e.status_code in _NON_RETRYABLE_STATUS:
+                raise
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM stream model {mname} failed, fallback to next: {e.detail}")
+        except Exception as e:
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM stream model {mname} exception, fallback to next: {e}")
+
+    if isinstance(last_error, HTTPException):
+        raise last_error
+    raise HTTPException(502, f"LLM 流式调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
+
+
+async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int):  # noqa: C901
+    """单模型流式调用，内置指数退避重试。产出 (delta, full)。"""
+    url = f"{cfg['api_base']}/chat/completions"
+    payload = {
+        "model": cfg["model"],
+        "messages": msgs,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": True,
+    }
+    headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+    attempt = 0
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    if resp.status_code != 200:
+                        body = (await resp.aread()).decode("utf-8", "replace")[:400]
+                        if resp.status_code in _RETRYABLE_STATUS and attempt < retries:
+                            attempt += 1
+                            await asyncio.sleep(_retry_delay(attempt))
+                            continue
+                        raise HTTPException(502, f"LLM 流式调用失败: {resp.status_code} {body}")
+                    full_parts: list[str] = []
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                            delta = obj["choices"][0]["delta"]
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                            continue
+                        if not isinstance(delta, dict):
+                            continue
+                        piece = delta.get("content") or delta.get("reasoning_content") or ""
+                        if piece:
+                            full_parts.append(piece)
+                            yield piece, "".join(full_parts)
+                    return
+        except HTTPException:
+            raise
+        except Exception as e:
+            if isinstance(e, _NETWORK_EXC) and attempt < retries:
+                attempt += 1
+                await asyncio.sleep(_retry_delay(attempt))
+                continue
+            raise
+
+
+# ══════════════════════════════════════════════════════════════
+# 对话历史组装
+# ══════════════════════════════════════════════════════════════
+
+
+def build_conversation_messages(
+    conversation_id: str = "",
+    session_id: str = "",
+    system_prompt: str = "",
+    max_rounds: int = 12,
+    max_chars: int = 24000,
+) -> list[dict]:
+    """从 messages 表加载对话历史，组装多轮 messages（供真实上下文对话）。
+
+    - conversation_id（聊天页）与 session_id（Agent 执行页）双轨兼容，二选一
+    - 仅保留 user/assistant 轮次（忽略内部消息）
+    - 窗口裁剪：最多 max_rounds 轮；总字符超 max_chars 时从最早丢弃
+    - system_prompt 恒置最前
+    """
+    from common.db import get_db
+
+    turns: list[dict] = []
+    if conversation_id or session_id:
+        conn = get_db()
+        try:
+            if conversation_id:
+                rows = conn.execute(
+                    "SELECT role, content FROM messages WHERE conversation_id=? ORDER BY id ASC",
+                    (conversation_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT role, content FROM messages WHERE session_id=? ORDER BY id ASC",
+                    (session_id,),
+                ).fetchall()
+        finally:
+            conn.close()
+        turns = [
+            dict(r) for r in rows if r["role"] in ("user", "assistant") and str(r["content"] or "").strip()
+        ]
+    turns = turns[-max_rounds:]
+    while turns and sum(len(t["content"]) for t in turns) > max_chars:
+        turns.pop(0)
+    msgs: list[dict] = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    msgs.extend(turns)
+    return msgs
+
+
+# ══════════════════════════════════════════════════════════════
+# 使用统计与 JSON 容错解析（v12.0 保留）
+# ══════════════════════════════════════════════════════════════
+
+
+def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, success: bool = True, error: str = "") -> None:
+    """记录使用统计到 usage_logs。失败静默（不影响主流程）。
+
+    error 为失败原因摘要（阶段标记 [stage:xxx] 等），供运营诊断失败率。
+    """
     try:
         from common.db import get_db_context
 
         with get_db_context() as conn:
+            # 幂等补列：老库无 error 列（v13.1 诊断埋点）
+            cols = [r["name"] for r in conn.execute("PRAGMA table_info(usage_logs)").fetchall()]
+            if "error" not in cols:
+                conn.execute("ALTER TABLE usage_logs ADD COLUMN error TEXT DEFAULT ''")
+                conn.commit()
             conn.execute(
-                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (datetime.now().isoformat(), task_type, input_len, output_len, round(elapsed, 3), 1 if success else 0),
+                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success, error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    datetime.now().isoformat(),
+                    task_type,
+                    input_len,
+                    output_len,
+                    round(elapsed, 3),
+                    1 if success else 0,
+                    (error or "")[:500],
+                ),
             )
     except Exception as e:
         logger.debug(f"log_usage skipped: {e}")
@@ -139,7 +464,6 @@ def parse_llm_json(raw: str) -> dict:
     1. 去代码块围栏 → 2. 提取首个 { 至最后一个 } 片段 → 3. 剥离注释 → 4. 修复尾逗号 → 5. 修复单引号。
     全部失败时抛出带原始内容摘要的异常，便于定位。
     """
-    import json
     import re
 
     text = (raw or "").strip()

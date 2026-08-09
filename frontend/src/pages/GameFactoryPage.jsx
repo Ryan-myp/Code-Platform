@@ -30,6 +30,7 @@ import {
   Camera,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -679,6 +680,14 @@ export default function GameFactoryPage() {
                       >
                         查看
                       </Button>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <ShareButton
+                          content={`# 小游戏：${p.name}\n\n需求：${p.requirement || ''}\n\n> 由小团智能平台小游戏工坊生成 · ${new Date().toLocaleString()}`}
+                          title={`小游戏：${p.name}`}
+                          contentType="game"
+                          className="!p-1.5"
+                        />
+                      </span>
                       <button
                         onClick={(e) => openRename(p, e)}
                         title="重命名"

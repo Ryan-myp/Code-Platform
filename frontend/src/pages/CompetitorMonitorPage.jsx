@@ -14,10 +14,12 @@ import {
   Share2,
   AlertTriangle,
   CheckCircle2,
+  Copy,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
+import ShareButton from '../components/ShareButton'
 import {
   Button,
   PageHeader,
@@ -165,6 +167,74 @@ export default function CompetitorMonitorPage() {
 
   const toggleSelect = (id) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  // 报告 → Markdown（复制/分享复用）
+  const buildReportMd = (r) => {
+    if (!r?.analysis) return ''
+    const a = r.analysis
+    const lines = ['# 竞品分析报告', '', `生成于 ${formatDateTime(r.created_at)}`, '']
+    if (a.overview) lines.push('## 整体概览', '', a.overview, '')
+    if (a.content_categories?.length) {
+      lines.push('## 内容分类', '')
+      a.content_categories.forEach((c) => lines.push(`- ${c.name}：${c.desc || c.count || ''}`))
+      lines.push('')
+    }
+    if (a.hot_patterns?.length) {
+      lines.push('## 热门模式', '')
+      a.hot_patterns.forEach((p) => lines.push(`- ${typeof p === 'string' ? p : p.pattern || ''}`))
+      lines.push('')
+    }
+    if (a.publishing_habits) {
+      lines.push(
+        '## 发布习惯',
+        '',
+        `- 频率：${a.publishing_habits.frequency || '—'}`,
+        `- 主平台：${a.publishing_habits.platform_focus || '—'}`,
+        `- 最佳时段：${(a.publishing_habits.best_times || []).join('、') || '—'}`,
+        `- 分发策略：${a.publishing_habits.multi_platform_strategy || '—'}`,
+        ''
+      )
+    }
+    if (a.engagement_analysis) {
+      lines.push(
+        '## 互动分析',
+        '',
+        `- 均赞：${a.engagement_analysis.avg_likes ?? '—'}`,
+        `- 均评：${a.engagement_analysis.avg_comments ?? '—'}`,
+        `- 均转：${a.engagement_analysis.avg_shares ?? '—'}`,
+        `- 互动率：${a.engagement_analysis.engagement_rate || '—'} · 趋势：${a.engagement_analysis.trend || '—'}`,
+        ''
+      )
+    }
+    if (a.competitive_advantages?.length) {
+      lines.push('## 竞争优势', '')
+      a.competitive_advantages.forEach((x) => lines.push(`- ${x}`))
+      lines.push('')
+    }
+    if (a.competitive_weaknesses?.length) {
+      lines.push('## 竞争劣势', '')
+      a.competitive_weaknesses.forEach((x) => lines.push(`- ${x}`))
+      lines.push('')
+    }
+    if (a.recommendations?.length) {
+      lines.push('## 策略建议', '')
+      a.recommendations.forEach((x) => lines.push(`- ${x}`))
+      lines.push('')
+    }
+    lines.push('---', `由小团智能平台 AI 竞品监控生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+
+  const copyReport = async () => {
+    const md = buildReportMd(report)
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('报告已复制')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
+    }
   }
 
   // 雷达图维度（从 radar.option.radar.indicator 解析）
@@ -378,6 +448,12 @@ export default function CompetitorMonitorPage() {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={3}
               placeholder="内容定位、更新频率、目标受众等（用于 AI 分析）"
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !analyzing) {
+                  e.preventDefault()
+                  handleAnalyze()
+                }
+              }}
               className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm resize-none"
             />
           </div>
@@ -399,8 +475,18 @@ export default function CompetitorMonitorPage() {
             <div className="flex items-center gap-2 text-xs text-ink-400">
               <Clock className="w-3.5 h-3.5" />
               生成于 {formatDateTime(report.created_at)}
-              <span className="ml-auto flex items-center gap-1 text-emerald-600">
-                <CheckCircle2 className="w-3.5 h-3.5" /> AI 完成
+              <span className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={copyReport}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-100 hover:bg-brand-50 text-ink-600 hover:text-brand-600 transition-colors"
+                  title="复制报告全文"
+                >
+                  <Copy className="w-3 h-3" /> 复制
+                </button>
+                <ShareButton content={buildReportMd(report)} title="竞品分析报告" contentType="competitor_report" />
+                <span className="flex items-center gap-1 text-emerald-600">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> AI 完成
+                </span>
               </span>
             </div>
 

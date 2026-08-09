@@ -455,7 +455,7 @@ def test_workflow_crud_and_run(test_db_path, auth_headers):
 
 def test_prd_pipeline(test_db_path, auth_headers):
     """PRD 流水线：生成 → 审查 → 技术方案（mock LLM）"""
-    from unittest.mock import patch
+    from unittest.mock import AsyncMock, patch
 
     from fastapi.testclient import TestClient
 
@@ -463,18 +463,18 @@ def test_prd_pipeline(test_db_path, auth_headers):
 
     client = TestClient(app)
 
-    with patch("prd_engine.call_llm", return_value="# PRD 文档\n## 背景\n测试PRD"):
+    with patch("prd_engine.call_llm_async", new=AsyncMock(return_value="# PRD 文档\n## 背景\n测试PRD")):
         gen_resp = client.post("/api/prd/generate", json={"prd_text": "做一个用户系统"}, headers=auth_headers)
     assert gen_resp.status_code == 200
     prd_text = gen_resp.json()["result"]
     assert "PRD" in prd_text
 
-    with patch("prd_engine.call_llm", return_value="审查报告：评分 90/100"):
+    with patch("prd_engine.call_llm_async", new=AsyncMock(return_value="审查报告：评分 90/100")):
         review_resp = client.post("/api/prd/review", json={"prd_text": prd_text}, headers=auth_headers)
     assert review_resp.status_code == 200
     assert "90" in review_resp.json()["result"]
 
-    with patch("prd_engine.call_llm", return_value="# 技术方案\n## 架构总览"):
+    with patch("prd_engine.call_llm_async", new=AsyncMock(return_value="# 技术方案\n## 架构总览")):
         td_resp = client.post("/api/prd/technical-design", json={"prd_text": prd_text}, headers=auth_headers)
     assert td_resp.status_code == 200
     assert "技术方案" in td_resp.json()["result"]
@@ -482,7 +482,7 @@ def test_prd_pipeline(test_db_path, auth_headers):
 
 def test_prd_test_cases_and_code(test_db_path, auth_headers):
     """PRD 测试用例 + 代码生成（mock LLM）"""
-    from unittest.mock import patch
+    from unittest.mock import AsyncMock, patch
 
     from fastapi.testclient import TestClient
 
@@ -490,7 +490,7 @@ def test_prd_test_cases_and_code(test_db_path, auth_headers):
 
     client = TestClient(app)
 
-    with patch("prd_engine.call_llm", return_value="| 编号 | 步骤 | 预期结果 |"):
+    with patch("prd_engine.call_llm_async", new=AsyncMock(return_value="| 编号 | 步骤 | 预期结果 |")):
         tc_resp = client.post(
             "/api/prd/test-cases",
             json={
@@ -502,7 +502,7 @@ def test_prd_test_cases_and_code(test_db_path, auth_headers):
     assert tc_resp.status_code == 200
     assert "编号" in tc_resp.json()["result"]
 
-    with patch("prd_engine.call_llm", return_value="```python\nprint('hello')\n```"):
+    with patch("prd_engine.call_llm_async", new=AsyncMock(return_value="```python\nprint('hello')\n```")):
         code_resp = client.post(
             "/api/prd/generate-code",
             json={

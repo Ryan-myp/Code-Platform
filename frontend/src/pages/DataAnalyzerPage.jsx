@@ -10,11 +10,17 @@ import {
   Loader2,
   Database,
   FileText,
+  Download,
+  RefreshCw,
+  Settings2,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
+import ShareButton from '../components/ShareButton'
+import HistoryPanel from '../components/HistoryPanel'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import useToolHistory from '../hooks/useToolHistory'
 
 // 示例数据：一键体验（电商销售明细）
 const SAMPLE_CSV = `日期,区域,产品类别,销售金额,销售数量,销售员
@@ -49,6 +55,18 @@ const QUICK_QUESTIONS = [
   '分析各产品类别的表现差异并给出优化建议',
 ]
 
+const DEPTH_OPTIONS = [
+  { value: 'quick', label: '快速', desc: '核心指标 + 关键发现' },
+  { value: 'standard', label: '标准', desc: '概览/趋势/对比多维度' },
+  { value: 'deep', label: '深度', desc: '交叉分析 + 统计 + 建议' },
+]
+
+const STYLE_OPTIONS = [
+  { value: 'default', label: '默认' },
+  { value: 'business', label: '商务简约' },
+  { value: 'dark', label: '深色' },
+]
+
 function parsePreview(csv, maxRows = 6, maxCols = 8) {
   const lines = csv.split('\n').filter((l) => l.trim())
   if (lines.length === 0) return []
@@ -66,7 +84,115 @@ export default function DataAnalyzerPage() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [showCode, setShowCode] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [depth, setDepth] = useState('standard')
+  const [chartStyle, setChartStyle] = useState('default')
+  const [lastParams, setLastParams] = useState(null) // 重试时复用
   const fileInputRef = useRef(null)
+  const { history, add, remove, clear } = useToolHistory('data_analyzer_history_v1', 20)
+
+  // 下载工具（通用）
+  const downloadText = (content, filename, mime = 'text/markdown;charset=utf-8') => {
+    const blob = new Blob([content], { type: mime })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+  }
+
+  const buildConclusionMd = () => {
+    if (!result?.conclusion) return ''
+    const q = lastParams?.question || question
+    const header = `# 数据分析报告\n\n> 分析问题：${q}\n> 数据：${meta.filename || 'data.csv'}（${meta.rows} 行）\n> 耗时：${result.duration}s\n\n---\n\n`
+    return header + result.conclusion
+  }
+
+  const downloadConclusion = () => {
+    if (!result?.conclusion) return
+    const q = lastParams?.question || question
+    downloadText(buildConclusionMd(), `数据分析-${(q || 'report').slice(0, 20).replace(/[\\/:*?"<>|]/g, '_')}.md`)
+    toast.success('分析报告已下载')
+  }
+
+  const downloadChart = (name, b64) => {
+    const a = document.createElement('a')
+    a.href = `data:image/png;base64,${b64}`
+    a.download = name.endsWith('.png') ? name : `${name}.png`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    toast.success(`图表 ${name} 已下载`)
+  }
+
+  const runAnalyze = async (q, data, filename, opts = {}) => {
+    setLoading(true)
+    setResult(null)
+    try {
+      const res = await api.post('/api/data-analyzer/analyze', {
+        question: q,
+        data,
+        filename: filename || 'data.csv',
+        depth: opts.depth || depth,
+        chart_style: opts.chartStyle || chartStyle,
+      })
+      setResult(res.data)
+      add({
+        title: q.slice(0, 30),
+        question: q,
+        csv: data.slice(0, 300),
+        filename: filename || 'data.csv',
+        conclusion: res.data.conclusion,
+        charts: (res.data.charts || []).map((c) => ({ name: c.name, data: c.data.slice(0, 40) })),
+        depth: opts.depth || depth,
+        chartStyle: opts.chartStyle || chartStyle,
+      })
+      if (res.data.error && !res.data.conclusion) {
+        toast.error('分析执行出错，请尝试换一种问法')
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || '分析失败，请重试')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRun = async () => {
+    if (!csv.trim()) {
+      toast.error('请先上传数据或使用示例数据')
+      return
+    }
+    if (!question.trim()) {
+      toast.error('请描述你想分析的问题')
+      return
+    }
+    const params = { question: question.trim(), filename: meta.filename }
+    setLastParams(params)
+    await runAnalyze(params.question, csv, params.filename)
+  }
+
+  const handleRetry = () => {
+    if (!lastParams || !csv.trim()) return
+    setQuestion(lastParams.question)
+    runAnalyze(lastParams.question, csv, lastParams.filename)
+  }
+
+  const handleReuse = (item) => {
+    setQuestion(item.question)
+    if (item.depth) setDepth(item.depth)
+    if (item.chartStyle) setChartStyle(item.chartStyle)
+    toast.success('已复用历史分析，可直接运行')
+  }
+
+  const onKeyDown = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      handleRun()
+    }
+  }
 
   const applyCsv = (text, filename = '') => {
     const lines = text.split('\n').filter((l) => l.trim())
@@ -97,33 +223,6 @@ export default function DataAnalyzerPage() {
       toast.error(err.message || '文件解析失败')
     }
     e.target.value = ''
-  }
-
-  const handleRun = async () => {
-    if (!csv.trim()) {
-      toast.error('请先上传数据或使用示例数据')
-      return
-    }
-    if (!question.trim()) {
-      toast.error('请描述你想分析的问题')
-      return
-    }
-    setLoading(true)
-    setResult(null)
-    try {
-      const res = await api.post('/api/data-analyzer/analyze', {
-        question: question.trim(),
-        data: csv,
-        filename: meta.filename || 'data.csv',
-      })
-      setResult(res.data)
-      if (res.data.error && !res.data.conclusion) {
-        toast.error('分析执行出错，请尝试换一种问法')
-      }
-    } catch (err) {
-      toast.error(err.message || '分析失败，请重试')
-    }
-    setLoading(false)
   }
 
   const preview = parsePreview(csv)
@@ -242,7 +341,8 @@ export default function DataAnalyzerPage() {
             <textarea
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="例如：按区域汇总销售金额并分析趋势，找出增长最快的品类…"
+              onKeyDown={onKeyDown}
+              placeholder="例如：按区域汇总销售金额并分析趋势，找出增长最快的品类…（⌘/Ctrl + Enter 运行）"
               rows={3}
               className="w-full px-4 py-3 text-sm text-gray-900 placeholder-gray-400 border border-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-emerald-400 resize-y"
             />
@@ -257,6 +357,61 @@ export default function DataAnalyzerPage() {
                 </button>
               ))}
             </div>
+
+            {/* 高级参数（专业基线：真实影响分析深度与图表风格） */}
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="mt-3 w-full flex items-center justify-between px-3 py-2 text-xs text-gray-500 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <span className="flex items-center gap-1.5 font-medium">
+                <Settings2 className="w-3.5 h-3.5" /> 高级选项
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {showAdvanced && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-gray-500 mb-1.5">分析深度</p>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                    {DEPTH_OPTIONS.map((d) => (
+                      <button
+                        key={d.value}
+                        onClick={() => setDepth(d.value)}
+                        title={d.desc}
+                        className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+                          depth === d.value
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-white text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1.5">图表风格</p>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                    {STYLE_OPTIONS.map((s) => (
+                      <button
+                        key={s.value}
+                        onClick={() => setChartStyle(s.value)}
+                        className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
+                          chartStyle === s.value
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-white text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <Button
               onClick={handleRun}
               loading={loading}
@@ -272,6 +427,17 @@ export default function DataAnalyzerPage() {
               {loading ? 'AI 正在生成代码并分析…' : '开始分析'}
             </Button>
           </Card>
+
+          {/* 历史记录（专业基线：结果可回溯可复用） */}
+          <HistoryPanel
+            history={history}
+            onReuse={handleReuse}
+            onRemove={remove}
+            onClear={clear}
+            renderSummary={(item) =>
+              `${item.filename || ''} · ${item.depth || '标准'}深度 · ${(item.conclusion || '').slice(0, 40)}`
+            }
+          />
         </div>
 
         {/* 右侧：结果 */}
@@ -281,9 +447,26 @@ export default function DataAnalyzerPage() {
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-emerald-600" /> 分析结果
               </h3>
-              {result?.duration && (
-                <span className="text-xs text-gray-400">耗时 {result.duration}s</span>
-              )}
+              <div className="flex items-center gap-2">
+                {result?.duration && (
+                  <span className="text-xs text-gray-400">耗时 {result.duration}s</span>
+                )}
+                {result?.conclusion && (
+                  <>
+                    <Button size="sm" variant="ghost" icon={Download} onClick={downloadConclusion}>
+                      导出报告
+                    </Button>
+                    <ShareButton
+                      content={buildConclusionMd()}
+                      title="数据分析报告"
+                      contentType="data_analysis"
+                    />
+                    <Button size="sm" variant="ghost" icon={RefreshCw} onClick={handleRetry}>
+                      重新分析
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
 
             {!result ? (
@@ -311,6 +494,12 @@ export default function DataAnalyzerPage() {
                           alt={chart.name}
                           className="w-full bg-white"
                         />
+                        <button
+                          onClick={() => downloadChart(chart.name, chart.data)}
+                          className="w-full py-1.5 text-xs text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 flex items-center justify-center gap-1 transition-colors"
+                        >
+                          <Download className="w-3 h-3" /> 下载图片
+                        </button>
                       </div>
                     ))}
                   </div>

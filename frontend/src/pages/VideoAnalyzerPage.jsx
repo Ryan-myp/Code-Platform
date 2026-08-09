@@ -10,8 +10,11 @@ import {
   Film,
   Eye,
   Sparkles,
+  Copy,
+  RefreshCw,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -43,6 +46,17 @@ export default function VideoAnalyzerPage() {
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // 边界校验：拒绝超大文件（后端默认上限 200MB），提前提示避免上传中断
+    if (file.size > 200 * 1024 * 1024) {
+      toast.error('文件过大：单次上传请控制在 200MB 以内')
+      e.target.value = ''
+      return
+    }
+    if (!/video\//.test(file.type) && !/\.(mp4|mov|avi|webm|mkv)$/i.test(file.name)) {
+      toast.error('不支持的视频格式，请上传 MP4 / MOV / AVI / WebM')
+      e.target.value = ''
+      return
+    }
 
     setUploading(true)
     setResult(null)
@@ -86,6 +100,50 @@ export default function VideoAnalyzerPage() {
       toast.success('已删除')
     } catch (err) {
       toast.error(err.message)
+    }
+  }
+
+  const buildReportMd = (res) => {
+    if (!res) return ''
+    const lines = [
+      '# 视频分析报告',
+      '',
+      `- 标题：${res.title || '-'}`,
+      `- 基调：${res.tone || '-'}`,
+      `- 目标受众：${res.target_audience || '-'}`,
+      '',
+      '## 内容摘要',
+      '',
+      res.summary || '-',
+      '',
+    ]
+    if (res.key_scenes?.length) {
+      lines.push('## 关键场景', '')
+      res.key_scenes.forEach((s) => lines.push(`- [${s.timestamp}] ${s.description}（${s.importance}）`))
+      lines.push('')
+    }
+    if (res.highlights?.length) {
+      lines.push('## 内容亮点', '')
+      res.highlights.forEach((h) => lines.push(`- ${h}`))
+      lines.push('')
+    }
+    if (res.recommendations?.length) {
+      lines.push('## 优化建议', '')
+      res.recommendations.forEach((r) => lines.push(`- ${r}`))
+      lines.push('')
+    }
+    lines.push('---', `由小团智能平台 AI 视频分析生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+
+  const copyReport = async () => {
+    const md = buildReportMd(result)
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('分析报告已复制')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
     }
   }
 
@@ -215,9 +273,24 @@ export default function VideoAnalyzerPage() {
           ) : (
             <>
               <Card className="border-red-200">
-                <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                  <Film className="w-4 h-4 text-red-500" /> 视频概览
-                </h3>
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Film className="w-4 h-4 text-red-500" /> 视频概览
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" icon={RefreshCw} onClick={() => handleAnalyze()}>
+                      重新分析
+                    </Button>
+                    <Button variant="ghost" size="sm" icon={Copy} onClick={copyReport}>
+                      复制报告
+                    </Button>
+                    <ShareButton
+                      content={buildReportMd(result)}
+                      title={`视频分析：${result.title}`}
+                      contentType="video_analysis"
+                    />
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="p-3 bg-gray-50 rounded-lg">
                     <div className="text-xs text-gray-500">标题</div>

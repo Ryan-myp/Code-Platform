@@ -24,7 +24,9 @@ import {
   PageHeader,
   ConfirmDialog,
 } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -125,14 +127,23 @@ export default function VideoFactoryPage() {
   // 云端提示词库
   const [cloudPrompts, setCloudPrompts] = useState([])
 
-  // 生成
-  const [prompt, setPrompt] = useState('')
-  const [width, setWidth] = useState(1152)
-  const [height, setHeight] = useState(768)
-  const [duration, setDuration] = useState(5)
-  const [mode, setMode] = useState('ti2vid')
+  // 生成（专业基线：输入态持久化，刷新不丢草稿；参考图 image 体积大不持久化）
+  const [inputs, setInputs] = usePersistentToolState('video_factory_inputs', {
+    prompt: '',
+    width: 1152,
+    height: 768,
+    duration: 5,
+    mode: 'ti2vid',
+    frameRate: 24,
+  })
+  const { prompt, width, height, duration, mode, frameRate } = inputs
+  const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
+  const setWidth = (v) => setInputs((p) => ({ ...p, width: v }))
+  const setHeight = (v) => setInputs((p) => ({ ...p, height: v }))
+  const setDuration = (v) => setInputs((p) => ({ ...p, duration: v }))
+  const setMode = (v) => setInputs((p) => ({ ...p, mode: v }))
+  const setFrameRate = (v) => setInputs((p) => ({ ...p, frameRate: v }))
   const [image, setImage] = useState('')
-  const [frameRate, setFrameRate] = useState(24)
   const [creating, setCreating] = useState(false)
   const [lastResult, setLastResult] = useState(null)
   const { submitTask, startPolling, stopPolling } = useAsyncTask()
@@ -642,6 +653,14 @@ export default function VideoFactoryPage() {
                   >
                     <Download className="w-4 h-4 text-green-600" />
                   </button>
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <ShareButton
+                      content={`# 视频作品：${video.filename}\n\n- 文件：${video.filename}\n- 大小：${formatBytes(video.size)}\n\n> 由小团智能平台 AI 视频工坊生成 · ${new Date().toLocaleString()}`}
+                      title={`视频作品：${video.filename}`}
+                      contentType="video"
+                      className="!p-2 !bg-white !rounded-full"
+                    />
+                  </span>
                   <button
                     onClick={() => setDeleteTarget(video)}
                     className="p-2 bg-white rounded-full hover:bg-red-50 transition-colors"

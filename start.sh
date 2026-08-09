@@ -28,10 +28,13 @@ start_backend() {
     log_info "Starting backend on port 8888..."
     export AGNES_API_KEY="${AGNES_API_KEY:-}"
     cd "$PROJECT_ROOT/backend"
-    nohup python3 main.py > /tmp/backend.log 2>&1 &
+    # 优先使用项目 .venv（arm64 + torch MPS，照片数字人引擎必需）；无则回退系统 python3
+    PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+    [ -x "$PYTHON_BIN" ] || PYTHON_BIN=python3
+    nohup "$PYTHON_BIN" main.py > /tmp/backend.log 2>&1 &
     BACKEND_PID=$!
     echo "$BACKEND_PID" > /tmp/backend.pid
-    log_info "Backend PID: $BACKEND_PID"
+    log_info "Backend PID: $BACKEND_PID (python: $PYTHON_BIN)"
 }
 
 # ─── 前端启动 ────────────────────────────────────────────────────

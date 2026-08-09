@@ -11,7 +11,7 @@ import {
   Target,
   Download,
 } from 'lucide-react'
-import { Card, PageHeader } from '../components/ui'
+import { Card, PageHeader, ErrorState, SkeletonGrid } from '../components/ui'
 import api, { API_BASE } from '../lib/api'
 import { useToast } from '../lib/toast'
 import {
@@ -44,6 +44,8 @@ export default function UsageAnalyticsPage() {
   const [stats, setStats] = useState(null)
   const [dailyUsage, setDailyUsage] = useState([])
   const [moduleDist, setModuleDist] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   // 导出使用统计 CSV（带 token 的 fetch，触发浏览器下载）
   const exportCsv = async () => {
@@ -71,6 +73,8 @@ export default function UsageAnalyticsPage() {
   }, [])
 
   const loadStats = async () => {
+    setLoading(true)
+    setLoadError('')
     try {
       const res = await api.get('/api/usage-stats')
       const data = res.data || {}
@@ -91,40 +95,12 @@ export default function UsageAnalyticsPage() {
       if (data.module_breakdown) {
         setModuleDist(data.module_breakdown.map((m) => ({ name: m.module, value: m.count })))
       }
-    } catch {
-      // 后端可能暂无此端点，使用模拟数据
-      const today = new Date()
-      const mockDaily = []
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(today)
-        d.setDate(d.getDate() - i)
-        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`
-        mockDaily.push({
-          date: dateStr,
-          调用次数: Math.floor(Math.random() * 20) + 5,
-          消耗Token: Math.floor(Math.random() * 5000) + 1000,
-        })
-      }
-      setDailyUsage(mockDaily)
-
-      setModuleDist([
-        { name: 'AI对话', value: 35 },
-        { name: '内容创作', value: 25 },
-        { name: '文档处理', value: 15 },
-        { name: '数据分析', value: 10 },
-        { name: '智能工坊', value: 8 },
-        { name: '其他', value: 7 },
-      ])
-
-      setStats({
-        total_calls: 1284,
-        total_tokens: 458200,
-        today_calls: 47,
-        today_tokens: 18200,
-        most_used: 'AI对话',
-        remaining_today: '无限',
-        member_level: 'pro',
-      })
+    } catch (e) {
+      // 后端不可用时展示错误而非编造数据（真实统计才能支撑商业决策）
+      setLoadError(e?.message || '用量统计加载失败')
+      toast.error(`加载用量统计失败：${e.message || '网络错误'}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -145,7 +121,13 @@ export default function UsageAnalyticsPage() {
         }
       />
 
-      {/* 总览卡片 */}
+      {loading ? (
+        <SkeletonGrid count={8} />
+      ) : loadError ? (
+        <ErrorState message={loadError} onRetry={loadStats} />
+      ) : (
+        <>
+          {/* 总览卡片 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
@@ -285,6 +267,8 @@ export default function UsageAnalyticsPage() {
           </div>
         </div>
       </Card>
+        </>
+      )}
     </div>
   )
 }

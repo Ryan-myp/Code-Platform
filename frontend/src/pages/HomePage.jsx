@@ -74,6 +74,7 @@ import {
   ChevronUp,
   ChevronDown,
   Save,
+  RefreshCw,
 } from 'lucide-react'
 import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -601,6 +602,7 @@ export default function HomePage() {
   const [drafts, setDrafts] = useState([])
   const [showcase, setShowcase] = useState([]) // 真实用户成果案例墙
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [capKw, setCapKw] = useState('')
 
   // 首页组件配置（null=未加载，默认全显示）
@@ -645,7 +647,9 @@ export default function HomePage() {
       setDrafts(draftRes.data || [])
       if (widgetsRes?.data) setWidgets(widgetsRes.data)
       setShowcase(showcaseRes?.data?.items || [])
-    } catch {
+      setLoadError('')
+    } catch (e) {
+      setLoadError(e?.message || '首页数据加载失败')
       toast.error('加载数据失败')
     } finally {
       setLoading(false)
@@ -821,6 +825,24 @@ export default function HomePage() {
     )
   }
 
+  // 核心数据加载失败：全页兜底错误态 + 一键重试（不再静默空白）
+  if (loadError && !stats) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <div className="w-14 h-14 bg-red-50 rounded-2xl flex items-center justify-center mb-4">
+          <svg className="w-7 h-7 text-red-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+        </div>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1">首页数据加载失败</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-5">{loadError}</p>
+        <Button variant="primary" icon={RefreshCw} onClick={loadData}>
+          重新加载
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* 欢迎区 */}
@@ -876,14 +898,21 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 真实成果案例墙：用户主动分享的成果（点击跳分享页，形成传播闭环） */}
+      {/* 真实成果案例墙：用户主动分享的成果（点击跳分享页，形成传播闭环）
+          无真实分享时展示系统精选示例成果（is_demo，点击直达工具页） */}
       {showcase.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-soft overflow-hidden">
           <div className="flex items-center justify-between px-5 pt-4 pb-3">
             <div className="flex items-center gap-2">
               <GalleryVerticalEnd className="w-5 h-5 text-brand-500" />
-              <h2 className="font-semibold text-gray-900">真实成果案例</h2>
-              <span className="text-xs text-gray-400">平台用户分享的生成结果 · 点击围观</span>
+              <h2 className="font-semibold text-gray-900">
+                {showcase.some((s) => s.is_demo) ? '精选成果案例' : '真实成果案例'}
+              </h2>
+              <span className="text-xs text-gray-400">
+                {showcase.some((s) => s.is_demo)
+                  ? '平台能力示例 · 点击体验同款创作'
+                  : '平台用户分享的生成结果 ·  点击围观'}
+              </span>
             </div>
             <button
               onClick={() => navigate('/tools')}
@@ -896,21 +925,23 @@ export default function HomePage() {
           <div className="flex gap-3 px-5 pb-5 overflow-x-auto pb-4 scrollbar-thin">
             {showcase.map((s) => (
               <a
-                key={s.share_code}
-                href={`/share/${s.share_code}`}
-                target="_blank"
+                key={s.is_demo ? `demo-${s.route}` : s.share_code}
+                href={s.is_demo ? s.route : `/share/${s.share_code}`}
+                target={s.is_demo ? '_self' : '_blank'}
                 rel="noreferrer"
                 className="group w-64 flex-shrink-0 rounded-xl border border-gray-200 hover:border-brand-300 hover:shadow-md transition-all overflow-hidden"
               >
                 <div className="px-4 py-3 bg-gradient-to-br from-gray-50 to-brand-50/40">
                   <div className="flex items-center justify-between gap-2">
                     <span className="px-1.5 py-0.5 rounded-md bg-brand-100 text-brand-700 text-[10px] font-medium">
-                      {s.content_type}
+                      {s.is_demo ? `${s.content_type} · 示例` : s.content_type}
                     </span>
-                    <span className="flex items-center gap-1 text-[10px] text-gray-400">
-                      <Activity className="w-3 h-3" />
-                      {s.views} 浏览
-                    </span>
+                    {!s.is_demo && (
+                      <span className="flex items-center gap-1 text-[10px] text-gray-400">
+                        <Activity className="w-3 h-3" />
+                        {s.views} 浏览
+                      </span>
+                    )}
                   </div>
                   <p className="mt-2 text-sm font-medium text-gray-800 truncate">
                     {s.title || '分享成果'}
@@ -921,12 +952,37 @@ export default function HomePage() {
                     {s.preview || '（无预览内容）'}
                   </p>
                   <p className="mt-2 text-[10px] text-gray-300 group-hover:text-brand-500 transition-colors">
-                    {s.created_at?.slice(0, 10)} · 点击查看完整内容 →
+                    {s.is_demo
+                      ? '点击进入对应工具 →'
+                      : `${s.created_at?.slice(0, 10)} · 点击查看完整内容 →`}
                   </p>
                 </div>
               </a>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* 真实成果案例墙：空态引导（无分享时鼓励创作，形成分享闭环） */}
+      {showcase.length === 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft px-5 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center">
+              <GalleryVerticalEnd className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-gray-900">真实成果案例</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                暂无用户分享成果，去创作并分享，你的作品会成为大家的灵感
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/tools')}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-brand-500 to-indigo-600 text-white text-xs font-medium rounded-xl hover:opacity-90 transition-opacity flex-shrink-0"
+          >
+            <Sparkles className="w-3.5 h-3.5" /> 去创作第一个作品
+          </button>
         </div>
       )}
 

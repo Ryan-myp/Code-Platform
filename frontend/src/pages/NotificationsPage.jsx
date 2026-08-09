@@ -12,7 +12,7 @@ import {
   Filter,
   Search,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty } from '../components/ui'
+import { Card, Button, Badge, Empty, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -29,6 +29,7 @@ export default function NotificationsPage() {
   const toast = useToast()
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [filter, setFilter] = useState({ type: '', unreadOnly: false })
 
   useEffect(() => {
@@ -37,12 +38,14 @@ export default function NotificationsPage() {
 
   const loadNotifications = async () => {
     setLoading(true)
+    setLoadError('')
     try {
       let url = '/api/notifications?'
       if (filter.unreadOnly) url += 'unread_only=true&'
       const res = await api.get(url)
       setNotifications(res.data)
     } catch {
+      setLoadError('通知加载失败，请检查网络后重试')
       toast.error('加载通知失败')
     } finally {
       setLoading(false)
@@ -152,6 +155,10 @@ export default function NotificationsPage() {
         <div className="flex items-center justify-center h-32">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-500" />
         </div>
+      ) : loadError ? (
+        <Card>
+          <ErrorState message={loadError} onRetry={loadNotifications} />
+        </Card>
       ) : filteredNotifications.length === 0 ? (
         <Card>
           <Empty icon={Bell} title="暂无通知" description="当有新通知时会显示在这里" />

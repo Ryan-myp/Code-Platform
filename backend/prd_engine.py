@@ -10,12 +10,12 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from common.auth import decode_access_token, get_user_profile, require_auth
 from common.config import BIZ_DELIVERY_DIR, DEFAULT_MODELS, load_config
 from common.db import get_db
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, call_llm_async, log_usage, stream_llm_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["研发流程"])
@@ -86,17 +86,53 @@ CODE_SYSTEM = """你是一位高级开发工程师，擅长编写高质量可运
 直接输出代码，不要解释。"""
 
 
+# ══════════════════════════════════════════════════════════════
+# v12.0 流式输出（SSE）：PRD 端点 stream: true 时返回打字机增量
+# ══════════════════════════════════════════════════════════════
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """序列化 SSE 事件：``event: {event}\ndata: {json}\n\n``。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
+
+
+def stream_llm_response(system_prompt: str, user_prompt: str, max_tokens: int, usage_key: str) -> StreamingResponse:
+    """把 LLM 流式调用包装为 SSE 响应（事件 delta/done/error），复用重试与模型降级。"""
+
+    async def gen():
+        start = time.time()
+        try:
+            full = ""
+            async for delta, full in stream_llm_async(system_prompt, user_prompt, max_tokens=max_tokens):  # noqa: B007 — full 为累计文本，循环结束后用于 done 事件
+                yield _sse_event("delta", {"text": delta})
+            log_usage(usage_key, len(user_prompt), len(full), time.time() - start)
+            yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2)})
+        except HTTPException as e:
+            yield _sse_event("error", {"detail": e.detail})
+        except Exception as e:
+            logger.exception(f"{usage_key} stream failed")
+            yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
 @router.post("/api/prd/generate")
-def generate_prd(req: dict):
-    """AI 生成 PRD"""
+async def generate_prd(req: dict):
+    """AI 生成 PRD（v12.0：stream: true 走 SSE 流式）"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
         raise HTTPException(400, "请输入需求描述")
 
+    if req.get("stream"):
+        return stream_llm_response(PRD_SYSTEM, prd_text, 4000, "prd_generate")
+
     start = time.time()
     try:
         # 尝试用 biz-delivery 的 prompt 模板增强（若有）
-        result = call_llm(PRD_SYSTEM, prd_text, max_tokens=4000)
+        result = await call_llm_async(PRD_SYSTEM, prd_text, max_tokens=4000)
         log_usage("prd_generate", len(prd_text), len(result), time.time() - start)
         return {"result": result}
     except Exception as e:
@@ -105,13 +141,16 @@ def generate_prd(req: dict):
 
 
 @router.post("/api/prd/review")
-def review_prd(req: dict):
-    """PRD 审查 - 优先用 biz-delivery ReviewEngine，失败 fallback LLM"""
+async def review_prd(req: dict):
+    """PRD 审查 - 优先用 biz-delivery ReviewEngine，失败 fallback LLM；stream: true 直接 LLM 流式"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
         raise HTTPException(400, "请输入 PRD 内容")
 
     repo_path = req.get("repo_path") or ""
+    if req.get("stream"):
+        return stream_llm_response(REVIEW_SYSTEM, prd_text, 4000, "prd_review")
+
     start = time.time()
     fallback = False
 
@@ -137,19 +176,22 @@ def review_prd(req: dict):
         logger.warning(f"biz-delivery review unavailable, fallback LLM: {e}")
         fallback = True
 
-    result = call_llm(REVIEW_SYSTEM, prd_text, max_tokens=4000)
+    result = await call_llm_async(REVIEW_SYSTEM, prd_text, max_tokens=4000)
     log_usage("prd_review", len(prd_text), len(result), time.time() - start)
     return {"result": result, "engine": "llm", "fallback": fallback}
 
 
 @router.post("/api/prd/technical-design")
-def technical_design(req: dict):
-    """技术方案生成 - 优先用 biz-delivery TDEngine"""
+async def technical_design(req: dict):
+    """技术方案生成 - 优先用 biz-delivery TDEngine；stream: true 直接 LLM 流式"""
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
         raise HTTPException(400, "请输入 PRD 内容")
 
     repo_path = req.get("repo_path") or ""
+    if req.get("stream"):
+        return stream_llm_response(TD_SYSTEM, prd_text, 6000, "prd_td")
+
     start = time.time()
     fallback = False
 
@@ -172,18 +214,22 @@ def technical_design(req: dict):
         logger.warning(f"biz-delivery TD unavailable, fallback LLM: {e}")
         fallback = True
 
-    result = call_llm(TD_SYSTEM, prd_text, max_tokens=6000)
+    result = await call_llm_async(TD_SYSTEM, prd_text, max_tokens=6000)
     log_usage("prd_td", len(prd_text), len(result), time.time() - start)
     return {"result": result, "engine": "llm", "fallback": fallback}
 
 
 @router.post("/api/prd/test-cases")
-def test_cases(req: dict):
-    """测试用例生成 - 优先用 biz-delivery TestEngine"""
+async def test_cases(req: dict):
+    """测试用例生成 - 优先用 biz-delivery TestEngine；stream: true 直接 LLM 流式"""
     prd_text = (req.get("prd_text") or "").strip()
     tech_design = (req.get("tech_design") or "").strip()
     if not prd_text:
         raise HTTPException(400, "请输入 PRD 内容")
+
+    if req.get("stream"):
+        user_prompt = f"PRD:\n{prd_text}\n\n技术方案:\n{tech_design}" if tech_design else f"PRD:\n{prd_text}"
+        return stream_llm_response(TEST_SYSTEM, user_prompt, 4000, "prd_test")
 
     start = time.time()
     fallback = False
@@ -204,40 +250,46 @@ def test_cases(req: dict):
         fallback = True
 
     user_prompt = f"PRD:\n{prd_text}\n\n技术方案:\n{tech_design}" if tech_design else f"PRD:\n{prd_text}"
-    result = call_llm(TEST_SYSTEM, user_prompt, max_tokens=4000)
+    result = await call_llm_async(TEST_SYSTEM, user_prompt, max_tokens=4000)
     log_usage("prd_test", len(user_prompt), len(result), time.time() - start)
     return {"result": result, "engine": "llm", "fallback": fallback}
 
 
 @router.post("/api/prd/generate-code")
-def generate_code(req: dict):
-    """根据技术方案生成代码"""
+async def generate_code(req: dict):
+    """根据技术方案生成代码（stream: true 走 SSE 流式）"""
     tech_design = (req.get("tech_design") or "").strip()
     language = (req.get("language") or "python").strip()
     task_type = req.get("task_type", "code")
     if not tech_design:
         raise HTTPException(400, "请输入技术方案")
 
-    start = time.time()
     user_prompt = f"语言: {language}\n任务类型: {task_type}\n\n技术方案:\n{tech_design}"
-    result = call_llm(CODE_SYSTEM, user_prompt, max_tokens=8000)
+    if req.get("stream"):
+        return stream_llm_response(CODE_SYSTEM, user_prompt, 8000, "prd_code")
+
+    start = time.time()
+    result = await call_llm_async(CODE_SYSTEM, user_prompt, max_tokens=8000)
     log_usage("prd_code", len(user_prompt), len(result), time.time() - start)
     return {"result": result, "language": language}
 
 
 @router.post("/api/prd/code-chat")
-def code_chat(req: dict):
-    """代码对话 - 追问/修改代码"""
+async def code_chat(req: dict):
+    """代码对话 - 追问/修改代码（stream: true 走 SSE 流式）"""
     message = (req.get("message") or "").strip()
     language = (req.get("language") or "python").strip()
     if not message:
         raise HTTPException(400, "请输入消息")
 
-    start = time.time()
     system = (
         f"你是一位高级 {language} 开发工程师。根据用户对话上下文，继续完善或修改代码。直接输出最新完整代码，不要解释。"
     )
-    result = call_llm(system, message, max_tokens=8000)
+    if req.get("stream"):
+        return stream_llm_response(system, message, 8000, "prd_code_chat")
+
+    start = time.time()
+    result = await call_llm_async(system, message, max_tokens=8000)
     log_usage("prd_code_chat", len(message), len(result), time.time() - start)
     return {"result": result}
 

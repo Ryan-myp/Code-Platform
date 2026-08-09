@@ -39,7 +39,9 @@ import {
   PageHeader,
   ConfirmDialog,
 } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -73,14 +75,14 @@ const PROMPT_TEMPLATES = [
   },
 ]
 
-// 尺寸选项
+// 尺寸选项（label 区分语义，ratio 展示实际分辨率避免歧义）
 const SIZES = [
-  { label: '正方形', value: '1024x1024', ratio: '1:1' },
-  { label: '横向', value: '1280x720', ratio: '16:9' },
-  { label: '纵向', value: '720x1280', ratio: '9:16' },
-  { label: '宽屏', value: '1920x1080', ratio: '16:9' },
-  { label: '竖版', value: '1080x1350', ratio: '4:5' },
-  { label: '封面', value: '800x600', ratio: '4:3' },
+  { label: '正方形', value: '1024x1024', ratio: '1:1 · 1024×1024' },
+  { label: '横向', value: '1280x720', ratio: '16:9 · 1280×720' },
+  { label: '纵向', value: '720x1280', ratio: '9:16 · 720×1280' },
+  { label: '宽屏', value: '1920x1080', ratio: '16:9 高清 · 1920×1080' },
+  { label: '竖版', value: '1080x1350', ratio: '4:5 · 1080×1350' },
+  { label: '封面', value: '800x600', ratio: '4:3 · 800×600' },
 ]
 
 const TRYON_STYLES = [
@@ -117,7 +119,18 @@ const TABS = [
 
 export default function ImageFactoryPage() {
   const toast = useToast()
-  const [activeTab, setActiveTab] = useState('generate')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('image_factory_inputs', {
+    activeTab: 'generate',
+    prompt: '',
+    selectedSize: '1024x1024',
+    batchSize: 1,
+  })
+  const { activeTab, prompt, selectedSize, batchSize } = inputs
+  const setActiveTab = (v) => setInputs((p) => ({ ...p, activeTab: v }))
+  const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
+  const setSelectedSize = (v) => setInputs((p) => ({ ...p, selectedSize: v }))
+  const setBatchSize = (v) => setInputs((p) => ({ ...p, batchSize: v }))
   const [images, setImages] = useState([])
   const [templates, setTemplates] = useState([])
   const [stats, setStats] = useState({ total_images: 0, total_templates: 0, api_configured: false })
@@ -129,9 +142,6 @@ export default function ImageFactoryPage() {
   const [deleteTarget, setDeleteTarget] = useState(null)
 
   // 生成
-  const [prompt, setPrompt] = useState('')
-  const [selectedSize, setSelectedSize] = useState('1024x1024')
-  const [batchSize, setBatchSize] = useState(1)
   const [generating, setGenerating] = useState(false)
   const [generatedImages, setGeneratedImages] = useState([])
   const [generationError, setGenerationError] = useState(null)
@@ -607,6 +617,14 @@ export default function ImageFactoryPage() {
       >
         <Download className="w-4 h-4" />
       </button>
+      <span onClick={(e) => e.stopPropagation()}>
+        <ShareButton
+          content={`# AI 图片作品\n\n提示词：${img.prompt || ''}\n\n> 由小团智能平台 AI 图片工厂生成 · ${new Date().toLocaleString()}`}
+          title="AI 图片作品"
+          contentType="image"
+          className="!p-2 !bg-white !rounded-full"
+        />
+      </span>
       <button
         onClick={() => setDeleteTarget(img)}
         className="p-2 bg-white rounded-full hover:bg-red-100 hover:text-red-600 transition-colors"
@@ -661,7 +679,7 @@ export default function ImageFactoryPage() {
 
       {/* Tabs */}
       <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-        <div className="flex overflow-x-auto">
+        <div className="flex flex-wrap">
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -702,6 +720,12 @@ export default function ImageFactoryPage() {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="描述你想要的图片，例如：Professional product photography of a luxury perfume bottle, golden hour lighting, white background..."
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !generating) {
+                      e.preventDefault()
+                      handleGenerate()
+                    }
+                  }}
                   className="w-full h-36 px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none transition-all"
                 />
               </div>

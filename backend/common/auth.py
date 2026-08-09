@@ -464,6 +464,7 @@ def get_quota_info(user_id: str) -> dict:
         "membership_expires": exp,
         "membership_days_left": days_left,
         "username": profile.get("username", ""),
+        "role": profile.get("role", ""),  # 供前端识别 admin 豁免（水印/1080p/配额）
         "daily_quota": profile["daily_quota"],
         "bonus_quota": profile["bonus_quota"],
         "used_today": profile["used_today"],
@@ -969,6 +970,7 @@ def _auth_by_api_key(raw_key: str) -> dict[str, Any]:
             "role": row["role"],
             "scope": ["read", "write"],
             "auth_mode": "api_key",
+            "api_key_id": row["id"],
         }
     finally:
         conn.close()

@@ -14,8 +14,10 @@ import {
   Search,
   Flame,
   Clock3,
+  Copy,
 } from 'lucide-react'
 import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
 
@@ -645,6 +647,25 @@ export default function GalleryPage() {
               <Badge color="purple">{preview.author}</Badge>
               <span>{fmtTime(preview.created_at)}</span>
               <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(preview.prompt || '')
+                      toast.success('提示词已复制，可到创作工具中复用')
+                    } catch {
+                      toast.error('复制失败')
+                    }
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium bg-gray-50 text-gray-500 border border-gray-200 hover:border-brand-300 hover:text-brand-600 transition-all"
+                  title="复制提示词"
+                >
+                  <Copy className="w-3.5 h-3.5" /> 复制提示词
+                </button>
+                <ShareButton
+                  content={preview.prompt || '（无描述）'}
+                  title={`作品 · ${preview.author}`}
+                  contentType="gallery_work"
+                />
                 <button
                   onClick={() => toggleLike(preview)}
                   className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all ${preview.liked ? 'bg-rose-50 text-rose-500 border border-rose-200' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:border-rose-200 hover:text-rose-500'}`}

@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -251,6 +251,83 @@ SCENE_TEMPLATES = [
         "desc": "情感丰富，引人入胜",
         "voice_hint": "zh-CN-XiaoxiaoNeural",
         "speed_hint": 0.9,
+    },
+]
+
+# ── 行业模板库 ──────────────────────────────────────────────
+# 每模板 = 场景背景（scene_id/background_id/voice_hint/speed_hint，供前端一键填充）
+#          + 字幕样式（position: right=右侧名片下 / center=底部居中大字）
+#          + 片头片尾引导语 + 推荐文案结构（脚本助手按结构生成）
+INDUSTRY_TEMPLATES = [
+    {
+        "id": "live_shopping",
+        "name": "带货种草",
+        "emoji": "🛍️",
+        "desc": "痛点钩子+卖点3连+促单引导，暖调背景抓眼球",
+        "scene_id": "livestream",
+        "background_id": "warm",
+        "voice_hint": "zh-CN-YunjianNeural",
+        "speed_hint": 1.1,
+        "subtitle": {"position": "center", "color": "#ffb84d", "font_size": 34},
+        "opening": "好物严选 · 真实测评",
+        "closing": "点击关注，好物不错过",
+        "script_structure": "开头痛点钩子（3秒留人）→ 产品卖点3条（每条配使用场景）→ 价格/福利对比 → 促单引导",
+    },
+    {
+        "id": "knowledge",
+        "name": "知识口播",
+        "emoji": "📚",
+        "desc": "提问开场+干货3点+金句收尾，科技蓝幕显专业",
+        "scene_id": "course",
+        "background_id": "tech",
+        "voice_hint": "zh-CN-YunxiNeural",
+        "speed_hint": 1.0,
+        "subtitle": {"position": "right", "color": "#4dd0e1", "font_size": 32},
+        "opening": "知识干货 · 每天3分钟",
+        "closing": "收藏转发，让更多人看到",
+        "script_structure": "开头提问（制造好奇）→ 核心知识3点（由浅入深）→ 案例佐证 → 总结金句",
+    },
+    {
+        "id": "news",
+        "name": "新闻播报",
+        "emoji": "📰",
+        "desc": "导语+事实+观点三段式，演播室背景显权威",
+        "scene_id": "news",
+        "background_id": "studio",
+        "voice_hint": "zh-CN-YunyangNeural",
+        "speed_hint": 1.0,
+        "subtitle": {"position": "center", "color": "#ffd54f", "font_size": 32},
+        "opening": "今日资讯 · 权威速递",
+        "closing": "持续关注，第一时间掌握",
+        "script_structure": "导语（一句话概括事件）→ 事件经过（时间线+关键细节）→ 背景分析 → 结尾观点",
+    },
+    {
+        "id": "course",
+        "name": "课程讲解",
+        "emoji": "🎓",
+        "desc": "概念引入+分步拆解+小结回顾，办公室背景亲和",
+        "scene_id": "course",
+        "background_id": "office",
+        "voice_hint": "zh-CN-XiaoxiaoNeural",
+        "speed_hint": 0.95,
+        "subtitle": {"position": "right", "color": "#81c784", "font_size": 30},
+        "opening": "系统课程 · 循序渐进",
+        "closing": "点赞收藏，反复学习",
+        "script_structure": "引入概念（生活化类比）→ 分步讲解（每步一个小结）→ 常见误区 → 课后小结",
+    },
+    {
+        "id": "brand",
+        "name": "品牌介绍",
+        "emoji": "🏢",
+        "desc": "故事开场+优势矩阵+愿景收尾，演播室大气稳重",
+        "scene_id": "story",
+        "background_id": "studio",
+        "voice_hint": "zh-CN-YunjianNeural",
+        "speed_hint": 0.95,
+        "subtitle": {"position": "center", "color": "#ffd54f", "font_size": 36},
+        "opening": "品牌故事 · 匠心品质",
+        "closing": "了解更多，欢迎咨询",
+        "script_structure": "品牌故事（创始人初心）→ 核心优势3点（数据支撑）→ 产品/服务矩阵 → 品牌愿景口号",
     },
 ]
 
@@ -1005,6 +1082,34 @@ def _build_bg_src(bg: dict, w: int, h: int) -> Image.Image | None:
 
 _GLOW_CACHE = {}
 
+_TEXT_WIDTH_CACHE: dict = {}
+
+
+def _text_width(text: str, font) -> float:
+    """文本宽度（按 字体+文本 缓存）：卡拉OK逐字绘制每帧高频调用 textlength。"""
+    key = (font, text)
+    w = _TEXT_WIDTH_CACHE.get(key)
+    if w is None:
+        w = float(font.getlength(text))
+        if len(_TEXT_WIDTH_CACHE) > 10000:  # 上限防无限增长（文本行数有限，正常远低于此）
+            _TEXT_WIDTH_CACHE.clear()
+        _TEXT_WIDTH_CACHE[key] = w
+    return w
+
+
+def _karaoke_cur_idx(lines: list, progress: float) -> int:
+    """卡拉OK进度 → 当前行下标（与 _draw_karaoke 逐字逻辑一致，供字幕层缓存签名使用）。"""
+    total_chars = sum(len(ln) for ln in lines)
+    if total_chars == 0:
+        return 0
+    chars_done = min(int(progress * total_chars), total_chars - 1)
+    acc = 0
+    for i, ln in enumerate(lines):
+        if acc + len(ln) > chars_done:
+            return i
+        acc += len(ln)
+    return max(0, len(lines) - 1)
+
 
 def _get_glow_template(radius: int = 150, scale: float = 1.0):
     """高斯柔光斑 RGBA 模板（按 (radius, scale) 缓存，避免每帧重复计算/resize）。"""
@@ -1073,39 +1178,72 @@ def _draw_particles(img: Image.Image, t: float) -> None:
         d.ellipse([px - r, py - r, px + r, py + r], fill=f"#ffffff{alpha:02x}")
 
 
-def _draw_karaoke(
-    draw, lines: list, progress: float, font, x: int, y0: int, line_h: int, accent: str, max_rows: int = 12
+def _draw_karaoke(  # noqa: C901 — 卡拉OK逐字绘制（right/center 双布局），复杂度可控
+    draw,
+    lines: list,
+    progress: float,
+    font,
+    x: int,
+    y0: int,
+    line_h: int,
+    accent: str,
+    max_rows: int = 12,
+    center: bool = False,
+    canvas_w: int = 0,
 ) -> None:
-    """卡拉OK逐字字幕：已读行整行半透明白，当前行逐字显示且当前字主题色高亮。"""
+    """卡拉OK逐字字幕：已读行整行半透明白，当前行逐字显示且当前字主题色高亮。
+
+    center=True 时按底部全宽居中绘制，窗口跟随进度滑动（短视频字幕观感），
+    x 为每行中心点；canvas_w 用于居中时行宽超限的截断提示。
+    """
     if not lines:
         return
-    display = lines[:max_rows]
-    total_chars = sum(len(ln) for ln in display)
+    total_chars = sum(len(ln) for ln in lines)
     if total_chars == 0:
         return
     chars_done = min(int(progress * total_chars), total_chars - 1)
-    # 定位当前行
-    acc = 0
-    cur_idx = 0
-    for i, ln in enumerate(display):
-        if acc + len(ln) > chars_done:
-            cur_idx = i
+    # 定位当前行（窗口起点字符数：center 模式下当前行内进度需相对窗口计算）
+    cur_idx = _karaoke_cur_idx(lines, progress)
+    acc = sum(len(ln) for ln in lines[:cur_idx])
+    if center:
+        # 窗口 = 当前行及之前 max_rows-1 行（底部字幕随进度上滚）
+        start = max(0, cur_idx - max_rows + 1)
+        display = lines[start : cur_idx + 1]
+        if cur_idx < len(lines) - 1:
+            display = display + [lines[cur_idx + 1]]  # 预显示下一行开头，提示后续内容
+        display = display[:max_rows]
+        # 重新累计窗口起点前的字符数（当前行内进度需相对窗口计算）
+        acc = sum(len(ln) for ln in lines[:start])
+    else:
+        display = lines[:max_rows]
+    # 已读行（center 模式下窗口内当前行之前的行；right 模式为开头所有已读行）
+    for i in range(len(display)):
+        if center and i >= len(display) - 1:
             break
-        acc += len(ln)
-    # 已读行：整行半透明白
-    for i in range(cur_idx):
-        draw.text((x, y0 + i * line_h), display[i], fill="#ffffffb3", font=font)
+        if not center and i >= cur_idx:
+            break
+        ln = display[i]
+        tx = x - _text_width(ln, font) / 2 if center else x
+        draw.text((tx, y0 + i * line_h), ln, fill="#ffffffb3", font=font)
     # 当前行：字幕底条 + 逐字着色（已读白 / 当前字主题色 / 未读灰）
-    line = display[cur_idx]
+    cur_disp = cur_idx - (start if center else 0)
+    line = display[cur_disp]
     in_done = chars_done - acc
-    y_cur = y0 + cur_idx * line_h
-    line_w = draw.textlength(line, font=font)
+    y_cur = y0 + cur_disp * line_h
+    line_w = _text_width(line, font)
+    if center:
+        half = line_w / 2
+        lx = x - half - 8
+        rx = x + half + 8
+    else:
+        lx = x - 8
+        rx = x + line_w + 8
     draw.rounded_rectangle(
-        [x - 8, y_cur - 3, x + line_w + 8, y_cur + line_h - 5],
+        [lx, y_cur - 3, rx, y_cur + line_h - 5],
         radius=7,
         fill="#0000003a",
     )
-    cur_x = x
+    cur_x = x - line_w / 2 if center else x
     for j, ch in enumerate(line):
         if j < in_done:
             fill = "#ffffff"
@@ -1114,7 +1252,7 @@ def _draw_karaoke(
         else:
             fill = "#ffffff59"
         draw.text((cur_x, y_cur), ch, fill=fill, font=font)
-        cur_x += draw.textlength(ch, font=font)
+        cur_x += _text_width(ch, font)
 
 
 def _render_frame(  # noqa: C901
@@ -1130,6 +1268,9 @@ def _render_frame(  # noqa: C901
     energy: float = 0.0,
     mouth_shape: tuple = (0.0, 0.5),
     bg_img: Image.Image | None = None,
+    subtitle_style: dict | None = None,
+    sub_font=None,
+    sub_cache: dict | None = None,
 ) -> Image.Image:
     """绘制一帧：拟摄影/动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
     import math
@@ -1324,7 +1465,7 @@ def _render_frame(  # noqa: C901
             sw = bbox[2] - bbox[0]
             draw.text((cx - sw // 2, cy + r + 22), style_text, fill="#ffffff55", font=fonts["body"])
 
-    # ── 5. 右侧：人物名片 + 卡拉OK逐字字幕 ──
+    # ── 5. 人物名片（右上）+ 卡拉OK逐字字幕（right=名片下 / center=底部居中大字）──
     right_x = int(600 * S)
     right_w = int((1280 - 600 - 50) * S)
 
@@ -1346,23 +1487,89 @@ def _render_frame(  # noqa: C901
     draw.line([right_x, int(155 * S), right_x + right_w, int(155 * S)], fill="#ffffff15", width=1)
 
     accent = _accent_color(bg_hex)
-    _draw_karaoke(
-        draw,
-        text_lines,
-        progress,
-        fonts["body"],
-        right_x,
-        int(175 * S),
-        int(32 * S),
-        accent,
+    sub_style = subtitle_style or {}
+    sub_color = sub_style.get("color") or accent
+    sub_font_size = int(sub_style.get("font_size") or 32)
+    sub_font = sub_font or fonts["body"]
+    # 字幕静态帧跳过重绘：进度（当前行）未变化时复用上一帧字幕层，跳过逐字绘制
+    # （句间停顿/慢语速间隙命中率高；缓存随视频实例隔离，无跨视频串扰）
+    if sub_style.get("position") == "center":
+        k_max_rows = 4
+        k_line_h = int(sub_font_size * S)
+        k_y0 = height - int(64 * S) - int(20 * S) - k_max_rows * k_line_h
+        sub_x, sub_y, sub_w = 0, k_y0, width
+        sub_h = height - int(64 * S) - k_y0 + 4
+    else:
+        k_max_rows = 12
+        k_line_h = int(sub_font_size * S)
+        k_y0 = int(175 * S)
+        sub_x, sub_y = right_x - 10, k_y0 - 10
+        sub_w = right_w + 20
+        sub_h = (k_max_rows + 1) * k_line_h + int(40 * S)
+    sub_sig = (
+        hash("".join(text_lines)),
+        _karaoke_cur_idx(text_lines, progress),
+        sub_style.get("position"),
+        sub_color,
+        sub_font_size,
+        width,
+        height,
     )
-    if len(text_lines) > 12:
-        draw.text(
-            (right_x, int(175 * S) + 12 * int(32 * S)),
-            f"...共{sum(len(ln) for ln in text_lines)}字",
-            fill="#ffffff55",
-            font=fonts["tag"],
-        )
+    cached_layer = None
+    if sub_cache is not None:
+        with sub_cache["lock"]:
+            if sub_cache.get("sig") == sub_sig and sub_cache.get("layer") is not None:
+                cached_layer = sub_cache["layer"]
+    if cached_layer is not None:
+        ui.paste(cached_layer, (sub_x, sub_y))
+    else:
+        sub_layer = Image.new("RGBA", (sub_w, sub_h), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(sub_layer)
+        if sub_style.get("position") == "center":
+            # 底部居中大字（短视频字幕观感）：窗口跟随进度上滚，最多 4 行
+            _draw_karaoke(
+                sd,
+                text_lines,
+                progress,
+                sub_font,
+                width // 2,
+                k_y0 - sub_y,
+                k_line_h,
+                sub_color,
+                max_rows=k_max_rows,
+                center=True,
+                canvas_w=width,
+            )
+            if len(text_lines) > k_max_rows + 1:
+                sd.text(
+                    (width - int(40 * S), (k_y0 - sub_y) + (k_max_rows - 1) * k_line_h),
+                    f"...共{sum(len(ln) for ln in text_lines)}字",
+                    fill="#ffffff55",
+                    font=fonts["tag"],
+                )
+        else:
+            _draw_karaoke(
+                sd,
+                text_lines,
+                progress,
+                sub_font,
+                right_x,
+                k_y0 - sub_y,
+                k_line_h,
+                sub_color,
+            )
+            if len(text_lines) > 12:
+                sd.text(
+                    (right_x, (k_y0 - sub_y) + 12 * k_line_h),
+                    f"...共{sum(len(ln) for ln in text_lines)}字",
+                    fill="#ffffff55",
+                    font=fonts["tag"],
+                )
+        ui.paste(sub_layer, (sub_x, sub_y))
+        if sub_cache is not None:
+            with sub_cache["lock"]:
+                sub_cache["sig"] = sub_sig
+                sub_cache["layer"] = sub_layer
 
     # ── 6. 底部：品牌信息 + 主题色进度条 ──
     bar_h = int(64 * S)
@@ -1393,7 +1600,7 @@ def _render_frame(  # noqa: C901
     return Image.alpha_composite(img.convert("RGBA"), ui).convert("RGB")
 
 
-def _render_video(
+def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级），复杂度可控
     text: str,
     avatar: dict,
     bg: dict,
@@ -1402,6 +1609,9 @@ def _render_video(
     resolution: str = "720p",
     fps: int = 15,
     watermark: bool = False,
+    subtitle_style: dict | None = None,
+    opening: str = "",
+    closing: str = "",
 ) -> None:
     """真实视频感多帧渲染：动态背景粒子 + 卡拉OK逐字字幕 + 镜头缓慢推近。
 
@@ -1445,6 +1655,9 @@ def _render_video(
         "body": _load_font(20, FONT_CANDIDATES),
         "tag": _load_font(18, FONT_CANDIDATES),
     }
+    # 字幕专用字体：行业模板可指定字号（1280 基准坐标系），未指定时沿用 body
+    sub_style = subtitle_style or {}
+    sub_font = _load_font(int(sub_style.get("font_size") or 20), FONT_CANDIDATES) if sub_style else fonts["body"]
 
     # 音频时长 → 帧数（分辨率/帧率由 API 参数控制）
     duration = _audio_duration(audio_path)
@@ -1462,15 +1675,21 @@ def _render_video(
     # 字级口型时间轴（拼音韵母分类，嘴型逐字对齐配音文字）
     script_timeline = _build_script_timeline(text, duration)
 
-    # 文案换行（复用一帧的测量）
+    # 文案换行（复用一帧的测量）：center 字幕按底部全宽排版，right 沿用右侧栏宽
     probe = Image.new("RGB", (10, 10), "#000")
     probe_draw = ImageDraw.Draw(probe)
     right_w = int((OUT_W - 600 - 50) * 1.10)
-    text_lines = _wrap_text_lines(text, probe_draw, fonts["body"], right_w)
+    if sub_style.get("position") == "center":
+        wrap_w = int((OUT_W - 120) * 1.10)
+    else:
+        wrap_w = right_w
+    text_lines = _wrap_text_lines(text, probe_draw, sub_font, wrap_w)
 
     frames_dir = tempfile.mkdtemp(prefix="dh_frames_")
     # 水印字体只加载一次（原实现每帧重复加载字体文件）
     wm_font = _load_font(int(18 * OUT_W / 1280), FONT_CANDIDATES) if watermark else None
+    # 字幕静态帧缓存：进度未变化时复用字幕层（仅本次视频内共享，线程锁保护并发帧）
+    sub_cache = {"sig": None, "layer": None, "lock": threading.Lock()}
 
     def _render_one(f: int) -> None:
         t = f / fps
@@ -1490,6 +1709,9 @@ def _render_video(
             energy=energy,
             mouth_shape=mouth_shape,
             bg_img=bg_img,
+            subtitle_style=subtitle_style,
+            sub_font=sub_font,
+            sub_cache=sub_cache,
         )
         # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
         zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
@@ -1515,6 +1737,25 @@ def _render_video(
         if fade < 1.0:
             black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
             frame = Image.blend(black, frame, fade)
+        # 行业模板片头/片尾：首 1.2s 显示引导语、末 1.2s 显示收尾语（各自渐显渐隐，不遮字幕）
+        if (opening and t < 1.2) or (closing and t > duration - 1.2):
+            ov_text = opening if t < 1.2 else closing
+            if t < 1.2:
+                fade_o = min(1.0, t / 0.3) * min(1.0, (1.2 - t) / 0.4)
+            else:
+                fade_o = min(1.0, (t - (duration - 1.2)) / 0.3) * min(1.0, (duration - t) / 0.4)
+            if fade_o > 0.02:
+                ov_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
+                ov_draw = ImageDraw.Draw(ov_layer)
+                ov_font = fonts["title"]
+                ov_w = ov_draw.textlength(ov_text, font=ov_font)
+                ov_h = ov_font.getbbox(ov_text)[3]
+                a = int(255 * fade_o * 0.92)
+                ov_x = (OUT_W - ov_w) / 2
+                ov_y = OUT_H * 0.20 - ov_h / 2
+                ov_draw.text((ov_x + 2, ov_y + 2), ov_text, font=ov_font, fill=(0, 0, 0, a))
+                ov_draw.text((ov_x, ov_y), ov_text, font=ov_font, fill=(255, 255, 255, a))
+                frame.paste(ov_layer, (0, 0), ov_layer)
         # 商业水印：右下角半透明（不随淡入淡出消失，全程可见）
         if watermark:
             wm_text = WATERMARK_TEXT
@@ -1532,58 +1773,103 @@ def _render_video(
 
     try:
         # 帧渲染并行化：PIL/numpy 的 C 层操作释放 GIL，线程池可吃满多核（帧间无依赖）
-        render_workers = min(os.cpu_count() or 4, 8)
+        # v13.0 看门狗：单帧无进展超时 + 总时长超限即中断，绝不僵死白等
+        # v14.0 线程池按分辨率调优：720p 默认档吃满核（8 worker）；
+        # 1080p 单帧内存/耗时翻倍，降并发防内存压力（4 worker 封顶）
+        # v14.1 修复：as_completed 的 timeout 是"总预算"（长视频必然误杀），
+        # 改用手动 wait(FIRST_COMPLETED, 15s) 实现真正的"无进展看门狗"
+        cpu_n = os.cpu_count() or 4
+        render_workers = min(cpu_n, 8) if resolution == "720p" else max(2, min(cpu_n // 2, 4))
+        deadline = max(total_frames * 0.5, 300)  # 经验单帧预算 0.5s，下限 300s
+        frame_start = time.monotonic()
         with ThreadPoolExecutor(max_workers=render_workers) as pool:
-            for _ in pool.map(_render_one, range(total_frames)):
-                pass
+            pending = {pool.submit(_render_one, f) for f in range(total_frames)}
+            done = 0
+            while pending:
+                # 15s 内无任何新完成帧 → 视为渲染停滞（worker 卡死/内存压力），立即中断
+                finished, pending = wait(pending, timeout=15, return_when=FIRST_COMPLETED)
+                if not finished:
+                    raise TimeoutError(f"帧渲染停滞：>15s 无新完成帧（已完成 {done}/{total_frames} 帧）")
+                for fut in finished:
+                    fut.result()  # 帧渲染异常向上抛
+                    done += 1
+                if time.monotonic() - frame_start > deadline:
+                    raise TimeoutError(f"帧渲染总时长超限（>{deadline:.0f}s，已完成 {done}/{total_frames} 帧）")
+        logger.info(f"帧渲染完成：{total_frames}帧 耗时{time.monotonic() - frame_start:.1f}s")
 
         # ffmpeg：帧序列 + 音频 → MP4
         # 编码器自动选择：Apple 芯片用 VideoToolbox 硬件编码（快 5~10 倍），
         # Linux 容器等无硬件编码器环境自动回退 libx264 CPU 编码
-        try:
-            enc = _pick_video_encoder()
-            # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
-            # 去除 JPG 帧软糊感；硬件编码器（videotoolbox/nvenc）不支持 qscale
-            # （ffmpeg 8.x 报错）改用目标码率模式，libx264 用 crf 18
-            quality_args = ["-b:v", "6M", "-maxrate", "8M", "-bufsize", "12M"] if enc != "libx264" else ["-crf", "18"]
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-framerate",
-                    str(fps),
-                    "-i",
-                    os.path.join(frames_dir, "%04d.jpg"),
-                    "-i",
-                    audio_path,
-                    "-c:v",
-                    enc,
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-vf",
-                    "unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
-                    *quality_args,
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    "-shortest",
-                    "-movflags",
-                    "+faststart",
-                    output_path,
-                ],
-                check=True,
-                capture_output=True,
-                stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
-                timeout=900,
-            )
-        except subprocess.CalledProcessError as e:
-            # 把 ffmpeg stderr 带进错误信息，否则用户只能看到 exit code，无法诊断
-            detail = e.stderr.decode(errors="replace")[-500:].strip() if e.stderr else "未知错误"
-            raise RuntimeError(f"视频编码失败（ffmpeg exit {e.returncode}）：{detail}") from e
-        logger.info(f"动态视频生成成功：{output_path} ({total_frames}帧 @{fps}fps, {duration:.1f}s)")
+        # v13.0 降级：1080p 编码失败自动以 720p 重试，保证出片
+        encode_attempts = [resolution, "720p"] if resolution == "1080p" else [resolution]
+        encode_err: Exception | None = None
+        for enc_res in encode_attempts:
+            try:
+                _ffmpeg_encode(frames_dir, audio_path, output_path, enc_res, fps)
+                encode_err = None
+                logger.info(f"视频编码成功：{enc_res} {total_frames}帧 @{fps}fps, {duration:.1f}s")
+                break
+            except Exception as e:  # noqa: BLE001 — 编码失败尝试降级
+                encode_err = e
+                logger.warning(f"视频编码失败（{enc_res}），准备降级重试: {e}")
+        if encode_err:
+            raise encode_err
     finally:
         shutil.rmtree(frames_dir, ignore_errors=True)
+
+
+def _ffmpeg_encode(frames_dir: str, audio_path: str, output_path: str, resolution: str, fps: int) -> None:
+    """ffmpeg 帧序列+音频合成 MP4（分辨率由参数控制，供降级重试复用）。"""
+    OUT_W, OUT_H = (1920, 1080) if resolution == "1080p" else (1280, 720)
+    try:
+        enc = _pick_video_encoder()
+        # 画质滤镜链：锐化（unsharp）+ 对比度/饱和度分级（eq），
+        # 去除 JPG 帧软糊感；硬件编码器（videotoolbox/nvenc）不支持 qscale
+        # （ffmpeg 8.x 报错）改用目标码率模式，libx264 用 crf 18
+        # v14.0 码率按分辨率分级：720p 短视频 5M 已满足观感（编码更快），1080p 保持 6M 画质
+        if enc != "libx264":
+            quality_args = [
+                "-b:v", "6M" if resolution == "1080p" else "5M",
+                "-maxrate", "8M" if resolution == "1080p" else "7M",
+                "-bufsize", "12M" if resolution == "1080p" else "10M",
+            ]
+        else:
+            quality_args = ["-crf", "18"]
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-framerate",
+                str(fps),
+                "-i",
+                os.path.join(frames_dir, "%04d.jpg"),
+                "-i",
+                audio_path,
+                "-vf",
+                f"scale={OUT_W}:{OUT_H}:flags=lanczos,unsharp=5:5:0.6:5:5:0.0,eq=contrast=1.06:saturation=1.10",
+                "-c:v",
+                enc,
+                "-pix_fmt",
+                "yuv420p",
+                *quality_args,
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                output_path,
+            ],
+            check=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
+            timeout=900,
+        )
+    except subprocess.CalledProcessError as e:
+        # 把 ffmpeg stderr 带进错误信息，否则用户只能看到 exit code，无法诊断
+        detail = e.stderr.decode(errors="replace")[-500:].strip() if e.stderr else "未知错误"
+        raise RuntimeError(f"视频编码失败（ffmpeg exit {e.returncode}）：{detail}") from e
 
 
 # ── 数据库 ──────────────────────────────────────────────────
@@ -1615,6 +1901,8 @@ def _ensure_tables(conn) -> None:
         ("resolution", "TEXT DEFAULT '720p'"),
         ("fps", "INTEGER DEFAULT 15"),
         ("watermark", "INTEGER DEFAULT 0"),
+        ("engine", "TEXT DEFAULT '2d'"),
+        ("template_id", "TEXT DEFAULT ''"),
     ]:
         try:
             conn.execute(f"ALTER TABLE digital_human_records ADD COLUMN {col} {ddl}")
@@ -1646,6 +1934,7 @@ def _ensure_tables(conn) -> None:
         ("voice_id", "TEXT DEFAULT ''"),
         ("background_id", "TEXT DEFAULT ''"),
         ("speed", "REAL DEFAULT 1.0"),
+        ("engine", "TEXT DEFAULT '2d'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE digital_human_batches ADD COLUMN {col} {ddl}")
@@ -1667,6 +1956,20 @@ def _ensure_tables(conn) -> None:
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_batch_items_batch ON digital_human_batch_items(batch_id)")
+    # v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（key=hash(text|voice|speed|pitch)）
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS digital_human_tts_cache (
+            cache_key TEXT PRIMARY KEY,
+            text TEXT DEFAULT '',
+            voice TEXT DEFAULT '',
+            speed REAL DEFAULT 1.0,
+            pitch INTEGER DEFAULT 0,
+            audio_url TEXT DEFAULT '',
+            hits INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            last_hit TEXT DEFAULT ''
+        )"""
+    )
     # 用户自定义形象（上传头像图片）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS digital_human_custom_avatars (
@@ -1691,6 +1994,26 @@ def _ensure_tables(conn) -> None:
             emoji TEXT DEFAULT '🎙️',
             audio_url TEXT DEFAULT '',
             duration REAL DEFAULT 0,
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    # 声音克隆（v1 参数近似克隆：edge-tts 音色池 + 基频匹配 + 音调补偿；
+    # engine 预留 cosyvoice 升级路径）。吊销后 status='revoked'，生成链路不再可用。
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS voice_clones (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            voice_name TEXT DEFAULT '',
+            sample_path TEXT DEFAULT '',
+            sample_duration REAL DEFAULT 0,
+            f0_mean REAL DEFAULT 0,
+            gender TEXT DEFAULT '',
+            edge_voice TEXT DEFAULT '',
+            pitch_hz INTEGER DEFAULT 0,
+            speed REAL DEFAULT 1.0,
+            status TEXT DEFAULT 'active',       -- active/revoked
+            declare_authorized INTEGER DEFAULT 0,
+            engine TEXT DEFAULT 'pitch_fit',    -- v1: 参数近似克隆；预留 cosyvoice
             created_at TEXT DEFAULT ''
         )"""
     )
@@ -1721,12 +2044,29 @@ def _load_custom_avatars(user_id: str = "") -> dict:
     return out
 
 
+def _lookup_voice(user_id: str = "", voice_id: str = "") -> dict | None:
+    """声音统一查找：内置音色 / 自定义上传（custom_）/ 克隆声音（clone_）。"""
+    v = next((x for x in VOICES if x["id"] == voice_id), None)
+    if not v and (voice_id.startswith("custom_") or voice_id.startswith("clone_")):
+        v = _load_custom_voices(user_id).get(voice_id)
+    return v
+
+
 def _load_custom_voices(user_id: str = "") -> dict:
-    """按用户加载自定义声音 → {id: voice_dict}；含本地音频路径映射。"""
+    """按用户加载自定义声音 → {id: voice_dict}；含本地音频路径映射。
+
+    合并两类声音：
+    - custom_：用户上传的音频样本（生成时直接用样本作为配音）
+    - clone_：声音克隆（生成时用匹配音色 + 音调补偿合成，样本仅作分析，不直接使用）
+    """
     conn = get_db()
     try:
         rows = conn.execute(
             "SELECT * FROM digital_human_custom_voices WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        clone_rows = conn.execute(
+            "SELECT * FROM voice_clones WHERE user_id=? AND status='active' ORDER BY created_at DESC",
             (user_id,),
         ).fetchall()
     finally:
@@ -1739,6 +2079,15 @@ def _load_custom_voices(user_id: str = "") -> dict:
         d["local_audio_path"] = (
             os.path.join(_BASE_DIR, *url.lstrip("/").split("/")) if url.startswith("/uploads/") else ""
         )
+        out[d["id"]] = d
+    for r in clone_rows:
+        d = dict(r)
+        d["is_custom"] = True
+        d["is_clone"] = True
+        d["name"] = d.get("voice_name") or "克隆声音"
+        d["desc"] = f"声音克隆 · {d.get('gender') or '未知'}声 · 基频 {d.get('f0_mean') or 0}Hz"
+        d["emoji"] = "🔊"
+        d["local_audio_path"] = d.get("sample_path") or ""
         out[d["id"]] = d
     return out
 
@@ -1801,6 +2150,87 @@ async def upload_custom_avatar(
         conn.close()
     return {
         "avatar": {"id": avatar_id, "name": name.strip()[:20] or "我的形象", "image_url": image_url, "is_custom": True}
+    }
+
+
+@router.post("/photo-avatar")
+async def upload_photo_avatar(
+    file: UploadFile = File(...),
+    name: str = Form("我的照片形象"),
+    current_user: dict = require_auth(),
+):
+    """照片数字人形象上传：校验正脸（mediapipe）+ 分辨率 ≥ 512px → 存入自定义形象。
+
+    照片原图即推理素材（LivePortrait/Wav2Lip 引擎在生成时做检测/裁剪/对齐），
+    前端缩略图直接展示原图。校验失败返回 400（不消耗配额）。
+    """
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMG_EXT:
+        raise HTTPException(400, f"不支持的图片格式: {ext or '未知'}（支持 jpg/png/webp）")
+    content = await file.read()
+    if len(content) > 15 * 1024 * 1024:
+        raise HTTPException(400, "照片不能超过 15MB")
+    avatar_id = f"custom_{uuid.uuid4().hex[:10]}"
+    filename = f"{avatar_id}.jpg"
+    path = os.path.join(UPLOAD_DH_AVATAR_DIR, filename)
+    try:
+        def _process_photo() -> None:
+            img = Image.open(BytesIO(content))
+            img.load()
+            w, h = img.size
+            if min(w, h) < 512:
+                raise HTTPException(400, f"照片分辨率过低（{w}x{h}），请上传至少 512x512 的清晰正脸照片")
+            if w / h > 3 or h / w > 3:
+                raise HTTPException(400, "照片比例异常，请上传正常的人像照片")
+            # 正脸检测：mediapipe 检测不到人脸/关键点 → 视为非真实正脸（漫画/截图/无人像）
+            import cv2
+            import numpy as np
+
+            from live_portrait_engine import _face_align_params
+
+            bgr = cv2.cvtColor(np.asarray(img.convert("RGB")), cv2.COLOR_RGB2BGR)
+            try:
+                _face_align_params(bgr)
+            except Exception as e:  # noqa: BLE001 — 检测失败统一转为友好提示
+                raise HTTPException(400, f"未检测到清晰正脸（{e}），请上传正面免冠、光线充足的真实人像照片") from e
+            img.convert("RGB").save(path, "JPEG", quality=92)
+
+        await asyncio.to_thread(_process_photo)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"图片解析失败: {e}") from e
+    image_url = f"/uploads/dh_avatars/{filename}"
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        conn.execute(
+            "INSERT INTO digital_human_custom_avatars (id, user_id, name, style, gender, desc, emoji, image_url, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                avatar_id,
+                user,
+                (name or "我的照片形象").strip()[:20],
+                "照片数字人",
+                "真人",
+                "上传照片生成的数字人形象（支持口型同步）",
+                "📷",
+                image_url,
+                datetime.now().isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "avatar": {
+            "id": avatar_id,
+            "name": (name or "我的照片形象").strip()[:20],
+            "image_url": image_url,
+            "is_custom": True,
+            "engine": "live_portrait",
+        }
     }
 
 
@@ -1929,6 +2359,101 @@ async def delete_custom_voice(voice_id: str, current_user: dict = require_auth()
     return {"success": True}
 
 
+# ── 声音克隆（v1 参数近似克隆：上传样本 → 基频分析 → 音色匹配 + 音调补偿） ──
+@router.post("/voice-clone")
+async def create_voice_clone(
+    file: UploadFile = File(...),
+    voice_name: str = Form(...),
+    declare_authorized: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """上传 10-60s 干净人声样本 → 克隆专属声音（异步任务分析匹配音色）。
+
+    合规必选：declare_authorized 必须为 true（本人声音或已获授权），否则拒绝克隆。
+    返回 task_id：轮询 GET /api/tasks/{task_id}，完成后在 GET /voice-clones 查看。
+    """
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    if declare_authorized.strip().lower() not in ("true", "1", "yes"):
+        raise HTTPException(400, "请先声明「本人声音或已获授权」后再进行声音克隆（合规必选）")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_AUDIO_EXT:
+        raise HTTPException(400, f"不支持的音频格式: {ext or '未知'}（支持 mp3/wav/m4a/aac/ogg）")
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "样本音频不能超过 20MB")
+    clone_id = f"clone_{uuid.uuid4().hex[:10]}"
+    filename = f"{clone_id}{ext}"
+    path = os.path.join(UPLOAD_DH_VOICE_DIR, filename)
+    with open(path, "wb") as f:
+        f.write(content)
+    # ffprobe 快速校验：无效音频 / 时长不在 10-60s 直接拦截（避免无效分析任务）
+    duration = await asyncio.to_thread(_audio_duration, path)
+    if duration <= 0:
+        os.remove(path)
+        raise HTTPException(400, "音频文件无效或无法解析，请重新上传")
+    from voice_clone import MAX_SAMPLE_SECONDS, MIN_SAMPLE_SECONDS
+
+    if duration < MIN_SAMPLE_SECONDS or duration > MAX_SAMPLE_SECONDS:
+        os.remove(path)
+        raise HTTPException(
+            400, f"样本时长需在 {MIN_SAMPLE_SECONDS:.0f}-{MAX_SAMPLE_SECONDS:.0f} 秒之间（当前 {duration:.0f}s）"
+        )
+    task = create_task(
+        "dh_voice_clone",
+        {"clone_id": clone_id, "sample_path": path, "voice_name": (voice_name or "").strip()[:20]},
+        username=user,
+        user_id=uid,
+    )
+    return {
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "声音克隆任务已提交，分析完成自动入库，稍后刷新声音列表",
+        "task": task,
+    }
+
+
+@router.get("/voice-clones")
+async def list_voice_clones(current_user: dict = require_auth()):
+    """我的克隆声音列表（含已吊销，供前端展示状态与吊销入口）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        rows = conn.execute(
+            "SELECT * FROM voice_clones WHERE user_id=? ORDER BY created_at DESC",
+            (user,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"voices": [dict(r) for r in rows]}
+
+
+@router.post("/voice-clones/{clone_id}/revoke")
+async def revoke_voice_clone(clone_id: str, current_user: dict = require_auth()):
+    """吊销克隆音色（本人或管理员）：状态置 revoked 并删除样本文件，立即不可再用于生成。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    try:
+        _ensure_tables(conn)
+        row = conn.execute(
+            "SELECT user_id, sample_path FROM voice_clones WHERE id=?", (clone_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "克隆声音不存在")
+        if row["user_id"] != user and role != "admin":
+            raise HTTPException(403, "无权吊销该克隆音色")
+        conn.execute("UPDATE voice_clones SET status='revoked' WHERE id=?", (clone_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    sample = row["sample_path"] or ""
+    if sample and os.path.exists(sample):
+        os.remove(sample)
+    return {"success": True, "message": "克隆音色已吊销，不可再用于生成"}
+
+
 # ── 请求模型 ──────────────────────────────────────────────────
 class GenerateRequest(BaseModel):
     text: str = Field(..., min_length=5, max_length=5000, description="口播文案")
@@ -1936,10 +2461,12 @@ class GenerateRequest(BaseModel):
     voice_id: str = Field("zh-CN-XiaoxiaoNeural", description="声音ID")
     background_id: str = Field("tech", description="背景ID")
     scene_id: str = Field("product", description="场景模板ID")
+    template_id: str = Field("", max_length=40, description="行业模板ID（可选，空=不套模板）")
     speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+    engine: str = Field("2d", pattern="^(2d|live_portrait)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象）")
 
 
 # 商业水印：免费用户生成视频带平台水印（会员/管理员自动去除）
@@ -2010,6 +2537,104 @@ async def list_backgrounds():
 async def list_scenes():
     """场景预设模板（产品介绍/课程讲解/新闻播报/直播带货/故事讲述）。"""
     return {"scenes": SCENE_TEMPLATES}
+
+
+@router.get("/templates")
+async def list_templates():
+    """行业模板库：带货种草/知识口播/新闻播报/课程讲解/品牌介绍。
+
+    每模板含场景背景一键填充（scene/background/voice/speed）、
+    字幕样式（位置/配色/字号）、片头片尾引导语、推荐文案结构。
+    """
+    return {"templates": INDUSTRY_TEMPLATES}
+
+
+# ── v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（省通道调用/网络等待） ──
+_TTS_KEY_LOCKS: dict[str, threading.Lock] = {}
+_TTS_KEY_LOCKS_GUARD = threading.Lock()
+_TTS_CACHE_MAX_ROWS = 500  # 缓存行数上限（超出按最后命中时间清理最旧的 100 条）
+
+
+def _tts_cache_filename(cache_key: str) -> str:
+    """缓存音频文件路径（uploads/audio/tts_cache/{key}.mp3）。"""
+    return os.path.join(UPLOAD_AUDIO_DIR, "tts_cache", f"{cache_key}.mp3")
+
+
+def _tts_cache_key(text: str, voice: str, speed: float, pitch: int) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"{text}|{voice}|{speed}|{pitch}".encode()).hexdigest()[:16]
+
+
+def _tts_key_lock(cache_key: str) -> threading.Lock:
+    """进程内 per-key 锁：批量预热与单条生成并发时同一 key 只合成一次。"""
+    with _TTS_KEY_LOCKS_GUARD:
+        lock = _TTS_KEY_LOCKS.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _TTS_KEY_LOCKS[cache_key] = lock
+        return lock
+
+
+def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0) -> tuple[str, str]:
+    """带缓存的 TTS 合成，返回 (audio_path, audio_url)。
+
+    - key = hash(text|voice|speed|pitch)：同文案同音色同语速直接复用（跨用户共享，
+      TTS 通道有成本与限速，命中零等待；批量任务 TTS 预热即依赖此机制）
+    - 未命中：合成后落缓存（文件 + 表），行数超限按最后命中时间清理最旧 100 条
+    """
+    cache_key = _tts_cache_key(text, voice, speed, pitch)
+    lock = _tts_key_lock(cache_key)
+    with lock:
+        path = _tts_cache_filename(cache_key)
+        url = f"/uploads/audio/tts_cache/{cache_key}.mp3"
+        with get_db_context() as conn:
+            _ensure_tables(conn)
+            row = conn.execute(
+                "SELECT audio_url FROM digital_human_tts_cache WHERE cache_key=?", (cache_key,)
+            ).fetchone()
+        if row and os.path.exists(path) and os.path.getsize(path) >= 512:
+            with get_db_context() as conn:
+                conn.execute(
+                    "UPDATE digital_human_tts_cache SET hits=hits+1, last_hit=? WHERE cache_key=?",
+                    (datetime.now().isoformat(), cache_key),
+                )
+            return path, row["audio_url"]
+        from voice_factory import _tts_one
+
+        audio_bytes = _tts_one(text, voice, speed, pitch)
+        if not audio_bytes or len(audio_bytes) < 512:
+            raise RuntimeError("TTS 生成的音频无效（文件过小）")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(audio_bytes)
+        now = datetime.now().isoformat()
+        with get_db_context() as conn:
+            _ensure_tables(conn)
+            conn.execute(
+                """INSERT OR REPLACE INTO digital_human_tts_cache
+                   (cache_key, text, voice, speed, pitch, audio_url, hits, created_at, last_hit)
+                   VALUES (?,?,?,?,?,?,1,?,?)""",
+                (cache_key, text[:200], voice, speed, pitch, url, now, now),
+            )
+            # 行数超限：按最后命中时间清理最旧 100 条（连同文件，防磁盘膨胀）
+            over = conn.execute("SELECT COUNT(*) AS c FROM digital_human_tts_cache").fetchone()["c"]
+            over -= _TTS_CACHE_MAX_ROWS
+            if over > 0:
+                stale = conn.execute(
+                    """SELECT cache_key FROM digital_human_tts_cache
+                       ORDER BY COALESCE(last_hit, created_at) ASC LIMIT ?""",
+                    (over,),
+                ).fetchall()
+                for r in stale:
+                    conn.execute("DELETE FROM digital_human_tts_cache WHERE cache_key=?", (r["cache_key"],))
+                    fp = _tts_cache_filename(r["cache_key"])
+                    if os.path.exists(fp):
+                        try:
+                            os.remove(fp)
+                        except OSError:
+                            pass
+        return path, url
 
 
 # ── 写真肖像 API ────────────────────────────────────────────
@@ -2139,13 +2764,11 @@ def _generate_one(  # noqa: C901
         raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
     risk_hits = list(dict.fromkeys(h["word"] for h in hits))  # 去重保序
 
-    # 验证形象/声音/背景/场景（内置 + 用户自定义）
+    # 验证形象/声音/背景/场景（内置 + 用户自定义 + 克隆）
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
-    voice = next((v for v in VOICES if v["id"] == req.voice_id), None)
+    voice = _lookup_voice(user, req.voice_id)
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
-    if not voice and req.voice_id.startswith("custom_"):
-        voice = _load_custom_voices(user).get(req.voice_id)
     if not avatar:
         raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
     if not voice:
@@ -2153,6 +2776,20 @@ def _generate_one(  # noqa: C901
     bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
     if not bg:
         raise HTTPException(400, f"未知背景: {req.background_id}")
+    # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
+    if req.engine == "live_portrait":
+        if not (
+            avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])
+        ):
+            raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
+
+    # 行业模板：提供 template_id 时取字幕样式/片头片尾（场景背景由前端按模板一键填充）
+    template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
+    if req.template_id and not template:
+        raise HTTPException(400, f"未知行业模板: {req.template_id}")
+    subtitle_style = template.get("subtitle") if template else None
+    opening_text = template.get("opening", "") if template else ""
+    closing_text = template.get("closing", "") if template else ""
 
     # 0. 商业配额：参数与内容校验通过后才扣费（失败不消耗额度）
     from common.auth import consume_quota, get_quota_info
@@ -2179,82 +2816,116 @@ def _generate_one(  # noqa: C901
     optimized_text = _clean_script_text(req.text)
     _report(15, "文案已就绪，正在合成配音…")
 
-    # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音
-    audio_url = ""
-    audio_error = ""
-    audio_path = ""
-    if voice.get("is_custom"):
-        audio_path = voice.get("local_audio_path") or ""
-        if audio_path and os.path.exists(audio_path):
-            audio_url = voice["audio_url"]
-        else:
-            audio_error = "自定义声音文件缺失，请重新上传"
-    if not audio_url:
-        _report(20, "正在合成配音…")
-        try:
-            from voice_factory import _tts_one
-
-            audio_bytes = _tts_one(optimized_text, req.voice_id, req.speed)
-            if not audio_bytes:
-                raise RuntimeError("TTS 返回空音频")
-            audio_filename = f"{record_id}.mp3"
-            audio_path = os.path.join(UPLOAD_AUDIO_DIR, audio_filename)
-            with open(audio_path, "wb") as f:
-                f.write(audio_bytes)
-            # 极小/空文件视为生成失败：避免前端误显"音频已生成"、下游 ffmpeg 报错
-            if os.path.getsize(audio_path) < 512:
-                os.remove(audio_path)
-                audio_path = ""
-                raise RuntimeError("TTS 生成的音频无效（文件过小）")
-            audio_url = f"/uploads/audio/{audio_filename}"
-        except Exception as e:
-            logger.exception("TTS failed for digital human %s", record_id)
-            audio_error = str(e)
-
-    # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
-    # 渲染为 CPU 密集操作，受全局并发池保护（同批次多任务串行，跨批次限并发数）
-    _report(55, "配音完成，正在渲染数字人视频…")
+    # 2+3. 配音与视频合成（v13.0：失败自动重试 1 次；配额已在上方只扣一次，重试不重复扣费）
+    # stage 埋点：失败原因带 [stage:tts]/[stage:render] 前缀，便于诊断与前端提示
+    audio_url, audio_path, audio_error = "", "", ""
     video_url = ""
-    status = "done"
+    status = "failed"
     error_msg = ""
-    if audio_path and os.path.exists(audio_path):
+    engine_used = req.engine  # 记录实际使用的引擎（降级后为 2d）
+    for attempt in (1, 2):
+        stage = "tts"
         try:
-            if not _RENDER_SLOT.acquire(timeout=600):
-                raise RuntimeError("当前视频渲染任务繁忙，请稍后重试")
-            try:
-                video_filename = f"{record_id}.mp4"
-                video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
-                _render_video(
-                    text=optimized_text[:200],
-                    avatar=avatar,
-                    bg=bg,
-                    audio_path=audio_path,
-                    output_path=video_path,
-                    resolution=req.resolution,
-                    fps=req.fps,
-                    watermark=use_watermark,
-                )
-            finally:
-                _RENDER_SLOT.release()
-            video_url = f"/uploads/videos/{video_filename}"
-            _report(85, "视频渲染完成，正在保存记录…")
-        except Exception as e:
-            logger.exception("video generation failed %s", record_id)
-            status = "audio_only"
-            error_msg = f"视频合成失败（{e}），已生成配音音频"
-    else:
-        # 配音未生成：明确标记 failed（区别于音频成功但视频失败的 audio_only），
-        # 避免前端误显“配音音频已生成，可预览音频+形象”
-        status = "failed"
-        error_msg = audio_error or "配音生成失败"
+            # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音；
+            #    克隆声音用匹配音色 + 音调补偿合成（样本仅作分析，不直接使用）
+            if voice.get("is_custom") and not voice.get("is_clone"):
+                audio_path = voice.get("local_audio_path") or ""
+                if audio_path and os.path.exists(audio_path):
+                    audio_url = voice["audio_url"]
+                else:
+                    raise RuntimeError("自定义声音文件缺失，请重新上传")
+            if not audio_url:
+                _report(20, "正在合成配音…")
 
-    # 4. 保存记录（含商业参数：分辨率/帧率/水印）
+                # 克隆声音：透传匹配音色 + 基频补偿（pitch），模拟样本音色气质
+                tts_voice = req.voice_id
+                tts_pitch = 0
+                if voice.get("is_clone"):
+                    tts_voice = voice.get("edge_voice") or req.voice_id
+                    tts_pitch = int(voice.get("pitch_hz") or 0)
+                # v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（命中零等待，批量预热依赖）
+                audio_path, audio_url = _tts_cached(optimized_text, tts_voice, req.speed, tts_pitch)
+                # 极小/空文件视为生成失败：避免前端误显“音频已生成”、下游 ffmpeg 报错
+                if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) < 512:
+                    audio_path = ""
+                    raise RuntimeError("TTS 生成的音频无效（文件过小）")
+
+            # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
+            # 渲染为 CPU 密集操作，受全局并发池保护（同批次多任务串行，跨批次限并发数）
+            stage = "render"
+            _report(55, "配音完成，正在渲染数字人视频…")
+            if audio_path and os.path.exists(audio_path):
+                if not _RENDER_SLOT.acquire(timeout=600):
+                    raise RuntimeError("当前视频渲染任务繁忙，请稍后重试")
+                try:
+                    video_filename = f"{record_id}.mp4"
+                    video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
+                    # v13.0 引擎选择：live_portrait（照片数字人）失败自动降级 2D 基础引擎，保证出片
+                    engines = [req.engine, "2d"] if req.engine == "live_portrait" else ["2d"]
+                    render_err: Exception | None = None
+                    for eng in engines:
+                        try:
+                            if eng == "live_portrait":
+                                from live_portrait_engine import generate_from_photo
+
+                                generate_from_photo(
+                                    photo_path=avatar["local_image_path"],
+                                    audio_path=audio_path,
+                                    output_path=video_path,
+                                    resolution=req.resolution,
+                                    watermark=use_watermark,
+                                    progress=progress,
+                                )
+                            else:
+                                _render_video(
+                                    text=optimized_text[:200],
+                                    avatar=avatar,
+                                    bg=bg,
+                                    audio_path=audio_path,
+                                    output_path=video_path,
+                                    resolution=req.resolution,
+                                    fps=req.fps,
+                                    watermark=use_watermark,
+                                    subtitle_style=subtitle_style,
+                                    opening=opening_text,
+                                    closing=closing_text,
+                                )
+                            engine_used = eng
+                            render_err = None
+                            break
+                        except Exception as e:  # noqa: BLE001 — 引擎失败尝试降级
+                            render_err = e
+                            logger.warning(f"数字人渲染失败（engine={eng}），准备降级: {e}")
+                    if render_err:
+                        raise render_err
+                finally:
+                    _RENDER_SLOT.release()
+                video_url = f"/uploads/videos/{video_filename}"
+                _report(85, "视频渲染完成，正在保存记录…")
+            status = "done"
+            break
+        except HTTPException:
+            raise  # 4xx/配额类错误不重试
+        except Exception as e:
+            logger.warning(f"数字人生成第 {attempt} 次失败（stage={stage}）: {e}")
+            audio_error = f"[stage:{stage}] {e}"
+            if attempt < 2:
+                continue  # 自动重试 1 次：TTS 失败重跑 TTS；渲染失败时音频已缓存，只重跑渲染
+            # 最终失败：区分 audio_only（音频成功、视频失败）与 failed（配音未生成）
+            if stage == "render" and audio_path and os.path.exists(audio_path):
+                status = "audio_only"
+                error_msg = f"{audio_error}，已生成配音音频"
+            else:
+                status = "failed"
+                error_msg = audio_error or "配音生成失败"
+
+    # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板）
     conn.execute(
         """INSERT INTO digital_human_records
            (id, user_id, avatar_id, avatar_name, voice_id, voice_name,
-            background_id, scene_id, text, text_length, status,
-            audio_url, video_url, error, resolution, fps, watermark, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+            background_id, scene_id, template_id, text, text_length, status,
+            audio_url, video_url, error, resolution, fps, watermark, engine, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
         (
             record_id,
             user,
@@ -2264,6 +2935,7 @@ def _generate_one(  # noqa: C901
             voice["name"],
             req.background_id,
             req.scene_id,
+            req.template_id,
             optimized_text,
             len(optimized_text),
             status,
@@ -2273,6 +2945,7 @@ def _generate_one(  # noqa: C901
             req.resolution,
             req.fps,
             1 if use_watermark else 0,
+            engine_used,
             datetime.now().isoformat(),
         ),
     )
@@ -2281,7 +2954,7 @@ def _generate_one(  # noqa: C901
     _report(95, "记录已保存")
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg)
+    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg, error=error_msg or "")
     _report(100, "生成完成")
 
     return {
@@ -2294,6 +2967,7 @@ def _generate_one(  # noqa: C901
         "resolution": req.resolution,
         "fps": req.fps,
         "watermark": use_watermark,
+        "engine": engine_used,
         "quota_remaining": quota.get("remaining"),
         "sensitive_warning": (
             f"文案含风险词（{', '.join(risk_hits[:6])}），发布到平台时可能限流，建议修改" if risk_hits else ""
@@ -2311,7 +2985,7 @@ def _generate_one(  # noqa: C901
     }
 
 
-def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:
+def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:  # noqa: C901 — 多条件校验，逐项分支保持可读
     """异步提交前快速失败预检：违规词 / 今日额度 / 素材参数（不消耗配额，执行时再扣）。"""
     try:
         from content_strategy import _scan_text
@@ -2330,17 +3004,21 @@ def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:
     if remaining is not None and remaining <= 0:
         raise HTTPException(402, "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）")
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
-    voice = next((v for v in VOICES if v["id"] == req.voice_id), None)
+    voice = _lookup_voice(user, req.voice_id)
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
-    if not voice and req.voice_id.startswith("custom_"):
-        voice = _load_custom_voices(user).get(req.voice_id)
     if not avatar:
         raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
     if not voice:
         raise HTTPException(400, f"未知声音: {req.voice_id}")
     if not next((b for b in BACKGROUNDS if b["id"] == req.background_id), None):
         raise HTTPException(400, f"未知背景: {req.background_id}")
+    # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
+    if req.engine == "live_portrait":
+        if not (avatar.get("is_custom") and avatar.get("local_image_path")):
+            raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
+        if not os.path.exists(avatar["local_image_path"]):
+            raise HTTPException(400, "照片形象文件缺失，请重新上传")
 
 
 @router.post("/generate")
@@ -2484,10 +3162,12 @@ class BatchGenerateRequest(BaseModel):
     voice_id: str = Field("zh-CN-XiaoxiaoNeural", description="声音ID")
     background_id: str = Field("tech", description="背景ID")
     scene_id: str = Field("product", description="场景模板ID")
+    template_id: str = Field("", max_length=40, description="行业模板ID（可选）")
     speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+    engine: str = Field("2d", pattern="^(2d|live_portrait)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象）")
 
 
 # 批量任务缓存：batch_id → 任务（DB 为持久真相，内存仅加速轮询；重启后自动从 DB 恢复）
@@ -2535,6 +3215,7 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
         "voice_id": row["voice_id"],
         "background_id": row["background_id"],
         "speed": row["speed"],
+        "engine": row["engine"] if "engine" in row.keys() else "2d",
         "created_at": row["created_at"],
         "finished_at": row["finished_at"],
         "items": [
@@ -2554,7 +3235,7 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
     }
 
 
-def _batch_worker(
+def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试多分支，逐段可读
     batch_id: str,
     texts: list[str],
     req: BatchGenerateRequest,
@@ -2566,8 +3247,43 @@ def _batch_worker(
     """后台批量生成：逐条走完整流水线；违规词/超短文案直接失败（不浪费配额）。
 
     indexes 非空时表示部分重试（只处理指定下标）；每条结果实时落库，进程重启可从 DB 恢复。
+    v14.0 并行流水线：渲染前先并行预热全部文案配音（写音频缓存），逐条渲染时
+    TTS 缓存命中直接跳过合成阶段，TTS 总耗时从串行 n 条降到 ≈n/4 条。
     """
     task = _BATCH_TASKS[batch_id]
+
+    def _prefetch_tts() -> None:
+        """并行 TTS 预热：合法文案写入音频缓存，供主循环渲染时命中。"""
+        try:
+            voice_info = _lookup_voice(user, req.voice_id)
+        except Exception:  # noqa: BLE001 — 预热失败不影响主流程
+            return
+        if not voice_info:
+            return
+        if voice_info.get("is_custom") and not voice_info.get("is_clone"):
+            return  # 自定义上传声音无 TTS 环节
+        tts_voice = voice_info.get("edge_voice") or req.voice_id if voice_info.get("is_clone") else req.voice_id
+        tts_pitch = int(voice_info.get("pitch_hz") or 0) if voice_info.get("is_clone") else 0
+        warm = [
+            i
+            for i in (indexes if indexes is not None else range(len(texts)))
+            if 5 <= len(texts[i].strip()) <= 10000
+            and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
+        ]
+        if not warm:
+            return
+
+        def _warm(i: int) -> None:
+            try:
+                _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch)
+            except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再合成
+                logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
+
+        with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
+            list(pool.map(_warm, warm))
+
+    prefetch = threading.Thread(target=_prefetch_tts, daemon=True)
+    prefetch.start()
     try:
         for i in indexes if indexes is not None else range(len(texts)):
             item = task["items"][i]
@@ -2586,10 +3302,12 @@ def _batch_worker(
                         voice_id=req.voice_id,
                         background_id=req.background_id,
                         scene_id=req.scene_id,
+                        template_id=req.template_id,
                         speed=req.speed,
                         resolution=req.resolution,
                         fps=req.fps,
                         watermark=req.watermark,
+                        engine=req.engine,
                     )
                     res = _generate_one(sub, user, uid, role)
                     if res["status"] == "done":
@@ -2649,7 +3367,9 @@ def _batch_worker(
                 (datetime.now().isoformat(), batch_id),
             )
         task["status"] = "interrupted"
+        prefetch.join(timeout=30)
         return
+    prefetch.join(timeout=120)  # 等待 TTS 预热收尾（渲染期间应已全部完成）
     task["status"] = "done"
     task["finished_at"] = datetime.now().isoformat()
     with get_db_context() as conn:
@@ -2729,9 +3449,9 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
         conn.execute(
             """INSERT INTO digital_human_batches
                (id, user_id, status, total, success, failed, skipped,
-                avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed,
+                avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed, engine,
                 created_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
             (
                 batch_id,
                 user,
@@ -2747,6 +3467,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
                 req.voice_id,
                 req.background_id,
                 req.speed,
+                req.engine,
                 datetime.now().isoformat(),
                 "",
             ),
@@ -2772,6 +3493,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
         "voice_id": req.voice_id,
         "background_id": req.background_id,
         "speed": req.speed,
+        "engine": req.engine,
         "created_at": datetime.now().isoformat(),
         "finished_at": "",
         "items": items,
@@ -2875,6 +3597,7 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
         resolution=task["resolution"],
         fps=task["fps"],
         watermark=None,
+        engine=task.get("engine", "2d"),
     )
     # 重建任务（失败项重置为 pending，其余保持原结果）
     new_items = [dict(item) for item in task["items"]]
@@ -2898,6 +3621,7 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
         "voice_id": task["voice_id"],
         "background_id": task["background_id"],
         "speed": task["speed"],
+        "engine": task.get("engine", "2d"),
         "created_at": task["created_at"],
         "finished_at": "",
         "items": new_items,
@@ -2932,6 +3656,7 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
 class ScriptAssistRequest(BaseModel):
     topic: str = Field(..., min_length=2, max_length=100, description="口播主题")
     scene_id: str = Field("product", description="场景模板ID（影响文案风格）")
+    template_id: str = Field("", max_length=40, description="行业模板ID（可选，按模板推荐结构生成）")
     platform: str = Field("douyin", max_length=20, description="目标平台 douyin/kuaishou/wechat/bilibili")
     tone: str = Field("专业", max_length=20, description="文案风格：专业/亲切/活泼/煽情")
 
@@ -2949,6 +3674,9 @@ _SCENE_STYLES = {
 def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth()):
     """AI 口播文案助手：按主题/场景/平台生成 3 版口播脚本（LLM 失败自动回退模板）。"""
     scene_style = _SCENE_STYLES.get(req.scene_id, "产品介绍")
+    # 行业模板：按模板推荐的文案结构生成（选模板后脚本结构与成片字幕风格一致）
+    template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
+    structure = f"；文案结构：{template['script_structure']}" if template else ""
     platform_labels = {"douyin": "抖音", "kuaishou": "快手", "wechat": "公众号", "bilibili": "B站"}
     platform_name = platform_labels.get(req.platform, req.platform)
     system = (
@@ -2957,7 +3685,7 @@ def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth())
         "要求：口语化、无Markdown标记、无违禁词（不能出现点击领取/加微信/日赚等），不要用'最'等广告法极限词。"
     )
     user_prompt = (
-        f"主题：{req.topic}；场景：{scene_style}；平台：{platform_name}；风格：{req.tone}。"
+        f"主题：{req.topic}；场景：{scene_style}{structure}；平台：{platform_name}；风格：{req.tone}。"
         "请生成3版不同切入角度的口播文案。"
     )
     scripts = []
@@ -3240,4 +3968,72 @@ def _dh_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dic
     )
 
 
-register_handler("dh_generate", _dh_generate_handler, user_limit=1)
+register_handler("dh_generate", _dh_generate_handler, user_limit=1, max_attempts=2)
+
+
+def _dh_voice_clone_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """声音克隆异步任务：pyin 基频分析 → 音色池匹配 + 音调补偿 → 入库（active）。
+
+    v1 参数近似克隆（engine='pitch_fit'）：样本仅作分析，不直接用于配音；
+    失败自动清理样本文件，任务重试需重新上传。
+    """
+    from voice_clone import analyze_sample, fit_voice
+
+    clone_id = payload.get("clone_id") or ""
+    sample_path = payload.get("sample_path") or ""
+    voice_name = (payload.get("voice_name") or "我的克隆声音").strip()[:20]
+    # 与 digital_human_records / custom_voices 一致：user_id 列存 username（生成链路按 username 查询）
+    user = ctx.get("username", "")
+    update(10, "正在分析人声样本…")
+    try:
+        if not sample_path or not os.path.exists(sample_path):
+            raise RuntimeError("样本文件缺失，请重新上传")
+        analysis = analyze_sample(sample_path)  # {duration, f0_mean, voiced_ratio, gender}
+        update(60, "正在匹配音色…")
+        fit = fit_voice(analysis["f0_mean"])
+        conn = get_db()
+        try:
+            _ensure_tables(conn)
+            conn.execute(
+                "INSERT INTO voice_clones (id, user_id, voice_name, sample_path, sample_duration,"
+                " f0_mean, gender, edge_voice, pitch_hz, speed, status, declare_authorized, engine, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    clone_id,
+                    user,
+                    voice_name,
+                    sample_path,
+                    analysis["duration"],
+                    analysis["f0_mean"],
+                    analysis["gender"],
+                    fit["edge_voice"],
+                    fit["pitch_hz"],
+                    fit["speed"],
+                    "active",
+                    1,
+                    "pitch_fit",
+                    datetime.now().isoformat(),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        update(100, "声音克隆完成，可在声音列表中使用")
+        return {
+            "clone_id": clone_id,
+            "voice_id": clone_id,
+            "voice_name": voice_name,
+            "edge_voice": fit["edge_voice"],
+            "pitch_hz": fit["pitch_hz"],
+            "gender": analysis["gender"],
+            "f0_mean": analysis["f0_mean"],
+            "sample_duration": analysis["duration"],
+        }
+    except Exception:
+        # 分析失败：清理样本文件（避免垃圾留存），任务失败可重试（需重新上传）
+        if sample_path and os.path.exists(sample_path):
+            os.remove(sample_path)
+        raise
+
+
+register_handler("dh_voice_clone", _dh_voice_clone_handler, user_limit=1)

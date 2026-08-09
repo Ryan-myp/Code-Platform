@@ -15,10 +15,12 @@ import {
   TrendingUp,
   CheckCircle2,
   AlertTriangle,
+  Copy,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
+import ShareButton from '../components/ShareButton'
 import {
   Button,
   PageHeader,
@@ -274,6 +276,34 @@ function ComplianceTab() {
     }
   }
 
+  // 扫描结果 → Markdown（复制/分享复用）
+  const buildResultMd = (r) => {
+    if (!r) return ''
+    const lines = [
+      '# 内容合规扫描结果',
+      '',
+      `- 风险等级：${r.risk_label || r.risk || '-'}`,
+      `- 命中总数：${r.total_hits ?? 0} 处`,
+      '',
+      r.message || '',
+      '',
+    ]
+    if (r.hits?.length) {
+      lines.push('## 命中明细', '')
+      r.hits.forEach((h) => {
+        lines.push(`- [${h.level === 'high' ? '高' : '中'}] ${h.word}${h.context ? `（上下文：${h.context}）` : ''}`)
+      })
+      lines.push('')
+    }
+    if (r.suggestions?.length) {
+      lines.push('## 修改建议', '')
+      r.suggestions.forEach((s) => lines.push(`- ${s}`))
+      lines.push('')
+    }
+    lines.push('---', `由小团智能平台 AI 内容策略生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+
   const riskStyle = {
     safe: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     low: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -304,6 +334,12 @@ function ComplianceTab() {
               onChange={(e) => setContent(e.target.value)}
               rows={10}
               placeholder="粘贴正文内容，扫描敏感词 / 违禁词 / 广告法禁用词…"
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !checking) {
+                  e.preventDefault()
+                  handleCheck()
+                }
+              }}
               className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm resize-none"
             />
           </div>
@@ -320,9 +356,35 @@ function ComplianceTab() {
       </Card>
 
       <Card>
-        <h3 className="font-semibold text-ink-900 mb-3 flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-brand-500" /> 扫描结果
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-ink-900 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-brand-500" /> 扫描结果
+          </h3>
+          {result && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={Copy}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(buildResultMd(result))
+                    toast.success('扫描结果已复制')
+                  } catch {
+                    toast.error('复制失败，请手动选择复制')
+                  }
+                }}
+              >
+                复制
+              </Button>
+              <ShareButton
+                content={buildResultMd(result)}
+                title="内容安全扫描结果"
+                contentType="content_strategy"
+              />
+            </div>
+          )}
+        </div>
         {!result ? (
           <Empty icon={ShieldCheck} title="等待扫描" description="输入内容后点击「开始扫描」" />
         ) : (

@@ -8,6 +8,11 @@ from pathlib import Path
 
 import pytest
 
+# 测试环境标识必须在任何测试模块 import main 之前设置：
+# 否则模块级 `from main import app` 会绑定生产限流（login 5/min），
+# 全量运行时多个测试文件的登录请求在同一 limiter 上累积，偶发 429 失败
+os.environ["APP_ENV"] = "test"
+
 # 添加 backend 到路径
 BACKEND_DIR = Path(__file__).parent.parent / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
@@ -34,6 +39,22 @@ def setup_test_db():
     from main import init_db
 
     init_db()
+    # api_keys 表由 web_search 模块级 init_db 创建（该模块可能在 DB_PATH 切换前已加载，
+    # 表落在旧库），此处对测试库幂等补建，保证 API Key 认证链路可用
+    from common.db import get_db_context
+
+    with get_db_context() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                key_hash TEXT NOT NULL,
+                key_prefix TEXT NOT NULL,
+                label TEXT,
+                last_used TEXT,
+                created_at TEXT NOT NULL
+            )"""
+        )
     yield db_path
     # Cleanup
     if original_db_path:

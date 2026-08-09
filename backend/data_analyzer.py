@@ -44,6 +44,20 @@ _ANALYZER_SYSTEM_PROMPT = """你是资深数据分析师与 Python 工程师。�
 7. 代码要健壮：先 df.head() 了解结构，处理缺失值与类型转换，避免除零。
 8. 只输出代码本身，用 ```python 代码块包裹，不要输出任何解释文字。"""
 
+# 分析深度 → 附加要求（专业基线：参数真实影响输出质量）
+_DEPTH_REQUIREMENTS = {
+    "quick": "快速分析：聚焦核心指标与最关键的 1-2 个发现，结论控制在 5 句以内，图表最多 1 张。",
+    "standard": "标准分析：覆盖数据概览、关键指标、趋势/对比/占比维度，结论 8-12 句，图表最多 3 张。",
+    "deep": "深度分析：多维度交叉（时间/分类/相关性）、异常值诊断、统计指标（均值/中位数/标准差）、可执行建议，结论 15 句以上，图表最多 4 张。",
+}
+
+# 图表风格 → 注入 matplotlib 样式
+_CHART_STYLES = {
+    "default": "",
+    "dark": "plt.style.use('dark_background')\n",
+    "business": "plt.rcParams.update({'figure.facecolor': 'white', 'axes.grid': True, 'grid.alpha': 0.3, 'axes.spines.top': False, 'axes.spines.right': False, 'font.size': 11})\n",
+}
+
 
 def _extract_code(raw: str) -> str:
     """从 LLM 回复中提取 python 代码块（无代码块时整段视为代码）。"""
@@ -149,6 +163,16 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
     """
     question, data, info = _validate_analyze_request(req)
 
+    # 专业基线：分析深度 + 图表风格（真实影响生成质量）
+    depth = (req.get("depth") or "standard").lower()
+    if depth not in _DEPTH_REQUIREMENTS:
+        depth = "standard"
+    chart_style = (req.get("chart_style") or "default").lower()
+    if chart_style not in _CHART_STYLES:
+        chart_style = "default"
+    depth_req = _DEPTH_REQUIREMENTS[depth]
+    style_code = _CHART_STYLES[chart_style]
+
     # ── LLM 生成分析代码 ──
     user_prompt = (
         f"## 数据概览\n"
@@ -157,7 +181,8 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
         f"- 总行数（不含表头）：{info['rows']}\n\n"
         f"## 数据预览（前 {PREVIEW_ROWS} 行）\n"
         f"```\n{info['preview']}\n```\n\n"
-        f"## 用户的问题\n{question}\n"
+        f"## 用户的问题\n{question}\n\n"
+        f"## 分析要求\n{depth_req}\n"
     )
     start = datetime.now()
     raw_code = ""
@@ -172,6 +197,9 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
     code = _extract_code(raw_code)
     if not code:
         raise HTTPException(500, "模型未能生成分析代码，请重试")
+    # 注入图表风格（Agg 后端已由沙箱强制）
+    if style_code:
+        code = style_code + "\n" + code
     if len(code) > MAX_CODE_LEN:
         raise HTTPException(500, "生成的代码过长，请简化问题后重试")
 

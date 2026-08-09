@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from common.auth import require_auth
 from common.db import get_db, get_db_context
 from common.llm import call_llm, call_llm_async, parse_llm_json
+from prd_engine import stream_llm_response
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class CodeReviewRequest(BaseModel):
     language: str = "python"
     code: str
     model: str = ""
+    stream: bool = False
 
 
 class CodeImproveRequest(BaseModel):
@@ -2087,8 +2089,8 @@ async def list_code_generations(current_user: dict = require_auth()):
 
 
 @router.post("/api/code/review")
-def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
-    """AI 代码审查"""
+async def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
+    """AI 代码审查（v12.0：stream: true 走 SSE 流式）"""
     try:
         system_prompt = f"""你是资深{data.language}代码审查专家，负责把关生产级代码质量。
 
@@ -2116,7 +2118,10 @@ def review_code(data: CodeReviewRequest, current_user: dict = require_auth()):
 - 修复：给出修改代码
 
 （每个问题独立一节，按严重程度排序，最多列出10个问题）"""
-        result = call_llm(system_prompt, data.code)
+        if data.stream:
+            return stream_llm_response(system_prompt, data.code, 4000, "code_review")
+
+        result = await call_llm_async(system_prompt, data.code)
 
         review_id = f"cr_{uuid.uuid4().hex[:12]}"
         # 独立连接：避免 LLM 调用期间其他函数关闭线程复用连接
@@ -3115,6 +3120,11 @@ async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_au
     """AI PPT 生成（异步任务：大纲 + 真实 PPTX 文件输出 / 进度跟踪 / 自动重试）"""
     if not data.title.strip():
         raise HTTPException(400, "PPT 主题不能为空")
+    # 占位符拦截：模板残留 [xxx] 占位符不允许直接生成（避免污染历史记录）
+    if re.search(r"\[[^\]]+\]", data.title):
+        raise HTTPException(400, "PPT 主题中还有未填写的占位符（如 [产品名]），请先替换为实际内容")
+    if len(data.title.strip()) > 200:
+        raise HTTPException(400, "PPT 主题过长（上限 200 字）")
     payload = {
         "title": data.title,
         "outline": data.outline,

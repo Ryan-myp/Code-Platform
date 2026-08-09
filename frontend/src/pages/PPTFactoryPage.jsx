@@ -26,6 +26,7 @@ import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../co
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const PPT_TYPES = [
   { value: 'business', label: '商业计划', icon: Briefcase, color: 'blue' },
@@ -66,25 +67,25 @@ const TEMPLATES = [
   {
     name: '产品发布演示',
     icon: '🚀',
-    title: '[产品名] 新品发布会',
+    title: '智能新品发布会',
     outline: '1. 产品背景\n2. 核心功能\n3. 技术亮点\n4. 使用场景\n5. 价格方案\n6. Q&A',
   },
   {
     name: '商业计划书',
     icon: '💼',
-    title: '[项目名] 商业计划书',
+    title: 'AI 内容平台商业计划书',
     outline: '1. 市场分析\n2. 产品定位\n3. 商业模式\n4. 团队介绍\n5. 财务预测\n6. 融资需求',
   },
   {
     name: '技术培训',
     icon: '🎓',
-    title: '[技术主题] 技术培训',
+    title: '大模型应用开发技术培训',
     outline: '1. 技术概述\n2. 核心概念\n3. 实践案例\n4. 动手实验\n5. 最佳实践',
   },
   {
     name: '项目提案',
     icon: '💡',
-    title: '[项目名] 立项提案',
+    title: '智能客服系统立项提案',
     outline: '1. 项目背景\n2. 目标与范围\n3. 技术方案\n4. 资源需求\n5. 时间规划\n6. 风险评估',
   },
   {
@@ -98,15 +99,26 @@ const TEMPLATES = [
 export default function PPTFactoryPage() {
   const toast = useToast()
   const { submitTask } = useAsyncTask()
-  const [title, setTitle] = useState('')
-  const [outline, setOutline] = useState('')
-  const [pptType, setPptType] = useState('business')
-  const [audience, setAudience] = useState('executive')
-  const [scale, setScale] = useState('standard')
-  const [theme, setTheme] = useState('business_blue')
   const [result, setResult] = useState('')
   const [slides, setSlides] = useState([])
-  const [pptxUrl, setPptxUrl] = useState('')
+  // 专业基线：输入态持久化（刷新/误关页面不丢草稿）
+  const [inputs, setInputs] = usePersistentToolState('ppt_factory_inputs', {
+    title: '',
+    outline: '',
+    pptType: 'business',
+    audience: 'executive',
+    scale: 'standard',
+    theme: 'business_blue',
+  })
+  const { title, outline, pptType, audience, scale, theme } = inputs
+  const setTitle = (v) => setInputs((p) => ({ ...p, title: v ?? '' }))
+  const setOutline = (v) => setInputs((p) => ({ ...p, outline: v ?? '' }))
+  const setPptType = (v) => setInputs((p) => ({ ...p, pptType: v }))
+  const setAudience = (v) => setInputs((p) => ({ ...p, audience: v }))
+  const setScale = (v) => setInputs((p) => ({ ...p, scale: v }))
+  const setTheme = (v) => setInputs((p) => ({ ...p, theme: v }))
+    const [pptxUrl, setPptxUrl] = useState('')
+    const [downloading, setDownloading] = useState(false)
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
   const [copied, setCopied] = useState(false)
@@ -135,6 +147,11 @@ export default function PPTFactoryPage() {
   const generate = async () => {
     if (!title.trim()) {
       toast.error('请输入 PPT 主题')
+      return
+    }
+    // 占位符校验：模板残留的 [xxx] 占位符不允许直接生成（避免污染历史记录）
+    if (/\[[^\]]+\]/.test(title)) {
+      toast.error('主题中还有未填写的占位符（如 [产品名]），请先替换为实际内容')
       return
     }
     setResult('')
@@ -183,6 +200,28 @@ export default function PPTFactoryPage() {
     navigator.clipboard.writeText(result)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  // 下载 PPTX：走 axios 携带 Authorization 头（<a download> 原生导航不带 token，会 401）
+  const downloadPptx = async () => {
+    if (!pptxUrl) return
+    setDownloading(true)
+    try {
+      const res = await api.get(pptxUrl, { responseType: 'blob' })
+      const blobUrl = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = pptxUrl.split('/').pop() || 'presentation.pptx'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 3000)
+      toast.success('PPTX 已开始下载')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '下载失败，请稍后重试')
+    } finally {
+      setDownloading(false)
+    }
   }
 
   const downloadOutline = () => {
@@ -436,6 +475,12 @@ export default function PPTFactoryPage() {
                   onChange={(e) => setOutline(e.target.value)}
                   placeholder="输入大纲要点，每行一个..."
                   rows={4}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !task) {
+                      e.preventDefault()
+                      generate()
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none"
                 />
               </div>
@@ -502,13 +547,15 @@ export default function PPTFactoryPage() {
               {result && (
                 <div className="flex items-center gap-2 flex-wrap">
                   {pptxUrl && (
-                    <a
-                      href={pptxUrl}
-                      download
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-medium hover:bg-orange-600 transition-colors shadow-sm"
+                    <Button
+                      size="sm"
+                      icon={Download}
+                      loading={downloading}
+                      onClick={downloadPptx}
+                      className="bg-orange-500 text-white hover:bg-orange-600 border-0"
                     >
-                      <Download className="w-3.5 h-3.5" /> 下载 PPTX
-                    </a>
+                      下载 PPTX
+                    </Button>
                   )}
                   <Button variant="ghost" size="sm" icon={Download} onClick={downloadOutline}>
                     大纲

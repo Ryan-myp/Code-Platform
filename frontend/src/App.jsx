@@ -14,6 +14,7 @@ import CommandPalette from './components/CommandPalette'
 import OnboardingTour from './components/OnboardingTour'
 import FloatingAssistant from './components/FloatingAssistant'
 import MobileBottomNav from './components/MobileBottomNav'
+import BackToTop from './components/BackToTop'
 import AccessGuard from './components/AccessGuard'
 import { ToastProvider, useToast } from './lib/toast'
 
@@ -187,7 +188,7 @@ export default function App() {
   }
 
   return (
-    <Router>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <ShareRedirect />
       <ToastProvider>
         <QuotaExhaustedNotifier />
@@ -227,6 +228,8 @@ export default function App() {
                             <Route path="/notifications" element={<NotificationsPage />} />
                             <Route path="/board" element={<ReqBoardPage />} />
                             <Route path="/workspace" element={<AIWorkspacePage />} />
+                            {/* 演示别名：/workbench → 工作台 */}
+                            <Route path="/workbench" element={<Navigate to="/workspace" replace />} />
                             <Route path="/projects" element={<ProjectSpacePage />} />
                             <Route path="/projects/:id" element={<ProjectSpacePage />} />
                             <Route path="/artifacts" element={<ArtifactsPage />} />
@@ -373,8 +376,26 @@ export default function App() {
                                 </AccessGuard>
                               }
                             />
+                            {/* 演示别名：/voice-factory → AI 配音 */}
+                            <Route
+                              path="/voice-factory"
+                              element={
+                                <AccessGuard path="/voice-dubbing">
+                                  <VoicePage />
+                                </AccessGuard>
+                              }
+                            />
                             <Route
                               path="/meme"
+                              element={
+                                <AccessGuard path="/meme">
+                                  <MemePage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* 演示别名：/meme-factory → 表情包工坊 */}
+                            <Route
+                              path="/meme-factory"
                               element={
                                 <AccessGuard path="/meme">
                                   <MemePage />
@@ -407,6 +428,15 @@ export default function App() {
                             />
                             <Route
                               path="/mindmap"
+                              element={
+                                <AccessGuard path="/mindmap">
+                                  <MindMapPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* 演示别名：/mind-map → 思维导图 */}
+                            <Route
+                              path="/mind-map"
                               element={
                                 <AccessGuard path="/mindmap">
                                   <MindMapPage />
@@ -462,6 +492,15 @@ export default function App() {
                                 </AccessGuard>
                               }
                             />
+                            {/* 演示别名：/code-sandbox → 代码解释器 */}
+                            <Route
+                              path="/code-sandbox"
+                              element={
+                                <AccessGuard path="/code-interpreter">
+                                  <CodeSandboxPage />
+                                </AccessGuard>
+                              }
+                            />
                             <Route
                               path="/data-analyzer"
                               element={
@@ -472,6 +511,14 @@ export default function App() {
                             />
                             <Route
                               path="/api-platform"
+                              element={
+                                <AccessGuard path="/api-platform">
+                                  <ApiDocsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/api-docs"
                               element={
                                 <AccessGuard path="/api-platform">
                                   <ApiDocsPage />
@@ -558,6 +605,7 @@ export default function App() {
                             />
                             {/* v9.0 效率工具箱 */}
                             <Route path="/tool-hub" element={<ToolHubPage />} />
+                            <Route path="/tools" element={<ToolHubPage />} />
                             <Route path="/tool/:toolId" element={<ToolRunPage />} />
                             <Route
                               path="/stock"
@@ -584,6 +632,8 @@ export default function App() {
                       </main>
                       {/* 全局浮动机器人：登录后所有页面可用 */}
                       <FloatingAssistant />
+                      {/* 全局回到顶部（登录态内页） */}
+                      <BackToTop />
                       {/* 移动端底部导航 */}
                       <MobileBottomNav />
                     </div>

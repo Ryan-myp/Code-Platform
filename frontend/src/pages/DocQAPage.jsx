@@ -11,11 +11,17 @@ import {
   User,
   Sparkles,
   Search,
+  Download,
+  RefreshCw,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import ShareButton from '../components/ShareButton'
+import HistoryPanel from '../components/HistoryPanel'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import MarkdownRenderer from '../components/MarkdownRenderer'
+import useToolHistory from '../hooks/useToolHistory'
 
 export default function DocQAPage() {
   const toast = useToast()
@@ -29,6 +35,7 @@ export default function DocQAPage() {
   const [task, setTask] = useState(null)
   const [messages, setMessages] = useState([])
   const [records, setRecords] = useState([])
+  const { history, add, remove, clear } = useToolHistory('doc_qa_history_v1', 20)
 
   useEffect(() => {
     loadRecords()
@@ -46,6 +53,12 @@ export default function DocQAPage() {
   const handleUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // 边界校验：后端单文件上限 20MB，前端提前拦截避免上传中断
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('文件过大：单次上传请控制在 20MB 以内')
+      e.target.value = ''
+      return
+    }
     setUploading(true)
     setMessages([])
     try {
@@ -83,15 +96,26 @@ export default function DocQAPage() {
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: 'assistant',
-              content: data.answer,
-              time: new Date().toISOString(),
-              source: data.source,
-            },
-          ])
+          setMessages((prev) => {
+            const next = [
+              ...prev,
+              {
+                role: 'assistant',
+                content: data.answer,
+                time: new Date().toISOString(),
+                source: data.source,
+              },
+            ]
+            // 专业基线：每轮问答落一次会话快照（可回溯可复用）
+            add({
+              title: q.slice(0, 24),
+              docName: docInfo?.filename || '文档',
+              docId: docInfo?.doc_id,
+              question: q,
+              messages: next.map((m) => ({ role: m.role, content: m.content, source: m.source })),
+            })
+            return next
+          })
           setTask(null)
         },
         onError: (e) => {
@@ -116,6 +140,59 @@ export default function DocQAPage() {
     } catch (err) {
       toast.error(err.message)
     }
+  }
+
+  // 专业基线：会话历史复用 / 导出 / 重试
+  const handleReuse = (item) => {
+    if (item.docId && docInfo?.doc_id !== item.docId) {
+      toast.error('请先上传对应的文档再复用该会话')
+      return
+    }
+    setMessages(
+      item.messages?.map((m) => ({ ...m, time: new Date().toISOString() })) || []
+    )
+    toast.success(`已恢复会话《${item.title || item.docName}》`)
+  }
+
+  const handleRetry = () => {
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+    if (!lastUser || !docInfo || task) return
+    // 回滚到最后一条用户消息（去掉其后的 assistant 回复）
+    const idx = messages.findIndex((m) => m === lastUser)
+    setMessages(messages.slice(0, idx + 1))
+    handleAsk(lastUser.content)
+  }
+
+  const buildChatMd = () => {
+    if (messages.length === 0) return ''
+    const title = docInfo?.filename || '文档问答'
+    return `# 文档问答记录：${title}\n\n`
+      + messages
+          .map(
+            (m) =>
+              `### ${m.role === 'user' ? '🙋 提问' : '🤖 回答'}（${new Date(m.time).toLocaleString('zh-CN')}）\n\n${m.content}${m.source ? `\n\n> 来源：${m.source}` : ''}\n`
+          )
+          .join('\n---\n\n')
+  }
+
+  const exportChat = () => {
+    if (messages.length === 0) return
+    const title = docInfo?.filename || '文档问答'
+    const blob = new Blob([buildChatMd()], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${title.replace(/[\\/:*?"<>|]/g, '_')}-问答记录.md`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+    toast.success('对话记录已导出')
+  }
+
+  const clearChat = () => {
+    if (!window.confirm('确定清空当前对话吗？')) return
+    setMessages([])
   }
 
   return (
@@ -220,6 +297,18 @@ export default function DocQAPage() {
               </div>
             )}
           </Card>
+
+          {/* 会话历史（专业基线：可回溯可恢复） */}
+          <HistoryPanel
+            history={history}
+            onReuse={handleReuse}
+            onRemove={remove}
+            onClear={clear}
+            title="会话历史"
+            renderSummary={(item) =>
+              `${item.docName || '文档'} · ${item.question?.slice(0, 40) || ''}`
+            }
+          />
         </div>
 
         {/* 右侧：对话区 */}
@@ -232,7 +321,35 @@ export default function DocQAPage() {
                   <span className="text-xs text-gray-400 font-normal">| {docInfo.filename}</span>
                 )}
               </h3>
-              <span className="text-xs text-gray-400">{messages.length} 条消息</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">{messages.length} 条消息</span>
+                {messages.length > 0 && (
+                  <>
+                    <button
+                      onClick={exportChat}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+                      title="导出对话记录"
+                    >
+                      <Download className="w-3 h-3" /> 导出
+                    </button>
+                    <ShareButton content={buildChatMd()} title="文档问答记录" contentType="doc_qa" />
+                    <button
+                      onClick={handleRetry}
+                      disabled={!docInfo || !!task}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-indigo-600 rounded-lg transition-colors disabled:opacity-40"
+                      title="重新回答最后一个问题"
+                    >
+                      <RefreshCw className="w-3 h-3" /> 重试
+                    </button>
+                    <button
+                      onClick={clearChat}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-red-500 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" /> 清空对话
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* 消息列表 */}
@@ -258,7 +375,11 @@ export default function DocQAPage() {
                           : 'bg-gray-100 text-gray-800 rounded-bl-md'
                       }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap">{m.content}</p>
+                      {m.role === 'user' ? (
+                        <p className="text-sm whitespace-pre-wrap">{m.content}</p>
+                      ) : (
+                        <MarkdownRenderer content={m.content} className="text-sm" />
+                      )}
                       <div className="flex items-center justify-between mt-1">
                         <span
                           className={`text-[10px] ${m.role === 'user' ? 'text-white/60' : 'text-gray-400'}`}

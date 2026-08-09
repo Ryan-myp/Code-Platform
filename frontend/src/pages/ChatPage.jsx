@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   MessageSquare,
   Send,
+  Square,
   Users,
   Layers,
   Menu,
@@ -17,13 +18,17 @@ import {
   RefreshCw,
   Brain,
   ChevronDown,
+  Download,
+  Copy,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
+import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime } from '../lib/format'
 import { Button, Empty, SkeletonList, ErrorState, ConfirmDialog } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 
 const TARGET_TYPES = {
   agent: { icon: BotIcon, color: 'text-purple-600', chip: 'bg-purple-100 text-purple-700' },
@@ -51,6 +56,7 @@ export default function ChatPage() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [inputText, setInputText] = useState('')
   const [sending, setSending] = useState(false)
+  const abortRef = useRef(null)
 
   const [agents, setAgents] = useState([])
   const [teams, setTeams] = useState([])
@@ -266,9 +272,56 @@ export default function ChatPage() {
     }
   }
 
-  // 发送消息
-  const handleSend = async () => {
-    const content = inputText.trim()
+  // 单 Agent SSE 流式执行：打字机增量渲染（assistant 由后端自动落库）
+  const streamToAgent = (agent, content, convId, targets, onClose) => {
+    const streamMsg = {
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      targets,
+      streaming: true,
+    }
+    setMessages((prev) => [...prev, streamMsg])
+    const patchStream = (updater) => {
+      setMessages((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (!last || !last.streaming) return prev
+        next[next.length - 1] = { ...last, ...updater(last) }
+        return next
+      })
+    }
+    abortRef.current = fetchSSE(`/api/agents/${agent.id}/run/stream`, {
+      body: { message: content, conversation_id: convId },
+      onEvent: (event, data) => {
+        if (event === 'delta') {
+          patchStream((m) => ({ content: m.content + data.text }))
+        } else if (event === 'done') {
+          patchStream((m) => ({ content: data.full || m.content, streaming: false }))
+        } else if (event === 'error') {
+          patchStream((m) => ({
+            streaming: false,
+            error: true,
+            content: m.content || `执行失败：${data.detail || '未知错误'}`,
+          }))
+        }
+      },
+      onError: (err) =>
+        patchStream((m) => ({
+          streaming: false,
+          error: true,
+          content: m.content || `执行失败：${err.message}`,
+        })),
+      onClose: () => {
+        abortRef.current = null
+        onClose?.()
+      },
+    })
+  }
+
+  // 发送消息（支持传入 content 覆盖输入框内容，供错误重试复用）
+  const handleSend = async (contentOverride) => {
+    const content = (contentOverride ?? inputText).trim()
     if (!content || sending) return
 
     const targets = resolveTargets(parseMentions(content))
@@ -307,6 +360,18 @@ export default function ChatPage() {
       }
 
       let assistantContent = ''
+
+      // v12.0：单 Agent 场景走 SSE 流式（打字机增量；assistant 由后端自动落库）
+      const singleAgent =
+        targets.length === 0
+          ? agents[0]
+          : targets.length === 1 && targets[0].type === 'agent'
+            ? targets[0]
+            : null
+      if (singleAgent) {
+        await new Promise((resolve) => streamToAgent(singleAgent, content, convId, targets, resolve))
+        return // 已完成（assistant 由后端自动落库），跳过下方非流式逻辑
+      }
 
       if (targets.length === 0) {
         // 无 @mention → 默认 agent
@@ -380,6 +445,61 @@ export default function ChatPage() {
     } finally {
       setSending(false)
     }
+  }
+
+  // 停止生成：中断 SSE 流，保留已生成内容
+  const handleStop = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setMessages((prev) => {
+      const next = [...prev]
+      const last = next[next.length - 1]
+      if (last?.streaming) next[next.length - 1] = { ...last, streaming: false }
+      return next
+    })
+    setSending(false)
+  }
+
+  // 错误重试：删除失败回复，重新发送对应的用户消息
+  const handleRetry = (msgIdx) => {
+    if (sending) return
+    let userIdx = -1
+    for (let i = msgIdx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userIdx = i
+        break
+      }
+    }
+    if (userIdx < 0) return
+    const userMsg = messages[userIdx]
+    // 删除失败回复（保留用户消息，由 handleSend 重新走完整发送流程）
+    setMessages((prev) => prev.filter((_, idx) => idx !== msgIdx))
+    handleSend(userMsg.content)
+  }
+
+  // 对话 → Markdown（导出/分享复用）
+  const buildChatMd = () => {
+    if (messages.length === 0) return ''
+    const lines = [`# 对话记录：${activeConversation?.title || '智能协作'}`, '']
+    messages.forEach((m) => {
+      const role = m.role === 'user' ? '🙋 我' : m.role === 'error' ? '⚠️ 错误' : '🤖 AI'
+      lines.push(`### ${role}（${new Date(m.timestamp).toLocaleString('zh-CN')}）`, '', m.content, '')
+    })
+    lines.push('---', `由小团智能平台 AI 协作中心生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+
+  const exportChat = () => {
+    const md = buildChatMd()
+    if (!md) return
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `对话记录_${new Date().toISOString().slice(0, 10)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success('对话记录已导出')
   }
 
   const handleKeyDown = (e) => {
@@ -572,6 +692,18 @@ export default function ChatPage() {
             <span className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full">
               {workflows.length} Workflows
             </span>
+            {messages.length > 0 && (
+              <>
+                <button
+                  onClick={exportChat}
+                  className="px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:text-purple-600 hover:border-purple-200 transition-colors flex items-center gap-1"
+                  title="导出对话记录"
+                >
+                  <Download className="w-3 h-3" /> 导出
+                </button>
+                <ShareButton content={buildChatMd()} title="AI协作对话记录" contentType="chat" />
+              </>
+            )}
           </div>
         </header>
 
@@ -620,9 +752,9 @@ export default function ChatPage() {
                 </div>
               )}
               {messages.map((msg, idx) => (
-                <MessageBubble key={idx} msg={msg} />
+                <MessageBubble key={idx} msg={msg} onRetry={() => handleRetry(idx)} />
               ))}
-              {sending && (
+              {sending && !messages.some((m) => m.streaming) && (
                 <div className="flex items-center gap-2 text-gray-500 pl-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   <span className="text-sm">处理中…</span>
@@ -729,16 +861,22 @@ export default function ChatPage() {
                 className="flex-1 p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none resize-none min-h-[48px] max-h-[140px] text-sm"
                 rows={1}
               />
-              <Button
-                variant="gradient"
-                icon={Send}
-                onClick={handleSend}
-                loading={sending}
-                disabled={!inputText.trim()}
-                className="flex-shrink-0"
-              >
-                <span className="hidden sm:inline">发送</span>
-              </Button>
+              {sending && abortRef.current ? (
+                <Button variant="danger" icon={Square} onClick={handleStop} className="flex-shrink-0">
+                  <span className="hidden sm:inline">停止</span>
+                </Button>
+              ) : (
+                <Button
+                  variant="gradient"
+                  icon={Send}
+                  onClick={handleSend}
+                  loading={sending}
+                  disabled={!inputText.trim()}
+                  className="flex-shrink-0"
+                >
+                  <span className="hidden sm:inline">发送</span>
+                </Button>
+              )}
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-2">
@@ -793,9 +931,18 @@ function MentionGroup({ label, icon: Icon, color, items, onPick }) {
 }
 
 // 消息气泡
-function MessageBubble({ msg }) {
+function MessageBubble({ msg, onRetry }) {
+  const toast = useToast()
   const isUser = msg.role === 'user'
-  const isError = msg.role === 'error'
+  const isError = msg.role === 'error' || msg.error
+  const copyMsg = async () => {
+    try {
+      await navigator.clipboard.writeText(msg.content)
+      toast.success('已复制')
+    } catch {
+      toast.error('复制失败')
+    }
+  }
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -847,10 +994,35 @@ function MessageBubble({ msg }) {
             className={`text-sm leading-relaxed ${isUser || isError ? 'whitespace-pre-wrap' : ''}`}
           >
             {isUser || isError ? msg.content : <MarkdownRenderer content={msg.content} />}
+            {!isUser && !isError && msg.streaming && !msg.content && (
+              <span className="text-gray-400">正在思考…</span>
+            )}
+            {msg.streaming && (
+              <span className="inline-block w-0.5 h-3.5 bg-purple-500/70 animate-pulse ml-0.5 align-middle" />
+            )}
           </div>
-          <p className={`text-xs mt-1.5 ${isUser ? 'text-white/60' : 'text-gray-400'}`}>
-            {formatRelativeTime(msg.timestamp)}
-          </p>
+          <div className={`flex items-center gap-2 mt-1.5 ${isUser ? 'justify-end' : ''}`}>
+            <span className={`text-xs ${isUser ? 'text-white/60' : 'text-gray-400'}`}>
+              {formatRelativeTime(msg.timestamp)}
+            </span>
+            {!isUser && !isError && !msg.streaming && (
+              <button
+                onClick={copyMsg}
+                className={`inline-flex items-center gap-1 text-xs ${isUser ? 'text-white/60 hover:text-white' : 'text-gray-400 hover:text-purple-600'} transition-colors`}
+                title="复制这条回复"
+              >
+                <Copy className="w-3 h-3" /> 复制
+              </button>
+            )}
+          </div>
+          {(isError || msg.error) && onRetry && (
+            <button
+              onClick={onRetry}
+              className="mt-2 inline-flex items-center gap-1 px-2.5 py-1 bg-red-50 border border-red-200 text-red-600 text-xs font-medium rounded-lg hover:bg-red-100 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" /> 重试
+            </button>
+          )}
         </div>
       </div>
     </div>
