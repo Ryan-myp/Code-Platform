@@ -40,6 +40,7 @@ import {
   ConfirmDialog,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 
@@ -708,13 +709,12 @@ export default function ImageFactoryPage() {
                   <label className="text-sm font-medium text-gray-700">
                     提示词 <span className="text-red-500">*</span>
                   </label>
-                  <button
-                    onClick={() => applyTemplate(PROMPT_TEMPLATES[0])}
-                    className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1"
-                  >
-                    <Wand2 className="w-3 h-3" />
-                    <span>智能补充</span>
-                  </button>
+                  <EnhancePromptButton
+                    text={prompt}
+                    onEnhance={(t) => setPrompt(t)}
+                    style="image"
+                    className="text-violet-600 hover:text-violet-700"
+                  />
                 </div>
                 <textarea
                   value={prompt}

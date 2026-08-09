@@ -23,6 +23,7 @@ import {
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { Card, Button, Badge, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -402,7 +403,15 @@ export default function CopywritingPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">需求描述 *</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                  <span>需求描述 *</span>
+                  <EnhancePromptButton
+                    text={prompt}
+                    onEnhance={(t) => setPrompt(t)}
+                    style="copywriting"
+                    className="text-pink-600 hover:text-pink-700"
+                  />
+                </label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}

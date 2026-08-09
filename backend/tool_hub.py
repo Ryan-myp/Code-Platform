@@ -3,8 +3,10 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
+import traceback
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -18,6 +20,8 @@ from common.db import get_db
 from common.llm import call_llm_async
 from permissions import access_status, get_visibility_map, load_user_ctx
 from task_queue import create_task, register_handler
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -7416,11 +7420,86 @@ class ToolRunRequest(BaseModel):
     params: dict[str, Any] | None = {}
     model: str = ""
 
+
+class EnhancePromptRequest(BaseModel):
+    """AI 提示词润色请求：风格化扩写用户输入，供各生成页「智能补充」复用。"""
+
+    text: str
+    style: str = "general"  # image / copywriting / music / video / meme / mindmap / ppt / general
+
     # ══════════════════════════════════════════════════════════════
 
 
 # API 端点
 # ══════════════════════════════════════════════════════════════
+
+
+# 各场景提示词润色专家系统（免费辅助能力，不扣减生成额度）
+_ENHANCE_SYSTEMS = {
+    "image": (
+        "你是一位专业 AI 绘画提示词工程师。把用户的简要描述扩写为高质量英文绘图提示词："
+        "包含主体、场景、光线、镜头、风格、画质等维度，用逗号分隔，不使用括号包裹。"
+        "只输出润色后的提示词本身，不要解释。"
+    ),
+    "copywriting": (
+        "你是一位资深营销文案专家。把用户的简要需求扩写为具体可执行的文案创作指令："
+        "明确目标人群、核心卖点、语气基调、内容结构（开头-主体-结尾）与字数要求，"
+        "让 AI 可直接按此生成高质量文案。只输出润色后的指令，不要解释。"
+    ),
+    "music": (
+        "你是一位专业音乐制作人。把用户的简要描述扩写为结构化的音乐创作提示："
+        "包含曲风、BPM 速度、乐器配置、情绪走向、段落结构（前奏-主歌-副歌-间奏-尾奏）。"
+        "只输出润色后的提示，不要解释。"
+    ),
+    "video": (
+        "你是一位短视频编导。把用户的简要主题扩写为完整的视频分镜提示："
+        "包含画面描述、运镜方式、时长建议、旁白文案要点与情绪节奏。"
+        "只输出润色后的提示，不要解释。"
+    ),
+    "meme": (
+        "你是一位互联网表情包创作达人。把用户的一句话扩写为适合做表情包的文案："
+        "保留幽默感与网络流行语风格，简短有力，适合黄底黑字或白底黑字大字报样式。"
+        "可以给出 2-3 个候选，每个一行。只输出文案，不要解释。"
+    ),
+    "mindmap": (
+        "你是一位知识结构整理专家。把用户的主题扩写为思维导图分支大纲："
+        "用多级缩进结构输出，每行一个节点，子节点缩进表示层级，覆盖主要维度。"
+        "只输出大纲，不要解释。"
+    ),
+    "ppt": (
+        "你是一位 PPT 结构设计专家。把用户主题扩写为演示文稿大纲："
+        "输出封面页、目录、3-6 个章节（每章节含要点），每行一个要点。"
+        "只输出大纲，不要解释。"
+    ),
+    "general": (
+        "你是一位需求澄清专家。把用户的简要描述扩写为更完整、更具体、可执行的表达，"
+        "保留原意，补充关键细节与边界条件，语气专业。只输出润色后的文本，不要解释。"
+    ),
+}
+
+
+@router.post("/api/tools/enhance-prompt")
+async def enhance_prompt(req: EnhancePromptRequest, current_user: dict = require_auth()):
+    """AI 润色/扩写提示词：各生成页「智能补充」共用，免费不扣额度。"""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(400, "请先输入内容再使用智能补充")
+    if len(text) > 2000:
+        raise HTTPException(400, "内容过长（2000 字以内），请精简后重试")
+    system_prompt = _ENHANCE_SYSTEMS.get(req.style, _ENHANCE_SYSTEMS["general"])
+    try:
+        enhanced = await call_llm_async(
+            system_prompt, f"【原始内容】\n{text}", max_tokens=800, temperature=0.7
+        )
+        enhanced = enhanced.strip().strip('"\'`')
+        if not enhanced or enhanced.lower().startswith(("抱歉", "sorry", "无法")):
+            raise HTTPException(502, "智能补充暂不可用，请稍后重试")
+        return {"ok": True, "enhanced": enhanced}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[enhance_prompt] {traceback.format_exc()}")
+        raise HTTPException(500, f"智能补充失败：{str(e)}") from e
 
 
 @router.get("/api/tools")

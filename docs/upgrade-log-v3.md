@@ -276,3 +276,48 @@
 
 - 生成页「智能补充/润色 prompt」能力目前仅 ImageFactory/Excel 2 页具备，可向 Copywriting/Music/Video 等扩散
 - 分享落地页可作为获客主链路：统计 `share_visit` 埋点的来源渠道转化率
+
+---
+
+# v13.5 AI 智能补充能力扩散（2026-08-09）
+
+## 一、背景
+
+v13.4 后续建议指出：生成页「智能补充/润色 prompt」能力仅 ImageFactory/Excel 2 页具备，且 ImageFactory 的「智能补充」只是模板填入、非真实 AI 润色。本次将其升级为**通用 AI 润色能力**并扩散到全部核心生成页。
+
+## 二、改动清单
+
+### 后端（tool_hub.py）
+| 改动 | 说明 |
+|---|---|
+| `POST /api/tools/enhance-prompt` | 新增 AI 润色接口：接收 `{text, style}`，9 种场景专家系统（image/copywriting/music/video/meme/mindmap/ppt/general），`call_llm_async` 扩写（max_tokens=800, temperature=0.7） |
+| 边界校验 | 空文本 400、超 2000 字 400、拒绝「抱歉/无法」开头输出 502、异常 500（含 traceback 日志） |
+| 免费策略 | 不在 `_QUOTA_PATHS` 扣额度路径中，辅助润色不消耗生成额度 |
+
+### 前端
+| 文件 | 改动 |
+|---|---|
+| `EnhancePromptButton.jsx`（新增） | 通用「AI 智能补充」组件：魔棒图标、busy 防重入、toast 成功/失败反馈，props：`{text, onEnhance, style, className}` |
+| `ImageFactoryPage.jsx` | 替换假「智能补充」（模板填入）为真 AI 润色（style=image） |
+| `CopywritingPage.jsx` | 需求描述 label 右侧加智能补充（style=copywriting） |
+| `VideoFactoryPage.jsx` | 视频描述 label 右侧加智能补充（style=video） |
+| `MusicFactoryPage.jsx` | 歌词内容 label 右侧加智能补充（style=music） |
+
+## 三、设计要点
+
+- **场景专家系统**：不同生成场景使用不同 system prompt（图片润色转专业英文提示词、文案扩写补营销结构、歌词补韵律意象等），而非统一模板
+- **免费辅助**：润色是辅助能力不消耗生成额度，与生成主链路解耦，失败不阻塞生成
+- **双保险防重入**：组件内 busy state 禁用按钮 + 生成页 Cmd+Enter 快捷键 busy 守卫
+- **优雅降级**：LLM 异常时返回 500 + 前端 toast 展示 detail，不中断页面
+
+## 四、验证结果
+
+- `npx vite build` 成功（10.85s）；6 个改动文件 GetProblems 全部 0 errors
+- 后端接口实测（curl）：copywriting 扩写为结构化营销文案 ✅、image 扩写为专业英文提示词 ✅、空文本 400 ✅、未认证 401 ✅
+- 浏览器实测 `/image-factory`：输入 11 字中文 → 点击智能补充 → 「补充中…」→ toast「已智能补充，可直接生成」→ 输入框扩写为 243 字符专业英文提示词（含 golden hour/backlighting/cinematic/8k 等细节），控制台 0 错误 ✅
+- 修复部署问题：8888 端口后端（前端默认 API）未加载新路由返回 405 → 重启 8888 加载新代码，清理 8000 冗余进程
+
+## 五、后续建议
+
+- 智能补充可继续扩散到 Mindmap/PPT/Excel 等输入型页面（组件已支持对应 style）
+- 可考虑在润色时附带「扩写/精简/改写」模式选择，适配不同输入习惯

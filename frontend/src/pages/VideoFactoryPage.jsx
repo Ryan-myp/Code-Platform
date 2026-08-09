@@ -25,6 +25,7 @@ import {
   ConfirmDialog,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 
@@ -345,8 +346,16 @@ export default function VideoFactoryPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            视频描述 <span className="text-red-500">*</span>
+          <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
+            <span>
+              视频描述 <span className="text-red-500">*</span>
+            </span>
+            <EnhancePromptButton
+              text={prompt}
+              onEnhance={(t) => setPrompt(t)}
+              style="video"
+              className="text-blue-600 hover:text-blue-700"
+            />
           </label>
           <textarea
             value={prompt}

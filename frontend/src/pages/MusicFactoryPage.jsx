@@ -28,6 +28,7 @@ import {
   ConfirmDialog,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 
@@ -651,8 +652,16 @@ export default function MusicFactoryPage() {
           </h2>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              歌词内容 <span className="text-red-500">*</span>
+            <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
+              <span>
+                歌词内容 <span className="text-red-500">*</span>
+              </span>
+              <EnhancePromptButton
+                text={selectedLyrics}
+                onEnhance={(t) => setSelectedLyrics(t)}
+                style="music"
+                className="text-purple-600 hover:text-purple-700"
+              />
             </label>
             <textarea
               value={selectedLyrics}
