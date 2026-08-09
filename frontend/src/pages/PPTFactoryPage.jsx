@@ -23,6 +23,7 @@ import {
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -56,6 +57,15 @@ const THEMES = [
   { value: 'energy_orange', label: '活力橙', color: 'bg-orange-500' },
   { value: 'minimal_gray', label: '简约灰', color: 'bg-gray-500' },
   { value: 'china_red', label: '中国红', color: 'bg-red-600' },
+]
+
+const RANDOM_TITLES = [
+  '2026 年产品战略规划',
+  '新员工入职培训',
+  'Q3 销售业绩复盘',
+  '人工智能技术趋势分享',
+  '项目启动会汇报',
+  '年度品牌营销方案',
 ]
 
 const TEMPLATES = [
@@ -458,7 +468,14 @@ export default function PPTFactoryPage() {
             </h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">主题 *</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                  <span>主题 *</span>
+                  <RandomPromptButton
+                    prompts={RANDOM_TITLES}
+                    onPick={(t) => setTitle(t)}
+                    className="text-orange-500 hover:text-orange-700"
+                  />
+                </label>
                 <input
                   type="text"
                   value={title}

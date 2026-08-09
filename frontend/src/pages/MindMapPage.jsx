@@ -12,9 +12,19 @@ import {
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+
+const RANDOM_TOPICS = [
+  '新能源汽车市场分析',
+  'Python 后端工程师学习路线',
+  '如何打造个人知识管理系统',
+  '跨境电商运营全流程',
+  '2026 年 AI 应用发展趋势',
+  '家庭健康管理计划',
+]
 
 const PALETTE = [
   '#667eea',
@@ -232,12 +242,19 @@ export default function MindMapPage() {
               <span className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-500" /> 生成导图
               </span>
-              <EnhancePromptButton
-                text={topic}
-                onEnhance={(t) => setTopic(t)}
-                style="mindmap"
-                className="text-purple-600 hover:text-purple-700 text-xs"
-              />
+              <span className="flex items-center gap-3">
+                <RandomPromptButton
+                  prompts={RANDOM_TOPICS}
+                  onPick={(t) => setTopic(t)}
+                  className="text-purple-500 hover:text-purple-700 text-xs"
+                />
+                <EnhancePromptButton
+                  text={topic}
+                  onEnhance={(t) => setTopic(t)}
+                  style="mindmap"
+                  className="text-purple-600 hover:text-purple-700 text-xs"
+                />
+              </span>
             </h3>
             <textarea
               value={topic}

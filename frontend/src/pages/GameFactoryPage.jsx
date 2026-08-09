@@ -32,9 +32,19 @@ import {
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+
+const RANDOM_REQUIREMENTS = [
+  '加入道具系统，吃金色苹果可以加速，每 50 分关卡加速一次',
+  '吃到红色果实后身体变短但得分翻倍，效果限时 10 秒',
+  '双人同屏对战模式，双方各控制一条蛇，先撞墙或咬到自己者输',
+  '加入金币收集与商店系统，可用金币购买不同皮肤',
+  '每过 5 关增加新的障碍物类型，如移动墙、传送门',
+  '支持键盘 WASD 与方向键双操作方式',
+]
 
 const TEMPLATES = [
   {
@@ -502,12 +512,19 @@ export default function GameFactoryPage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
                   <span>玩法需求 *</span>
-                  <EnhancePromptButton
-                    text={requirement}
-                    onEnhance={(t) => setRequirement(t)}
-                    style="game"
-                    className="text-fuchsia-600 hover:text-fuchsia-700"
-                  />
+                  <div className="flex items-center gap-3">
+                    <RandomPromptButton
+                      prompts={RANDOM_REQUIREMENTS}
+                      onPick={(t) => setRequirement(t)}
+                      className="text-fuchsia-500 hover:text-fuchsia-700"
+                    />
+                    <EnhancePromptButton
+                      text={requirement}
+                      onEnhance={(t) => setRequirement(t)}
+                      style="game"
+                      className="text-fuchsia-600 hover:text-fuchsia-700"
+                    />
+                  </div>
                 </label>
                 <textarea
                   value={requirement}

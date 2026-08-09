@@ -22,9 +22,19 @@ import {
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+
+const RANDOM_FORMULAS = [
+  '根据 A 列销售额计算提成：10 万以下 5%，10-50 万 8%，50 万以上 12%',
+  '统计 B 列中重复出现的值并标记出现次数',
+  '根据入职日期计算工龄，满一年显示“满X年”',
+  '把 C 列混合格式的日期统一为 YYYY-MM-DD 并计算与今天的差值天数',
+  '按部门汇总 D 列金额，生成部门-金额对照表',
+  '从 E 列身份证号中提取出生日期和性别',
+]
 
 const OPERATIONS = [
   { value: 'analyze', label: '数据分析', icon: BarChart3, desc: 'AI 分析数据，给出洞察和建议' },
@@ -309,12 +319,19 @@ export default function ExcelPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
                     <span>公式需求</span>
-                    <EnhancePromptButton
-                      text={prompt}
-                      onEnhance={(t) => setPrompt(t)}
-                      style="excel"
-                      className="text-green-600 hover:text-green-700"
-                    />
+                    <div className="flex items-center gap-3">
+                      <RandomPromptButton
+                        prompts={RANDOM_FORMULAS}
+                        onPick={(t) => setPrompt(t)}
+                        className="text-green-500 hover:text-green-700"
+                      />
+                      <EnhancePromptButton
+                        text={prompt}
+                        onEnhance={(t) => setPrompt(t)}
+                        style="excel"
+                        className="text-green-600 hover:text-green-700"
+                      />
+                    </div>
                   </label>
                   <textarea
                     value={prompt}

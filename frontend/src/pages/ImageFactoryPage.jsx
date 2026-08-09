@@ -41,11 +41,22 @@ import {
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
+
+// 随机提示词预设
+const RANDOM_PROMPTS = [
+  'Professional product photography of a luxury perfume bottle, golden hour lighting, white background, soft shadows, 8k',
+  'Cyberpunk city street at night, neon lights reflecting on wet asphalt, cinematic, ultra detailed, atmospheric',
+  'A cute corgi puppy wearing a tiny yellow raincoat, walking in a puddle, studio lighting, adorable, high detail',
+  'Minimalist Japanese zen garden with raked sand and bonsai tree, soft morning light, serene, tranquil atmosphere',
+  'Fantasy castle floating on clouds above a sea of mist, dramatic epic scale, matte painting, cinematic lighting',
+  'Delicious strawberry cheesecake slice on a marble table, professional food photography, fresh ingredients, shallow depth of field',
+]
 
 // 提示词模板
 const PROMPT_TEMPLATES = [
@@ -709,12 +720,19 @@ export default function ImageFactoryPage() {
                   <label className="text-sm font-medium text-gray-700">
                     提示词 <span className="text-red-500">*</span>
                   </label>
-                  <EnhancePromptButton
-                    text={prompt}
-                    onEnhance={(t) => setPrompt(t)}
-                    style="image"
-                    className="text-violet-600 hover:text-violet-700"
-                  />
+                  <div className="flex items-center gap-3">
+                    <RandomPromptButton
+                      prompts={RANDOM_PROMPTS}
+                      onPick={(t) => setPrompt(t)}
+                      className="text-violet-500 hover:text-violet-700"
+                    />
+                    <EnhancePromptButton
+                      text={prompt}
+                      onEnhance={(t) => setPrompt(t)}
+                      style="image"
+                      className="text-violet-600 hover:text-violet-700"
+                    />
+                  </div>
                 </div>
                 <textarea
                   value={prompt}

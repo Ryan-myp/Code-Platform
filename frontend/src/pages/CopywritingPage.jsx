@@ -24,6 +24,7 @@ import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
+import RandomPromptButton from '../components/RandomPromptButton'
 import { Card, Button, Badge, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -54,6 +55,15 @@ const LENGTHS = [
   { value: 'short', label: '短文案', desc: '100-200字' },
   { value: 'medium', label: '标准', desc: '300-500字' },
   { value: 'long', label: '长文', desc: '800-1500字' },
+]
+
+const RANDOM_PROMPTS = [
+  '为一款主打安全性能的新能源汽车撰写朋友圈推广文案，目标人群是关注家庭出行的 30-45 岁人群',
+  '为一家新开业的日式拉面店撰写小红书种草笔记，突出汤底浓郁、叉烧入口即化',
+  '为程序员社区撰写公众号推文开篇，主题：如何高效准备系统设计面试',
+  '为儿童智能手表撰写电商详情页文案，强调定位精准、家长可远程查看',
+  '为本地瑜伽馆撰写推广文案，吸引上班族报名晚间课程',
+  '为环保品牌的竹制餐具撰写品牌故事文案，突出可持续理念',
 ]
 
 const TEMPLATES = [
@@ -405,12 +415,19 @@ export default function CopywritingPage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
                   <span>需求描述 *</span>
-                  <EnhancePromptButton
-                    text={prompt}
-                    onEnhance={(t) => setPrompt(t)}
-                    style="copywriting"
-                    className="text-pink-600 hover:text-pink-700"
-                  />
+                  <div className="flex items-center gap-3">
+                    <RandomPromptButton
+                      prompts={RANDOM_PROMPTS}
+                      onPick={(t) => setPrompt(t)}
+                      className="text-pink-500 hover:text-pink-700"
+                    />
+                    <EnhancePromptButton
+                      text={prompt}
+                      onEnhance={(t) => setPrompt(t)}
+                      style="copywriting"
+                      className="text-pink-600 hover:text-pink-700"
+                    />
+                  </div>
                 </label>
                 <textarea
                   value={prompt}
