@@ -83,6 +83,53 @@ const PRESET_CATEGORIES = [
       'A cute cat walking on the beach at sunset, warm golden light, heartwarming',
     ],
   },
+  {
+    name: '影视剧情',
+    icon: '🎬',
+    presets: [
+      'A lone traveler walking through a desert at dusk, long shadow, epic western film mood',
+      'Two people meeting on a rainy street, slow motion, dramatic lighting, romance film',
+      'A detective walking into a dimly lit office, noir atmosphere, film grain, mystery',
+      'A robot waking up in a forest, curious gaze, sci-fi drama, soft morning light',
+    ],
+  },
+  {
+    name: '科幻未来',
+    icon: '🚀',
+    presets: [
+      'Futuristic city skyline with flying vehicles at sunset, sci-fi concept art, cinematic',
+      'A spaceship flying through a nebula with colorful gas clouds, epic space odyssey',
+      "Holographic interface floating above a person's hand, futuristic tech, blue glow",
+      'Dystopian megacity interior with neon signs and rain, blade runner style',
+    ],
+  },
+]
+
+const CAMERA_MOTIONS = [
+  { value: '', label: '固定镜头', kw: '' },
+  { value: 'slow push in', label: '推近', kw: 'slow push in, dolly zoom' },
+  { value: 'pull back', label: '拉远', kw: 'gradual pull back' },
+  { value: 'pan left to right', label: '横移', kw: 'smooth pan left to right' },
+  { value: 'orbit around', label: '环绕', kw: 'orbit around the subject, 360 rotation' },
+  { value: 'handheld', label: '手持', kw: 'handheld camera, natural shake, documentary feel' },
+  { value: 'crane up', label: '升降', kw: 'crane shot rising upward' },
+]
+
+const MOODS = [
+  { value: '', label: '默认', kw: '' },
+  { value: 'warm', label: '温暖治愈', kw: 'warm cozy atmosphere, soft golden light, heartwarming' },
+  { value: 'epic', label: '史诗宏大', kw: 'epic scale, dramatic lighting, grandiose atmosphere' },
+  { value: 'dreamy', label: '梦幻唯美', kw: 'dreamy ethereal mood, soft pastel tones, magical atmosphere' },
+  { value: 'cyber', label: '赛博冷峻', kw: 'cold cyberpunk mood, neon blue and purple, high contrast' },
+  { value: 'dark', label: '暗黑悬疑', kw: 'dark mysterious mood, low key lighting, suspenseful' },
+  { value: 'joyful', label: '欢乐活泼', kw: 'joyful vibrant mood, bright colors, energetic' },
+]
+
+const ASPECTS = [
+  { label: '16:9 横屏', value: '1920x1080' },
+  { label: '9:16 竖屏', value: '1080x1920' },
+  { label: '1:1 方形', value: '1080x1080' },
+  { label: '4:3 经典', value: '1280x960' },
 ]
 
 const VIDEO_STYLES = [
@@ -136,14 +183,22 @@ export default function VideoFactoryPage() {
     duration: 5,
     mode: 'ti2vid',
     frameRate: 24,
+    videoStyle: '',
+    cameraAngle: '',
+    cameraMotion: '',
+    mood: '',
   })
-  const { prompt, width, height, duration, mode, frameRate } = inputs
+  const { prompt, width, height, duration, mode, frameRate, videoStyle, cameraAngle, cameraMotion, mood } = inputs
   const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
   const setWidth = (v) => setInputs((p) => ({ ...p, width: v }))
   const setHeight = (v) => setInputs((p) => ({ ...p, height: v }))
   const setDuration = (v) => setInputs((p) => ({ ...p, duration: v }))
   const setMode = (v) => setInputs((p) => ({ ...p, mode: v }))
   const setFrameRate = (v) => setInputs((p) => ({ ...p, frameRate: v }))
+  const setVideoStyle = (v) => setInputs((p) => ({ ...p, videoStyle: v ?? '' }))
+  const setCameraAngle = (v) => setInputs((p) => ({ ...p, cameraAngle: v ?? '' }))
+  const setCameraMotion = (v) => setInputs((p) => ({ ...p, cameraMotion: v ?? '' }))
+  const setMood = (v) => setInputs((p) => ({ ...p, mood: v ?? '' }))
   const [image, setImage] = useState('')
   const [creating, setCreating] = useState(false)
   const [lastResult, setLastResult] = useState(null)
@@ -225,7 +280,13 @@ export default function VideoFactoryPage() {
     setCreating(true)
     setLastResult(null)
     const form = new FormData()
-    form.append('prompt', prompt)
+    // 风格/镜头/运镜/情绪作为结构化控制项，拼入 prompt 参与生成（避免死控件）
+    const parts = [prompt]
+    if (videoStyle) parts.push(VIDEO_STYLES.find((s) => s.value === videoStyle)?.label)
+    if (cameraAngle) parts.push(cameraAngle)
+    if (cameraMotion) parts.push(CAMERA_MOTIONS.find((m) => m.value === cameraMotion)?.kw)
+    if (mood) parts.push(MOODS.find((m) => m.value === mood)?.kw)
+    form.append('prompt', parts.filter(Boolean).join(', '))
     form.append('width', width)
     form.append('height', height)
     form.append('duration', duration)
@@ -417,12 +478,13 @@ export default function VideoFactoryPage() {
           </div>
         )}
 
-        {/* 视频风格 + 镜头语言 */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* 视频风格 + 镜头语言 + 运镜 + 情绪氛围 */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">视频风格</label>
             <select
-              defaultValue=""
+              value={videoStyle}
+              onChange={(e) => setVideoStyle(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
             >
               {VIDEO_STYLES.map((s) => (
@@ -436,7 +498,8 @@ export default function VideoFactoryPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">镜头语言</label>
             <select
-              defaultValue=""
+              value={cameraAngle}
+              onChange={(e) => setCameraAngle(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
             >
               {CAMERA_ANGLES.map((a) => (
@@ -445,6 +508,57 @@ export default function VideoFactoryPage() {
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">运镜方式</label>
+            <select
+              value={cameraMotion}
+              onChange={(e) => setCameraMotion(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+            >
+              {CAMERA_MOTIONS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">情绪氛围</label>
+            <select
+              value={mood}
+              onChange={(e) => setMood(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all text-sm"
+            >
+              {MOODS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">画面比例快捷切换</label>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {ASPECTS.map((a) => (
+              <button
+                key={a.value}
+                onClick={() => {
+                  const [w, h] = a.value.split('x').map(Number)
+                  setWidth(w)
+                  setHeight(h)
+                }}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                  width === Number(a.value.split('x')[0]) && height === Number(a.value.split('x')[1])
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                    : 'border-gray-200 hover:bg-gray-50 text-gray-600'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
           </div>
         </div>
 
