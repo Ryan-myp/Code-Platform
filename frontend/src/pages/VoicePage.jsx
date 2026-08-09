@@ -22,6 +22,7 @@ import {
   Play,
   FileText,
   SlidersHorizontal,
+  Wand2,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonList } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -92,6 +93,39 @@ const VOICES = [
   },
 ]
 
+// 场景化示例文案（点击场景卡片且文本为空时自动填充；随机文案从当前场景池抽取）
+const SCENE_TEXT_TEMPLATES = {
+  shortvideo: [
+    '大家好，欢迎来到小团智能平台，今天用 3 分钟教你做出一个爆款短视频，从选题到剪辑，全程干货，先点赞收藏再观看。',
+    '你有没有发现，短视频的黄金三秒决定了播放量，今天分享三个开头技巧，让你的视频完播率翻倍。',
+    '揭秘！普通人也能学会的短视频涨粉方法，第一步就是找准自己的赛道，第二步持续输出垂直内容。',
+  ],
+  ad: [
+    '还在为效率低下烦恼吗？小团智能平台一站式搞定文案、图片、视频，一次创作，全平台分发，现在注册还有免费额度，赶紧体验吧！',
+    '限时福利！今天下单立减五十元，前一百名还送精美礼品，机会有限，错过再等一年，赶快点击下方链接抢购！',
+    '这款产品凭什么销量十万加？三大核心优势：材质升级、工艺精良、售后无忧，用户口碑爆棚，你还在犹豫什么？',
+  ],
+  audiobook: [
+    '夜深了，故事才刚刚开始。他推开那扇尘封已久的木门，眼前的一切让他愣在了原地……',
+    '第一章 初遇。那是一个下着细雨的黄昏，她撑着一把红色的伞，站在巷口，仿佛等了很久。',
+    '老屋的钟敲了十二下，男孩悄悄从床上爬起来，借着月光，翻开了那本泛黄的日记。',
+  ],
+  news: [
+    '各位听众朋友，大家好，这里是午间新闻。首先关注国内要闻：人工智能产业迎来新一轮发展机遇，多地出台支持政策……',
+    '今日要闻播报：受冷空气影响，本周全国大部分地区将迎来降温天气，请广大市民注意添衣保暖，出行注意安全。',
+    '下面播报财经消息：本周股市整体震荡上行，科技板块表现亮眼，专家提醒投资者注意控制仓位风险。',
+  ],
+  story: [
+    '小朋友们，晚上好呀！今天森林里的小兔子要去找它的好朋友小松鼠玩，路上会发生什么有趣的事情呢？让我们一起去看看吧！',
+    '从前呀，有一只不爱刷牙的小狮子，它总是捂着嘴巴说牙疼，后来牙医大象伯伯来帮忙了，猜猜小狮子最后怎么样了？',
+    '叮咚，魔法城堡的大门打开了，小公主和小伙伴们要出发去寻找会唱歌的星星啦，出发之前，先把小手洗干净哦！',
+  ],
+  custom: [
+    '欢迎来到小团智能平台，在这里，你可以自由选择音色、语速和音调，打造专属于你的声音。',
+    '这是一段自定义配音示例文本，你可以替换成自己的内容，选择喜欢的音色开始创作。',
+  ],
+}
+
 function fmtDuration(sec) {
   if (!sec) return '--:--'
   const m = Math.floor(sec / 60),
@@ -122,6 +156,21 @@ export default function VoicePage() {
   const setSpeed = (v) => setInputs((p) => ({ ...p, speed: v }))
   const setPitch = (v) => setInputs((p) => ({ ...p, pitch: v }))
   const setFormat = (v) => setInputs((p) => ({ ...p, format: v }))
+  // 随机文案：从当前场景模板池抽取（custom/无匹配时从全部场景池抽取）
+  const pickRandomText = () => {
+    const pool = SCENE_TEXT_TEMPLATES[scene] || []
+    const all = Object.values(SCENE_TEXT_TEMPLATES).flat()
+    const src = pool.length > 0 ? pool : all
+    setText(src[Math.floor(Math.random() * src.length)])
+  }
+  const selectScene = (id) => {
+    setScene(id)
+    // 场景联动：文本为空时自动填充该场景首条示例文案
+    if (!text.trim()) {
+      const tmpl = (SCENE_TEXT_TEMPLATES[id] || [])[0]
+      if (tmpl) setText(tmpl)
+    }
+  }
   const [previewing, setPreviewing] = useState('')
   const [generating, setGenerating] = useState(false)
   const [items, setItems] = useState([])
@@ -463,7 +512,7 @@ export default function VoicePage() {
               {SCENES.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => setScene(s.id)}
+                  onClick={() => selectScene(s.id)}
                   className={`flex flex-col items-start gap-1 px-3 py-2.5 rounded-xl border transition-all ${
                     scene === s.id
                       ? 'bg-pink-50 border-pink-300 ring-2 ring-pink-500/20'
@@ -485,6 +534,14 @@ export default function VoicePage() {
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <AudioLines className="w-4 h-4 text-violet-500" /> 配音文本
+              <button
+                onClick={pickRandomText}
+                title="从当前场景示例文案中随机抽取一条"
+                className="ml-auto text-xs text-violet-500 hover:text-violet-700 flex items-center gap-1 font-normal"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                随机文案
+              </button>
             </h3>
             <textarea
               value={text}
