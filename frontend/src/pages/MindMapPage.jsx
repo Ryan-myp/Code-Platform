@@ -24,20 +24,46 @@ const RANDOM_TOPICS = [
   '跨境电商运营全流程',
   '2026 年 AI 应用发展趋势',
   '家庭健康管理计划',
+  '门店私域流量增长策略',
+  '敏捷开发团队 Scrum 实践',
+  '大学生职业规划路线图',
+  '个人理财资产配置方案',
+  '短视频账号冷启动计划',
+  '智能家居产品需求分析',
 ]
 
-const PALETTE = [
-  '#667eea',
-  '#4A90D9',
-  '#6B8E23',
-  '#E91E63',
-  '#FF9800',
-  '#9C27B0',
-  '#00BCD4',
-  '#FF5722',
+// 配色主题：前端渲染覆色（不依赖后端节点自带色，一键全局换肤）
+const COLOR_THEMES = [
+  {
+    id: 'classic',
+    name: '经典多彩',
+    colors: ['#667eea', '#4A90D9', '#6B8E23', '#E91E63', '#FF9800', '#9C27B0', '#00BCD4', '#FF5722'],
+  },
+  {
+    id: 'fresh',
+    name: '清新薄荷',
+    colors: ['#10B981', '#34D399', '#22C55E', '#84CC16', '#0EA5E9', '#14B8A6', '#A3E635', '#16A34A'],
+  },
+  {
+    id: 'warm',
+    name: '暖阳橙红',
+    colors: ['#F59E0B', '#F97316', '#EF4444', '#EAB308', '#FB923C', '#F43F5E', '#FBBF24', '#DC2626'],
+  },
+  {
+    id: 'tech',
+    name: '科技蓝紫',
+    colors: ['#3B82F6', '#6366F1', '#06B6D4', '#8B5CF6', '#0EA5E9', '#4F46E5', '#22D3EE', '#7C3AED'],
+  },
+  {
+    id: 'dark',
+    name: '暗夜深邃',
+    colors: ['#94A3B8', '#64748B', '#CBD5E1', '#475569', '#A78BFA', '#818CF8', '#93C5FD', '#C4B5FD'],
+  },
 ]
 
-function MindMapCanvas({ data, width = 800, height = 600 }) {
+const DEFAULT_PALETTE = COLOR_THEMES[0].colors
+
+function MindMapCanvas({ data, width = 800, height = 600, palette = DEFAULT_PALETTE }) {
   const canvasRef = useRef(null)
 
   useEffect(() => {
@@ -54,7 +80,7 @@ function MindMapCanvas({ data, width = 800, height = 600 }) {
     const cy = height / 2
 
     // 根节点
-    drawNode(ctx, cx, cy, data.root.name, data.root.color || '#667eea', 80)
+    drawNode(ctx, cx, cy, data.root.name, palette[0], 80)
 
     // 一级分支
     const branchCount = (data.root.children || []).length
@@ -66,9 +92,10 @@ function MindMapCanvas({ data, width = 800, height = 600 }) {
         const angle = -Math.PI / 2 + i * angleStep
         const nx = cx + Math.cos(angle) * radius
         const ny = cy + Math.sin(angle) * radius
+        const branchColor = palette[(i + 1) % palette.length]
 
         // 连线
-        ctx.strokeStyle = child.color || '#ccc'
+        ctx.strokeStyle = branchColor
         ctx.lineWidth = 2
         ctx.beginPath()
         ctx.moveTo(cx, cy + 30)
@@ -76,7 +103,7 @@ function MindMapCanvas({ data, width = 800, height = 600 }) {
         ctx.stroke()
 
         // 一级节点
-        drawNode(ctx, nx, ny, child.name, child.color || '#4A90D9', 60)
+        drawNode(ctx, nx, ny, child.name, branchColor, 60)
 
         // 二级节点
         const subChildren = child.children || []
@@ -90,14 +117,14 @@ function MindMapCanvas({ data, width = 800, height = 600 }) {
             const sx = nx + Math.cos(sa) * subRadius
             const sy = ny + Math.sin(sa) * subRadius
 
-            ctx.strokeStyle = '#c4b5fd'
+            ctx.strokeStyle = branchColor + '99'
             ctx.lineWidth = 1.5
             ctx.beginPath()
             ctx.moveTo(nx, ny + 18)
             ctx.quadraticCurveTo(nx, ny + 18 + subRadius * 0.5, sx, sy - 12)
             ctx.stroke()
 
-            drawNode(ctx, sx, sy, sub.name, child.color ? child.color + '88' : '#c4b5fd', 44)
+            drawNode(ctx, sx, sy, sub.name, branchColor + '88', 44)
 
             // 三级节点
             const subSub = sub.children || []
@@ -108,21 +135,21 @@ function MindMapCanvas({ data, width = 800, height = 600 }) {
                 const tx = sx + Math.cos(tAngle) * tRadius
                 const ty = sy + Math.sin(tAngle) * tRadius
 
-                ctx.strokeStyle = '#e9d5ff'
+                ctx.strokeStyle = branchColor + '44'
                 ctx.lineWidth = 1
                 ctx.beginPath()
                 ctx.moveTo(sx, sy + 12)
                 ctx.lineTo(tx, ty)
                 ctx.stroke()
 
-                drawNode(ctx, tx, ty, ss.name, '#e9d5ff', 32, '#666')
+                drawNode(ctx, tx, ty, ss.name, branchColor + '33', 32, '#666')
               })
             }
           })
         }
       })
     }
-  }, [data, width, height])
+  }, [data, width, height, palette])
 
   return <canvas ref={canvasRef} style={{ width, height }} className="rounded-xl" />
 }
@@ -157,6 +184,7 @@ export default function MindMapPage() {
   const { submitTask } = useAsyncTask()
   const [topic, setTopic] = useState('')
   const [depth, setDepth] = useState(3)
+  const [paletteKey, setPaletteKey] = useState('classic')
   const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
@@ -285,6 +313,28 @@ export default function MindMapPage() {
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+              <label className="text-xs text-gray-500 mr-1">配色：</label>
+              {COLOR_THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setPaletteKey(t.id)}
+                  title={t.name}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] border transition-all ${
+                    paletteKey === t.id
+                      ? 'bg-purple-100 border-purple-300 text-purple-700 font-medium'
+                      : 'bg-gray-50 border-gray-100 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  <span className="flex gap-0.5">
+                    {t.colors.slice(0, 3).map((c) => (
+                      <span key={c} className="w-2 h-2 rounded-full" style={{ background: c }} />
+                    ))}
+                  </span>
+                  {t.name}
+                </button>
+              ))}
+            </div>
             <Button
               variant="primary"
               icon={Sparkles}
@@ -396,6 +446,7 @@ export default function MindMapPage() {
                   data={{ root: result.root, title: result.title }}
                   width={fullscreen ? 1000 : 700}
                   height={fullscreen ? 650 : 500}
+                  palette={COLOR_THEMES.find((t) => t.id === paletteKey)?.colors || DEFAULT_PALETTE}
                 />
               </div>
             )}

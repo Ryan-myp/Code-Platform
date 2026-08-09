@@ -18,6 +18,7 @@ import {
   Trash2,
   Lightbulb,
   Download,
+  RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -34,6 +35,10 @@ const RANDOM_FORMULAS = [
   '把 C 列混合格式的日期统一为 YYYY-MM-DD 并计算与今天的差值天数',
   '按部门汇总 D 列金额，生成部门-金额对照表',
   '从 E 列身份证号中提取出生日期和性别',
+  '计算 A 列库存量与 B 列安全库存的差值，低于安全线标红预警',
+  '按季度统计销售额环比增长率，并用条件格式标出增长超过 20% 的季度',
+  '将 A 列手机号脱敏为 138****1234 格式',
+  '计算员工 A 列的加班时长，按 1.5 倍折算调休天数',
 ]
 
 const OPERATIONS = [
@@ -79,6 +84,36 @@ const QUICK_TEMPLATES = [
     icon: '🧹',
     op: 'clean',
     prompt: '请检查数据中的重复行、空值、异常值，并给出清洗方案',
+  },
+  {
+    name: '人事考勤统计',
+    icon: '⏰',
+    op: 'analyze',
+    prompt: '请分析考勤数据，统计出勤率、迟到早退频次、加班时长，并识别考勤异常员工',
+  },
+  {
+    name: '库存周转分析',
+    icon: '📦',
+    op: 'analyze',
+    prompt: '请分析库存数据，计算周转率、滞销占比、缺货风险，并给出补货建议',
+  },
+  {
+    name: '成绩统计',
+    icon: '📝',
+    op: 'create',
+    prompt: '根据各科成绩生成统计表：总分、排名、平均分、优秀率、及格率、分数段分布',
+  },
+  {
+    name: '销售提成计算',
+    icon: '💸',
+    op: 'formula',
+    prompt: '需要按阶梯比例计算提成：销售额 10 万以下 5%，10-50 万 8%，50 万以上 12%',
+  },
+  {
+    name: '多表合并',
+    icon: '🔗',
+    op: 'formula',
+    prompt: '需要把多个分部门的销售表按产品编码合并成一张总表，并汇总金额',
   },
 ]
 
@@ -205,6 +240,7 @@ export default function ExcelPage() {
   const reuseHistory = (item) => {
     setOperation(item.operation)
     setResult(item.result)
+    if (item.prompt) setPrompt(item.prompt)
   }
 
   return (
@@ -454,6 +490,15 @@ export default function ExcelPage() {
                     onClick={copyResult}
                   >
                     {copied ? '已复制' : '复制'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={RefreshCw}
+                    loading={loading}
+                    onClick={execute}
+                  >
+                    重新执行
                   </Button>
                 </div>
               )}

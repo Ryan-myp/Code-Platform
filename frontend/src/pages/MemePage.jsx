@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -87,6 +88,9 @@ const AI_STYLES = [
   { id: 'pixel', name: '像素复古', desc: '8-bit 质感' },
   { id: 'ink', name: '水墨国风', desc: '笔墨晕染' },
   { id: 'neon', name: '霓虹赛博', desc: '灯管光效' },
+  { id: 'oil', name: '油画质感', desc: '笔触厚重' },
+  { id: 'anime', name: '赛璐璐动漫', desc: '日漫赛璐璐' },
+  { id: 'film', name: '电影写实', desc: '胶片质感' },
 ]
 
 const SUGGESTS = [
@@ -96,6 +100,12 @@ const SUGGESTS = [
   { top: '格局打开', bottom: '这事就这么定了' },
   { top: '已阅', bottom: '散会' },
   { top: '干饭人', bottom: '干饭魂' },
+  { top: '周五了', bottom: '灵魂已经放假' },
+  { top: '甲方说', bottom: '需求很简单，就是改个颜色' },
+  { top: '开工', bottom: '搬砖的尽头是摸鱼' },
+  { top: '体检报告', bottom: '主打一个不敢看' },
+  { top: '早起失败', bottom: '床绑架了我' },
+  { top: '开会两小时', bottom: '结论下次再说' },
 ]
 
 export default function MemePage() {
@@ -578,13 +588,20 @@ export default function MemePage() {
                       <label className="block text-xs font-medium text-gray-500 mb-1">
                         AI 场景描述（可选）
                       </label>
-                      <input
-                        type="text"
-                        value={aiPrompt}
-                        onChange={(e) => setAiPrompt(e.target.value)}
-                        placeholder="如：一只加班到崩溃的柴犬，办公室场景"
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={aiPrompt}
+                          onChange={(e) => setAiPrompt(e.target.value)}
+                          placeholder="如：一只加班到崩溃的柴犬，办公室场景"
+                          className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+                        />
+                        <EnhancePromptButton
+                          text={aiPrompt}
+                          onEnhance={(t) => setAiPrompt(t)}
+                          className="text-amber-600 hover:text-amber-700"
+                        />
+                      </div>
                       <p className="text-[11px] text-gray-400 mt-1">留空则根据文字自动设计场景</p>
                     </div>
                     <div>

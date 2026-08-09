@@ -40,6 +40,7 @@ import {
   Loader2,
   AlertTriangle,
   LayoutGrid,
+  Shuffle,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -89,6 +90,30 @@ const SCENES = [
     color: 'from-violet-500 to-purple-600',
   },
 ]
+
+// 场景台词模板：点击场景卡片时自动填入示例口播（文案为空时），也可随机抽取
+const SCENE_SCRIPTS = {
+  product: [
+    '大家好，今天给大家介绍一款全新的AI效率工具。它能在30秒内自动完成PPT大纲、数据分析、视频生成，让繁琐的工作变得像聊天一样简单。现在下单，立享限时五折优惠，错过再等一年！',
+    '家人们，这款智能办公软件真的太方便了！一键生成周报、自动整理会议纪要、还能智能推荐最优方案。我已经用了三个月，工作效率直接翻倍，强烈推荐给每一位职场人！',
+  ],
+  course: [
+    '同学们好，今天我们学习AI绘画的核心概念——提示词工程。首先，明确主题是创作的基础；其次，描述风格决定画面气质；最后，细节参数控制最终效果。我们通过三个实战案例来理解。',
+    '这节课我们来讲数据分析的四大步骤：第一，明确分析目标；第二，数据清洗与预处理；第三，建模与计算；第四，可视化呈现结论。每一步都有对应的工具和方法，大家做好笔记。',
+  ],
+  news: [
+    '各位观众朋友，大家好！今天是8月9日，欢迎收看今日科技快讯。首条消息：国内AI大模型应用市场规模持续扩大，预计年底突破千亿。接下来请看详细报道。',
+    '本台消息：随着人工智能技术的快速发展，智慧医疗、智能制造等领域迎来新一轮变革。专家预计，未来五年相关产业将带动新增就业岗位超百万个。',
+  ],
+  livestream: [
+    '欢迎来到直播间！今天这款产品我们直接给大家上福利价，原价399，今天直播间只要99！三、二、一，上链接！还没点关注的家人们先点亮红心，我们马上抽奖！',
+    '来咯来咯！今天给大家炸一波福利——最新款智能手环，心率监测、睡眠分析、运动记录全都有，今天只要半价！库存不多，拍完即止，赶紧去抢！',
+  ],
+  story: [
+    '从前有座山，山里有个小村庄。村里住着一位老工匠，他每天打磨一件器物，从不在乎时间。多年后，那些器物成了远近闻名的珍宝——原来，真正的价值，都藏在日复一日的坚持里。',
+    '那是一个深秋的傍晚，我收到了一封迟到了十年的信。信上只有一句话：人生没有白走的路。多年后我才明白，当年那些看似无用的选择，恰恰铺成了通向梦想的唯一道路。',
+  ],
+}
 
 export default function DigitalHumanPage() {
   const toast = useToast()
@@ -1114,6 +1139,27 @@ export default function DigitalHumanPage() {
     toast.success('已填入文案框，可继续编辑')
   }
 
+  // 场景联动：切换场景；文案为空时自动填该场景示例口播
+  const selectScene = (id) => {
+    setSceneId(id)
+    if (!text.trim()) {
+      const pool = SCENE_SCRIPTS[id]
+      if (pool?.length) {
+        setText(pool[0])
+        toast.success(`已填「${SCENES.find((s) => s.id === id)?.name || ''}」示例口播`)
+      }
+    }
+  }
+
+  // 随机台词：优先当前场景池，否则全场景池抽取
+  const pickRandomScript = () => {
+    const pool = SCENE_SCRIPTS[sceneId]
+    const all = Object.values(SCENE_SCRIPTS).flat()
+    const list = pool?.length ? pool : all
+    setText(list[Math.floor(Math.random() * list.length)])
+    toast.success('已随机填入口播文案')
+  }
+
   // ── 合规预检：生成前检查违禁词/风险词 ──
   const checkCompliance = async () => {
     if (!text.trim()) {
@@ -1250,7 +1296,7 @@ export default function DigitalHumanPage() {
                   <button
                     key={s.id}
                     onClick={() => {
-                      setSceneId(s.id)
+                      selectScene(s.id)
                     }}
                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-xs transition-all ${
                       sceneId === s.id
@@ -1712,6 +1758,9 @@ export default function DigitalHumanPage() {
                 </Button>
                 <Button variant="secondary" size="sm" icon={FileText} onClick={loadArticles}>
                   素材库
+                </Button>
+                <Button variant="secondary" size="sm" icon={Shuffle} onClick={pickRandomScript}>
+                  随机台词
                 </Button>
               </div>
             </div>

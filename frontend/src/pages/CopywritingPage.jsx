@@ -19,6 +19,7 @@ import {
   Trash2,
   Star,
   Tag,
+  RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -64,6 +65,12 @@ const RANDOM_PROMPTS = [
   '为儿童智能手表撰写电商详情页文案，强调定位精准、家长可远程查看',
   '为本地瑜伽馆撰写推广文案，吸引上班族报名晚间课程',
   '为环保品牌的竹制餐具撰写品牌故事文案，突出可持续理念',
+  '为一家 SaaS 公司撰写获客落地页主标题和副标题，突出“3 天部署、零代码”卖点',
+  '为宠物寄养服务撰写朋友圈文案，目标人群是长假出行的宠物主，强调视频日报服务',
+  '为高校食堂新窗口撰写校园墙宣传文案，突出性价比与招牌菜，语气幽默接地气',
+  '为知识付费课程撰写公众号推文，主题：普通人如何靠 AI 提升 3 倍工作效率',
+  '为本地书店撰写世界读书日主题活动文案，含打卡赠书环节，唤起纸质书情怀',
+  '为健身房撰写新年开工营销文案，主打“年后瘦身计划”，设置早鸟价机制',
 ]
 
 const TEMPLATES = [
@@ -112,6 +119,30 @@ const TEMPLATES = [
     icon: '📦',
     prompt:
       '为产品智能扫地机器人撰写详情页文案，包含：产品亮点、规格参数、使用场景、用户评价摘要、购买理由',
+  },
+  {
+    name: '短视频口播',
+    icon: '🎬',
+    prompt:
+      '写一段 60 秒短视频口播脚本，产品是 AI 学习平板，面向备考学生家长，开头 3 秒要有钩子，中间讲核心功能，结尾引导评论领取体验课',
+  },
+  {
+    name: '招聘 JD',
+    icon: '👔',
+    prompt:
+      '撰写一份招聘 JD，岗位是 AI 产品经理，要求突出平台型产品经验与数据驱动能力，包含岗位职责、任职要求、加分项、福利亮点，语气真诚有吸引力',
+  },
+  {
+    name: '年会致辞',
+    icon: '🥂',
+    prompt:
+      '撰写公司年会总经理致辞稿，回顾年度关键词“增长”，感谢团队付出，公布明年目标，结尾鼓舞士气，时长 5 分钟，语言正式中带温度',
+  },
+  {
+    name: '直播话术',
+    icon: '📺',
+    prompt:
+      '写一套直播间带货话术，产品是护肤精华液，包含开场暖场、痛点引入、产品卖点、价格锚点、逼单话术、告别话术，节奏紧凑',
   },
 ]
 
@@ -548,6 +579,15 @@ export default function CopywritingPage() {
                     onClick={copyResult}
                   >
                     {copied ? '已复制' : '复制'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={RefreshCw}
+                    loading={!!task}
+                    onClick={generate}
+                  >
+                    重新生成
                   </Button>
                 </div>
               )}

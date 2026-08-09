@@ -58,6 +58,9 @@ AI_STYLES = {
     "pixel": "像素艺术风格，复古 8-bit 游戏画面质感，色彩鲜明",
     "ink": "水墨国风，飘逸的笔触与墨色晕染质感，留白得当",
     "neon": "霓虹赛博朋克风格，深色背景，霓虹灯管光效，未来感",
+    "oil": "厚涂油画风格，可见笔触与颜料质感，浓郁色彩，艺术感强",
+    "anime": "赛璐璐日漫风格，清晰线条与平涂上色，明亮通透，动画电影质感",
+    "film": "电影写实质感，胶片颗粒与自然光影，浅景深，故事感强",
 }
 
 CANVAS = 1080  # 正方形画布（微信表情标准 1080×1080）
@@ -471,7 +474,7 @@ async def generate_meme(
     bottom_text: str = Form(""),
     style: str = Form("yellow"),
     ai_prompt: str = Form(""),
-    ai_style: str = Form("flat", description="AI 模式画面风格（flat/3d/pixel/ink/neon）"),
+    ai_style: str = Form("flat", description="AI 模式画面风格（flat/3d/pixel/ink/neon/oil/anime/film）"),
     bg_upload: str = Form("", description="上传背景图 base64 dataURL（style=upload 时必填，≤8MB）"),
     decoration: str = Form("", description="右下角 emoji 装饰，逗号分隔，最多 4 个（如 😂,🔥,💯）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),

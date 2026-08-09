@@ -19,6 +19,10 @@ import {
   Rocket,
   BarChart3,
   Lightbulb,
+  BookOpen,
+  Megaphone,
+  ClipboardList,
+  RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -36,6 +40,9 @@ const PPT_TYPES = [
   { value: 'product', label: '产品发布', icon: Rocket, color: 'purple' },
   { value: 'training', label: '培训课件', icon: GraduationCap, color: 'amber' },
   { value: 'proposal', label: '项目提案', icon: Lightbulb, color: 'orange' },
+  { value: 'academic', label: '学术论文', icon: BookOpen, color: 'indigo' },
+  { value: 'marketing', label: '营销策划', icon: Megaphone, color: 'pink' },
+  { value: 'review', label: '个人述职', icon: ClipboardList, color: 'teal' },
 ]
 
 const AUDIENCES = [
@@ -57,6 +64,9 @@ const THEMES = [
   { value: 'energy_orange', label: '活力橙', color: 'bg-orange-500' },
   { value: 'minimal_gray', label: '简约灰', color: 'bg-gray-500' },
   { value: 'china_red', label: '中国红', color: 'bg-red-600' },
+  { value: 'mint_fresh', label: '清新薄荷', color: 'bg-emerald-400' },
+  { value: 'vintage_gold', label: '复古金棕', color: 'bg-amber-700' },
+  { value: 'dream_pink', label: '梦幻紫粉', color: 'bg-fuchsia-400' },
 ]
 
 const RANDOM_TITLES = [
@@ -66,6 +76,12 @@ const RANDOM_TITLES = [
   '人工智能技术趋势分享',
   '项目启动会汇报',
   '年度品牌营销方案',
+  '数字化转型路线图',
+  '校园招聘宣讲方案',
+  '乡村振兴产业规划',
+  '电商大促营销策略',
+  'AIGC 行业白皮书',
+  '安全生产月活动总结',
 ]
 
 const TEMPLATES = [
@@ -104,6 +120,30 @@ const TEMPLATES = [
     icon: '📅',
     title: '2026年度工作总结',
     outline: '1. 年度回顾\n2. 重点成果\n3. 经验教训\n4. 团队建设\n5. 明年展望',
+  },
+  {
+    name: '学术答辩',
+    icon: '🎓',
+    title: '硕士学位论文答辩',
+    outline: '1. 研究背景与意义\n2. 文献综述\n3. 研究方法\n4. 实验设计与结果\n5. 结论与展望\n6. 创新点总结',
+  },
+  {
+    name: '电商大促',
+    icon: '🛒',
+    title: '双十一电商大促营销方案',
+    outline: '1. 市场分析\n2. 活动目标\n3. 玩法设计\n4. 渠道投放\n5. 预算分配\n6. 效果预估',
+  },
+  {
+    name: '政府汇报',
+    icon: '🏛️',
+    title: '年度政务工作汇报',
+    outline: '1. 指导思想\n2. 重点工作推进\n3. 民生实事成效\n4. 存在问题\n5. 下步计划',
+  },
+  {
+    name: '文旅策划',
+    icon: '🏞️',
+    title: '城市文旅品牌策划方案',
+    outline: '1. 资源禀赋分析\n2. 客群画像\n3. IP 打造\n4. 活动策划\n5. 传播推广\n6. 落地保障',
   },
 ]
 
@@ -301,6 +341,9 @@ export default function PPTFactoryPage() {
     energy_orange: 'border-orange-200 bg-orange-50',
     minimal_gray: 'border-gray-200 bg-gray-50',
     china_red: 'border-red-200 bg-red-50',
+    mint_fresh: 'border-emerald-200 bg-emerald-50',
+    vintage_gold: 'border-amber-200 bg-amber-50',
+    dream_pink: 'border-fuchsia-200 bg-fuchsia-50',
   }
 
   return (
@@ -592,6 +635,15 @@ export default function PPTFactoryPage() {
                     onClick={copyResult}
                   >
                     {copied ? '已复制' : '复制'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={RefreshCw}
+                    loading={!!task}
+                    onClick={generate}
+                  >
+                    重新生成
                   </Button>
                 </div>
               )}
