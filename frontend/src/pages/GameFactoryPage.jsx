@@ -44,6 +44,12 @@ const RANDOM_REQUIREMENTS = [
   '加入金币收集与商店系统，可用金币购买不同皮肤',
   '每过 5 关增加新的障碍物类型，如移动墙、传送门',
   '支持键盘 WASD 与方向键双操作方式',
+  '策略塔防：3 种炮塔（箭/炮/冰），5 波敌人，波间可升级炮塔',
+  '回合制战斗：勇士 vs 史莱姆，3 个技能（重击/治疗/防御），3 连战出首领',
+  '卡牌对战：10 张卡牌库，能量上限 3，击败 AI 对手',
+  '五子棋：AI 分简单/困难两档，支持悔棋',
+  '放置经营：4 种设施可升级，离线收益 50%，累计收入成就',
+  '答题闯关：15 题常识题库，3 条命，每题限时 15 秒',
 ]
 
 const TEMPLATES = [
@@ -52,6 +58,7 @@ const TEMPLATES = [
     name: '贪吃蛇',
     icon: '🐍',
     color: 'from-emerald-500 to-green-600',
+    category: '休闲',
     description: '吃食物变长，撞墙/撞自己结束',
   },
   {
@@ -59,6 +66,7 @@ const TEMPLATES = [
     name: '2048',
     icon: '🔢',
     color: 'from-amber-500 to-orange-600',
+    category: '休闲',
     description: '滑动合并数字，合成 2048',
   },
   {
@@ -66,6 +74,7 @@ const TEMPLATES = [
     name: '飞机大战',
     icon: '✈️',
     color: 'from-blue-500 to-indigo-600',
+    category: '休闲',
     description: '躲避敌机，射击得分升级',
   },
   {
@@ -73,6 +82,7 @@ const TEMPLATES = [
     name: '打砖块',
     icon: '🧱',
     color: 'from-red-500 to-rose-600',
+    category: '休闲',
     description: '挡板反弹小球，清空砖块',
   },
   {
@@ -80,6 +90,7 @@ const TEMPLATES = [
     name: '记忆翻牌',
     icon: '🃏',
     color: 'from-violet-500 to-purple-600',
+    category: '休闲',
     description: '翻牌配对，步数越少越好',
   },
   {
@@ -87,30 +98,85 @@ const TEMPLATES = [
     name: '俄罗斯方块',
     icon: '🧩',
     color: 'from-cyan-500 to-teal-600',
+    category: '休闲',
     description: '旋转堆叠，满行消除',
-  },
-  {
-    id: 'minesweeper',
-    name: '扫雷',
-    icon: '💣',
-    color: 'from-lime-500 to-green-600',
-    description: '推理翻格，零失误过关',
   },
   {
     id: 'match3',
     name: '三消消乐',
     icon: '🍬',
     color: 'from-pink-500 to-rose-600',
+    category: '休闲',
     description: '交换消除，连锁加分',
+  },
+  {
+    id: 'minesweeper',
+    name: '扫雷',
+    icon: '💣',
+    color: 'from-lime-500 to-green-600',
+    category: '益智',
+    description: '推理翻格，零失误过关',
+  },
+  {
+    id: 'quiz',
+    name: '答题闯关',
+    icon: '🧠',
+    color: 'from-yellow-500 to-amber-600',
+    category: '益智',
+    description: '多类型题库限时闯关',
+  },
+  {
+    id: 'tower-defense',
+    name: '策略塔防',
+    icon: '🏰',
+    color: 'from-orange-500 to-amber-600',
+    category: '策略',
+    description: '布塔防守升级，抵御波次进攻',
+  },
+  {
+    id: 'turn-rpg',
+    name: '回合制RPG',
+    icon: '🧙',
+    color: 'from-purple-500 to-indigo-600',
+    category: '回合制',
+    description: '技能抉择，击败首领闯关',
+  },
+  {
+    id: 'card-battle',
+    name: '回合制卡牌',
+    icon: '🎴',
+    color: 'from-rose-500 to-pink-600',
+    category: '回合制',
+    description: '抽卡出牌，能量管理对战',
+  },
+  {
+    id: 'gomoku',
+    name: '五子棋',
+    icon: '⚫',
+    color: 'from-slate-500 to-gray-700',
+    category: '回合制',
+    description: '与 AI 对弈，三档难度',
+  },
+  {
+    id: 'idle-manager',
+    name: '放置经营',
+    icon: '🏪',
+    color: 'from-teal-500 to-emerald-600',
+    category: '模拟',
+    description: '开店自动赚钱，离线收益',
   },
   {
     id: 'custom',
     name: '自定义',
     icon: '✨',
     color: 'from-gray-500 to-gray-700',
+    category: '自定义',
     description: '自由描述玩法，AI 设计实现',
   },
 ]
+
+// 模板分类展示顺序
+const TEMPLATE_CATEGORIES = ['休闲', '益智', '策略', '回合制', '模拟', '自定义']
 
 const VERSION_META = {
   web: { label: '网页版', icon: Globe, color: 'green', desc: '浏览器直接玩，可在线试玩' },
@@ -471,25 +537,46 @@ export default function GameFactoryPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <FolderTree className="w-4 h-4 text-fuchsia-500" /> 选择玩法模板
             </h3>
-            <div className="grid grid-cols-2 gap-2">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTemplate(t.id)}
-                  className={`flex flex-col items-center gap-1.5 px-2 py-3 rounded-xl border transition-all ${
-                    template === t.id
-                      ? 'bg-fuchsia-50 border-fuchsia-300 ring-2 ring-fuchsia-500/20'
-                      : 'border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <span
-                    className={`w-9 h-9 rounded-lg bg-gradient-to-br ${t.color} flex items-center justify-center text-lg`}
-                  >
-                    {t.icon}
-                  </span>
-                  <span className="text-xs font-medium text-gray-700">{t.name}</span>
-                </button>
-              ))}
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+              {TEMPLATE_CATEGORIES.map((cat) => {
+                const catTpls = templates.filter((t) => (t.category || '其他') === cat)
+                if (catTpls.length === 0) return null
+                return (
+                  <div key={cat}>
+                    <p className="text-[11px] font-medium text-gray-400 mb-1.5 flex items-center gap-1">
+                      {cat === '休闲' && '🎮'}
+                      {cat === '益智' && '🧩'}
+                      {cat === '策略' && '♟️'}
+                      {cat === '回合制' && '🔄'}
+                      {cat === '模拟' && '🏪'}
+                      {cat === '自定义' && '✨'}
+                      {cat}
+                    </p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {catTpls.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => setTemplate(t.id)}
+                          className={`flex flex-col items-center gap-1 px-1 py-2 rounded-xl border transition-all ${
+                            template === t.id
+                              ? 'bg-fuchsia-50 border-fuchsia-300 ring-2 ring-fuchsia-500/20'
+                              : 'border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          <span
+                            className={`w-8 h-8 rounded-lg bg-gradient-to-br ${t.color} flex items-center justify-center text-base`}
+                          >
+                            {t.icon}
+                          </span>
+                          <span className="text-[10px] font-medium text-gray-700 leading-tight text-center">
+                            {t.name}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
             {tpl && <p className="mt-2 text-xs text-gray-400">{tpl.description}</p>}
           </Card>

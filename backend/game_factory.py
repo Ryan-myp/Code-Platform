@@ -39,6 +39,7 @@ TEMPLATES = [
         "name": "贪吃蛇",
         "icon": "🐍",
         "color": "from-emerald-500 to-green-600",
+        "category": "休闲",
         "description": "经典贪吃蛇：键盘/触屏控制方向，吃食物变长，撞墙或撞自己结束",
         "play": (
             "经典贪吃蛇玩法：蛇从屏幕中央出发，吃食物（随机刷新的方块）后蛇身变长、得分增加；"
@@ -51,6 +52,7 @@ TEMPLATES = [
         "name": "2048",
         "icon": "🔢",
         "color": "from-amber-500 to-orange-600",
+        "category": "休闲",
         "description": "数字合并：滑动合并相同数字，合成 2048 获胜",
         "play": (
             "2048 玩法：4×4 棋盘，每次滑动所有方块向该方向移动并合并相同数字（合并一次只计一次分）；"
@@ -63,6 +65,7 @@ TEMPLATES = [
         "name": "飞机大战",
         "icon": "✈️",
         "color": "from-blue-500 to-indigo-600",
+        "category": "休闲",
         "description": "射击闯关：控制飞机躲避并击落敌机，得分升级",
         "play": (
             "飞机大战玩法：玩家飞机在屏幕底部，左右移动躲避从上方下落的敌机，发射子弹击落敌机得分；"
@@ -75,6 +78,7 @@ TEMPLATES = [
         "name": "打砖块",
         "icon": "🧱",
         "color": "from-red-500 to-rose-600",
+        "category": "休闲",
         "description": "弹球消砖：挡板反弹小球，清空砖块过关",
         "play": (
             "打砖块玩法：底部挡板左右移动反弹小球，小球撞击上方砖块将其消除并得分；"
@@ -87,6 +91,7 @@ TEMPLATES = [
         "name": "记忆翻牌",
         "icon": "🃏",
         "color": "from-violet-500 to-purple-600",
+        "category": "休闲",
         "description": "配对记忆：翻牌找相同图案，步数越少越好",
         "play": (
             "记忆翻牌玩法：4×4 共 16 张卡片（8 对相同图案），点击翻开两张，图案相同则配对成功保持翻开；"
@@ -99,6 +104,7 @@ TEMPLATES = [
         "name": "俄罗斯方块",
         "icon": "🧩",
         "color": "from-cyan-500 to-teal-600",
+        "category": "休闲",
         "description": "经典下落消除：七种方块旋转堆叠，满行消除，等级加速",
         "play": (
             "俄罗斯方块玩法：七种形状方块（I/O/T/S/Z/J/L）从顶部下落，玩家左右移动与旋转方块，"
@@ -113,6 +119,7 @@ TEMPLATES = [
         "name": "扫雷",
         "icon": "💣",
         "color": "from-lime-500 to-green-600",
+        "category": "益智",
         "description": "推理扫雷：翻格子找地雷，数字提示周边雷数，零失误过关",
         "play": (
             "扫雷玩法：9×9 棋盘随机埋 10 颗雷，点击翻格子；翻到雷游戏结束；"
@@ -126,6 +133,7 @@ TEMPLATES = [
         "name": "三消消乐",
         "icon": "🍬",
         "color": "from-pink-500 to-rose-600",
+        "category": "休闲",
         "description": "爽快三消：交换相邻糖果，三个相同即消除，连锁加分",
         "play": (
             "三消玩法：8×8 棋盘铺满不同颜色糖果（4-5 种），交换相邻两个位置，"
@@ -135,10 +143,111 @@ TEMPLATES = [
         ),
     },
     {
+        "id": "tower-defense",
+        "name": "策略塔防",
+        "icon": "🏰",
+        "color": "from-orange-500 to-amber-600",
+        "category": "策略",
+        "description": "策略塔防：布塔防守，升级炮塔，抵御一波波敌人进攻",
+        "play": (
+            "策略塔防玩法：敌人沿固定路径从入口走向终点，玩家在路径旁建造炮塔阻止敌人抵达终点（漏掉扣生命，生命归零失败）；"
+            "至少 3 种炮塔（如箭塔/炮塔/冰塔），各有不同射程、伤害、攻速与特效（冰塔减速）；"
+            "击杀敌人获得金币，可建造新塔或升级已有塔（至多 3 级，升级提升属性）；"
+            "波次系统：至少 5 波敌人，敌人种类逐波增加（普通/快速/重甲/首领），波次间自动开启建造阶段；"
+            "建造/升级通过点击塔位弹出选择面板（Canvas 内绘制按钮）完成；"
+            "支持触屏点击与鼠标点击；显示金币、生命、波次与击杀数；本地存储最高纪录。"
+        ),
+    },
+    {
+        "id": "turn-rpg",
+        "name": "回合制RPG",
+        "icon": "🧙",
+        "color": "from-purple-500 to-indigo-600",
+        "category": "回合制",
+        "description": "回合制战斗：角色属性克制，技能抉择，击败怪物首领闯关",
+        "play": (
+            "回合制 RPG 战斗玩法：玩家与敌人轮流行动（回合制状态机：玩家回合→选择指令→结算→敌人回合→循环）；"
+            "玩家角色拥有 HP/MP/攻击力/防御力与至少 3 个技能（普通攻击/强力技能消耗 MP/防御姿态），技能各有特效与消耗；"
+            "至少 3 类敌人（史莱姆/骷髅/首领龙），属性逐渐增强，击败后获得经验与金币；"
+            "经验累积升级：等级提升增加属性上限并恢复满 HP/MP；金币可在商店购买药水/装备（商店在关卡间出现）；"
+            "连战系统：连续击败 3 个敌人后遭遇首领，击败首领通关；死亡后显示重试；"
+            "战斗指令通过 Canvas 内绘制按钮面板选择（攻击/技能/防御/道具）；"
+            "显示双方 HP/MP 血条、回合提示文字与技能动画效果；支持点击/触屏操作。"
+        ),
+    },
+    {
+        "id": "card-battle",
+        "name": "回合制卡牌",
+        "icon": "🎴",
+        "color": "from-rose-500 to-pink-600",
+        "category": "回合制",
+        "description": "卡牌对战：抽卡出牌，能量管理，击败对手获胜",
+        "play": (
+            "回合制卡牌对战玩法：玩家与 AI 对手轮流回合，每回合开始抽 1 张牌（手牌上限 5，回合结束丢弃超出部分）；"
+            "每回合获得 1 点能量（上限 3），打出卡牌消耗能量；至少 10 种卡牌：攻击类（火球/剑击/连击）、防御类（护盾/治疗）、效果类（抽牌/加能量/强化）；"
+            "双方各有 HP（玩家 30，AI 对手 25）与护盾值，护盾优先抵消伤害；"
+            "AI 对手按简单启发式决策（优先攻击、低血量时防御/治疗）；"
+            "打出卡牌时点击手牌区域的卡牌再点击「出牌」按钮（Canvas 内绘制），有卡牌拖拽/点击高亮反馈；"
+            "一方 HP 归零即分出胜负；显示双方 HP/护盾/能量、当前回合数与卡牌动画（出牌飞行动效）；"
+            "支持点击/触屏操作；本地存储最高连胜纪录。"
+        ),
+    },
+    {
+        "id": "gomoku",
+        "name": "五子棋",
+        "icon": "⚫",
+        "color": "from-slate-500 to-gray-700",
+        "category": "回合制",
+        "description": "回合制棋类：与 AI 对弈五子棋，先连五子者胜，难度可选",
+        "play": (
+            "五子棋玩法：15×15 棋盘，玩家执黑先手、AI 执白后手，轮流落子（回合制），横/竖/斜任意方向连成五子即获胜；"
+            "AI 采用启发式评分算法：遍历所有空位，按攻防权重评分（成五/活四/冲四/活三/眠三/活二等棋型加权），选最高分落子，兼顾进攻与防守；"
+            "提供 3 档 AI 难度（简单/普通/困难），简单档随机夹杂低权重落子、困难档纯最优决策；"
+            "落子后显示最后一步标记（如红点），棋盘有木纹底色与网格线，棋子有立体渐变质感；"
+            "支持悔棋（回退最后一步）、重新开局；提示当前轮到谁，胜负出现时高亮获胜连线；"
+            "支持点击/触屏落子；本地存储胜/负/平统计。"
+        ),
+    },
+    {
+        "id": "idle-manager",
+        "name": "放置经营",
+        "icon": "🏪",
+        "color": "from-teal-500 to-emerald-600",
+        "category": "模拟",
+        "description": "放置经营：开店摆摊自动赚钱，升级扩张，离线收益",
+        "play": (
+            "放置经营玩法：经营一家小吃摊/小店，顾客自动上门消费产生金币收入（放置挂机核心）；"
+            "至少 4 种可解锁设施（摊位/货架/招牌/员工），每个设施可升级（至多 5 级），提升每秒收入；"
+            "收入自动累积，玩家点击「收取」或自动入账；升级设施需要花费金币，设施间有前置解锁关系（如先摊位后货架）；"
+            "成就系统：达成累计收入里程碑（如 100/1000/10000 金币）触发成就弹窗；"
+            "离线收益：重进游戏时按离线时长发放 50% 收益；"
+            "界面为 Canvas 绘制：店铺场景 + 底部设施升级面板（点击设施弹出升级/价格按钮），金币飘字动效；"
+            "支持点击/触屏操作；本地存储存档（金币/设施等级/成就）。"
+        ),
+    },
+    {
+        "id": "quiz",
+        "name": "答题闯关",
+        "icon": "🧠",
+        "color": "from-yellow-500 to-amber-600",
+        "category": "益智",
+        "description": "益智答题：多类型题库闯关，答错扣命，限时挑战",
+        "play": (
+            "答题闯关玩法：连续答对闯关，题库至少 15 题覆盖常识/数学/成语/科学多类型，每题 4 个选项；"
+            "答对得分+1 并进入下一题，答错扣 1 条命（初始 3 条命），命归零游戏结束；"
+            "每题限时 15 秒，超时视为答错；连续答对 5 题触发「连击」提示加分；"
+            "题目与选项在 Canvas 内绘制（题目顶部、四个选项按钮），选中后立即显示对错反馈（绿/红高亮）再进下一题；"
+            "通关后显示得分、正确率与最高纪录（本地存储 Top 5），支持重玩；"
+            "题库内置在代码中（数组常量），可循环随机出题不重复（用完洗牌重抽）；"
+            "支持点击/触屏选择选项；界面活泼配色，有答题音效（对/错）。"
+        ),
+    },
+    {
         "id": "custom",
         "name": "自定义",
         "icon": "✨",
         "color": "from-gray-500 to-gray-700",
+        "category": "自定义",
         "description": "自由发挥：描述你的玩法，AI 设计实现",
         "play": "根据用户需求自行设计合理的玩法与界面（建议复杂度适中，可玩性优先）。",
     },
@@ -157,7 +266,9 @@ _GENERATE_SYSTEM = """你是一位资深游戏开发工程师，擅长 HTML5 Can
    - game.json 配置（deviceOrientation: "portrait"、showStatusBar: false）
    - project.config.json 配置（appid 用 "touristappid" 测试号、compileType 为 "game"）
    - 微信小游戏没有 DOM，不能用 document/window/Canvas 2D 的 document.createElement，只能用小游戏 API 与 Canvas 2D 上下文
-4. 双版本玩法逻辑一致：相同的规则、计分、难度曲线
+4. 双版本玩法逻辑一致：相同的规则、计分、难度曲线；
+   两个版本都必须完整输出、缺一不可：建议先输出 wx 版（体积较小）再输出 web 版，
+   严禁只输出一个版本或将 wx 版简写成占位/注释；若代码量大，适当精简注释与重复代码
 5. 必须包含完整游戏状态机与界面（商用游戏最低标准，双版本都要有）：
    - 开始界面：游戏标题、一句玩法说明、操作提示、「开始游戏」按钮（网页版可用 Enter/空格键，微信版触屏按钮）
    - 游戏中：完整循环（update/render）、碰撞检测、计分、难度曲线
@@ -169,10 +280,26 @@ _GENERATE_SYSTEM = """你是一位资深游戏开发工程师，擅长 HTML5 Can
    - 动效：得分飘字、消除/击中时的粒子爆炸反馈、按钮按下反馈
    - 视觉：渐变色背景或星空氛围层、圆角按钮、统一配色方案，避免大面积纯色块的廉价感
 7. 代码必须完整可用，注释清晰，界面美观，画布自适应屏幕（含 resize 处理）
-8. 输出控制在合理范围：web 版 index.html 不超过 1200 行，wx 版 game.js 不超过 1000 行，总字符数 60000 以内；不要写与玩法无关的冗余代码
+8. 输出控制在合理范围：web 版 index.html 不超过 1000 行，wx 版 game.js 不超过 900 行，总字符数 70000 以内；不要写与玩法无关的冗余代码
 9. 所有状态变量声明时必须初始化（如数组初始化为 []、对象初始化为 null），
    所有可能被事件回调触发的绘制/更新函数（如 resize 监听触发 draw）开头必须先判空（if (!data) return;），
-   严禁出现未初始化变量被回调访问导致的运行时报错"""
+   严禁出现未初始化变量被回调访问导致的运行时报错
+
+回合制/策略/模拟类游戏专项要求（仅当所选模板属于这些类型时强制执行，即时类游戏忽略）：
+A. 回合状态机：必须用 phase 状态字段管理回合流转（如 player-turn → resolve → enemy-turn → player-turn），
+   每个阶段有独立的 update/处理函数，回合切换时显示过渡提示文字与动效
+B. AI 对手决策：敌方/AI 行动必须实现明确的决策函数（如启发式评分/规则优先级），
+   严禁 AI 每回合随机乱动；决策后给出 0.5-1s 的思考/行动动画延迟再结算
+C. 资源经济系统：金币/能量/MP 等资源必须有获取与消耗的完整闭环，
+   资源不足时按钮置灰并给出提示，不允许出现负资源
+D. 操作面板 UI：选择类操作（塔位建造/战斗指令/卡牌出牌/设施升级）必须用 Canvas 内绘制的按钮面板实现，
+   点击区域命中检测要覆盖按钮绘制区域，面板打开时游戏主体暂停/不受影响
+E. 棋盘/网格类：格子坐标换算统一用 (col,row) 与像素 (x,y) 的转换函数，
+   点击判定用格坐标而非像素直接比较，边界检查必须完整（拒绝越界落子/移动）
+F. 数值平衡：回合制战斗单局时长控制在 3-8 分钟，敌人强度随关卡递进，
+   玩家平均 3 次尝试内可通关首关，避免数值崩坏（如敌人秒杀或玩家无双）
+G. 双版本一致：回合逻辑、AI 决策、资源规则在网页版与微信版完全一致，
+   微信版用 wx.onTouchStart 做按钮/棋盘点击命中，禁止使用 document 事件"""
 
 
 class GenerateRequest(BaseModel):
@@ -265,28 +392,30 @@ def _validate_files(files: dict) -> dict:
         raise ValueError("缺少 web 版文件")
     web = _inline_web_files(web)
     result = {"web": web}
-    if isinstance(wx, dict) and wx:
-        # 微信小游戏必需文件兜底
-        if "game.json" not in wx:
-            wx["game.json"] = json.dumps(
-                {"deviceOrientation": "portrait", "showStatusBar": False},
-                ensure_ascii=False,
-                indent=2,
-            )
-        if "project.config.json" not in wx:
-            wx["project.config.json"] = json.dumps(
-                {
-                    "appid": "touristappid",
-                    "compileType": "game",
-                    "setting": {"urlCheck": False},
-                    "projectname": "wxgame",
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        if "game.js" not in wx:
-            raise ValueError("wx 版缺少 game.js 入口文件")
-        result["wx"] = wx
+    # 微信版为交付核心之一：缺失或 game.js 为空直接判定失败（触发自动重试）
+    if not isinstance(wx, dict) or not wx or not (wx.get("game.js") or "").strip():
+        raise ValueError("wx 版缺失或 game.js 为空，必须输出完整的双版本")
+    # 微信小游戏必需文件兜底
+    if "game.json" not in wx:
+        wx["game.json"] = json.dumps(
+            {"deviceOrientation": "portrait", "showStatusBar": False},
+            ensure_ascii=False,
+            indent=2,
+        )
+    if "project.config.json" not in wx:
+        wx["project.config.json"] = json.dumps(
+            {
+                "appid": "touristappid",
+                "compileType": "game",
+                "setting": {"urlCheck": False},
+                "projectname": "wxgame",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    if "game.js" not in wx:
+        raise ValueError("wx 版缺少 game.js 入口文件")
+    result["wx"] = wx
     return result
 
 
@@ -346,12 +475,11 @@ def _qc_check(files: dict) -> dict:
     web = files.get("web") or {}
     html = web.get("index.html") or ""
     wx = files.get("wx") or {}
-    # 1) 文件完整性：web 版必须有 index.html；若产出 wx 版则三件套齐全
+    # 1) 文件完整性：web 版必须有 index.html；wx 三件套必须齐全（双版本缺一不可）
     checks.append({"item": "web index.html 存在", "ok": bool(html), "detail": "已生成" if html else "缺失"})
-    if wx:
-        for name in ("game.js", "game.json", "project.config.json"):
-            ok = bool(wx.get(name))
-            checks.append({"item": f"wx {name} 存在", "ok": ok, "detail": "已生成" if ok else "缺失"})
+    for name in ("game.js", "game.json", "project.config.json"):
+        ok = bool((wx or {}).get(name))
+        checks.append({"item": f"wx {name} 存在", "ok": ok, "detail": "已生成" if ok else "缺失"})
     # 2) HTML 结构：script/style 配对 + canvas/入口存在
     if html:
         err = _check_html_pairs(html)
@@ -430,7 +558,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
     for _attempt in range(3):
         try:
             _report(25, f"AI 正在生成双版本代码（第 {_attempt + 1} 次尝试）…")
-            result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
+            result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=22000, temperature=0.4, timeout=300)
             break
         except HTTPException as e:
             if e.status_code < 500:
@@ -460,7 +588,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
                 "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
             )
             result = await call_llm_async(
-                _GENERATE_SYSTEM, retry_prompt, max_tokens=16000, temperature=0.3, timeout=300
+                _GENERATE_SYSTEM, retry_prompt, max_tokens=22000, temperature=0.3, timeout=300
             )
         except (ValueError, json.JSONDecodeError) as e:
             last_err = str(e)
@@ -480,7 +608,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
                 "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
             )
             result = await call_llm_async(
-                _GENERATE_SYSTEM, retry_prompt, max_tokens=10000, temperature=0.3, timeout=300
+                _GENERATE_SYSTEM, retry_prompt, max_tokens=14000, temperature=0.3, timeout=300
             )
         except HTTPException:
             raise
@@ -751,7 +879,7 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
     start = time.time()
     try:
         _report(40, "AI 正在生成升级版代码…")
-        result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=16000, temperature=0.4, timeout=300)
+        result = await call_llm_async(_EVOLVE_SYSTEM, user_prompt, max_tokens=20000, temperature=0.4, timeout=300)
     except HTTPException:
         conn.close()
         raise
