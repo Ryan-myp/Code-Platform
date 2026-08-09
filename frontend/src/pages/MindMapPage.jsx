@@ -358,6 +358,15 @@ export default function MindMapPage() {
                   <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>
                     导出PNG
                   </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={RefreshCw}
+                    disabled={!!task}
+                    onClick={generate}
+                  >
+                    重新生成
+                  </Button>
                   <ShareButton
                     content={`# ${result.title || result.topic || '思维导图'}\n\n${result.description || ''}\n\n> 由小团智能平台 AI 思维导图生成 · ${new Date().toLocaleString()}`}
                     title={`思维导图：${result.title || result.topic}`}

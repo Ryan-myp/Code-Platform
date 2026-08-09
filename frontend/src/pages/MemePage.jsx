@@ -516,8 +516,17 @@ export default function MemePage() {
           </Card>
 
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Type className="w-4 h-4 text-pink-500" /> 表情文字
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <Type className="w-4 h-4 text-pink-500" /> 表情文字
+              </span>
+              <button
+                onClick={() => applySuggest(SUGGESTS[Math.floor(Math.random() * SUGGESTS.length)])}
+                className="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1"
+              >
+                <Wand2 className="w-3 h-3" />
+                随机梗文案
+              </button>
             </h3>
             {!batchMode ? (
               <div className="space-y-3">
@@ -685,8 +694,24 @@ export default function MemePage() {
             ) : (
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">
-                    批量文案（每行一组，用 / 分隔顶部与底部）
+                  <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                    <span>批量文案（每行一组，用 / 分隔顶部与底部）</span>
+                    <button
+                      onClick={() => {
+                        const count = 3 + Math.floor(Math.random() * 2)
+                        const pool = [...SUGGESTS]
+                        const picked = []
+                        while (picked.length < count && pool.length > 0) {
+                          const i = Math.floor(Math.random() * pool.length)
+                          picked.push(pool.splice(i, 1)[0])
+                        }
+                        setBatchText(picked.map((s) => `${s.top} / ${s.bottom}`).join('\n'))
+                      }}
+                      className="text-amber-600 hover:text-amber-700 flex items-center gap-1"
+                    >
+                      <Wand2 className="w-3 h-3" />
+                      随机批量
+                    </button>
                   </label>
                   <textarea
                     value={batchText}
