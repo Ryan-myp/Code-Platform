@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -227,8 +228,16 @@ export default function MindMapPage() {
         {/* 左侧：输入 */}
         <div className="space-y-4">
           <Card>
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-purple-500" /> 生成导图
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-500" /> 生成导图
+              </span>
+              <EnhancePromptButton
+                text={topic}
+                onEnhance={(t) => setTopic(t)}
+                style="mindmap"
+                className="text-purple-600 hover:text-purple-700 text-xs"
+              />
             </h3>
             <textarea
               value={topic}

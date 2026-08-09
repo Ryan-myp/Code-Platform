@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -306,7 +307,15 @@ export default function ExcelPage() {
               {/* 输入 */}
               {operation === 'formula' ? (
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">公式需求</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                    <span>公式需求</span>
+                    <EnhancePromptButton
+                      text={prompt}
+                      onEnhance={(t) => setPrompt(t)}
+                      style="excel"
+                      className="text-green-600 hover:text-green-700"
+                    />
+                  </label>
                   <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -467,8 +468,14 @@ export default function PPTFactoryPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">
-                  大纲要点（可选）
+                <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                  <span>大纲要点（可选）</span>
+                  <EnhancePromptButton
+                    text={outline}
+                    onEnhance={(t) => setOutline(t)}
+                    style="ppt"
+                    className="text-orange-600 hover:text-orange-700"
+                  />
                 </label>
                 <textarea
                   value={outline}

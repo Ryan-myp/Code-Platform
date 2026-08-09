@@ -321,3 +321,44 @@ v13.4 后续建议指出：生成页「智能补充/润色 prompt」能力仅 Im
 
 - 智能补充可继续扩散到 Mindmap/PPT/Excel 等输入型页面（组件已支持对应 style）
 - 可考虑在润色时附带「扩写/精简/改写」模式选择，适配不同输入习惯
+
+---
+
+# v13.6 智能补充剩余页扩散 + 新场景专家（2026-08-09）
+
+## 一、背景
+
+v13.5 已为核心 4 个生成页接入 AI 智能补充。经扫描（textarea 存在但无 EnhancePromptButton 的 34 个页面中筛选「创作/生成型输入」），剩余 MindMap/PPT/Excel/Game 4 个生成页仍缺此能力；且后端专家系统缺 game/excel 场景。
+
+## 二、改动清单
+
+### 后端（tool_hub.py）
+| 改动 | 说明 |
+|---|---|
+| `_ENHANCE_SYSTEMS` 新增 2 场景 | `game`：游戏策划专家（核心玩法/操作/关卡/美术音效/目标人群）；`excel`：Excel 公式专家（列结构假设/计算规则/边界条件/输出格式） |
+| 专家系统总数 | 9 → 11 种场景（image/copywriting/music/video/meme/mindmap/ppt/game/excel/general） |
+
+### 前端（4 页接入）
+| 文件 | 改动 |
+|---|---|
+| `MindMapPage.jsx` | 「生成导图」标题右侧加智能补充（style=mindmap，紫色） |
+| `PPTFactoryPage.jsx` | 「大纲要点」label 右侧加智能补充（style=ppt，橙色） |
+| `ExcelPage.jsx` | 「公式需求」label 右侧加智能补充（style=excel，绿色） |
+| `GameFactoryPage.jsx` | 「玩法需求」label 右侧加智能补充（style=game，品红） |
+
+## 三、设计要点
+
+- **筛选原则**：只给「创作/生成型输入」接入，扫描/配置/批量格式输入（ContentStrategy 正文、Meme 批量文案）不接入，避免破坏输入格式语义
+- **标题内嵌模式**：无独立 label 的卡片（MindMap）将 h3 改为 flex justify-between，右侧内嵌按钮，不额外占行
+- **场景对齐**：每页传对应 style 让后端走领域专家系统，而非统一 general
+
+## 四、验证结果
+
+- `npx vite build` 成功（10.39s）；5 个改动文件 GetProblems 全部 0 errors
+- 后端接口实测（curl）：game 扩写为游戏设计需求说明书 ✅、excel 扩写为精确公式需求描述（列结构/阶梯规则/边界条件）✅
+- 浏览器实测 `/mindmap`：输入主题 → 智能补充 → 扩写为 77 行三级树形大纲（PEST/产业链/竞争格局等维度）✅；`/games` 页玩法需求按钮存在 ✅；控制台 0 错误
+
+## 五、后续建议
+
+- 智能补充已覆盖 8 个创作生成页（Image/Copywriting/Music/Video/MindMap/PPT/Excel/Game），可收尾该能力线
+- 可考虑给智能补充加「扩写/精简/改写」模式参数，适配不同输入习惯

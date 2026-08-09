@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import EnhancePromptButton from '../components/EnhancePromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -499,7 +500,15 @@ export default function GameFactoryPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">玩法需求 *</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center justify-between">
+                  <span>玩法需求 *</span>
+                  <EnhancePromptButton
+                    text={requirement}
+                    onEnhance={(t) => setRequirement(t)}
+                    style="game"
+                    className="text-fuchsia-600 hover:text-fuchsia-700"
+                  />
+                </label>
                 <textarea
                   value={requirement}
                   onChange={(e) => setRequirement(e.target.value)}
