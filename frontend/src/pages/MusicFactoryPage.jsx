@@ -76,6 +76,26 @@ const PRESET_CATEGORIES = [
       { text: '雨后彩虹', style: 'pop' },
     ],
   },
+  {
+    name: '节日庆典',
+    icon: '🎉',
+    themes: [
+      { text: '春节团圆夜', style: 'pop' },
+      { text: '圣诞雪夜', style: 'classical' },
+      { text: '毕业季不说再见', style: 'ballad' },
+      { text: '生日派对狂欢', style: 'electronic' },
+    ],
+  },
+  {
+    name: '国风古韵',
+    icon: '🏮',
+    themes: [
+      { text: '江南烟雨', style: 'classical' },
+      { text: '长安月下', style: 'folk' },
+      { text: '山河故人', style: 'folk' },
+      { text: '琴瑟和鸣', style: 'classical' },
+    ],
+  },
 ]
 
 const STYLES = [
@@ -252,6 +272,7 @@ export default function MusicFactoryPage() {
     form.append('style', style)
     form.append('language', language)
     form.append('length', length)
+    form.append('mood', mood)
     await submitTask('/api/music-factory/lyrics/generate', form, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
