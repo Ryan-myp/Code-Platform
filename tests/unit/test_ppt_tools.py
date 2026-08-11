@@ -102,6 +102,18 @@ class TestSystemPrompt:
         prompt = extended_api._build_ppt_system_prompt("not_exist")
         assert "商务汇报" in prompt
 
+    def test_prompt_requires_content_richness(self):
+        import extended_api
+
+        # v19：内容丰富度要求（每页 4-6 条 / 数据页带数据点 / 页数 10-14）
+        prompt = extended_api._build_ppt_system_prompt("business")
+        assert "内容丰富度要求" in prompt
+        assert "3-5 条" in prompt
+        assert "chart_suggestion 必须写明具体数据点" in prompt
+        assert "背景 → 行动 → 结果" in prompt
+        assert "10-14 页" in prompt
+        assert "subtitle" in prompt and "notes" in prompt
+
 
 class TestBuildPptx:
     def test_paragraph_structure_rendered(self, monkeypatch, tmp_path):
@@ -185,6 +197,24 @@ class TestBuildPptx:
         assert len(prs.slides) == 1
         text = " ".join(sh.text_frame.text for sh in prs.slides[0].shapes if sh.has_text_frame)
         assert "空演示" in text
+
+    def test_page_footer_added(self, monkeypatch, tmp_path):
+        """v19：每页页脚（品牌 + 页码），深色页用浅灰字"""
+        import extended_api
+        from pptx import Presentation
+
+        monkeypatch.setattr(extended_api, "PPTX_DIR", str(tmp_path))
+        path = extended_api._build_pptx_file("T", _sample_outline(), "business")
+        prs = Presentation(path)
+        assert len(prs.slides) == 3
+
+        texts = []
+        for sh in prs.slides[1].shapes:  # content 页
+            if sh.has_text_frame:
+                texts.append(sh.text_frame.text)
+        joined = "\n".join(texts)
+        assert "小团智能 · 商务汇报" in joined
+        assert "02 / 03" in joined
 
     def test_legacy_string_content_still_works(self, monkeypatch, tmp_path):
         import extended_api

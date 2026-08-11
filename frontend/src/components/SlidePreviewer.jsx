@@ -144,6 +144,10 @@ function BarChartSvg({ accent }) {
         return (
           <g key={i}>
             <rect x={24 + i * 44} y={148 - h} width="28" height={h} rx="4" fill={accent} opacity={0.55 + 0.45 * (i / bars.length)} />
+            {/* v19-B：柱顶数据标签 */}
+            <text x={38 + i * 44} y={148 - h - 6} fontSize="10" fill={accent} textAnchor="middle" fontWeight="600">
+              {v}%
+            </text>
             <text x={38 + i * 44} y="166" fontSize="11" fill="#9CA3AF" textAnchor="middle">
               {String.fromCharCode(65 + i)}
             </text>
@@ -206,54 +210,105 @@ function ChartBlock({ suggestion, accent }) {
   const kind = chartKind(suggestion)
   return (
     <div className="flex flex-col items-center justify-center h-full">
-      <div className="w-full max-w-[300px]">
+      <div className="w-full max-w-[280px]">
         {kind === 'pie' ? <PieChartSvg accent={accent} /> : kind === 'line' ? <LineChartSvg accent={accent} /> : <BarChartSvg accent={accent} />}
       </div>
-      <span className="text-[10px] text-gray-400 mt-1">图表建议：{suggestion}</span>
+      {suggestion && (
+        <span className="text-[10px] text-gray-400 mt-1 text-center line-clamp-1 max-w-[90%]">
+          建议：{suggestion}
+        </span>
+      )}
     </div>
   )
 }
 
+/** 图表类型中文标签（v19-B 数据洞察徽章） */
+function chartLabel(suggestion) {
+  const k = chartKind(suggestion)
+  if (k === 'pie') return '饼图'
+  if (k === 'line') return '折线图'
+  return '柱状图'
+}
+
 /* ---------- 段落级内容渲染 ---------- */
 
-function ContentLines({ lines, textColor, accent }) {
+/** 页脚：品牌 + 主题色短线 + 页码（v19-B 视觉升级）；dark 用于深色底页（浅色文字） */
+function SlideFooter({ t, index, total, dark = false }) {
+  return (
+    <div
+      className="flex items-center justify-between pt-3 mt-1 text-[10px] opacity-60"
+      style={{ color: dark ? '#D0D5DD' : t.gray }}
+    >
+      <span>小团智能 · {t.name}</span>
+      <span className="flex items-center gap-1.5">
+        <span className="w-4 h-0.5 rounded" style={{ background: t.accent }} />
+        {String(index + 1).padStart(2, '0')} / {String(total).padStart(2, '0')}
+      </span>
+    </div>
+  )
+}
+
+function ContentLines({ lines, textColor, accent, accentLight }) {
   if (!Array.isArray(lines) || lines.length === 0) return null
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {lines.map((line, i) => {
         if (typeof line === 'string') {
           return (
-            <p key={i} className="text-sm text-gray-600">
+            <p key={i} className="text-sm text-gray-600 leading-relaxed">
               {line}
             </p>
           )
         }
         const { text = '', level = 1, emphasis = 'normal' } = line
         if (level === 0) {
+          // 主论点：左侧主题色竖条 + 大字号（v19-B）
           return (
-            <p key={i} className="text-lg font-bold leading-snug" style={{ color: textColor }}>
-              {text}
-            </p>
+            <div key={i} className="flex items-stretch gap-3 mb-1">
+              <span className="w-1 rounded-full flex-shrink-0" style={{ background: accent }} />
+              <p className="text-lg font-bold leading-snug" style={{ color: textColor }}>
+                {text}
+              </p>
+            </div>
           )
         }
         if (emphasis === 'strong') {
+          // 关键数据/结论：主题色浅底数据卡片（v19-B）
           return (
-            <p key={i} className="text-sm font-semibold" style={{ color: accent }}>
-              • {text}
-            </p>
+            <div
+              key={i}
+              className="flex items-start gap-2.5 rounded-lg px-3 py-2"
+              style={{ background: accentLight }}
+            >
+              <span
+                className="mt-[9px] w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{ background: accent }}
+              />
+              <p className="text-sm font-semibold leading-relaxed" style={{ color: textColor }}>
+                {text}
+              </p>
+            </div>
           )
         }
         if (emphasis === 'quote') {
           return (
-            <p key={i} className="text-sm italic border-l-2 pl-2 text-gray-500" style={{ borderColor: accent }}>
+            <p
+              key={i}
+              className="text-sm italic border-l-[3px] pl-3 py-1.5 rounded-r-lg leading-relaxed text-gray-600"
+              style={{ borderColor: accent, background: `${accentLight}80` }}
+            >
               {text}
             </p>
           )
         }
         return (
-          <p key={i} className="text-sm text-gray-600">
-            • {text}
-          </p>
+          <div key={i} className="flex items-start gap-2.5">
+            <span
+              className="mt-[9px] w-1.5 h-1.5 rounded-full flex-shrink-0 opacity-50"
+              style={{ background: accent }}
+            />
+            <p className="text-sm leading-relaxed text-gray-600">{text}</p>
+          </div>
         )
       })}
     </div>
@@ -263,130 +318,216 @@ function ContentLines({ lines, textColor, accent }) {
 /* ---------- 版式 ---------- */
 
 function CoverSlide({ slide, t }) {
+  const year = new Date().getFullYear()
   return (
-    <div className="w-full h-full flex flex-col justify-between p-10" style={{ background: `linear-gradient(135deg, ${t.dark}, ${t.dark}CC)`, color: t.white }}>
-      <div className="text-xs tracking-widest uppercase opacity-70">{t.name}</div>
-      <div>
-        <h2 className="text-3xl font-bold leading-tight mb-3">{slide.title || '无标题'}</h2>
-        {slide.subtitle && <p className="text-base opacity-90">{slide.subtitle}</p>}
+    <div
+      className="relative w-full h-full flex flex-col justify-between p-10 overflow-hidden"
+      style={{ background: `linear-gradient(135deg, ${t.dark}, ${t.dark}CC)`, color: t.white }}
+    >
+      {/* v19-B 装饰：大圆环 + 圆点阵列 */}
+      <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full border border-white/10" />
+      <div className="absolute -top-10 -right-10 w-44 h-44 rounded-full border border-white/10" />
+      <div className="absolute top-12 right-16 w-2 h-2 rounded-full bg-white/30" />
+      <div className="absolute top-24 right-28 w-1.5 h-1.5 rounded-full" style={{ background: t.accent }} />
+      <div className="absolute bottom-40 right-10 w-1.5 h-1.5 rounded-full bg-white/25" />
+      <div className="absolute bottom-52 right-24 w-1 h-1 rounded-full bg-white/40" />
+      <div className="relative">
+        <div className="flex items-center gap-2 text-xs tracking-widest uppercase opacity-70 mb-5">
+          <span className="w-7 h-0.5 rounded" style={{ background: t.accent }} />
+          {t.name}
+        </div>
+        <h2 className="text-4xl font-bold leading-tight mb-4 max-w-[85%]">
+          {slide.title || '无标题'}
+        </h2>
+        {slide.subtitle && (
+          <p className="text-base opacity-90 max-w-[70%] leading-relaxed">{slide.subtitle}</p>
+        )}
       </div>
-      <div className="flex items-center gap-2 text-xs opacity-60">
-        <span className="w-8 h-1 rounded" style={{ background: t.accent }} />
-        小团智能平台 · AI PPT
+      <div className="relative flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs opacity-60">
+          <span className="w-8 h-1 rounded" style={{ background: t.accent }} />
+          小团智能平台 · AI PPT
+        </div>
+        <div className="text-xs opacity-40">{year}</div>
       </div>
     </div>
   )
 }
 
-function TocSlide({ slide, t, index }) {
+function TocSlide({ slide, t, index, total }) {
   const lines = Array.isArray(slide.content) ? slide.content.map((c) => (typeof c === 'string' ? c : c.text)) : []
   return (
     <div className="w-full h-full p-10 flex flex-col" style={{ background: t.white, color: t.text }}>
-      <div className="text-xl font-bold mb-1" style={{ color: t.accent }}>
-        目录
+      <div className="flex items-center gap-3 mb-6">
+        <span className="text-2xl font-bold" style={{ color: t.accent }}>
+          目录
+        </span>
+        {slide.title && <span className="text-sm text-gray-400 mt-1">· {slide.title}</span>}
       </div>
-      {slide.title && <div className="text-sm text-gray-500 mb-6">{slide.title}</div>}
-      <div className="flex-1 grid grid-cols-2 gap-x-8 gap-y-4 content-start">
+      <div className="flex-1 grid grid-cols-2 gap-x-10 gap-y-5 content-start">
         {lines.map((text, i) => (
-          <div key={i} className="flex items-center gap-3">
-            <span className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" style={{ background: t.accent }}>
+          <div key={i} className="flex items-center gap-3 border-b border-gray-100 pb-3">
+            <span
+              className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold text-white flex-shrink-0 shadow-sm"
+              style={{ background: t.accent }}
+            >
               {String(i + 1).padStart(2, '0')}
             </span>
-            <span className="text-sm">{text}</span>
+            <span className="text-sm font-medium">{text}</span>
           </div>
         ))}
       </div>
-      <div className="text-xs text-gray-400">第 {index + 1} 页</div>
+      <SlideFooter t={t} index={index} total={total} />
     </div>
   )
 }
 
-function ContentSlide({ slide, t, index }) {
+function ContentSlide({ slide, t, index, total }) {
   return (
-    <div className="w-full h-full p-10 flex flex-col" style={{ background: t.white, color: t.text }}>
-      <div className="flex items-center gap-2 mb-4">
-        <span className="w-1 h-6 rounded" style={{ background: t.accent }} />
-        <h3 className="text-lg font-bold">{slide.title || '内容页'}</h3>
+    <div className="w-full h-full p-10 pt-8 flex flex-col" style={{ background: t.white, color: t.text }}>
+      <div className="flex items-center gap-3 mb-1">
+        <span className="w-1.5 h-7 rounded-full" style={{ background: t.accent }} />
+        <h3 className="text-xl font-bold">{slide.title || '内容页'}</h3>
+        {slide.subtitle && <span className="text-xs text-gray-400 ml-1">· {slide.subtitle}</span>}
       </div>
-      <div className="flex-1">
-        <ContentLines lines={slide.content} textColor={t.text} accent={t.accent} />
+      <div className="w-full h-px bg-gray-100 mt-3 mb-5" />
+      <div className="flex-1 min-h-0">
+        <ContentLines
+          lines={slide.content}
+          textColor={t.text}
+          accent={t.accent}
+          accentLight={t.accentLight}
+        />
       </div>
-      <div className="text-xs text-gray-400">{index + 1}</div>
+      <SlideFooter t={t} index={index} total={total} />
     </div>
   )
 }
 
-function DataSlide({ slide, t, index }) {
+function DataSlide({ slide, t, index, total }) {
   return (
-    <div className="w-full h-full p-10 flex flex-col" style={{ background: t.white, color: t.text }}>
-      <div className="flex items-center gap-2 mb-4">
-        <span className="w-1 h-6 rounded" style={{ background: t.accent }} />
-        <h3 className="text-lg font-bold">{slide.title || '数据页'}</h3>
+    <div className="w-full h-full p-10 pt-8 flex flex-col" style={{ background: t.white, color: t.text }}>
+      <div className="flex items-center gap-3 mb-1">
+        <span className="w-1.5 h-7 rounded-full" style={{ background: t.accent }} />
+        <h3 className="text-xl font-bold">{slide.title || '数据页'}</h3>
+        {slide.subtitle && <span className="text-xs text-gray-400 ml-1">· {slide.subtitle}</span>}
       </div>
+      <div className="w-full h-px bg-gray-100 mt-3 mb-5" />
       <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
-        <div className="overflow-auto">
-          <ContentLines lines={slide.content} textColor={t.text} accent={t.accent} />
+        <div className="overflow-auto pr-1">
+          <ContentLines
+            lines={slide.content}
+            textColor={t.text}
+            accent={t.accent}
+            accentLight={t.accentLight}
+          />
         </div>
-        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex items-center min-h-0">
-          <ChartBlock suggestion={slide.chart_suggestion} accent={t.accent} />
+        {/* v19-B：图表卡片（标题 + 类型徽章 + 示意图） */}
+        <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 flex flex-col min-h-0">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-gray-700">数据洞察</span>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded-full"
+              style={{ background: t.accentLight, color: t.accent }}
+            >
+              {chartLabel(slide.chart_suggestion)}
+            </span>
+          </div>
+          <div className="flex-1 min-h-0">
+            <ChartBlock suggestion={slide.chart_suggestion} accent={t.accent} />
+          </div>
         </div>
       </div>
-      <div className="text-xs text-gray-400">{index + 1}</div>
+      <SlideFooter t={t} index={index} total={total} />
     </div>
   )
 }
 
-function CaseSlide({ slide, t, index }) {
+function CaseSlide({ slide, t, index, total }) {
   return (
-    <div className="w-full h-full p-10 flex flex-col" style={{ background: t.accentLight, color: t.text }}>
-      <div className="flex items-center gap-2 mb-4">
-        <span className="w-1 h-6 rounded" style={{ background: t.accent }} />
-        <h3 className="text-lg font-bold">{slide.title || '案例'}</h3>
+    <div
+      className="w-full h-full p-10 pt-8 flex flex-col"
+      style={{ background: t.accentLight, color: t.text }}
+    >
+      <div className="flex items-center gap-3 mb-1">
+        <span className="w-1.5 h-7 rounded-full" style={{ background: t.accent }} />
+        <h3 className="text-xl font-bold">{slide.title || '案例'}</h3>
+        {slide.subtitle && <span className="text-xs text-gray-400 ml-1">· {slide.subtitle}</span>}
       </div>
-      <div className="flex-1 rounded-2xl p-6 shadow-sm" style={{ background: t.white }}>
-        <ContentLines lines={slide.content} textColor={t.text} accent={t.accent} />
+      <div className="w-full h-px mt-3 mb-5" style={{ background: `${t.accent}22` }} />
+      <div
+        className="flex-1 rounded-2xl p-6 shadow-sm border"
+        style={{ background: t.white, borderColor: `${t.accent}22` }}
+      >
+        <ContentLines
+          lines={slide.content}
+          textColor={t.text}
+          accent={t.accent}
+          accentLight={t.accentLight}
+        />
       </div>
-      <div className="text-xs text-gray-400">{index + 1}</div>
+      <SlideFooter t={t} index={index} total={total} />
     </div>
   )
 }
 
-function SummarySlide({ slide, t, index }) {
+function SummarySlide({ slide, t, index, total }) {
   return (
-    <div className="w-full h-full p-10 flex flex-col items-center justify-center text-center" style={{ background: t.white, color: t.text }}>
-      <div className="text-xs tracking-widest uppercase mb-3" style={{ color: t.accent }}>
-        总结
+    <div
+      className="w-full h-full p-10 flex flex-col items-center justify-center text-center"
+      style={{ background: t.white, color: t.text }}
+    >
+      <div className="flex items-center gap-2 text-xs tracking-widest uppercase mb-4">
+        <span className="w-6 h-0.5 rounded" style={{ background: t.accent }} />
+        <span style={{ color: t.accent }}>总结</span>
+        <span className="w-6 h-0.5 rounded" style={{ background: t.accent }} />
       </div>
-      <h3 className="text-2xl font-bold leading-snug mb-4 max-w-[80%]">{slide.title || '核心结论'}</h3>
-      <div className="max-w-[70%]">
-        <ContentLines lines={slide.content} textColor={t.text} accent={t.accent} />
+      <h3 className="text-2xl font-bold leading-snug mb-5 max-w-[80%]">{slide.title || '核心结论'}</h3>
+      <div className="max-w-[70%] w-full text-left">
+        <ContentLines
+          lines={slide.content}
+          textColor={t.text}
+          accent={t.accent}
+          accentLight={t.accentLight}
+        />
       </div>
-      <div className="mt-6 text-xs text-gray-400">{index + 1}</div>
+      <div className="w-full mt-6">
+        <SlideFooter t={t} index={index} total={total} />
+      </div>
     </div>
   )
 }
 
-function ThanksSlide({ t, index }) {
+function ThanksSlide({ t, index, total }) {
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center gap-4" style={{ background: `linear-gradient(135deg, ${t.dark}, ${t.dark}CC)`, color: t.white }}>
-      <div className="text-4xl font-bold">{'感谢聆听'}</div>
-      <div className="text-sm opacity-80">欢迎交流与指正</div>
-      <div className="w-10 h-1 rounded" style={{ background: t.accent }} />
-      <div className="text-xs opacity-50">{index + 1}</div>
+    <div
+      className="relative w-full h-full flex flex-col items-center justify-center gap-4 overflow-hidden"
+      style={{ background: `linear-gradient(135deg, ${t.dark}, ${t.dark}CC)`, color: t.white }}
+    >
+      {/* v19-B 装饰：左下圆环与封面呼应 */}
+      <div className="absolute -bottom-24 -left-24 w-80 h-80 rounded-full border border-white/10" />
+      <div className="absolute -bottom-12 -left-12 w-44 h-44 rounded-full border border-white/10" />
+      <div className="absolute top-16 right-14 w-1.5 h-1.5 rounded-full bg-white/30" />
+      <div className="relative text-4xl font-bold">{'感谢聆听'}</div>
+      <div className="relative text-sm opacity-80">欢迎交流与指正</div>
+      <div className="relative w-10 h-1 rounded" style={{ background: t.accent }} />
+      <div className="absolute bottom-6 left-10 right-10">
+        <SlideFooter t={t} index={index} total={total} dark />
+      </div>
     </div>
   )
 }
 
-function SlideView({ slide, template, index }) {
+function SlideView({ slide, template, index, total }) {
   const t = SLIDE_THEMES[template] || SLIDE_THEMES.business
   const type = slide?.type || 'content'
   if (type === 'cover') return <CoverSlide slide={slide} t={t} />
-  if (type === 'toc') return <TocSlide slide={slide} t={t} index={index} />
-  if (type === 'data') return <DataSlide slide={slide} t={t} index={index} />
-  if (type === 'case') return <CaseSlide slide={slide} t={t} index={index} />
-  if (type === 'summary') return <SummarySlide slide={slide} t={t} index={index} />
-  if (type === 'thanks') return <ThanksSlide t={t} index={index} />
-  return <ContentSlide slide={slide} t={t} index={index} />
+  if (type === 'toc') return <TocSlide slide={slide} t={t} index={index} total={total} />
+  if (type === 'data') return <DataSlide slide={slide} t={t} index={index} total={total} />
+  if (type === 'case') return <CaseSlide slide={slide} t={t} index={index} total={total} />
+  if (type === 'summary') return <SummarySlide slide={slide} t={t} index={index} total={total} />
+  if (type === 'thanks') return <ThanksSlide t={t} index={index} total={total} />
+  return <ContentSlide slide={slide} t={t} index={index} total={total} />
 }
 
 /* ---------- 预览器主体 ---------- */
@@ -446,7 +587,7 @@ export default function SlidePreviewer({ slides, template = 'business', title = 
         {list.map((slide, i) => (
           <div key={i} className="group relative rounded-xl overflow-hidden shadow-sm border border-gray-200 bg-white">
             <div className="aspect-[16/9] w-full">
-              <SlideView slide={slide} template={template} index={i} />
+              <SlideView slide={slide} template={template} index={i} total={list.length} />
             </div>
             {slide.notes && (
               <div className="px-3 py-1.5 text-[10px] text-gray-400 bg-gray-50 border-t border-gray-100">
@@ -477,7 +618,7 @@ export default function SlidePreviewer({ slides, template = 'business', title = 
             onClick={(e) => e.stopPropagation()}
           >
             <div className="aspect-[16/9] w-full rounded-lg overflow-hidden shadow-2xl">
-              <SlideView slide={list[current]} template={template} index={current} />
+              <SlideView slide={list[current]} template={template} index={current} total={list.length} />
             </div>
             <div className="flex items-center justify-between mt-4 text-white/80">
               <div className="text-sm">

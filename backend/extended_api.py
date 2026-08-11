@@ -3499,9 +3499,17 @@ def _build_ppt_system_prompt(template_id: str = "business") -> str:
 
 ## 段落级结构化要求
 每页 content 使用段落级结构（level 分层 + emphasis 强调），便于渲染为层级清晰的版面：
-- level 0：主论点（结论式短句，一页仅1-2条）
-- level 1：支撑论据/细节（每页2-4条，具体、有数据）
+- level 0：主论点（结论式短句，一页仅1条）
+- level 1：支撑论据/细节（每页3-5条，每条必须含具体数据、场景或案例，禁止空泛表述）
 - emphasis：strong（关键数字或结论，渲染加粗高亮）、quote（引用/金句，渲染为引用样式）、normal（普通）
+
+## 内容丰富度要求（每页必须满足）
+1. 每页 content 至少 4 条：1 条 level 0 结论 + 3-5 条 level 1 支撑；每条论据必须落到具体数据（百分比/金额/倍数/年份）、可感知场景或真实案例，禁止"提升效率""加强协同"类空话
+2. 数据页（type=data）：chart_suggestion 必须写明具体数据点（如"近三年营收：1.2亿→2.3亿→4.1亿，柱状图对比"），预览器据此渲染真实维度图表
+3. 案例页（type=case）：content 必须按"背景 → 行动 → 结果"三段组织（3 条 level 1），关键数字用 emphasis=strong 标注
+4. 内容页（type=content）：遵循"结论 + 论据×3左右 + 关键数据 + 行动建议"结构，关键数据与结论用 emphasis=strong 标注
+5. 所有页面必须填写 subtitle（副标题/上下文说明）、notes（演讲备注：过渡语+强调点+互动问题）、duration_seconds（预估秒数）
+6. 页面总量 10-14 页：cover 1 + toc 1 + content 4-7 + data 2-3 + case 1-2 + summary 1 + thanks 1
 
 ## 通用设计原则
 1. 每页原则：一页一个核心观点，标题即是结论（非描述性标题）
@@ -3531,7 +3539,7 @@ def _build_ppt_system_prompt(template_id: str = "business") -> str:
   ]
 }}
 
-生成8-12页幻灯片，确保逻辑递进、首尾呼应。"""
+生成10-14页幻灯片，确保逻辑递进、首尾呼应、信息密度饱满（每页都能独立成稿）。"""
 
 
 def _parse_ppt_outline(result: str) -> dict:
@@ -3704,6 +3712,14 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
         if chart_suggestion:
             _text(slide, 0.8, 6.55, 11.7, 0.45, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
 
+    def _page_footer(slide, page_no: int, total: int, dark: bool = False):
+        """页脚：品牌 + 页码（v19：全页统一视觉基线，深色底用浅灰字）"""
+        fg = RGBColor(208, 213, 221) if dark else GRAY
+        _text(slide, 0.8, 7.05, 4, 0.35, f"小团智能 · {tpl['name']}", 10, fg)
+        _text(
+            slide, 11.6, 7.05, 1.0, 0.35, f"{page_no:02d} / {total:02d}", 10, fg, align=PP_ALIGN.RIGHT
+        )
+
     slides = outline.get("slides") or []
     meta = outline.get("meta") or {}
 
@@ -3730,6 +3746,7 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
             _render_data(slide, title_text, subtitle, content, s.get("chart_suggestion"))
         else:  # content / summary
             _render_content(slide, title_text, subtitle, content, s.get("chart_suggestion"))
+        _page_footer(slide, i + 1, len(slides), dark=stype in ("cover", "thanks"))
         _notes(slide, s.get("notes") or "")
 
     if not slides:

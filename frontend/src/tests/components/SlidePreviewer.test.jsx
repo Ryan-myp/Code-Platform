@@ -109,6 +109,20 @@ describe('SlidePreviewer 渲染', () => {
     expect(screen.getByText('核心结论')).toBeTruthy()
   })
 
+  it('v19-B 视觉升级：封面年份 + 页脚页码 + 数据洞察徽章', () => {
+    render(<SlidePreviewer slides={slides} template="business" />)
+    // 封面底部年份
+    expect(screen.getByText(String(new Date().getFullYear()))).toBeTruthy()
+    // 页脚页码：toc/data/thanks 三页（cover 无页脚）
+    expect(screen.getAllByText(/\/ 04$/).length).toBe(3)
+    expect(screen.getAllByText('小团智能 · 商务汇报').length).toBe(3)
+    // 数据页：数据洞察标题 + 图表类型徽章（'柱状图对比' → 柱状图）
+    expect(screen.getByText('数据洞察')).toBeTruthy()
+    expect(screen.getByText('柱状图')).toBeTruthy()
+    // 论点竖条渲染（level 0 + strong）
+    expect(screen.getByText('主论点')).toBeTruthy()
+  })
+
   it('空 slides 渲染 null', () => {
     const { container } = render(<SlidePreviewer slides={[]} />)
     expect(container.innerHTML).toBe('')
