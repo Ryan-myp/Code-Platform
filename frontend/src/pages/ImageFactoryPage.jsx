@@ -37,6 +37,7 @@ import {
   ChevronUp,
   Type,
   Square,
+  Copy,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -137,6 +138,45 @@ const TRYON_STYLES = [
   { id: 'fashion', label: '时尚', icon: '✨' },
 ]
 
+// 模板分类（模板市场化）
+const TEMPLATE_CATEGORIES = ['通用', '电商主图', '促销海报', '节日营销', '社媒封面']
+
+// 字体选项（与后端 FONT_FAMILIES 对应）
+const FONT_OPTIONS = [
+  { id: '', label: '默认（苹方）' },
+  { id: 'pingfang', label: '苹方 PingFang' },
+  { id: 'helvetica', label: '黑体 Helvetica' },
+  { id: 'hiragino', label: '冬青黑体 Hiragino' },
+  { id: 'songti', label: '宋体 Songti' },
+  { id: 'arial', label: 'Arial' },
+  { id: 'times', label: 'Times New Roman' },
+]
+
+const FONT_CSS = {
+  pingfang: 'PingFang SC, PingFangTC, sans-serif',
+  helvetica: 'Helvetica, Arial, sans-serif',
+  hiragino: 'Hiragino Sans GB, sans-serif',
+  songti: 'Songti SC, STSong, serif',
+  arial: 'Arial, sans-serif',
+  times: 'Times New Roman, serif',
+}
+
+// 图层属性小工具：粗体/斜体开关
+function StyleToggle({ active, onClick, children, title }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+        active ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
 // 模板图层属性面板（可视化编辑器）：按图层类型渲染表单
 function LayerProps({ layer, onChange }) {
   const inputCls =
@@ -160,11 +200,12 @@ function LayerProps({ layer, onChange }) {
         <div className="space-y-3">
           <div>
             <label className={labelCls}>文字内容</label>
-            <input
+            <textarea
               value={layer.text || ''}
               onChange={(e) => onChange({ text: e.target.value })}
               placeholder="渲染时显示的文字（支持换行）"
-              className={inputCls}
+              rows={2}
+              className={`${inputCls} resize-none`}
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -178,23 +219,86 @@ function LayerProps({ layer, onChange }) {
               />
             </div>
             <div>
-              <label className={labelCls}>对齐</label>
+              <label className={labelCls}>字体</label>
+              <select
+                value={layer.family || ''}
+                onChange={(e) => onChange({ family: e.target.value })}
+                className={inputCls}
+              >
+                {FONT_OPTIONS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <label className={labelCls}>样式</label>
+              <div className="flex gap-1.5">
+                <StyleToggle
+                  active={!!layer.bold}
+                  onClick={() => onChange({ bold: !layer.bold })}
+                  title="粗体"
+                >
+                  <b>B</b>
+                </StyleToggle>
+                <StyleToggle
+                  active={!!layer.italic}
+                  onClick={() => onChange({ italic: !layer.italic })}
+                  title="斜体"
+                >
+                  <i>I</i>
+                </StyleToggle>
+                <StyleToggle active={false} onClick={() => onChange({ align: layer.align === 'center' ? 'left' : 'center' })} title="对齐：左/中">
+                  {layer.align === 'center' ? '居中' : '左对齐'}
+                </StyleToggle>
+              </div>
+            </div>
+            <div className="w-28">
+              <label className={labelCls}>对齐方式</label>
               <select
                 value={layer.align || 'left'}
                 onChange={(e) => onChange({ align: e.target.value })}
                 className={inputCls}
               >
-                <option value="left">左对齐</option>
-                <option value="center">居中</option>
-                <option value="right">右对齐</option>
+                <option value="left">左</option>
+                <option value="center">中</option>
+                <option value="right">右</option>
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>字号</label>
               <input type="number" value={num(layer.font_size)} onChange={setNum('font_size')} className={inputCls} />
             </div>
+            <div>
+              <label className={labelCls}>字距</label>
+              <input
+                type="number"
+                value={num(layer.letter_spacing)}
+                onChange={setNum('letter_spacing')}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>行高</label>
+              <input
+                type="number"
+                step="0.05"
+                value={num(layer.line_height)}
+                onChange={setNum('line_height')}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>旋转°</label>
+              <input type="number" value={num(layer.rotation)} onChange={setNum('rotation')} className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -203,36 +307,82 @@ function LayerProps({ layer, onChange }) {
               <label className={labelCls}>Y</label>
               <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>最大宽度（0=不换行）</label>
               <input type="number" value={num(layer.max_width)} onChange={setNum('max_width')} className={inputCls} />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>阴影（如 2,2）</label>
+              <label className={labelCls}>文字颜色</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={layer.color || '#000000'}
+                  onChange={(e) => onChange({ color: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.color || ''}
+                  onChange={(e) => onChange({ color: e.target.value })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>阴影颜色（透明=无阴影）</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={(layer.shadow_color || '#00000080').slice(0, 7)}
+                  onChange={(e) => onChange({ shadow_color: `${e.target.value}${(layer.shadow_color || '').slice(7) || '80'}` })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.shadow_color || ''}
+                  onChange={(e) => onChange({ shadow_color: e.target.value })}
+                  placeholder="#RRGGBBAA，如 #00000080"
+                  className={`${inputCls} font-mono`}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>阴影偏移（如 2,3）</label>
               <input
                 value={layer.shadow || ''}
                 onChange={(e) => onChange({ shadow: e.target.value })}
-                placeholder="留空为无阴影"
+                placeholder="x,y；留空为无阴影"
                 className={inputCls}
               />
             </div>
+            <div>
+              <label className={labelCls}>描边宽度（0=无）</label>
+              <input type="number" value={num(layer.stroke_width)} onChange={setNum('stroke_width')} className={inputCls} />
+            </div>
           </div>
-          <div>
-            <label className={labelCls}>文字颜色</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={layer.color || '#000000'}
-                onChange={(e) => onChange({ color: e.target.value })}
-                className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
-              />
-              <input
-                value={layer.color || ''}
-                onChange={(e) => onChange({ color: e.target.value })}
-                className={inputCls}
-              />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>描边颜色</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={layer.stroke_color || '#000000'}
+                  onChange={(e) => onChange({ stroke_color: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.stroke_color || ''}
+                  onChange={(e) => onChange({ stroke_color: e.target.value })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+            <div className="flex items-end">
+              <p className="text-[10px] text-gray-400 leading-relaxed pb-1">
+                描边+阴影适合大促主标题；粗体勾选 B 后可用
+              </p>
             </div>
           </div>
         </div>
@@ -258,7 +408,7 @@ function LayerProps({ layer, onChange }) {
               <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>圆角</label>
               <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
@@ -275,21 +425,48 @@ function LayerProps({ layer, onChange }) {
                 className={inputCls}
               />
             </div>
+            <div>
+              <label className={labelCls}>边框宽度（0=无）</label>
+              <input type="number" value={num(layer.border_width)} onChange={setNum('border_width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>旋转°</label>
+              <input type="number" value={num(layer.rotation)} onChange={setNum('rotation')} className={inputCls} />
+            </div>
           </div>
-          <div>
-            <label className={labelCls}>填充颜色</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={layer.fill || '#F3F4F6'}
-                onChange={(e) => onChange({ fill: e.target.value })}
-                className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
-              />
-              <input
-                value={layer.fill || ''}
-                onChange={(e) => onChange({ fill: e.target.value })}
-                className={inputCls}
-              />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>填充颜色（支持渐变 #A→#B）</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={String(layer.fill || '#F3F4F6').split('→')[0]}
+                  onChange={(e) => onChange({ fill: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.fill || ''}
+                  onChange={(e) => onChange({ fill: e.target.value })}
+                  placeholder="#F3F4F6 或 #FF6B6B→#C0392B"
+                  className={`${inputCls} font-mono`}
+                />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>边框颜色</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={layer.border_color || '#FFFFFF'}
+                  onChange={(e) => onChange({ border_color: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.border_color || ''}
+                  onChange={(e) => onChange({ border_color: e.target.value })}
+                  className={inputCls}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -306,7 +483,7 @@ function LayerProps({ layer, onChange }) {
               className={inputCls}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>槽位变量名（可选）</label>
               <input
@@ -325,6 +502,17 @@ function LayerProps({ layer, onChange }) {
                 className={inputCls}
               />
             </div>
+            <div>
+              <label className={labelCls}>填充方式</label>
+              <select
+                value={layer.fit || 'cover'}
+                onChange={(e) => onChange({ fit: e.target.value })}
+                className={inputCls}
+              >
+                <option value="cover">铺满裁剪</option>
+                <option value="contain">完整显示</option>
+              </select>
+            </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
             <div>
@@ -342,6 +530,48 @@ function LayerProps({ layer, onChange }) {
             <div>
               <label className={labelCls}>高度</label>
               <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>圆角</label>
+              <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>不透明度（0-1）</label>
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1"
+                value={num(layer.opacity)}
+                onChange={setNum('opacity')}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>边框宽度（0=无）</label>
+              <input type="number" value={num(layer.border_width)} onChange={setNum('border_width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>旋转°</label>
+              <input type="number" value={num(layer.rotation)} onChange={setNum('rotation')} className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>边框颜色</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={layer.border_color || '#FFFFFF'}
+                onChange={(e) => onChange({ border_color: e.target.value })}
+                className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+              />
+              <input
+                value={layer.border_color || ''}
+                onChange={(e) => onChange({ border_color: e.target.value })}
+                className={inputCls}
+              />
             </div>
           </div>
         </div>
@@ -476,6 +706,15 @@ export default function ImageFactoryPage() {
   // 模板套版：待渲染图片（多选，批量应用模板）
   const [templateImages, setTemplateImages] = useState([])
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
+  // 模板市场：分类筛选
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState('全部')
+  // 模板编辑：背景模式（纯色/渐变/图片）
+  const [bgMode, setBgMode] = useState('solid')
+  const [bgGradientFrom, setBgGradientFrom] = useState('#FFFFFF')
+  const [bgGradientTo, setBgGradientTo] = useState('#E5E7EB')
+  const [showTemplateBgPicker, setShowTemplateBgPicker] = useState(false)
+  // 画布拖拽状态（pointer 事件）
+  const dragRef = useRef(null)
 
   // 编辑
   const [uploadedImage, setUploadedImage] = useState(null) // { url, filename }
@@ -733,9 +972,22 @@ export default function ImageFactoryPage() {
   // ── 模板管理 ──
   // 新图层默认值（可视化编辑器）
   const LAYER_DEFAULTS = {
-    text: { type: 'text', text: '文字内容', key: '', x: 50, y: 100, font_size: 28, color: '#000000', align: 'left', max_width: 0, shadow: '' },
-    rect: { type: 'rect', x: 50, y: 50, width: 300, height: 80, radius: 16, fill: '#F3F4F6', opacity: 1 },
-    image: { type: 'image', key: '', x: 0, y: 0, width: 300, height: 300, url: '', slot: '' },
+    text: { type: 'text', text: '文字内容', key: '', x: 50, y: 100, font_size: 28, color: '#000000', align: 'left', max_width: 0, shadow: '', shadow_color: '#00000080', family: '', bold: false, italic: false, letter_spacing: 0, line_height: 1.35, stroke_width: 0, stroke_color: '#000000', rotation: 0 },
+    rect: { type: 'rect', x: 50, y: 50, width: 300, height: 80, radius: 16, fill: '#F3F4F6', opacity: 1, rotation: 0, border_width: 0, border_color: '#FFFFFF' },
+    image: { type: 'image', key: '', x: 0, y: 0, width: 300, height: 300, url: '', slot: '', fit: 'cover', radius: 0, opacity: 1, rotation: 0, border_width: 0, border_color: '#FFFFFF' },
+  }
+
+  // 复制图层（插入到当前图层之后）
+  const duplicateTemplateLayer = (idx) => {
+    setTemplateForm((f) => {
+      const src = f.layers[idx]
+      if (!src) return f
+      const copy = { ...src, x: (src.x || 0) + 20, y: (src.y || 0) + 20 }
+      const layers = [...f.layers]
+      layers.splice(idx + 1, 0, copy)
+      return { ...f, layers }
+    })
+    setSelectedLayerIdx(idx + 1)
   }
 
   const addTemplateLayer = (type) => {
@@ -770,11 +1022,17 @@ export default function ImageFactoryPage() {
   const openCreateTemplate = () => {
     setEditingTemplateId('')
     setSelectedLayerIdx(-1)
+    setBgMode('solid')
+    setBgGradientFrom('#FFFFFF')
+    setBgGradientTo('#E5E7EB')
     setTemplateForm({
       name: '',
       width: 1080,
       height: 1920,
       background: '#FFFFFF',
+      background_image: '',
+      background_darken: 0,
+      category: '通用',
       layers: [],
       layerJson: '',
       showJson: false,
@@ -786,11 +1044,21 @@ export default function ImageFactoryPage() {
   const handleEditTemplate = (t) => {
     setEditingTemplateId(t.id)
     setSelectedLayerIdx(-1)
+    const bg = t.background || '#FFFFFF'
+    // 背景模式推断：图片 > 渐变 > 纯色
+    if (t.background_image) setBgMode('image')
+    else if (String(bg).includes('→')) setBgMode('gradient')
+    else setBgMode('solid')
+    setBgGradientFrom(String(bg).includes('→') ? bg.split('→')[0].trim() : bg)
+    setBgGradientTo(String(bg).includes('→') ? bg.split('→')[1].trim() : '#E5E7EB')
     setTemplateForm({
       name: t.name,
       width: t.width,
       height: t.height,
-      background: t.background || '#FFFFFF',
+      background: bg,
+      background_image: t.background_image || '',
+      background_darken: t.background_darken || 0,
+      category: t.category || '通用',
       layers: Array.isArray(t.layers) ? t.layers.map((l) => ({ ...l })) : [],
       layerJson: JSON.stringify(Array.isArray(t.layers) ? t.layers : [], null, 2),
       showJson: false,
@@ -821,6 +1089,9 @@ export default function ImageFactoryPage() {
         width: Number(templateForm.width) || 1080,
         height: Number(templateForm.height) || 1920,
         background: templateForm.background,
+        category: templateForm.category || '通用',
+        background_image: templateForm.background_image || '',
+        background_darken: Number(templateForm.background_darken) || 0,
         layers,
       }
       let res
@@ -1655,51 +1926,98 @@ export default function ImageFactoryPage() {
                 {templates.length === 0 ? (
                   <p className="text-sm text-gray-500">暂无可用模板</p>
                 ) : (
-                  <div className="space-y-2">
-                    {templates.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => setSelectedTemplate(t.id)}
-                        className={`w-full px-4 py-3 rounded-xl border text-left flex items-center justify-between transition-all ${
-                          selectedTemplate === t.id
-                            ? 'border-violet-500 bg-violet-50'
-                            : 'border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div>
-                          <div className="font-medium text-gray-900">{t.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {t.width} × {t.height}
+                  <>
+                    {/* 分类筛选 */}
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {['全部', ...TEMPLATE_CATEGORIES].map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setTemplateCategoryFilter(c)}
+                          className={`px-2.5 py-1 rounded-full text-xs border transition-all ${
+                            templateCategoryFilter === c
+                              ? 'border-violet-500 bg-violet-50 text-violet-700 font-medium'
+                              : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                    {/* 卡片网格：封面图 + 名称 + 尺寸 + 分类 */}
+                    <div className="grid grid-cols-2 gap-3 max-h-[420px] overflow-y-auto pr-1">
+                      {templates
+                        .filter(
+                          (t) =>
+                            templateCategoryFilter === '全部' ||
+                            (t.category || '通用') === templateCategoryFilter
+                        )
+                        .map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => setSelectedTemplate(t.id)}
+                            className={`group relative rounded-xl border overflow-hidden cursor-pointer transition-all ${
+                              selectedTemplate === t.id
+                                ? 'border-violet-500 ring-2 ring-violet-200'
+                                : 'border-gray-200 hover:border-violet-300 hover:shadow-sm'
+                            }`}
+                          >
+                            <div className="relative aspect-[3/4] bg-gray-100 overflow-hidden">
+                              {t.preview ? (
+                                <img
+                                  src={absUrl(t.preview)}
+                                  alt={t.name}
+                                  loading="lazy"
+                                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <LayoutTemplate className="w-8 h-8 text-gray-300" />
+                                </div>
+                              )}
+                              {selectedTemplate === t.id && (
+                                <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-violet-500 text-white flex items-center justify-center shadow">
+                                  <Check className="w-3 h-3" />
+                                </div>
+                              )}
+                              {/* hover 操作：编辑/删除 */}
+                              <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleEditTemplate(t)
+                                  }}
+                                  className="p-1.5 rounded-lg bg-black/60 text-white hover:bg-violet-500 transition-colors"
+                                  title="编辑模板"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </span>
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setDeletingTemplate(t.id)
+                                  }}
+                                  className="p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-500 transition-colors"
+                                  title="删除模板"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </span>
+                              </div>
+                            </div>
+                            <div className="p-2">
+                              <div className="text-xs font-medium text-gray-900 truncate">{t.name}</div>
+                              <div className="flex items-center justify-between mt-1">
+                                <span className="text-[10px] text-gray-400">
+                                  {t.width}×{t.height}
+                                </span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600">
+                                  {t.category || '通用'}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          {selectedTemplate === t.id && (
-                            <div className="w-2 h-2 rounded-full bg-violet-500" />
-                          )}
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleEditTemplate(t)
-                            }}
-                            className="p-1 rounded-md text-gray-300 hover:text-violet-500 hover:bg-violet-50 transition-colors"
-                            title="编辑模板"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </span>
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setDeletingTemplate(t.id)
-                            }}
-                            className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                            title="删除模板"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                        ))}
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -2669,7 +2987,7 @@ export default function ImageFactoryPage() {
       >
         <div className="space-y-5">
           {/* 基础信息 */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
             <div className="sm:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 *</label>
               <input
@@ -2678,6 +2996,20 @@ export default function ImageFactoryPage() {
                 placeholder="如：大促打折海报"
                 className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">分类</label>
+              <select
+                value={templateForm.category || '通用'}
+                onChange={(e) => setTemplateForm({ ...templateForm, category: e.target.value })}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm bg-white"
+              >
+                {TEMPLATE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">宽度</label>
@@ -2697,22 +3029,151 @@ export default function ImageFactoryPage() {
                 className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
               />
             </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">背景色</label>
-            <div className="flex items-center gap-3">
-              <input
-                type="color"
-                value={templateForm.background}
-                onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
-                className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer"
-              />
-              <input
-                value={templateForm.background}
-                onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono"
-              />
+            <div className="flex items-end">
+              <div className="flex gap-1.5 flex-wrap">
+                {[
+                  ['1080×1920', '竖屏海报'],
+                  ['1080×1440', '电商主图'],
+                  ['800×800', '方形贴纸'],
+                  ['1200×628', '横幅 Banner'],
+                ].map(([size, label]) => (
+                  <button
+                    key={size}
+                    onClick={() => {
+                      const [w, h] = size.split('×')
+                      setTemplateForm({ ...templateForm, width: w, height: h })
+                    }}
+                    className="px-2 py-1 rounded-lg text-[11px] border border-gray-200 text-gray-500 hover:border-violet-400 hover:text-violet-600 transition-all"
+                    title={label}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
             </div>
+          </div>
+          {/* 背景：纯色 / 渐变 / 图片 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">背景</label>
+            <div className="flex gap-1.5 mb-2.5">
+              {[
+                ['solid', '纯色'],
+                ['gradient', '渐变'],
+                ['image', '图片'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => {
+                    setBgMode(id)
+                    if (id === 'solid') {
+                      setTemplateForm((f) => ({ ...f, background: bgGradientFrom }))
+                    } else if (id === 'gradient') {
+                      setTemplateForm((f) => ({ ...f, background: `${bgGradientFrom}→${bgGradientTo}` }))
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                    bgMode === id
+                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {bgMode === 'solid' && (
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={String(templateForm.background || '#FFFFFF').split('→')[0]}
+                  onChange={(e) => {
+                    setBgGradientFrom(e.target.value)
+                    setTemplateForm({ ...templateForm, background: e.target.value })
+                  }}
+                  className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={templateForm.background}
+                  onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono"
+                />
+              </div>
+            )}
+            {bgMode === 'gradient' && (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400">从</span>
+                  <input
+                    type="color"
+                    value={bgGradientFrom}
+                    onChange={(e) => {
+                      setBgGradientFrom(e.target.value)
+                      setTemplateForm((f) => ({ ...f, background: `${e.target.value}→${bgGradientTo}` }))
+                    }}
+                    className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400">到</span>
+                  <input
+                    type="color"
+                    value={bgGradientTo}
+                    onChange={(e) => {
+                      setBgGradientTo(e.target.value)
+                      setTemplateForm((f) => ({ ...f, background: `${bgGradientFrom}→${e.target.value}` }))
+                    }}
+                    className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer"
+                  />
+                </div>
+                <input
+                  value={templateForm.background}
+                  onChange={(e) => setTemplateForm({ ...templateForm, background: e.target.value })}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono"
+                />
+              </div>
+            )}
+            {bgMode === 'image' && (
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={templateForm.background_image}
+                    onChange={(e) => setTemplateForm({ ...templateForm, background_image: e.target.value })}
+                    placeholder="选择背景图（自动铺满+可暗化）"
+                    readOnly
+                    className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 outline-none text-sm font-mono"
+                  />
+                  <button
+                    onClick={() => setShowTemplateBgPicker(true)}
+                    className="flex items-center gap-1 px-3 py-2.5 rounded-xl text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" /> 从图库选择
+                  </button>
+                  {templateForm.background_image && (
+                    <button
+                      onClick={() => setTemplateForm({ ...templateForm, background_image: '' })}
+                      className="p-2.5 rounded-xl text-xs text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="移除背景图"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-400 w-14">暗化 {Math.round((templateForm.background_darken || 0) * 100)}%</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.7"
+                    step="0.05"
+                    value={templateForm.background_darken || 0}
+                    onChange={(e) =>
+                      setTemplateForm({ ...templateForm, background_darken: parseFloat(e.target.value) })
+                    }
+                    className="flex-1"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
@@ -2774,6 +3235,16 @@ export default function ImageFactoryPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation()
+                          duplicateTemplateLayer(idx)
+                        }}
+                        className="p-1 rounded text-gray-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                        title="复制图层"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
                           removeTemplateLayer(idx)
                         }}
                         className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
@@ -2812,19 +3283,112 @@ export default function ImageFactoryPage() {
 
             {/* 右：画布预览 + 图层属性 */}
             <div className="lg:col-span-3 space-y-4">
-              {/* 画布实时预览 */}
+              {/* 画布实时预览（支持拖拽移动图层） */}
               {(() => {
                 const w = Number(templateForm.width) || 1080
                 const h = Number(templateForm.height) || 1920
                 const scale = Math.min(1, 340 / w)
                 const pv = (v) => (Number(v) || 0) * scale
+                const bg = String(templateForm.background || '#FFFFFF')
+                const isGradient = bg.includes('→')
+                const [gFrom, gTo] = isGradient ? bg.split('→').map((s) => s.trim()) : []
+                // 命中检测（从顶层向下），坐标已换算为画布原始像素
+                const hitTest = (px, py) => {
+                  const layers = templateForm.layers
+                  for (let i = layers.length - 1; i >= 0; i--) {
+                    const l = layers[i]
+                    let hit = false
+                    if (l.type === 'rect' || l.type === 'image') {
+                      hit =
+                        px >= (l.x || 0) &&
+                        px <= (l.x || 0) + (l.width || 0) &&
+                        py >= (l.y || 0) &&
+                        py <= (l.y || 0) + (l.height || 0)
+                    } else if (l.type === 'text') {
+                      const fs = Number(l.font_size) || 28
+                      const lines = String(l.text || '').split('\n')
+                      const tw = Number(l.max_width) || Math.max(1, ...lines.map((s) => s.length)) * fs * 0.55
+                      const th = lines.length * fs * (Number(l.line_height) || 1.35)
+                      hit =
+                        px >= (l.x || 0) &&
+                        px <= (l.x || 0) + tw &&
+                        py >= (l.y || 0) &&
+                        py <= (l.y || 0) + th
+                    }
+                    if (hit) return i
+                  }
+                  return -1
+                }
+                const shadowCss = (layer) => {
+                  if (!layer.shadow) return undefined
+                  const [sx, sy] = String(layer.shadow)
+                    .split(',')
+                    .map((s) => Number(s.trim()) || 0)
+                  return `${sx}px ${sy}px ${pv(3)}px ${layer.shadow_color || 'rgba(0,0,0,0.5)'}`
+                }
                 return (
                   <div
-                    className="relative rounded-xl border border-gray-200 overflow-hidden mx-auto shadow-sm"
-                    style={{ width: w * scale, height: h * scale, background: templateForm.background }}
+                    className="relative rounded-xl border border-gray-200 overflow-hidden mx-auto shadow-sm cursor-grab active:cursor-grabbing select-none"
+                    style={{
+                      width: w * scale,
+                      height: h * scale,
+                      background: isGradient ? `linear-gradient(135deg, ${gFrom}, ${gTo})` : bg,
+                    }}
+                    onPointerDown={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const px = (e.clientX - rect.left) / scale
+                      const py = (e.clientY - rect.top) / scale
+                      const idx = hitTest(px, py)
+                      if (idx >= 0) {
+                        setSelectedLayerIdx(idx)
+                        dragRef.current = {
+                          idx,
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          origX: Number(templateForm.layers[idx].x) || 0,
+                          origY: Number(templateForm.layers[idx].y) || 0,
+                        }
+                        e.currentTarget.setPointerCapture(e.pointerId)
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      const d = dragRef.current
+                      if (!d) return
+                      updateTemplateLayer(d.idx, {
+                        x: Math.round(d.origX + (e.clientX - d.startX) / scale),
+                        y: Math.round(d.origY + (e.clientY - d.startY) / scale),
+                      })
+                    }}
+                    onPointerUp={() => {
+                      dragRef.current = null
+                    }}
+                    onPointerCancel={() => {
+                      dragRef.current = null
+                    }}
                   >
+                    {/* 背景图 + 暗化层 */}
+                    {templateForm.background_image && (
+                      <>
+                        <img
+                          src={absUrl(templateForm.background_image)}
+                          alt="bg"
+                          className="absolute inset-0 w-full h-full object-cover"
+                        />
+                        {(templateForm.background_darken || 0) > 0 && (
+                          <div
+                            className="absolute inset-0"
+                            style={{ background: `rgba(0,0,0,${templateForm.background_darken})` }}
+                          />
+                        )}
+                      </>
+                    )}
                     {templateForm.layers.map((layer, idx) => {
+                      const selected = selectedLayerIdx === idx
+                      const outline = selected ? '2px solid #8b5cf6' : undefined
                       if (layer.type === 'rect') {
+                        const fill = String(layer.fill || '#F3F4F6')
+                        const grad = fill.includes('→')
+                        const [rFrom, rTo] = grad ? fill.split('→').map((s) => s.trim()) : []
                         return (
                           <div
                             key={idx}
@@ -2835,8 +3399,16 @@ export default function ImageFactoryPage() {
                               width: pv(layer.width),
                               height: pv(layer.height),
                               borderRadius: pv(layer.radius),
-                              background: layer.fill,
+                              background: grad ? `linear-gradient(135deg, ${rFrom}, ${rTo})` : fill,
                               opacity: layer.opacity ?? 1,
+                              border:
+                                layer.border_width > 0
+                                  ? `${pv(layer.border_width)}px solid ${layer.border_color || '#FFFFFF'}`
+                                  : undefined,
+                              transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+                              transformOrigin: 'center',
+                              outline,
+                              outlineOffset: -1,
                             }}
                           />
                         )
@@ -2853,11 +3425,22 @@ export default function ImageFactoryPage() {
                               fontSize: Math.max(6, pv(layer.font_size)),
                               color: layer.color,
                               textAlign: layer.align || 'left',
-                              lineHeight: 1.35,
+                              lineHeight: Number(layer.line_height) || 1.35,
+                              letterSpacing: `${pv(layer.letter_spacing)}px`,
                               whiteSpace: 'pre-wrap',
-                              textShadow: layer.shadow
-                                ? '1px 1px 3px rgba(0,0,0,0.5)'
-                                : undefined,
+                              fontFamily: FONT_CSS[layer.family] || FONT_CSS.pingfang,
+                              fontWeight: layer.bold ? 700 : 400,
+                              fontStyle: layer.italic ? 'italic' : 'normal',
+                              textShadow: shadowCss(layer),
+                              WebkitTextStroke:
+                                layer.stroke_width > 0
+                                  ? `${pv(layer.stroke_width)}px ${layer.stroke_color || '#000000'}`
+                                  : undefined,
+                              paintOrder: layer.stroke_width > 0 ? 'stroke fill' : undefined,
+                              transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+                              transformOrigin: 'center',
+                              outline,
+                              outlineOffset: -1,
                             }}
                           >
                             {layer.text}
@@ -2870,12 +3453,23 @@ export default function ImageFactoryPage() {
                             key={idx}
                             src={absUrl(layer.url)}
                             alt="layer"
-                            className="absolute object-cover"
+                            className="absolute"
                             style={{
                               left: pv(layer.x),
                               top: pv(layer.y),
                               width: pv(layer.width),
                               height: pv(layer.height),
+                              objectFit: layer.fit === 'contain' ? 'contain' : 'cover',
+                              borderRadius: pv(layer.radius),
+                              opacity: layer.opacity ?? 1,
+                              border:
+                                layer.border_width > 0
+                                  ? `${pv(layer.border_width)}px solid ${layer.border_color || '#FFFFFF'}`
+                                  : undefined,
+                              transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+                              transformOrigin: 'center',
+                              outline,
+                              outlineOffset: -1,
                             }}
                           />
                         ) : (
@@ -2887,6 +3481,9 @@ export default function ImageFactoryPage() {
                               top: pv(layer.y),
                               width: pv(layer.width),
                               height: pv(layer.height),
+                              borderRadius: pv(layer.radius),
+                              outline,
+                              outlineOffset: -1,
                             }}
                           >
                             {layer.key || '图片槽'}
@@ -2974,6 +3571,51 @@ export default function ImageFactoryPage() {
             {templateModal === 'edit' ? '保存修改' : '创建模板'}
           </Button>
         </div>
+      </Modal>
+
+      {/* 模板背景图选择 Modal */}
+      <Modal
+        open={!!showTemplateBgPicker}
+        onClose={() => setShowTemplateBgPicker(false)}
+        title="选择背景图（铺满画布，可用暗化调节文字对比度）"
+        size="2xl"
+      >
+        {images.length === 0 ? (
+          <Empty icon={ImageIcon} title="图片库为空" description="请先上传或生成图片" />
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {images.map((img) => {
+              const picked = templateForm.background_image === absUrl(img.url)
+              return (
+                <button
+                  key={img.filename}
+                  onClick={() => {
+                    setTemplateForm((f) => ({ ...f, background_image: absUrl(img.url) }))
+                    setShowTemplateBgPicker(false)
+                  }}
+                  className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                    picked ? 'border-violet-500' : 'border-gray-200 hover:border-violet-400'
+                  }`}
+                >
+                  <img
+                    src={absUrl(img.thumb_url || img.url)}
+                    alt={img.filename}
+                    className="w-full h-32 object-cover"
+                    loading="lazy"
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
+                    <p className="text-xs text-white truncate">{img.filename}</p>
+                  </div>
+                  {picked && (
+                    <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-violet-500 text-white flex items-center justify-center shadow">
+                      <Check className="w-3.5 h-3.5" />
+                    </div>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </Modal>
 
       {/* 套版图片多选弹窗 */}

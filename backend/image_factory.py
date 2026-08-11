@@ -163,21 +163,45 @@ def save_image(img: Image.Image, fmt: str = "PNG", keep_alpha: bool = False) -> 
     return filename
 
 
-def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
-    """获取字体（macOS PingFang → Linux 文泉驿/Noto CJK → 默认）"""
-    font_paths = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",  # Linux：文泉驿（简体）
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux：Noto CJK
-    ]
-    for fp in font_paths:
-        if os.path.exists(fp):
+# ── 字体系统：family/粗细/斜体（PIL 无内置粗斜体时用描边模拟粗体）──
+# family → (字体文件路径, 斜体候选 face index)
+FONT_FAMILIES = [
+    ("pingfang", "/System/Library/Fonts/PingFang.ttc", 1),
+    ("helvetica", "/System/Library/Fonts/Helvetica.ttc", 1),
+    ("hiragino", "/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+    ("songti", "/System/Library/Fonts/STSongti-SC-Regular.otf", 0),
+    ("arial", "/Library/Fonts/Arial.ttf", 0),
+    ("times", "/Library/Fonts/Times New Roman.ttf", 1),
+    ("noto", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),  # Linux
+    ("wqy", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),  # Linux
+]
+
+
+def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False) -> ImageFont.FreeTypeFont:
+    """获取字体：按 family 选择（macOS PingFang → Linux Noto/WQY → 默认）。
+
+    bold 由调用方用描边模拟（PIL 无可靠粗体变体）；italic 尝试 face index 1。
+    """
+    fam = (family or "").strip().lower()
+    path, italic_idx = None, 0
+    for name, fp, ii in FONT_FAMILIES:
+        if fam and fam == name and os.path.exists(fp):
+            path, italic_idx = fp, ii
+            break
+    if path is None:
+        # 指定字体缺失或未指定 → 依次兜底
+        for _, fp, ii in FONT_FAMILIES:
+            if os.path.exists(fp):
+                path, italic_idx = fp, ii
+                break
+    if path:
+        try:
+            return ImageFont.truetype(path, size, index=italic_idx if italic else 0)
+        except Exception:
             try:
-                return ImageFont.truetype(fp, size)
+                return ImageFont.truetype(path, size)
             except Exception:
-                continue
+                pass
     return ImageFont.load_default()
 
 
@@ -905,9 +929,28 @@ async def add_watermark(
 
 
 # ── 模板管理 API ──────────────────────────────────────────────
+TEMPLATE_CATEGORIES = ["通用", "电商主图", "促销海报", "节日营销", "社媒封面"]
+
+
+async def _gen_template_preview(template: dict) -> None:
+    """渲染模板封面缩略图（纯模板默认内容），失败静默不阻塞主流程。"""
+    try:
+        imgs = await render_template_image(template)
+        img = imgs[0]
+        max_w = 480
+        if img.width > max_w:
+            ratio = max_w / img.width
+            img = img.resize((max_w, max(1, int(img.height * ratio))), Image.LANCZOS)
+        preview_dir = os.path.join(TEMPLATE_DIR, "previews")
+        os.makedirs(preview_dir, exist_ok=True)
+        img.save(os.path.join(preview_dir, f"{template['id']}.png"), "PNG")
+    except Exception as e:
+        logger.warning(f"模板封面生成失败: {e}")
+
+
 @router.get("/templates")
 async def list_templates():
-    """列出所有模板"""
+    """列出所有模板（附加封面地址与分类）"""
     templates = []
     if os.path.exists(TEMPLATE_DIR):
         for f in os.listdir(TEMPLATE_DIR):
@@ -915,14 +958,30 @@ async def list_templates():
                 filepath = os.path.join(TEMPLATE_DIR, f)
                 with open(filepath, encoding="utf-8") as fh:
                     template = json.load(fh)
+                    template["category"] = template.get("category") or "通用"
+                    template["preview"] = f"/api/image-factory/template-preview/{template['id']}"
                     templates.append(template)
     templates.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return templates
 
 
+@router.get("/template-preview/{template_id}")
+async def template_preview(template_id: str):
+    """模板封面图（首次访问懒生成）"""
+    path = os.path.join(TEMPLATE_DIR, "previews", f"{template_id}.png")
+    if not os.path.exists(path):
+        tpath = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+        if os.path.exists(tpath):
+            with open(tpath, encoding="utf-8") as f:
+                await _gen_template_preview(json.load(f))
+        if not os.path.exists(path):
+            raise HTTPException(404, "预览不存在")
+    return FileResponse(path, media_type="image/png")
+
+
 @router.post("/template/create")
 async def create_template(req: dict):
-    """创建模板"""
+    """创建模板（保存后自动生成封面缩略图）"""
     template_id = generate_id()
     template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
 
@@ -932,24 +991,90 @@ async def create_template(req: dict):
         "width": req.get("width", 1080),
         "height": req.get("height", 1920),
         "background": req.get("background", "#FFFFFF"),
+        "category": req.get("category", "通用") or "通用",
         "layers": req.get("layers", []),
+        "background_image": req.get("background_image", ""),
+        "background_darken": req.get("background_darken", 0),
         "created_at": datetime.now().isoformat(),
     }
 
     with open(template_path, "w", encoding="utf-8") as f:
         json.dump(template, f, ensure_ascii=False, indent=2)
 
+    await _gen_template_preview(template)
     return template
 
 
-async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
-    """渲染模板生成图片（同步/异步任务共用执行体）。
+async def _load_template_img(source: str) -> Image.Image | None:
+    """加载图层/背景图片：本地图片文件直接读盘，http(s) 走网络下载。"""
+    if not source:
+        return None
+    try:
+        if source.startswith("/api/image-factory/images/"):
+            fname = source.rsplit("/", 1)[-1]
+            local = os.path.join(IMAGE_DIR, fname)
+            if os.path.exists(local):
+                return Image.open(local).convert("RGBA")
+            return None
+        if source.startswith("http"):
+            resp = await asyncio.to_thread(requests.get, source, timeout=30)
+            return Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    except Exception as e:
+        logger.warning(f"模板图片加载失败: {e}")
+    return None
+
+
+def _cover_resize(img: Image.Image, w: int, h: int) -> Image.Image:
+    """等比裁剪填充（cover）：先按目标比例中心裁剪再缩放，避免拉伸变形。"""
+    sw, sh = img.size
+    target = w / max(1, h)
+    src = sw / max(1, sh)
+    if src > target:
+        new_w = int(sh * target)
+        x0 = (sw - new_w) // 2
+        img = img.crop((x0, 0, x0 + new_w, sh))
+    elif src < target:
+        new_h = int(sw / target)
+        y0 = (sh - new_h) // 2
+        img = img.crop((0, y0, sw, y0 + new_h))
+    return img.resize((w, h), Image.LANCZOS)
+
+
+def _rounded_mask(w: int, h: int, radius: int) -> Image.Image:
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
+    return mask
+
+
+def _draw_text_run(td: ImageDraw.ImageDraw, x: int, y: int, s: str, font, fill: str,  # noqa: PLR0913
+                   letter_spacing: float = 0, stroke_width: int = 0, stroke_fill: str = "") -> None:
+    """绘制文字（支持字间距；描边模式下逐字绘制保证字间留白不被描边填充）。"""
+    if letter_spacing and letter_spacing > 0:
+        cx = x
+        for ch in s:
+            if stroke_width:
+                td.text((cx, y), ch, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
+            else:
+                td.text((cx, y), ch, font=font, fill=fill)
+            cx += td.textlength(ch, font=font) + letter_spacing
+    elif stroke_width:
+        td.text((x, y), s, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
+    else:
+        td.text((x, y), s, font=font, fill=fill)
+
+
+async def render_template_image(template: dict, overrides: dict | None = None,  # noqa: C901, PLR0912
+                                progress: Callable | None = None) -> list[Image.Image]:
+    """按模板渲染出 PIL 图像列表（不保存，供渲染任务/封面缩略图复用）。
 
     overrides.images 支持两种形态：
     - dict {key: url}：按图层 key 精确填充图片层（单张渲染）
     - list [url, ...]：批量模式，每张图依次填充主槽位并逐张渲染（如大促商品图批量套版）
     主槽位 = 第一个无自带 url（或显式 slot 标记）的 image 层。
     """
+    overrides = overrides or {}
+    width = int(overrides.get("width", template.get("width", 1080)))
+    height = int(overrides.get("height", template.get("height", 1920)))
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -958,24 +1083,10 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
             except Exception:
                 pass
 
-    template_id = payload.get("template_id")
-    overrides = payload.get("overrides") or {}
-    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
-    if not os.path.exists(template_path):
-        raise HTTPException(404, "模板不存在")
-
-    with open(template_path, encoding="utf-8") as f:
-        template = json.load(f)
-
-    width = overrides.get("width", template.get("width", 1080))
-    height = overrides.get("height", template.get("height", 1920))
-    bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
-
     # ── 槽位图片解析 ──
-    raw_images = overrides.get("images") or payload.get("images") or []
+    raw_images = overrides.get("images") or []
     slot_map = raw_images if isinstance(raw_images, dict) else {}
     batch_urls = [] if isinstance(raw_images, dict) else list(raw_images)
-    # 主槽位：第一个无自带 url（或显式 slot 标记）的 image 层
     main_slot_key = ""
     for layer in template.get("layers", []):
         if layer.get("type") == "image" and (layer.get("slot") or not layer.get("url")):
@@ -991,41 +1102,39 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
             return batch_url
         return layer.get("url", "")
 
-    async def _load_img(source: str) -> Image.Image | None:
-        """加载图层图片：本地图片文件直接读盘，http(s) 走网络下载。"""
-        if not source:
-            return None
-        try:
-            if source.startswith("/api/image-factory/images/"):
-                fname = source.rsplit("/", 1)[-1]
-                local = os.path.join(IMAGE_DIR, fname)
-                if os.path.exists(local):
-                    return Image.open(local).convert("RGBA")
-                return None
-            if source.startswith("http"):
-                resp = await asyncio.to_thread(requests.get, source, timeout=30)
-                return Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        except Exception as e:
-            logger.warning(f"模板图片层加载失败: {e}")
-        return None
-
-    async def _render_once(batch_url: str) -> Image.Image:
-        """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
-        # 背景：支持渐变简写 "#A→#B"（自上而下），否则纯色
+    async def _make_bg() -> Image.Image:
+        """背景：背景图（cover 铺满 + 模糊 + 暗化）> 渐变简写 > 纯色。"""
+        bg_src = overrides.get("background_image", template.get("background_image", ""))
+        if bg_src:
+            bg = await _load_template_img(bg_src)
+            if bg is not None:
+                blur = float(overrides.get("background_blur", template.get("background_blur", 0)) or 0)
+                darken = float(overrides.get("background_darken", template.get("background_darken", 0)) or 0)
+                bg = _cover_resize(bg, width, height)
+                if blur > 0:
+                    bg = bg.filter(ImageFilter.GaussianBlur(blur))
+                if darken > 0:
+                    shade = Image.new("RGBA", (width, height), (0, 0, 0, int(255 * min(1.0, darken))))
+                    bg = Image.alpha_composite(bg, shade)
+                return bg.convert("RGB")
+        bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
         if isinstance(bg_color, str) and "→" in bg_color:
             from image_edit_engine import make_gradient
 
             top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
-            canvas = make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
-        else:
-            canvas = Image.new("RGB", (width, height), bg_color)
+            return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
+        return Image.new("RGB", (width, height), bg_color)
+
+    async def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
+        """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
+        canvas = await _make_bg()
         draw = ImageDraw.Draw(canvas)
 
         for layer in template.get("layers", []):
             layer_type = layer.get("type")
 
             if layer_type == "rect":
-                # 圆角矩形底（卡片/横幅/按钮底）
+                # 圆角矩形底（卡片/横幅/按钮底）：支持渐变填充/描边边框/旋转
                 x = int(layer.get("x", 0))
                 y = int(layer.get("y", 0))
                 w = int(layer.get("width", 200))
@@ -1033,15 +1142,33 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
                 radius = int(layer.get("radius", 16))
                 fill = layer.get("fill", "#FFFFFF")
                 opacity = float(layer.get("opacity", 1.0))
-                overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                rotation = float(layer.get("rotation", 0) or 0)
+                border_w = int(layer.get("border_width", 0) or 0)
+                border_color = layer.get("border_color", fill)
+                overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                 od = ImageDraw.Draw(overlay)
-                od.rounded_rectangle([x, y, x + w, y + h], radius=radius, fill=fill)
+                if isinstance(fill, str) and "→" in fill:
+                    from image_edit_engine import make_gradient
+
+                    top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
+                    grad = make_gradient(w, h, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+                    overlay.paste(grad, (0, 0), _rounded_mask(w, h, radius))
+                else:
+                    od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=fill)
+                if border_w > 0:
+                    od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=border_color, width=border_w)
                 if opacity < 1.0:
                     overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-                canvas.paste(overlay, (0, 0), overlay)
+                if rotation:
+                    overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                    nw, nh = overlay.size
+                    canvas.paste(overlay, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), overlay)
+                else:
+                    canvas.paste(overlay, (x, y), overlay)
                 draw = ImageDraw.Draw(canvas)
 
             if layer_type == "text":
+                # 文字排版：字体族/粗体/斜体/字间距/行高/描边/阴影色/旋转
                 x = int(layer.get("x", 0))
                 y = int(layer.get("y", 0))
                 key = layer.get("key", "")
@@ -1052,11 +1179,17 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
                 align = layer.get("align", "left")
                 max_width = int(layer.get("max_width", 0) or 0)
                 shadow = layer.get("shadow", "")
+                shadow_color = layer.get("shadow_color", "#00000080")
+                family = layer.get("family", "")
+                bold = bool(layer.get("bold"))
+                italic = bool(layer.get("italic"))
+                letter_spacing = float(layer.get("letter_spacing", 0) or 0)
+                line_height = float(layer.get("line_height", 1.35) or 1.35)
+                stroke_w = int(layer.get("stroke_width", 0) or 0)
+                stroke_color = layer.get("stroke_color", font_color)
+                rotation = float(layer.get("rotation", 0) or 0)
 
-                try:
-                    font = get_font(font_size)
-                except Exception:
-                    font = ImageFont.load_default()
+                font = get_font(font_size, family, bold, italic)
 
                 # 自动换行（max_width>0 时按像素宽度折行）
                 if max_width > 0:
@@ -1073,57 +1206,121 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
                 else:
                     text_lines = text.split("\n") or [""]
 
-                line_h = int(font_size * 1.35)
-                for i, line in enumerate(text_lines):
-                    lx = x
+                line_h = int(font_size * line_height)
+                block_w = max_width or max(int(draw.textlength(ln, font=font)) for ln in text_lines)
+                block_h = line_h * len(text_lines)
+                # 粗体模拟：同色描边加粗（PIL 无可靠粗体变体）
+                sim_bold = max(1, round(font_size * 0.055)) if bold else 0
+                pad = 8 + (stroke_w + sim_bold) * 2
+                txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
+                td = ImageDraw.Draw(txt_img)
+                sx, sy = 2, 2
+                if shadow:
+                    try:
+                        sx, sy = (int(v) for v in shadow.split(","))
+                    except Exception:
+                        pass
+                stroke_total = stroke_w + sim_bold
+                for i, ln in enumerate(text_lines):
+                    lx = pad
                     if align == "center":
-                        lx = x + (max_width - int(draw.textlength(line, font=font))) // 2
+                        lx = pad + (block_w - int(td.textlength(ln, font=font))) // 2
                     elif align == "right":
-                        lx = x + max_width - int(draw.textlength(line, font=font))
-                    ly = y + i * line_h
+                        lx = pad + block_w - int(td.textlength(ln, font=font))
+                    ly = pad + i * line_h
                     if shadow:
-                        try:
-                            sx, sy = (int(v) for v in shadow.split(","))
-                            draw.text((lx + sx, ly + sy), line, fill="#00000080", font=font)
-                        except Exception:
-                            draw.text((lx + 2, ly + 2), line, fill="#00000080", font=font)
-                    draw.text((lx, ly), line, fill=font_color, font=font)
+                        _draw_text_run(td, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing, stroke_total, shadow_color)
+                    _draw_text_run(
+                        td, lx, ly, ln, font, font_color, letter_spacing, stroke_total,
+                        stroke_color if stroke_w else font_color,
+                    )
+                if rotation:
+                    txt_img = txt_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                    nw, nh = txt_img.size
+                    canvas.paste(txt_img, (int(x + block_w / 2 - nw / 2), int(y + block_h / 2 - nh / 2)), txt_img)
+                else:
+                    canvas.paste(txt_img, (x - pad, y - pad), txt_img)
 
             elif layer_type == "image":
+                # 图片层：cover 裁剪/圆角/边框/透明度/旋转
                 source = _resolve_layer_img(layer, batch_url)
-                layer_img = await _load_img(source)
+                layer_img = await _load_template_img(source)
                 if layer_img is None:
                     continue
                 x = int(layer.get("x", 0))
                 y = int(layer.get("y", 0))
                 w = int(layer.get("width", 200))
                 h = int(layer.get("height", 200))
-                layer_img = layer_img.resize((w, h), Image.LANCZOS)
-                canvas.paste(layer_img, (x, y), layer_img)
+                fit = layer.get("fit", "cover")
+                radius = int(layer.get("radius", 0) or 0)
+                opacity = float(layer.get("opacity", 1.0))
+                rotation = float(layer.get("rotation", 0) or 0)
+                border_w = int(layer.get("border_width", 0) or 0)
+                border_color = layer.get("border_color", "#FFFFFF")
+                if fit == "cover":
+                    layer_img = _cover_resize(layer_img, w, h)
+                else:
+                    layer_img = layer_img.resize((w, h), Image.LANCZOS)
+                if radius > 0:
+                    layer_img.putalpha(_rounded_mask(w, h, radius))
+                if opacity < 1.0:
+                    layer_img.putalpha(layer_img.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+                if border_w > 0:
+                    bd = ImageDraw.Draw(layer_img, "RGBA")
+                    bd.rounded_rectangle(
+                        [border_w // 2, border_w // 2, w - 1 - border_w // 2, h - 1 - border_w // 2],
+                        radius=max(0, radius - border_w // 2), outline=border_color, width=border_w,
+                    )
+                if rotation:
+                    layer_img = layer_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                    nw, nh = layer_img.size
+                    canvas.paste(layer_img, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), layer_img)
+                else:
+                    canvas.paste(layer_img, (x, y), layer_img)
 
         return canvas
 
-    _report(30, "正在渲染模板…")
+    _report(15, "正在渲染模板…")
     if batch_urls:
         total = len(batch_urls)
         results = []
         for i, u in enumerate(batch_urls):
-            _report(30 + int(i * 60 / total), f"正在处理第 {i + 1}/{total} 张…")
-            img = await _render_once(u)
-            filename = save_image(img)
-            results.append({"id": filename, "url": f"/api/image-factory/images/{filename}"})
+            _report(15 + int(i * 75 / total), f"正在处理第 {i + 1}/{total} 张…")
+            results.append(await _render_once(u))
         _report(100, "模板渲染完成")
-        out = {"images": results}
-        if results:
-            # 兼容旧客户端：单张时同时回填 url/id
-            out["url"] = results[0]["url"]
-            out["id"] = results[0]["id"]
-        return out
-
-    img = await _render_once("")
-    filename = save_image(img)
+        return results
+    result = [await _render_once("")]
     _report(100, "模板渲染完成")
-    return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
+    return result
+
+
+async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """渲染模板生成图片（同步/异步任务共用执行体），返回结果与任务进度兼容。"""
+    template_id = payload.get("template_id")
+    # 兼容两种参数形态：images/背景等既可放 overrides 内，也可放请求顶层
+    overrides = dict(payload.get("overrides") or {})
+    for k in ("images", "background_image", "background_darken", "background_blur", "width", "height"):
+        if k in payload and k not in overrides:
+            overrides[k] = payload[k]
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    if not os.path.exists(template_path):
+        raise HTTPException(404, "模板不存在")
+
+    with open(template_path, encoding="utf-8") as f:
+        template = json.load(f)
+
+    imgs = await render_template_image(template, overrides, progress)
+    results = []
+    for img in imgs:
+        filename = save_image(img)
+        results.append({"id": filename, "url": f"/api/image-factory/images/{filename}"})
+
+    if len(results) > 1:
+        out = {"images": results}
+        out["url"] = results[0]["url"]
+        out["id"] = results[0]["id"]
+        return out
+    return results[0]
 
 
 @router.post("/template/render")
@@ -1193,6 +1390,9 @@ async def update_template(template_id: str, req: dict):
     template["width"] = req.get("width", template.get("width", 1080))
     template["height"] = req.get("height", template.get("height", 1920))
     template["background"] = req.get("background", template.get("background", "#FFFFFF"))
+    template["category"] = req.get("category", template.get("category", "通用")) or "通用"
+    template["background_image"] = req.get("background_image", template.get("background_image", ""))
+    template["background_darken"] = req.get("background_darken", template.get("background_darken", 0))
     template["layers"] = req.get("layers", template.get("layers", []))
     template["updated_at"] = datetime.now().isoformat()
     # 兼容内置模板：缺 created_at 时补当前时间，保证列表按时间排序
@@ -1202,6 +1402,7 @@ async def update_template(template_id: str, req: dict):
     with open(template_path, "w", encoding="utf-8") as f:
         json.dump(template, f, ensure_ascii=False, indent=2)
 
+    await _gen_template_preview(template)
     return template
 
 
@@ -1756,6 +1957,324 @@ def init_templates():
                     "font_size": 24,
                     "color": "#FFFFFF",
                     "text": "限时优惠券",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_promotion_main",
+            "name": "大促主视觉海报",
+            "category": "促销海报",
+            "width": 1080,
+            "height": 1440,
+            "background": "#FF2D2D→#8E0E00",
+            "layers": [
+                {
+                    "type": "text",
+                    "key": "title",
+                    "x": 60,
+                    "y": 110,
+                    "font_size": 92,
+                    "bold": True,
+                    "color": "#FFD700",
+                    "align": "center",
+                    "max_width": 960,
+                    "stroke_width": 4,
+                    "stroke_color": "#C0392B",
+                    "shadow": "0,8",
+                    "shadow_color": "#66000000",
+                    "text": "大促狂欢节",
+                },
+                {
+                    "type": "rect",
+                    "x": 300,
+                    "y": 260,
+                    "width": 480,
+                    "height": 80,
+                    "radius": 40,
+                    "fill": "#FFD700",
+                },
+                {
+                    "type": "text",
+                    "key": "tag",
+                    "x": 300,
+                    "y": 278,
+                    "font_size": 40,
+                    "bold": True,
+                    "color": "#B00020",
+                    "align": "center",
+                    "max_width": 480,
+                    "text": "全场 5 折起",
+                },
+                {
+                    "type": "image",
+                    "key": "product",
+                    "x": 140,
+                    "y": 400,
+                    "width": 800,
+                    "height": 800,
+                    "radius": 36,
+                    "fit": "cover",
+                },
+                {
+                    "type": "text",
+                    "key": "subtitle",
+                    "x": 60,
+                    "y": 1240,
+                    "font_size": 44,
+                    "color": "#FFFFFF",
+                    "align": "center",
+                    "max_width": 960,
+                    "text": "限时特惠 · 手慢无",
+                },
+                {
+                    "type": "text",
+                    "key": "price",
+                    "x": 60,
+                    "y": 1310,
+                    "font_size": 64,
+                    "bold": True,
+                    "color": "#FFD700",
+                    "align": "center",
+                    "max_width": 960,
+                    "shadow": "0,4",
+                    "shadow_color": "#80000000",
+                    "text": "¥99 起",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_festival_christmas",
+            "name": "圣诞狂欢促销",
+            "category": "节日营销",
+            "width": 1080,
+            "height": 1920,
+            "background": "#0B3D2E→#041712",
+            "layers": [
+                {
+                    "type": "text",
+                    "key": "en_title",
+                    "x": 60,
+                    "y": 160,
+                    "font_size": 56,
+                    "family": "helvetica",
+                    "bold": True,
+                    "color": "#FFFFFF",
+                    "align": "center",
+                    "max_width": 960,
+                    "letter_spacing": 6,
+                    "text": "MERRY CHRISTMAS",
+                },
+                {
+                    "type": "text",
+                    "key": "title",
+                    "x": 60,
+                    "y": 260,
+                    "font_size": 72,
+                    "bold": True,
+                    "color": "#FFD700",
+                    "align": "center",
+                    "max_width": 960,
+                    "stroke_width": 4,
+                    "stroke_color": "#0B3D2E",
+                    "text": "圣诞狂欢季",
+                },
+                {
+                    "type": "rect",
+                    "x": 60,
+                    "y": 400,
+                    "width": 960,
+                    "height": 1200,
+                    "radius": 36,
+                    "fill": "#FFFFFF",
+                    "opacity": 0.08,
+                    "border_width": 2,
+                    "border_color": "#FFFFFF",
+                },
+                {
+                    "type": "image",
+                    "key": "product",
+                    "x": 150,
+                    "y": 470,
+                    "width": 780,
+                    "height": 780,
+                    "radius": 40,
+                    "fit": "cover",
+                },
+                {
+                    "type": "text",
+                    "key": "discount",
+                    "x": 60,
+                    "y": 1300,
+                    "font_size": 80,
+                    "bold": True,
+                    "color": "#FF4D4D",
+                    "align": "center",
+                    "max_width": 960,
+                    "shadow": "0,6",
+                    "shadow_color": "#80000000",
+                    "text": "全场 8 折",
+                },
+                {
+                    "type": "text",
+                    "key": "date",
+                    "x": 60,
+                    "y": 1420,
+                    "font_size": 36,
+                    "color": "#FFFFFF",
+                    "align": "center",
+                    "max_width": 960,
+                    "letter_spacing": 2,
+                    "text": "12.12 - 12.25 限定狂欢",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_clearance",
+            "name": "清仓特卖主图",
+            "category": "电商主图",
+            "width": 800,
+            "height": 800,
+            "background": "#FFF7E6",
+            "layers": [
+                {
+                    "type": "rect",
+                    "x": -40,
+                    "y": 50,
+                    "width": 340,
+                    "height": 84,
+                    "radius": 42,
+                    "fill": "#FF6B00→#FFA500",
+                    "rotation": -8,
+                },
+                {
+                    "type": "text",
+                    "key": "tag",
+                    "x": 32,
+                    "y": 72,
+                    "font_size": 44,
+                    "bold": True,
+                    "color": "#FFFFFF",
+                    "rotation": -8,
+                    "text": "清仓特卖",
+                },
+                {
+                    "type": "image",
+                    "key": "product",
+                    "x": 100,
+                    "y": 200,
+                    "width": 600,
+                    "height": 480,
+                    "radius": 24,
+                    "fit": "cover",
+                    "border_width": 6,
+                    "border_color": "#FF6B00",
+                },
+                {
+                    "type": "text",
+                    "key": "discount",
+                    "x": 0,
+                    "y": 700,
+                    "font_size": 52,
+                    "bold": True,
+                    "color": "#FF3B30",
+                    "align": "center",
+                    "max_width": 800,
+                    "text": "限时 5 折",
+                },
+                {
+                    "type": "text",
+                    "key": "subtitle",
+                    "x": 0,
+                    "y": 758,
+                    "font_size": 30,
+                    "color": "#8B5E34",
+                    "align": "center",
+                    "max_width": 800,
+                    "text": "今日特价 · 售完即止",
+                },
+            ],
+        },
+        {
+            "id": "tmplt_sale_banner",
+            "name": "年中大促横幅",
+            "category": "社媒封面",
+            "width": 1200,
+            "height": 628,
+            "background": "#1A1A2E",
+            "layers": [
+                {
+                    "type": "rect",
+                    "x": 40,
+                    "y": 80,
+                    "width": 520,
+                    "height": 468,
+                    "radius": 28,
+                    "fill": "#16213E→#0F3460",
+                    "border_width": 2,
+                    "border_color": "#E94560",
+                },
+                {
+                    "type": "image",
+                    "key": "product",
+                    "x": 85,
+                    "y": 130,
+                    "width": 430,
+                    "height": 370,
+                    "radius": 20,
+                    "fit": "cover",
+                },
+                {
+                    "type": "text",
+                    "key": "title",
+                    "x": 620,
+                    "y": 110,
+                    "font_size": 72,
+                    "bold": True,
+                    "color": "#F5C518",
+                    "text": "年中大促",
+                },
+                {
+                    "type": "text",
+                    "key": "subtitle",
+                    "x": 620,
+                    "y": 220,
+                    "font_size": 34,
+                    "color": "#FFFFFF",
+                    "letter_spacing": 1,
+                    "text": "限时特惠 · 全场折扣",
+                },
+                {
+                    "type": "text",
+                    "key": "price",
+                    "x": 620,
+                    "y": 300,
+                    "font_size": 56,
+                    "bold": True,
+                    "color": "#F5C518",
+                    "shadow": "0,4",
+                    "shadow_color": "#80000000",
+                    "text": "¥59 起",
+                },
+                {
+                    "type": "rect",
+                    "x": 620,
+                    "y": 420,
+                    "width": 280,
+                    "height": 84,
+                    "radius": 42,
+                    "fill": "#E94560",
+                },
+                {
+                    "type": "text",
+                    "key": "cta",
+                    "x": 620,
+                    "y": 442,
+                    "font_size": 34,
+                    "bold": True,
+                    "color": "#FFFFFF",
+                    "align": "center",
+                    "max_width": 280,
+                    "text": "立即抢购",
                 },
             ],
         },
