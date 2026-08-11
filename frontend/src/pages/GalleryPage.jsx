@@ -39,6 +39,7 @@ const AUTHOR_OPTIONS = [
   { value: 'meme_factory', label: '表情包工坊' },
   { value: 'game_factory', label: '小游戏工坊' },
   { value: 'miniapp', label: '小程序工坊' },
+  { value: 'short_drama', label: '短剧工厂' },
 ]
 
 function mediaFull(url) {

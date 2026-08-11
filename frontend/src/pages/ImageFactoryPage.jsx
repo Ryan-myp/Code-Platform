@@ -179,6 +179,18 @@ export default function ImageFactoryPage() {
   })
   const { activeTab, prompt, selectedSize, batchSize, artStyle, negativePrompt } = inputs
   const setActiveTab = (v) => setInputs((p) => ({ ...p, activeTab: v }))
+
+  // 恢复上次选项卡提示：activeTab 持久化自上次会话，非默认页签时提示避免误以为页面异常
+  const tabHintShown = useRef(false)
+  useEffect(() => {
+    if (tabHintShown.current) return
+    tabHintShown.current = true
+    if (activeTab && activeTab !== 'generate') {
+      const label = TABS.find((t) => t.id === activeTab)?.label || activeTab
+      toast.info(`已恢复上次的「${label}」页签，可点击上方页签切换`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
   const setSelectedSize = (v) => setInputs((p) => ({ ...p, selectedSize: v }))
   const setBatchSize = (v) => setInputs((p) => ({ ...p, batchSize: v }))
@@ -1155,145 +1167,6 @@ export default function ImageFactoryPage() {
         </div>
       )}
 
-      {/* Img2Img Tab */}
-      {activeTab === 'img2img' && (
-        <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 space-y-5">
-              <input
-                ref={img2imgRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImg2ImgUpload}
-              />
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
-                {img2imgPreview ? (
-                  <div className="relative rounded-xl overflow-hidden border border-gray-200">
-                    <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
-                    <button
-                      onClick={() => {
-                        setImg2imgFile(null)
-                        setImg2imgPreview('')
-                      }}
-                      className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white hover:bg-red-500 transition-colors"
-                      title="移除"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => img2imgRef.current?.click()}
-                    className="w-full border-2 border-dashed border-gray-200 rounded-xl p-8 text-center hover:border-violet-500 transition-colors"
-                  >
-                    <Upload className="w-10 h-10 mx-auto text-violet-500 mb-2" />
-                    <p className="text-sm font-medium text-gray-900">点击上传参考图</p>
-                    <p className="text-xs text-gray-500 mt-1">支持 JPG、PNG 格式</p>
-                  </button>
-                )}
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">提示词</label>
-                <textarea
-                  value={img2imgPrompt}
-                  onChange={(e) => setImg2imgPrompt(e.target.value)}
-                  rows={4}
-                  placeholder="描述想要的风格/元素变化，如：把照片变成油画风格、保持人物不变…"
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {SIZES.slice(0, 6).map((s) => (
-                    <button
-                      key={s.value}
-                      onClick={() => setImg2imgSize(s.value)}
-                      className={`px-2 py-2 rounded-lg border text-center transition-all ${img2imgSize === s.value ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-gray-200 hover:bg-gray-50'}`}
-                    >
-                      <div className="text-xs font-medium">{s.label}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">
-                  变化强度：{img2imgStrength}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={img2imgStrength}
-                  onChange={(e) => setImg2imgStrength(parseFloat(e.target.value))}
-                  className="w-full"
-                />
-                <p className="text-[11px] text-gray-400 mt-1">越小越接近原图，越大变化越明显</p>
-              </div>
-
-              <Button
-                variant="gradient"
-                size="lg"
-                icon={Image}
-                loading={img2imgBusy}
-                disabled={!img2imgPrompt.trim() || !img2imgFile}
-                onClick={handleImg2Img}
-                className="w-full"
-              >
-                {img2imgBusy ? '生成任务执行中（后台）…' : '生成变体'}
-              </Button>
-              {img2imgBusy && genTask && (
-                <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
-                  <div className="flex items-center gap-2 text-xs text-violet-700">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-                    <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
-                    <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
-                  </div>
-                  <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
-                      style={{ width: `${genTask.progress || 0}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 text-[11px] text-gray-400">
-                    任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="lg:col-span-2">
-              <h3 className="font-medium text-gray-900 mb-4">生成结果</h3>
-              {img2imgBusy ? (
-                <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
-              ) : generatedImages.length > 0 ? (
-                <div className="relative group rounded-xl overflow-hidden shadow-sm">
-                  <img
-                    src={generatedImages[0].url}
-                    alt={img2imgPrompt}
-                    className="w-full h-64 object-cover"
-                  />
-                  {renderImageActions(generatedImages[0])}
-                </div>
-              ) : (
-                <div className="h-64">
-                  <Empty
-                    icon={Image}
-                    title="暂无结果"
-                    description="上传参考图并输入提示词，生成风格变体"
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Img2Img Tab */}
       {activeTab === 'img2img' && (

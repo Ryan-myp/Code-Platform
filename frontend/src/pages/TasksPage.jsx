@@ -21,6 +21,12 @@ import {
   Eye,
   BarChart3,
   Trash2,
+  Clapperboard,
+  PenLine,
+  Languages,
+  Presentation,
+  Globe,
+  TrendingUp,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, Modal, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -42,6 +48,16 @@ const TYPE_META = {
   image_template: { label: '模板渲染', icon: Image, color: 'blue' },
   image_tryon: { label: '虚拟试衣', icon: Image, color: 'cyan' },
   voice_generate: { label: 'AI 配音', icon: Mic, color: 'emerald' },
+  drama_generate: { label: '短剧生成', icon: Clapperboard, color: 'purple' },
+  meme_generate_set: { label: '表情包批量', icon: Image, color: 'amber' },
+  music_compose: { label: '音乐作曲', icon: Music, color: 'rose' },
+  dh_voice_clone: { label: '声音克隆', icon: Mic, color: 'emerald' },
+  copywriting_generate: { label: '文案生成', icon: PenLine, color: 'blue' },
+  translation_translate: { label: '翻译', icon: Languages, color: 'indigo' },
+  ppt_generate: { label: 'PPT 生成', icon: Presentation, color: 'orange' },
+  web_search_query: { label: '网页搜索', icon: Globe, color: 'sky' },
+  video_analyze: { label: '视频分析', icon: Video, color: 'red' },
+  forecast_analyze: { label: '预测分析', icon: TrendingUp, color: 'green' },
 }
 
 const STATUS_META = {

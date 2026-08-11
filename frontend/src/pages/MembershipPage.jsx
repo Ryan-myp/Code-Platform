@@ -186,7 +186,9 @@ export default function MembershipPage() {
               {isVip ? '至尊版会员' : membership === 'pro' ? '专业版会员' : '免费版'}
               {membership !== 'free' && quota?.membership_expires && (
                 <span className="text-xs font-normal opacity-80 bg-white/20 rounded-full px-3 py-1">
-                  有效期至 {quota.membership_expires.slice(0, 10)}
+                  {quota.membership_days_left != null && quota.membership_days_left >= 3650
+                    ? '长期有效'
+                    : `有效期至 ${quota.membership_expires.slice(0, 10)}`}
                   {quota.membership_days_left != null && quota.membership_days_left <= 7 && (
                     <span className="ml-1.5 text-amber-200">
                       · 剩 {quota.membership_days_left} 天
@@ -285,7 +287,7 @@ export default function MembershipPage() {
                         onClick={() => setBuyPlan(key)}
                         className={`w-full py-2.5 rounded-xl text-sm font-medium text-white shadow-soft transition-all ${meta.btn}`}
                       >
-                        立即开通 <ArrowRight className="w-3.5 h-3.5 inline ml-0.5" />
+                        立即开通<ArrowRight className="w-3.5 h-3.5 inline ml-0.5" />
                       </button>
                     )}
                   </div>

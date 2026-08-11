@@ -31,7 +31,17 @@ SOURCE_LABEL = {
     "game_factory": "小游戏工坊",
     "miniapp": "小程序工坊",
     "publish": "发布中心",
+    "short_drama": "短剧工厂",
+    "digital_human": "数字人",
+    "workflow": "工作流",
 }
+# Agent 产物的 author 形如 agent-1 / agent-2，统一展示为“AI Agent”
+def _source_label(author: str) -> str:
+    if not author:
+        return "平台用户"
+    if author.startswith("agent"):
+        return "AI Agent"
+    return SOURCE_LABEL.get(author, author)
 
 # 作品类型 → 展示元信息
 TYPE_META = {
@@ -63,12 +73,16 @@ def _media_file_exists(media_url: str) -> bool:
 
 
 def _extract_prompt(content_raw: str) -> str:
-    """从 content 字段提取作品描述：dict 取 prompt/filename，纯文本直接返回。"""
+    """从 content 字段提取作品描述：dict 取 prompt / 表情包文案 / filename，纯文本直接返回。"""
     if not content_raw:
         return ""
     try:
         obj = json.loads(content_raw)
         if isinstance(obj, dict):
+            # 表情包：top_text + bottom_text 组合成可读标题，避免展示原始文件名
+            if obj.get("top_text") or obj.get("bottom_text"):
+                parts = [p for p in (obj.get("top_text"), obj.get("bottom_text")) if p]
+                return " / ".join(parts)[:300]
             return obj.get("prompt") or obj.get("filename") or ""
         return str(obj)[:300]
     except Exception:
@@ -112,7 +126,7 @@ def _decorate(row: dict, user_id: str) -> dict:
         "thumbnail": thumbnail,
         "duration": float(row.get("duration") or 0),
         "prompt": _extract_prompt(row.get("content")),
-        "author": SOURCE_LABEL.get(row.get("author", ""), row.get("author", "") or "平台用户"),
+        "author": _source_label(row.get("author", "") or ""),
         "created_at": row.get("created_at", ""),
         "likes": likes,
         "comments": comments,

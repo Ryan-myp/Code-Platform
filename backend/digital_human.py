@@ -3448,7 +3448,11 @@ async def list_records(
     q: str = "",
     current_user: dict = require_auth(),
 ):
-    """历史记录分页查询：状态筛选（done/audio_only/failed）+ 关键词搜索（文案/形象/声音）。"""
+    """历史生成记录（分页 / 按状态筛选 / 关键词搜索）。
+
+    text 字段防御性清洗：兼容历史脏数据（误存 Python dict 字面量），
+    解析出真实文案后再返回，避免前端直接渲染数据结构。
+    """
     conn = get_db()
     _ensure_tables(conn)
     where, args = ["1=1"], []
@@ -3470,7 +3474,27 @@ async def list_records(
         args + [page_size, (page - 1) * page_size],
     ).fetchall()
     conn.close()
-    return {"total": total, "page": page, "page_size": page_size, "items": [dict(r) for r in rows]}
+    items = []
+    for r in rows:
+        item = dict(r)
+        item["text"] = _clean_record_text(item.get("text") or "")
+        items.append(item)
+    return {"total": total, "page": page, "page_size": page_size, "items": items}
+
+
+def _clean_record_text(raw: str) -> str:
+    """兼容历史脏数据：若 text 被误存为 Python dict 字面量（如 {"text": "..."}），安全解析出真实文案。"""
+    if not raw or not raw.lstrip().startswith("{"):
+        return raw
+    try:
+        import ast
+
+        parsed = ast.literal_eval(raw)
+        if isinstance(parsed, dict) and parsed.get("text"):
+            return str(parsed["text"])
+    except (ValueError, SyntaxError):
+        pass
+    return raw
 
 
 class BatchDeleteRequest(BaseModel):

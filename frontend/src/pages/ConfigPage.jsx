@@ -329,7 +329,7 @@ export default function ConfigPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               <Globe className="w-4 h-4 inline mr-1" />
-              API URL <span className="text-red-500">*</span>
+              API URL<span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -527,7 +527,7 @@ export default function ConfigPage() {
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-gray-500 flex-shrink-0">API URL:</span>
                 <span className="font-mono text-xs text-gray-700 truncate">
-                  {config?.api_url || config?.agnes_api_base || '未配置'}
+                  {config?.api_url || config?.agnes_api_base || DEFAULT_API_URL}
                 </span>
               </div>
               <div className="flex items-center gap-2">

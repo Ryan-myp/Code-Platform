@@ -716,7 +716,7 @@ export default function VideoFactoryPage() {
               <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
               云端提示词库
               <span className="text-xs text-gray-400 font-normal">
-                （来自 /api/video-factory/prompts）
+                在线精选提示词，点击即可填充
               </span>
             </label>
             <div className="flex flex-wrap gap-2">
@@ -739,7 +739,7 @@ export default function VideoFactoryPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5 text-blue-500" />
-              脚本文案模板（v15）
+              脚本文案模板
               <span className="text-xs text-gray-400 font-normal">
                 点击填充到视频描述，支持 {'{主题}'} 替换
               </span>
@@ -1121,7 +1121,7 @@ export default function VideoFactoryPage() {
           >
             <Layers className="w-6 h-6 mx-auto text-blue-500 mb-2" />
             <div className="font-medium text-sm text-gray-900">批量转码</div>
-            <div className="text-xs text-gray-500 mt-1">统一 H.264 格式，可选分辨率（v15）</div>
+            <div className="text-xs text-gray-500 mt-1">统一 H.264 格式，可选分辨率</div>
           </button>
         </div>
       </div>

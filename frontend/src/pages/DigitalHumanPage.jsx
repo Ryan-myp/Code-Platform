@@ -597,14 +597,21 @@ export default function DigitalHumanPage() {
     }
   }
 
-  // ★ 吊销克隆音色（合规风控：授权撤销/滥用后立即停用并删除样本）
+  // 会员剩余时长人性化展示：超长有效期不显示天数为（避免“剩余 26806 天”的观感问题）
+const fmtDaysLeft = (days) => {
+  if (days >= 3650) return '长期有效'
+  if (days >= 365) return `剩余 ${Math.floor(days / 365)} 年 ${days % 365 > 0 ? `${days % 365} 天` : ''}`
+  return `剩余 ${days} 天`
+}
+
+// ★ 删除克隆音色（合规风控：授权撤销/滥用后立即停用并删除样本）
   const revokeVoiceClone = async (id) => {
-    if (!window.confirm('吊销后该克隆音色立即停用且样本文件被删除，确认吊销？')) return
+    if (!window.confirm('删除后该克隆音色立即停用且样本文件被删除，确认删除？')) return
     try {
       await api.post(`/api/digital-human/voice-clones/${id}/revoke`)
       setCustomVoices((prev) => prev.filter((v) => v.id !== id))
       if (voiceId === id) setVoiceId('zh-CN-XiaoxiaoNeural')
-      toast.success('克隆音色已吊销，不可再用于生成')
+      toast.success('克隆音色已删除，不可再用于生成')
     } catch (e) {
       toast.error(e.message)
     }
@@ -1328,7 +1335,7 @@ export default function DigitalHumanPage() {
             <span className="flex items-center gap-1 text-emerald-600">
               <Sparkles className="w-3 h-3" />{' '}
               {quota.membership === 'vip' ? '至尊版 · 不限量' : '专业版'}会员
-              {quota.membership_days_left != null && `（剩余 ${quota.membership_days_left} 天）`}
+              {quota.membership_days_left != null && `（${fmtDaysLeft(quota.membership_days_left)}）`}
             </span>
           ) : (
             <a
@@ -1702,7 +1709,7 @@ export default function DigitalHumanPage() {
                   <button
                     onClick={() => (v.is_clone ? revokeVoiceClone(v.id) : deleteCustomVoice(v.id))}
                     className="absolute top-1 right-7 p-1 rounded-full bg-red-500 text-white shadow opacity-0 group-hover:opacity-100 transition-opacity"
-                    title={v.is_clone ? '吊销该克隆音色' : '删除该声音'}
+                    title={v.is_clone ? '删除该克隆音色' : '删除该声音'}
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -3297,7 +3304,7 @@ ${batchTexts
             />
             <span className="text-xs text-violet-700 leading-relaxed">
               我声明：样本为<strong>本人声音</strong>或<strong>已获得授权</strong>使用，同意用于声音克隆合成
-              （合规必选，平台保留吊销权利）
+              （合规必选，平台保留撤销权利）
             </span>
           </label>
           <div className="flex justify-end gap-2">
