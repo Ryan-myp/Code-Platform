@@ -17,6 +17,7 @@ import MobileBottomNav from './components/MobileBottomNav'
 import BackToTop from './components/BackToTop'
 import AccessGuard from './components/AccessGuard'
 import { trackVisit } from './hooks/useRecentTools'
+import { pageTitleFor } from './lib/pageTitle'
 import { ToastProvider, useToast } from './lib/toast'
 
 // 页面级懒加载：首屏仅加载当前页面，其余按需分块（首包从 ~1.8MB 降至 ~300KB）
@@ -115,11 +116,15 @@ function ProtectedRoute({ children, isAuthenticated }) {
   return children
 }
 
+// v17-F：路由级页面标题映射见 lib/pageTitle.js（TOOL_META + 通用页 + 动态前缀）
+
 // v16 路由访问追踪：记录「最近使用」工具（供首页快捷区一键直达）
+// v17-F：同时跟随路由更新浏览器标签页标题（67 个页面切换时标签名始终正确）
 function RouteTracker() {
   const location = useLocation()
   useEffect(() => {
     trackVisit(location.pathname)
+    document.title = pageTitleFor(location.pathname)
   }, [location.pathname])
   return null
 }

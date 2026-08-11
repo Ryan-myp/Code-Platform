@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 
 // v16「最近使用」：localStorage 追踪用户访问过的核心页面，首页一键直达（留存利器）
 // 记录 {path, label, icon, ts}，同页面去重置顶，上限 10 条，仅收录映射表内页面
-const TOOL_META = {
+// v17-F：TOOL_META 同时供 App.jsx 路由级页面标题使用（单份数据源，两处消费）
+export const TOOL_META = {
   '/workspace': { label: 'AI 工作台', icon: '⚡' },
   '/board': { label: '需求看板', icon: '📋' },
   '/projects': { label: '项目空间', icon: '📁' },

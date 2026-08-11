@@ -2,6 +2,7 @@
 """Platform v9.0 API - 首页/任务/通知/仪表盘"""
 
 import json
+import time
 import uuid
 from datetime import datetime
 
@@ -10,6 +11,22 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
+
+# v17-F：首页热接口短 TTL 缓存（30 秒），避免每次进入首页都全表 COUNT / 重复拉取最近列表
+_HOME_CACHE_TTL = 30
+_HOME_CACHE: dict[str, tuple[float, object]] = {}
+
+
+def _home_cache_get(key: str) -> object | None:
+    item = _HOME_CACHE.get(key)
+    if item and time.time() - item[0] < _HOME_CACHE_TTL:
+        return item[1]
+    _HOME_CACHE.pop(key, None)
+    return None
+
+
+def _home_cache_set(key: str, value: object) -> None:
+    _HOME_CACHE[key] = (time.time(), value)
 
 router = APIRouter()
 
@@ -66,6 +83,9 @@ class DashboardWidgetUpdate(BaseModel):
 @router.get("/api/home/stats")
 async def get_home_stats(current_user: dict = require_auth()):
     """获取首页统计数据"""
+    cached = _home_cache_get("stats")
+    if cached is not None:
+        return cached
     conn = get_db()
     try:
         stats = {
@@ -82,6 +102,7 @@ async def get_home_stats(current_user: dict = require_auth()):
             "notifications_unread": conn.execute("SELECT COUNT(*) FROM notifications WHERE read=0").fetchone()[0],
             "artifacts": conn.execute("SELECT COUNT(*) FROM artifacts WHERE active=1").fetchone()[0],
         }
+        _home_cache_set("stats", stats)
         return stats
     finally:
         conn.close()
@@ -90,6 +111,9 @@ async def get_home_stats(current_user: dict = require_auth()):
 @router.get("/api/home/recent")
 async def get_home_recent(current_user: dict = require_auth()):
     """获取最近活动"""
+    cached = _home_cache_get("recent")
+    if cached is not None:
+        return cached
     conn = get_db()
     try:
         # 最近的任务
@@ -141,13 +165,15 @@ async def get_home_recent(current_user: dict = require_auth()):
             p["last_run"] = dict(run) if run else None
             recent_pipelines.append(p)
 
-        return {
+        result = {
             "tasks": recent_tasks,
             "projects": recent_projects,
             "notifications": recent_notifications,
             "requirements": recent_requirements,
             "pipelines": recent_pipelines,
         }
+        _home_cache_set("recent", result)
+        return result
     finally:
         conn.close()
 
