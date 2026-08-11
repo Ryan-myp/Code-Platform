@@ -187,6 +187,8 @@ export default function ImageFactoryPage() {
   const [images, setImages] = useState([])
   const [templates, setTemplates] = useState([])
   const [stats, setStats] = useState({ total_images: 0, total_templates: 0, api_configured: false })
+  const [enhancing, setEnhancing] = useState(false) // v20：AI 润色提示词
+  const [negativeHint, setNegativeHint] = useState('') // v20：自动负面词建议
   const [loadingGallery, setLoadingGallery] = useState(true)
   const [galleryError, setGalleryError] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -328,6 +330,29 @@ export default function ImageFactoryPage() {
       toast.success('已开始下载')
     } catch (e) {
       toast.error(`下载失败：${e.message}`)
+    }
+  }
+
+  // v20：AI 润色提示词（调用专用接口，失败静默回退原描述；附带自动负面词建议）
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) {
+      toast.error('请先输入描述，再使用 AI 润色')
+      return
+    }
+    if (enhancing) return
+    setEnhancing(true)
+    try {
+      const fd = new FormData()
+      fd.append('prompt', prompt)
+      const res = await api.post('/api/image-factory/enhance-prompt', fd)
+      const d = res.data || {}
+      if (d.enhanced) setPrompt(d.enhanced)
+      if (d.negative_auto) setNegativeHint(d.negative_auto)
+      toast.success('已 AI 润色，可直接生成')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || 'AI 润色失败')
+    } finally {
+      setEnhancing(false)
     }
   }
 
@@ -881,6 +906,15 @@ export default function ImageFactoryPage() {
                       style="image"
                       className="text-violet-600 hover:text-violet-700"
                     />
+                    <button
+                      onClick={handleEnhancePrompt}
+                      disabled={enhancing}
+                      className="inline-flex items-center gap-1 text-violet-600 hover:text-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="AI 润色为专业提示词（含构图/光线/风格/负面词建议）"
+                    >
+                      {enhancing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      {enhancing ? '润色中…' : '✨ AI 润色'}
+                    </button>
                   </div>
                 </div>
                 <textarea
@@ -897,6 +931,17 @@ export default function ImageFactoryPage() {
                 />
                 {negativePrompt && (
                   <p className="mt-1.5 text-[11px] text-violet-500">已启用负面提示词：{negativePrompt}</p>
+                )}
+                {negativeHint && !negativePrompt && (
+                  <p className="mt-1.5 text-[11px] text-gray-400">
+                    建议负面词：<span className="text-violet-500">{negativeHint}</span>
+                    <button
+                      onClick={() => setNegativePrompt(negativeHint)}
+                      className="ml-2 text-violet-600 hover:text-violet-700 underline"
+                    >
+                      一键填入
+                    </button>
+                  </p>
                 )}
               </div>
 

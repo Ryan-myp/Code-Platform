@@ -6,6 +6,7 @@ import {
   Play,
   Download,
   Sparkles,
+  Loader2,
   RefreshCw,
   Wand2,
   Trash2,
@@ -214,6 +215,7 @@ export default function VideoFactoryPage() {
   const setMood = (v) => setInputs((p) => ({ ...p, mood: v ?? '' }))
   const [image, setImage] = useState('')
   const [creating, setCreating] = useState(false)
+  const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
   const [lastResult, setLastResult] = useState(null)
   const { submitTask, startPolling, stopPolling } = useAsyncTask()
 
@@ -323,6 +325,29 @@ export default function VideoFactoryPage() {
     setLastResult((prev) => ({ ...prev, status: 'failed', error: e.message }))
     setCreating(false)
     toast.error(`视频生成失败：${e.message}`)
+  }
+
+  // v20：AI 画质增强（调用专用接口；失败静默回退原描述，不阻塞生成）
+  const handleEnhancePrompt = async () => {
+    if (!prompt.trim()) {
+      toast.error('请先输入视频描述，再使用 AI 增强')
+      return
+    }
+    if (enhancingPrompt) return
+    setEnhancingPrompt(true)
+    try {
+      const fd = new FormData()
+      fd.append('prompt', prompt)
+      fd.append('mode', mode === 'ti2vid' ? 'ti2vid' : 'i2vid')
+      const res = await api.post('/api/video-factory/enhance-prompt', fd)
+      const d = res.data || {}
+      if (d.enhanced) setPrompt(d.enhanced)
+      toast.success('已 AI 增强画面描述，可直接生成')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || 'AI 增强失败')
+    } finally {
+      setEnhancingPrompt(false)
+    }
   }
 
   const handleCreate = async () => {
@@ -624,6 +649,15 @@ export default function VideoFactoryPage() {
               style="video"
               className="text-blue-600 hover:text-blue-700"
             />
+            <button
+              onClick={handleEnhancePrompt}
+              disabled={enhancingPrompt}
+              className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="AI 增强为专业画面描述（含运动/镜头语言/光影/氛围）"
+            >
+              {enhancingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              {enhancingPrompt ? '增强中…' : '✨ AI 增强'}
+            </button>
           </label>
           <textarea
             value={prompt}

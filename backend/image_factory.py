@@ -180,6 +180,40 @@ def get_font(size: int = 24) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
+# ── v20：AI 提示词润色（免费辅助能力；LLM 失败静默回退原 prompt，不阻塞主链路）──
+_DEFAULT_NEGATIVE_PROMPT = (
+    "low quality, blurry, watermark, text, deformed, extra limbs, bad anatomy, "
+    "cropped, jpeg artifacts"
+)
+
+
+@router.post("/enhance-prompt")
+async def enhance_prompt(prompt: str = Form(...), current_user: dict = require_auth()):
+    """AI 润色文生图提示词：简单描述 → 专业提示词（主体/构图/光线/风格/质量词）+ 自动负面词建议。"""
+    from common.llm import call_llm_async
+
+    original = (prompt or "").strip()
+    if not original:
+        raise HTTPException(400, "请输入图片描述")
+    if len(original) > 500:
+        raise HTTPException(400, "描述过长（500 字以内），请精简后重试")
+    system = (
+        "你是一位专业 AI 绘画提示词工程师。把用户的简要描述扩写为高质量中文绘图提示词，"
+        "必须覆盖以下维度：主体（内容/数量/动作表情）、环境（场景/背景）、构图（视角/景别/布局）、"
+        "光线（时间/氛围/光源）、风格（艺术流派/画风）、材质与细节、质量词（高清/细腻/光影自然等）。"
+        "控制在 150 字以内，只输出润色后的提示词本身，不要解释。"
+    )
+    enhanced = original
+    try:
+        out = await call_llm_async(system, f"【原始描述】\n{original}", max_tokens=500, temperature=0.7)
+        out = (out or "").strip().strip('\"\'`')
+        if len(out) >= 4:
+            enhanced = out
+    except Exception:
+        logger.warning("[image_factory.enhance_prompt] LLM 调用失败，静默回退原 prompt", exc_info=True)
+    return {"ok": True, "original": original, "enhanced": enhanced, "negative_auto": _DEFAULT_NEGATIVE_PROMPT}
+
+
 # ── 统计 API ──────────────────────────────────────────────────
 @router.get("/stats")
 async def get_stats():

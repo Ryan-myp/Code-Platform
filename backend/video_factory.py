@@ -643,6 +643,41 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     raise HTTPException(500, "所有视频通道均失败: " + " | ".join(errors))
 
 
+# ── v20：AI 画质增强提示词（免费辅助能力；LLM 失败静默回退原 prompt）──
+@router.post("/enhance-prompt")
+async def enhance_prompt(
+    prompt: str = Form(...),
+    mode: str = Form("ti2vid", description="ti2vid=文生视频 / i2vid=图生视频"),
+    current_user: dict = require_auth(),
+):
+    """AI 增强视频画面描述：主体+运动+镜头语言+光影+氛围+风格；i2vid 保留主体前缀；失败回退原 prompt。"""
+    from common.llm import call_llm_async
+
+    original = (prompt or "").strip()
+    if not original:
+        raise HTTPException(400, "请输入视频描述")
+    if len(original) > 800:
+        raise HTTPException(400, "描述过长（800 字以内），请精简后重试")
+    is_i2vid = mode.strip().lower() in ("i2vid", "img2vid", "image")
+    system = (
+        "你是一位专业 AI 视频提示词工程师。把用户的简要画面描述增强为可直接用于文生视频模型的详细画面描述，"
+        "必须覆盖：主体（内容/数量/动作）、运动（主体运动/镜头运动）、镜头语言（景别/运镜/视角）、"
+        "光影（光线/时间/氛围）、情绪氛围、风格与画质词。控制在 200 字以内，"
+        "只输出增强后的画面描述本身，不要解释、不要加引号。"
+    )
+    if is_i2vid:
+        system += "注意：这是图生视频，必须完整保留用户描述中的主体特征（人物/物体外观、服装、场景细节）作为前缀，只在其后补充运动与镜头语言。"
+    enhanced = original
+    try:
+        out = await call_llm_async(system, f"【原始描述】\n{original}", max_tokens=600, temperature=0.7)
+        out = (out or "").strip().strip('\"\'`')
+        if len(out) >= 8:
+            enhanced = out
+    except Exception:
+        logger.warning("[video_factory.enhance_prompt] LLM 调用失败，静默回退原 prompt", exc_info=True)
+    return {"ok": True, "original": original, "enhanced": enhanced, "mode": "i2vid" if is_i2vid else "ti2vid"}
+
+
 @router.post("/generate")
 async def create_video_task(
     prompt: str = Form(...),

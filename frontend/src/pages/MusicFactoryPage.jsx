@@ -37,6 +37,108 @@ import usePersistentToolState from '../hooks/usePersistentToolState'
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
 
+// v20：歌词段落解析（与后端 parse_lyrics_sections 同构，兼容中英文/全角标注）
+// 注意：字符类开头 [ 必须转义（无转义时 V8 不把它当作内容字符，eslint no-useless-escape 此处为误报）
+/* eslint-disable-next-line no-useless-escape -- 字符类中 [ 需显式转义才能作为内容 */
+const SECTION_TAG_RE = /^\s*[\[［（(【]\s*([A-Za-z-]+(?:\s*\d*)?|副歌|主歌|桥段|桥|尾声|前奏|间奏|说唱|预副歌)\s*[\]［（(【］）)】]\s*$/
+const SECTION_TITLES = {
+  CHORUS: 'Chorus',
+  VERSE: 'Verse',
+  BRIDGE: 'Bridge',
+  OUTRO: 'Outro',
+  INTRO: 'Intro',
+  'PRE-CHORUS': 'Pre-Chorus',
+  RAP: 'Rap',
+  副歌: 'Chorus',
+  主歌: 'Verse',
+  桥段: 'Bridge',
+  桥: 'Bridge',
+  尾声: 'Outro',
+  前奏: 'Intro',
+  间奏: 'Interlude',
+  说唱: 'Rap',
+  预副歌: 'Pre-Chorus',
+}
+
+export function parseLyricsSections(text) {
+  if (!text || !String(text).trim()) return []
+  const sections = []
+  let current = null
+  const normalizeTitle = (raw) => {
+    const exact = SECTION_TITLES[raw]
+    if (exact) return exact
+    // "VERSE 1" / "CHORUS 2" 等带序号形式（保留序号）
+    for (const k of ['PRE-CHORUS', 'VERSE', 'CHORUS', 'BRIDGE', 'OUTRO', 'INTRO']) {
+      if (raw.startsWith(k)) return SECTION_TITLES[k] + raw.slice(k.length)
+    }
+    return raw.replace(/^\w/, (c) => c.toUpperCase())
+  }
+  for (const ln of String(text).split('\n')) {
+    const m = ln.match(SECTION_TAG_RE)
+    if (m) {
+      if (current) sections.push(current)
+      const raw = m[1].trim().toUpperCase()
+      const title = normalizeTitle(raw)
+      current = { title, lines: [], isHook: title.toUpperCase().includes('CHORUS') || title.toUpperCase().includes('HOOK') }
+      continue
+    }
+    if (!current) current = { title: '歌词', lines: [], isHook: false }
+    if (ln.trim()) current.lines.push(ln.trim())
+  }
+  if (current && current.lines.length) sections.push(current)
+  return sections
+}
+
+// v20：歌词卡片（段落徽章 + Hook 行强调 + 行渲染）
+const SECTION_BADGE_STYLES = {
+  Chorus: 'bg-purple-100 text-purple-700 border-purple-200',
+  Verse: 'bg-blue-50 text-blue-600 border-blue-100',
+  Bridge: 'bg-amber-50 text-amber-600 border-amber-100',
+  'Pre-Chorus': 'bg-fuchsia-50 text-fuchsia-600 border-fuchsia-100',
+}
+
+export function LyricsCard({ text, className = '' }) {
+  const sections = parseLyricsSections(text)
+  if (!sections.length) return null
+  return (
+    <div className={`space-y-3 ${className}`} data-testid="lyrics-card">
+      {sections.map((sec, i) => (
+        <div
+          key={i}
+          className="rounded-xl border border-gray-100 bg-white/70 shadow-sm overflow-hidden"
+        >
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50/80 border-b border-gray-100">
+            <span
+              className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                SECTION_BADGE_STYLES[sec.title] || 'bg-gray-100 text-gray-600 border-gray-200'
+              }`}
+            >
+              {sec.title}
+            </span>
+            {sec.isHook && (
+              <span className="text-[10px] text-purple-500 font-medium">🎵 记忆点 Hook</span>
+            )}
+          </div>
+          <div className="px-4 py-2.5">
+            {sec.lines.map((l, j) => (
+              <div
+                key={j}
+                className={`py-0.5 text-sm leading-relaxed ${
+                  sec.isHook && j === 0
+                    ? 'text-purple-800 font-semibold bg-purple-50/80 rounded-md px-2 -mx-2 my-0.5'
+                    : 'text-gray-700'
+                }`}
+              >
+                {l}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const PRESET_CATEGORIES = [
   {
     name: '爱情情感',
@@ -779,9 +881,7 @@ export default function MusicFactoryPage() {
                   </Button>
                 </div>
               </div>
-              <pre className="whitespace-pre-wrap text-sm text-gray-800 font-mono leading-relaxed max-h-96 overflow-y-auto">
-                {lyrics}
-              </pre>
+              <LyricsCard text={lyrics} className="max-h-96 overflow-y-auto pr-1" />
             </div>
           )}
         </div>
@@ -905,26 +1005,36 @@ export default function MusicFactoryPage() {
           )}
 
           {musicResult?.url && (
-            <div className="p-4 bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-xl">
-              <div className="flex items-center gap-3 mb-3">
+            <div className="overflow-hidden rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50 via-white to-pink-50 shadow-sm">
+              {/* v20：作品卡渐变头部 */}
+              <div className="bg-gradient-to-r from-purple-500 via-fuchsia-500 to-pink-500 px-4 py-3 flex items-center gap-3">
                 {musicResult.cover_url ? (
                   <img
                     src={absUrl(musicResult.cover_url)}
                     alt=""
-                    className="w-16 h-16 rounded-xl object-cover shadow-sm flex-shrink-0"
+                    className="w-12 h-12 rounded-lg object-cover shadow-md ring-2 ring-white/40 flex-shrink-0"
                   />
                 ) : (
-                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
-                    <Music2 className="w-7 h-7 text-white" />
+                  <div className="w-12 h-12 rounded-lg bg-white/20 backdrop-blur flex items-center justify-center flex-shrink-0 ring-1 ring-white/40">
+                    <Music2 className="w-6 h-6 text-white" />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-gray-900 truncate">
+                  <div className="font-bold text-white truncate drop-shadow-sm">
                     {musicResult.theme || 'AI 音乐作品'}
                   </div>
-                  <div className="text-sm text-gray-500 mt-0.5">
-                    {STYLES.find((s) => s.value === musicResult.style)?.label || musicResult.style}
-                    {musicResult.duration > 0 ? ` · ${musicResult.duration.toFixed(1)}s` : ''}
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span className="text-[10px] font-medium bg-white/25 text-white rounded-full px-2 py-0.5">
+                      {STYLES.find((s) => s.value === musicResult.style)?.label || musicResult.style}
+                    </span>
+                    {musicResult.duration > 0 && (
+                      <span className="text-[10px] font-medium bg-white/25 text-white rounded-full px-2 py-0.5">
+                        {musicResult.duration.toFixed(1)}s
+                      </span>
+                    )}
+                    <span className="text-[10px] font-medium bg-white/25 text-white rounded-full px-2 py-0.5">
+                      AI 作品
+                    </span>
                   </div>
                 </div>
                 <Button
@@ -946,7 +1056,26 @@ export default function MusicFactoryPage() {
                   换一版
                 </Button>
               </div>
-              <audio controls src={absUrl(musicResult.url)} className="w-full" />
+              <div className="px-4 py-3 space-y-3">
+                {/* v20：歌词预览（max-h 展开） */}
+                {selectedLyrics && (
+                  <details className="group rounded-xl border border-purple-100 bg-white/80">
+                    <summary className="cursor-pointer select-none flex items-center justify-between px-3 py-2 text-xs font-medium text-purple-600 hover:text-purple-700">
+                      <span className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        歌词预览
+                      </span>
+                      <span className="text-gray-400 group-open:hidden">展开 ▾</span>
+                      <span className="text-gray-400 hidden group-open:inline">收起 ▴</span>
+                    </summary>
+                    <LyricsCard text={selectedLyrics} className="max-h-72 overflow-y-auto px-3 pb-3" />
+                  </details>
+                )}
+                {/* v20：美化播放器容器 */}
+                <div className="rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-100/60 p-3">
+                  <audio controls src={absUrl(musicResult.url)} className="w-full" />
+                </div>
+              </div>
             </div>
           )}
         </div>

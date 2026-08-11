@@ -1,7 +1,7 @@
 /**
  * v17 通用格式化工具单测：日期/时间/字节/状态映射/截断/防抖/剪贴板。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   formatDateTime,
   formatDate,

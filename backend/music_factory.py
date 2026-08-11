@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -302,6 +303,65 @@ async def get_lyrics_examples():
     return {"examples": LYRICS_EXAMPLES}
 
 
+# ── v20：歌词段落解析（[Verse 1]/[Chorus]/[Bridge]/[Outro] 标注 → 段落卡片数据）──
+_SECTION_TAG_RE = re.compile(r"^\s*[\[［（(【]\s*([A-Za-z-]+(?:\s*\d*)?|副歌|主歌|桥段|桥|尾声|前奏|间奏|说唱|预副歌)\s*[]］）)】]\s*$")
+_SECTION_ALIASES = {"V": "Verse", "VERSE": "Verse", "CHORUS": "Chorus", "HOOK": "Chorus",
+                    "BRIDGE": "Bridge", "OUTRO": "Outro", "INTRO": "Intro", "PRE": "Pre-Chorus",
+                    "PRE-CHORUS": "Pre-Chorus", "RAP": "Rap", "VERSE1": "Verse 1",
+                    "副歌": "Chorus", "主歌": "Verse", "桥段": "Bridge", "桥": "Bridge",
+                    "尾声": "Outro", "前奏": "Intro", "间奏": "Interlude", "说唱": "Rap",
+                    "预副歌": "Pre-Chorus"}
+
+def _normalize_section_tag(tag: str) -> str:
+    """归一化段落标签（大写 + 中文别名映射）"""
+    t = tag.strip().upper()
+    if t in _SECTION_ALIASES:
+        return _SECTION_ALIASES[t]
+    # "CHORUS 1" / "VERSE2" 等带序号形式（保留序号）
+    for k in ("PRE-CHORUS", "VERSE", "CHORUS", "BRIDGE", "OUTRO", "INTRO"):
+        if t.startswith(k):
+            return k.title() + t[len(k):]
+    return t.title()
+
+
+def parse_lyrics_sections(text: str) -> list[dict]:
+    """解析带段落标注的歌词 → [{tag, title, lines[], is_hook}]。
+
+    兼容 [Verse 1] / [Chorus] / [Bridge] / （副歌）/【主歌】 等标注变体；
+    无任何标注时整段降级为单段 [{tag: 'text', title: '歌词', lines: 全部行}]。
+    """
+    if not text or not str(text).strip():
+        return []
+    raw_lines = [ln.rstrip() for ln in str(text).split("\n")]
+    sections: list[dict] = []
+    current = None
+
+    def _push():
+        if current and current["lines"]:
+            sections.append(current)
+
+    for ln in raw_lines:
+        m = _SECTION_TAG_RE.match(ln)
+        if m:
+            _push()
+            tag = m.group(1).strip().upper()
+            title = _normalize_section_tag(tag)
+            current = {"tag": title.upper(), "title": title, "lines": [], "is_hook": "CHORUS" in title.upper() or "HOOK" in title.upper()}
+            continue
+        if current is None:
+            current = {"tag": "TEXT", "title": "歌词", "lines": [], "is_hook": False}
+        if ln.strip():
+            current["lines"].append(ln.strip())
+    _push()
+
+    if not sections:
+        return []
+    # 无标注：整段降级为单段（保持原行结构）
+    if len(sections) == 1 and sections[0]["tag"] == "TEXT":
+        return [{"tag": "text", "title": "歌词", "lines": sections[0]["lines"], "is_hook": False}]
+    return sections
+
+
 async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) -> dict:
     """生成歌词（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
@@ -381,6 +441,13 @@ async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) 
 - 情感表达真挚
 - 结构清晰（标注Verse、Chorus、Bridge等）
 - 适合演唱
+
+v20 内容丰富度要求（必须全部满足）：
+- 记忆点 Hook：副歌首句必须是一句高传唱度、易记易上口的金句（3-7 字短句优先）
+- 画面感：至少 2 处具体可感知的意象描写（光线/色彩/声音/触觉/气味等五感细节），禁止抽象空话
+- 情感递进：段落间情绪必须发展（起→承→高潮→收），副歌情感强度高于主歌
+- 段落配比：主歌 2 段（每段 4 句）、副歌重复 2-3 遍、含桥段时桥段 2-4 句
+- 每段保持 [Verse 1]/[Chorus]/[Bridge] 标注，段间空一行
 
 请只输出歌词，不要解释。"""
 
