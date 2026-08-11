@@ -28,6 +28,15 @@ import {
   FileJson2,
   Package,
   ZoomIn,
+  Pencil,
+  ArrowUp,
+  ArrowDown,
+  X,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Type,
+  Square,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -127,6 +136,219 @@ const TRYON_STYLES = [
   { id: 'sporty', label: '运动', icon: '🏃' },
   { id: 'fashion', label: '时尚', icon: '✨' },
 ]
+
+// 模板图层属性面板（可视化编辑器）：按图层类型渲染表单
+function LayerProps({ layer, onChange }) {
+  const inputCls =
+    'w-full px-2.5 py-1.5 rounded-lg border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-xs'
+  const labelCls = 'block text-[11px] font-medium text-gray-500 mb-1'
+  const num = (v) => (v === '' || v === null || v === undefined ? '' : Number(v))
+  const setNum = (key) => (e) => onChange({ [key]: e.target.value === '' ? 0 : Number(e.target.value) })
+  return (
+    <div className="rounded-xl border border-gray-200 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <label className="text-sm font-medium text-gray-700">
+          图层属性 ·{' '}
+          <span className="text-violet-600">
+            {layer.type === 'text' ? '文字' : layer.type === 'rect' ? '矩形' : '图片'}
+          </span>
+        </label>
+        <span className="text-[11px] text-gray-400">单位：像素（相对画布）</span>
+      </div>
+
+      {layer.type === 'text' && (
+        <div className="space-y-3">
+          <div>
+            <label className={labelCls}>文字内容</label>
+            <input
+              value={layer.text || ''}
+              onChange={(e) => onChange({ text: e.target.value })}
+              placeholder="渲染时显示的文字（支持换行）"
+              className={inputCls}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>变量名（可选，渲染时可替换）</label>
+              <input
+                value={layer.key || ''}
+                onChange={(e) => onChange({ key: e.target.value })}
+                placeholder="如 price"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>对齐</label>
+              <select
+                value={layer.align || 'left'}
+                onChange={(e) => onChange({ align: e.target.value })}
+                className={inputCls}
+              >
+                <option value="left">左对齐</option>
+                <option value="center">居中</option>
+                <option value="right">右对齐</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={labelCls}>字号</label>
+              <input type="number" value={num(layer.font_size)} onChange={setNum('font_size')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>X</label>
+              <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Y</label>
+              <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>最大宽度（0=不换行）</label>
+              <input type="number" value={num(layer.max_width)} onChange={setNum('max_width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>阴影（如 2,2）</label>
+              <input
+                value={layer.shadow || ''}
+                onChange={(e) => onChange({ shadow: e.target.value })}
+                placeholder="留空为无阴影"
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>文字颜色</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={layer.color || '#000000'}
+                onChange={(e) => onChange({ color: e.target.value })}
+                className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+              />
+              <input
+                value={layer.color || ''}
+                onChange={(e) => onChange({ color: e.target.value })}
+                className={inputCls}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {layer.type === 'rect' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>X</label>
+              <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Y</label>
+              <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>宽度</label>
+              <input type="number" value={num(layer.width)} onChange={setNum('width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>高度</label>
+              <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>圆角</label>
+              <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>不透明度（0-1）</label>
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1"
+                value={num(layer.opacity)}
+                onChange={setNum('opacity')}
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>填充颜色</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={layer.fill || '#F3F4F6'}
+                onChange={(e) => onChange({ fill: e.target.value })}
+                className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+              />
+              <input
+                value={layer.fill || ''}
+                onChange={(e) => onChange({ fill: e.target.value })}
+                className={inputCls}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {layer.type === 'image' && (
+        <div className="space-y-3">
+          <div>
+            <label className={labelCls}>图片地址（留空 = 图片槽，渲染时套入所选图片）</label>
+            <input
+              value={layer.url || ''}
+              onChange={(e) => onChange({ url: e.target.value })}
+              placeholder="粘贴图片 URL，或留空作为图片槽"
+              className={inputCls}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>槽位变量名（可选）</label>
+              <input
+                value={layer.key || ''}
+                onChange={(e) => onChange({ key: e.target.value })}
+                placeholder="如 product_image"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>槽位标记（可选）</label>
+              <input
+                value={layer.slot || ''}
+                onChange={(e) => onChange({ slot: e.target.value })}
+                placeholder="如 main"
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>X</label>
+              <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Y</label>
+              <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>宽度</label>
+              <input type="number" value={num(layer.width)} onChange={setNum('width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>高度</label>
+              <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const TRYON_BACKGROUNDS = [
   { id: 'beach', label: '沙滩', icon: '🏖️' },
@@ -237,16 +459,23 @@ export default function ImageFactoryPage() {
   const img2imgRef = useRef(null)
 
   // 模板管理
-  const [templateModal, setTemplateModal] = useState(false) // 'create' | 'upload' | null
+  const [templateModal, setTemplateModal] = useState(false) // 'create' | 'edit' | 'upload' | null
+  const [editingTemplateId, setEditingTemplateId] = useState('') // 编辑模式下的模板 id
   const [templateForm, setTemplateForm] = useState({
     name: '',
     width: 1080,
     height: 1920,
     background: '#FFFFFF',
-    layers: '',
+    layers: [], // 图层对象数组（可视化编辑器维护）
+    layerJson: '', // 高级模式 JSON 文本
+    showJson: false, // 是否展开高级 JSON 编辑
   })
+  const [selectedLayerIdx, setSelectedLayerIdx] = useState(-1) // 可视化编辑选中的图层
   const [templateSaving, setTemplateSaving] = useState(false)
   const [deletingTemplate, setDeletingTemplate] = useState(null)
+  // 模板套版：待渲染图片（多选，批量应用模板）
+  const [templateImages, setTemplateImages] = useState([])
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
 
   // 编辑
   const [uploadedImage, setUploadedImage] = useState(null) // { url, filename }
@@ -421,13 +650,20 @@ export default function ImageFactoryPage() {
       {
         template_id: selectedTemplate,
         overrides: {},
+        images: templateImages.map((im) => im.url),
       },
       {
         onUpdate: (t) => setGenTask(t),
         onSuccess: (data) => {
-          if (data.url) {
-            setGeneratedImages([{ ...data, url: absUrl(data.url), prompt: '模板渲染' }])
-            toast.success('模板渲染完成')
+          const list =
+            data.images && data.images.length > 0
+              ? data.images
+              : data.url
+                ? [data]
+                : []
+          if (list.length > 0) {
+            setGeneratedImages(list.map((it) => ({ ...it, url: absUrl(it.url), prompt: '模板渲染' })))
+            toast.success(`模板渲染完成，共 ${list.length} 张`)
             fetchImages()
           } else {
             toast.error('渲染失败，未返回图片')
@@ -495,34 +731,112 @@ export default function ImageFactoryPage() {
   }
 
   // ── 模板管理 ──
-  const handleCreateTemplate = async () => {
+  // 新图层默认值（可视化编辑器）
+  const LAYER_DEFAULTS = {
+    text: { type: 'text', text: '文字内容', key: '', x: 50, y: 100, font_size: 28, color: '#000000', align: 'left', max_width: 0, shadow: '' },
+    rect: { type: 'rect', x: 50, y: 50, width: 300, height: 80, radius: 16, fill: '#F3F4F6', opacity: 1 },
+    image: { type: 'image', key: '', x: 0, y: 0, width: 300, height: 300, url: '', slot: '' },
+  }
+
+  const addTemplateLayer = (type) => {
+    setTemplateForm((f) => ({ ...f, layers: [...f.layers, { ...LAYER_DEFAULTS[type] }] }))
+    setSelectedLayerIdx(templateForm.layers.length)
+  }
+
+  const updateTemplateLayer = (idx, patch) => {
+    setTemplateForm((f) => ({
+      ...f,
+      layers: f.layers.map((l, i) => (i === idx ? { ...l, ...patch } : l)),
+    }))
+  }
+
+  const removeTemplateLayer = (idx) => {
+    setTemplateForm((f) => ({ ...f, layers: f.layers.filter((_, i) => i !== idx) }))
+    setSelectedLayerIdx(-1)
+  }
+
+  const moveTemplateLayer = (idx, dir) => {
+    setTemplateForm((f) => {
+      const target = idx + dir
+      if (target < 0 || target >= f.layers.length) return f
+      const layers = [...f.layers]
+      ;[layers[idx], layers[target]] = [layers[target], layers[idx]]
+      return { ...f, layers }
+    })
+    setSelectedLayerIdx(idx + dir)
+  }
+
+  // 打开新建模板弹窗
+  const openCreateTemplate = () => {
+    setEditingTemplateId('')
+    setSelectedLayerIdx(-1)
+    setTemplateForm({
+      name: '',
+      width: 1080,
+      height: 1920,
+      background: '#FFFFFF',
+      layers: [],
+      layerJson: '',
+      showJson: false,
+    })
+    setTemplateModal('create')
+  }
+
+  // 打开编辑模板弹窗（载入已有模板）
+  const handleEditTemplate = (t) => {
+    setEditingTemplateId(t.id)
+    setSelectedLayerIdx(-1)
+    setTemplateForm({
+      name: t.name,
+      width: t.width,
+      height: t.height,
+      background: t.background || '#FFFFFF',
+      layers: Array.isArray(t.layers) ? t.layers.map((l) => ({ ...l })) : [],
+      layerJson: JSON.stringify(Array.isArray(t.layers) ? t.layers : [], null, 2),
+      showJson: false,
+    })
+    setTemplateModal('edit')
+  }
+
+  const handleSaveTemplate = async () => {
     if (!templateForm.name.trim()) {
       toast.error('请输入模板名称')
       return
     }
     setTemplateSaving(true)
     try {
-      let layers = []
-      try {
-        layers = templateForm.layers.trim() ? JSON.parse(templateForm.layers) : []
-      } catch {
-        toast.error('图层 JSON 格式错误')
-        setTemplateSaving(false)
-        return
+      // 高级 JSON 模式展开时：以 JSON 文本为准
+      let layers = templateForm.layers
+      if (templateForm.showJson && templateForm.layerJson.trim()) {
+        try {
+          layers = JSON.parse(templateForm.layerJson)
+        } catch {
+          toast.error('图层 JSON 格式错误')
+          setTemplateSaving(false)
+          return
+        }
       }
-      const res = await api.post('/api/image-factory/template/create', {
+      const body = {
         name: templateForm.name.trim(),
         width: Number(templateForm.width) || 1080,
         height: Number(templateForm.height) || 1920,
         background: templateForm.background,
         layers,
-      })
-      toast.success(`模板「${res.data.name}」已创建`)
+      }
+      let res
+      if (templateModal === 'edit') {
+        res = await api.put(`/api/image-factory/templates/${editingTemplateId}`, body)
+        toast.success(`模板「${res.data.name}」已更新`)
+      } else {
+        res = await api.post('/api/image-factory/template/create', body)
+        toast.success(`模板「${res.data.name}」已创建`)
+      }
       setTemplateModal(false)
-      setTemplateForm({ name: '', width: 1080, height: 1920, background: '#FFFFFF', layers: '' })
+      setEditingTemplateId('')
+      setSelectedLayerIdx(-1)
       fetchTemplates()
     } catch (e) {
-      toast.error(`创建失败：${e.message}`)
+      toast.error(`保存失败：${e.message}`)
     } finally {
       setTemplateSaving(false)
     }
@@ -1318,7 +1632,7 @@ export default function ImageFactoryPage() {
                   <label className="text-sm font-medium text-gray-700">选择模板</label>
                   <div className="flex gap-1.5">
                     <button
-                      onClick={() => setTemplateModal('create')}
+                      onClick={openCreateTemplate}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-100 transition-all"
                     >
                       <Plus className="w-3 h-3" /> 新建
@@ -1365,6 +1679,16 @@ export default function ImageFactoryPage() {
                           <span
                             onClick={(e) => {
                               e.stopPropagation()
+                              handleEditTemplate(t)
+                            }}
+                            className="p-1 rounded-md text-gray-300 hover:text-violet-500 hover:bg-violet-50 transition-colors"
+                            title="编辑模板"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </span>
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation()
                               setDeletingTemplate(t.id)
                             }}
                             className="p-1 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
@@ -1379,6 +1703,47 @@ export default function ImageFactoryPage() {
                 )}
               </div>
 
+              {/* 套版图片选择：多选图片后应用模板批量渲染（如大促商品图套版） */}
+              <div className="rounded-xl border border-gray-200 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-gray-700">
+                    套版图片{templateImages.length > 0 && `（已选 ${templateImages.length} 张）`}
+                  </label>
+                  <button
+                    onClick={() => setShowTemplatePicker(true)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
+                  >
+                    <Image className="w-3 h-3" /> 从图库选择
+                  </button>
+                </div>
+                {templateImages.length === 0 ? (
+                  <p className="text-[11px] leading-relaxed text-gray-400">
+                    选择图片后应用模板渲染，每张图生成一张成品（适合批量套版）。未选择时按模板默认内容生成。
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {templateImages.map((im) => (
+                      <div key={im.filename} className="relative">
+                        <img
+                          src={absUrl(im.url)}
+                          alt={im.filename}
+                          className="w-14 h-14 rounded-lg object-cover border border-gray-200"
+                        />
+                        <button
+                          onClick={() =>
+                            setTemplateImages((p) => p.filter((x) => x.filename !== im.filename))
+                          }
+                          className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white shadow hover:bg-red-600 transition-colors"
+                          title="移除"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <Button
                 variant="gradient"
                 size="lg"
@@ -1388,7 +1753,11 @@ export default function ImageFactoryPage() {
                 onClick={handleRenderTemplate}
                 className="w-full"
               >
-                {rendering ? '渲染任务执行中（后台）…' : '生成图片'}
+                {rendering
+                  ? '渲染任务执行中（后台）…'
+                  : templateImages.length > 0
+                    ? `应用模板生成（${templateImages.length} 张）`
+                    : '生成图片'}
               </Button>
               {rendering && genTask && (
                 <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
@@ -1411,21 +1780,34 @@ export default function ImageFactoryPage() {
             </div>
 
             <div className="lg:col-span-2">
-              <h3 className="font-medium text-gray-900 mb-4">预览</h3>
+              <h3 className="font-medium text-gray-900 mb-4">
+                预览{generatedImages.length > 1 && `（共 ${generatedImages.length} 张）`}
+              </h3>
               {rendering ? (
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
               ) : generatedImages.length > 0 ? (
-                <div className="relative group rounded-xl overflow-hidden shadow-sm">
-                  <img
-                    src={generatedImages[0].url}
-                    alt="模板结果"
-                    className="w-full h-64 object-cover"
-                  />
-                  {renderImageActions(generatedImages[0])}
+                <div
+                  className={`grid gap-4 ${
+                    generatedImages.length > 1 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'
+                  }`}
+                >
+                  {generatedImages.map((img, i) => (
+                    <div key={`${img.filename || img.url}-${i}`} className="relative group rounded-xl overflow-hidden shadow-sm">
+                      <img
+                        src={img.url}
+                        alt="模板结果"
+                        className="w-full h-64 object-cover"
+                      />
+                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/50 text-white text-xs">
+                        {i + 1}/{generatedImages.length}
+                      </div>
+                      {renderImageActions(img)}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="h-64">
-                  <Empty icon={LayoutTemplate} title="暂无预览" description="选择模板并点击生成" />
+                  <Empty icon={LayoutTemplate} title="暂无预览" description="选择模板（可搭配图片）并点击生成" />
                 </div>
               )}
             </div>
@@ -2278,23 +2660,25 @@ export default function ImageFactoryPage() {
       </Modal>
 
       {/* 删除确认 */}
-      {/* 模板管理弹窗 */}
+      {/* 模板管理弹窗（可视化图层编辑器） */}
       <Modal
-        open={templateModal === 'create'}
+        open={templateModal === 'create' || templateModal === 'edit'}
         onClose={() => setTemplateModal(false)}
-        title="新建模板"
+        title={templateModal === 'edit' ? '编辑模板' : '新建模板'}
+        size="2xl"
       >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 *</label>
-            <input
-              value={templateForm.name}
-              onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
-              placeholder="如：电商商品主图"
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-5">
+          {/* 基础信息 */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">模板名称 *</label>
+              <input
+                value={templateForm.name}
+                onChange={(e) => setTemplateForm({ ...templateForm, name: e.target.value })}
+                placeholder="如：大促打折海报"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+              />
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">宽度</label>
               <input
@@ -2330,17 +2714,251 @@ export default function ImageFactoryPage() {
               />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
-              图层配置（JSON，可选）
-            </label>
-            <textarea
-              value={templateForm.layers}
-              onChange={(e) => setTemplateForm({ ...templateForm, layers: e.target.value })}
-              rows={5}
-              placeholder='[{"type":"text","content":"标题","x":50,"y":100}, {"type":"image","url":"…"}]'
-              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm font-mono resize-none"
-            />
+
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+            {/* 左：图层列表 */}
+            <div className="lg:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                图层（列表越靠下，绘制时越靠上层）
+              </label>
+              {templateForm.layers.length === 0 ? (
+                <div className="rounded-xl border-2 border-dashed border-gray-200 px-4 py-6 text-center">
+                  <p className="text-sm text-gray-400 mb-3">还没有图层，点击下方按钮添加</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {templateForm.layers.map((layer, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => setSelectedLayerIdx(idx)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                        selectedLayerIdx === idx
+                          ? 'border-violet-500 bg-violet-50'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <span
+                        className={`text-xs font-medium px-1.5 py-0.5 rounded ${layer.type === 'text' ? 'bg-blue-50 text-blue-600' : layer.type === 'rect' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}
+                      >
+                        {layer.type === 'text' ? '文字' : layer.type === 'rect' ? '矩形' : '图片'}
+                      </span>
+                      <span className="flex-1 text-xs text-gray-600 truncate">
+                        {layer.type === 'text'
+                          ? layer.text || '（空文字）'
+                          : layer.type === 'image'
+                            ? layer.key || layer.url || '图片槽'
+                            : `${layer.width}×${layer.height}`}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          moveTemplateLayer(idx, -1)
+                        }}
+                        disabled={idx === 0}
+                        className="p-1 rounded text-gray-300 hover:text-violet-500 hover:bg-violet-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="上移一层"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          moveTemplateLayer(idx, 1)
+                        }}
+                        disabled={idx === templateForm.layers.length - 1}
+                        className="p-1 rounded text-gray-300 hover:text-violet-500 hover:bg-violet-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        title="下移一层"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeTemplateLayer(idx)
+                        }}
+                        className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        title="删除图层"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-2 mt-2.5">
+                <button
+                  onClick={() => addTemplateLayer('text')}
+                  className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
+                >
+                  <Type className="w-3.5 h-3.5" /> 文字
+                </button>
+                <button
+                  onClick={() => addTemplateLayer('rect')}
+                  className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 transition-all"
+                >
+                  <Square className="w-3.5 h-3.5" /> 矩形
+                </button>
+                <button
+                  onClick={() => addTemplateLayer('image')}
+                  className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" /> 图片槽
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
+                图片层不填地址即为「图片槽」，渲染时自动套入所选图片（适合批量套版）；文字层的「变量名」可在渲染时批量替换内容。
+              </p>
+            </div>
+
+            {/* 右：画布预览 + 图层属性 */}
+            <div className="lg:col-span-3 space-y-4">
+              {/* 画布实时预览 */}
+              {(() => {
+                const w = Number(templateForm.width) || 1080
+                const h = Number(templateForm.height) || 1920
+                const scale = Math.min(1, 340 / w)
+                const pv = (v) => (Number(v) || 0) * scale
+                return (
+                  <div
+                    className="relative rounded-xl border border-gray-200 overflow-hidden mx-auto shadow-sm"
+                    style={{ width: w * scale, height: h * scale, background: templateForm.background }}
+                  >
+                    {templateForm.layers.map((layer, idx) => {
+                      if (layer.type === 'rect') {
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              position: 'absolute',
+                              left: pv(layer.x),
+                              top: pv(layer.y),
+                              width: pv(layer.width),
+                              height: pv(layer.height),
+                              borderRadius: pv(layer.radius),
+                              background: layer.fill,
+                              opacity: layer.opacity ?? 1,
+                            }}
+                          />
+                        )
+                      }
+                      if (layer.type === 'text') {
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              position: 'absolute',
+                              left: pv(layer.x),
+                              top: pv(layer.y),
+                              width: layer.max_width > 0 ? pv(layer.max_width) : undefined,
+                              fontSize: Math.max(6, pv(layer.font_size)),
+                              color: layer.color,
+                              textAlign: layer.align || 'left',
+                              lineHeight: 1.35,
+                              whiteSpace: 'pre-wrap',
+                              textShadow: layer.shadow
+                                ? '1px 1px 3px rgba(0,0,0,0.5)'
+                                : undefined,
+                            }}
+                          >
+                            {layer.text}
+                          </div>
+                        )
+                      }
+                      if (layer.type === 'image') {
+                        return layer.url ? (
+                          <img
+                            key={idx}
+                            src={absUrl(layer.url)}
+                            alt="layer"
+                            className="absolute object-cover"
+                            style={{
+                              left: pv(layer.x),
+                              top: pv(layer.y),
+                              width: pv(layer.width),
+                              height: pv(layer.height),
+                            }}
+                          />
+                        ) : (
+                          <div
+                            key={idx}
+                            className="absolute border-2 border-dashed border-violet-300 bg-violet-50/60 flex items-center justify-center text-[10px] text-violet-400"
+                            style={{
+                              left: pv(layer.x),
+                              top: pv(layer.y),
+                              width: pv(layer.width),
+                              height: pv(layer.height),
+                            }}
+                          >
+                            {layer.key || '图片槽'}
+                          </div>
+                        )
+                      }
+                      return null
+                    })}
+                    <div className="absolute bottom-1.5 right-2 text-[10px] text-white/70 bg-black/30 px-1.5 py-0.5 rounded">
+                      {w} × {h}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* 选中图层的属性面板 */}
+              {selectedLayerIdx >= 0 && templateForm.layers[selectedLayerIdx] && (
+                <LayerProps
+                  layer={templateForm.layers[selectedLayerIdx]}
+                  onChange={(patch) => updateTemplateLayer(selectedLayerIdx, patch)}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* 高级模式：JSON 编辑（保留给熟悉格式的用户） */}
+          <div className="border-t border-gray-100 pt-3">
+            <button
+              onClick={() =>
+                setTemplateForm((f) => ({
+                  ...f,
+                  showJson: !f.showJson,
+                  layerJson: JSON.stringify(f.layers, null, 2),
+                }))
+              }
+              className="flex items-center gap-1 text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              {templateForm.showJson ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+              高级：JSON 编辑
+            </button>
+            {templateForm.showJson && (
+              <div className="mt-2 flex gap-2 items-start">
+                <textarea
+                  value={templateForm.layerJson}
+                  onChange={(e) => setTemplateForm({ ...templateForm, layerJson: e.target.value })}
+                  rows={6}
+                  className="flex-1 px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-xs font-mono resize-y"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  icon={FileJson2}
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(templateForm.layerJson)
+                      if (!Array.isArray(parsed)) throw new Error('not array')
+                      setTemplateForm((f) => ({ ...f, layers: parsed, showJson: false }))
+                      setSelectedLayerIdx(-1)
+                      toast.success('JSON 已导入到图层编辑器')
+                    } catch {
+                      toast.error('JSON 格式错误，应为图层数组')
+                    }
+                  }}
+                >
+                  导入
+                </Button>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-6">
@@ -2349,11 +2967,70 @@ export default function ImageFactoryPage() {
           </Button>
           <Button
             variant="gradient"
-            icon={Plus}
+            icon={templateModal === 'edit' ? Check : Plus}
             loading={templateSaving}
-            onClick={handleCreateTemplate}
+            onClick={handleSaveTemplate}
           >
-            创建模板
+            {templateModal === 'edit' ? '保存修改' : '创建模板'}
+          </Button>
+        </div>
+      </Modal>
+
+      {/* 套版图片多选弹窗 */}
+      <Modal
+        open={showTemplatePicker}
+        onClose={() => setShowTemplatePicker(false)}
+        title="选择套版图片（可多选）"
+        size="2xl"
+      >
+        {images.length === 0 ? (
+          <Empty icon={ImageIcon} title="图片库为空" description="请先上传或生成图片" />
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+            {images.map((img) => {
+              const picked = templateImages.some((x) => x.filename === img.filename)
+              return (
+                <button
+                  key={img.filename}
+                  onClick={() => {
+                    setTemplateImages((prev) =>
+                      picked
+                        ? prev.filter((x) => x.filename !== img.filename)
+                        : [...prev, { url: absUrl(img.url), filename: img.filename }]
+                    )
+                  }}
+                  className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                    picked ? 'border-violet-500' : 'border-gray-200 hover:border-violet-400'
+                  }`}
+                >
+                  <img
+                    src={absUrl(img.thumb_url || img.url)}
+                    alt={img.filename}
+                    className="w-full h-32 object-cover"
+                    loading="lazy"
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
+                    <p className="text-xs text-white truncate">{img.filename}</p>
+                  </div>
+                  {picked && (
+                    <div className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-violet-500 text-white flex items-center justify-center shadow">
+                      <Check className="w-3.5 h-3.5" />
+                    </div>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        <div className="flex items-center justify-between mt-5">
+          <button
+            onClick={() => setTemplateImages([])}
+            className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+          >
+            清空选择
+          </button>
+          <Button variant="gradient" onClick={() => setShowTemplatePicker(false)}>
+            确定（已选 {templateImages.length} 张）
           </Button>
         </div>
       </Modal>

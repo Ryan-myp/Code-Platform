@@ -943,7 +943,13 @@ async def create_template(req: dict):
 
 
 async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
-    """渲染模板生成图片（同步/异步任务共用执行体）。"""
+    """渲染模板生成图片（同步/异步任务共用执行体）。
+
+    overrides.images 支持两种形态：
+    - dict {key: url}：按图层 key 精确填充图片层（单张渲染）
+    - list [url, ...]：批量模式，每张图依次填充主槽位并逐张渲染（如大促商品图批量套版）
+    主槽位 = 第一个无自带 url（或显式 slot 标记）的 image 层。
+    """
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -965,104 +971,156 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
     height = overrides.get("height", template.get("height", 1920))
     bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
 
-    _report(30, "正在渲染模板…")
-    # 背景：支持渐变简写 "#A→#B"（自上而下），否则纯色
-    if isinstance(bg_color, str) and "→" in bg_color:
-        from image_edit_engine import make_gradient
-
-        top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
-        img = make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
-    else:
-        img = Image.new("RGB", (width, height), bg_color)
-    draw = ImageDraw.Draw(img)
-
+    # ── 槽位图片解析 ──
+    raw_images = overrides.get("images") or payload.get("images") or []
+    slot_map = raw_images if isinstance(raw_images, dict) else {}
+    batch_urls = [] if isinstance(raw_images, dict) else list(raw_images)
+    # 主槽位：第一个无自带 url（或显式 slot 标记）的 image 层
+    main_slot_key = ""
     for layer in template.get("layers", []):
-        layer_type = layer.get("type")
+        if layer.get("type") == "image" and (layer.get("slot") or not layer.get("url")):
+            main_slot_key = layer.get("key") or layer.get("slot") or ""
+            break
 
-        if layer_type == "rect":
-            # 圆角矩形底（卡片/横幅/按钮底）
-            x = int(layer.get("x", 0))
-            y = int(layer.get("y", 0))
-            w = int(layer.get("width", 200))
-            h = int(layer.get("height", 60))
-            radius = int(layer.get("radius", 16))
-            fill = layer.get("fill", "#FFFFFF")
-            opacity = float(layer.get("opacity", 1.0))
-            overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
-            od.rounded_rectangle([x, y, x + w, y + h], radius=radius, fill=fill)
-            if opacity < 1.0:
-                overlay = overlay.filter(ImageFilter.GaussianBlur(0))
-                overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-            img.paste(overlay, (0, 0), overlay)
-            draw = ImageDraw.Draw(img)
+    def _resolve_layer_img(layer: dict, batch_url: str) -> str:
+        """图层图片来源：按 key 精确填充 > 批量主槽 > 图层自带 url。"""
+        key = layer.get("key", "")
+        if key and key in slot_map:
+            return slot_map[key]
+        if batch_url and key == main_slot_key:
+            return batch_url
+        return layer.get("url", "")
 
-        if layer_type == "text":
-            x = int(layer.get("x", 0))
-            y = int(layer.get("y", 0))
-            key = layer.get("key", "")
-            default_text = layer.get("text", "")
-            text = str(overrides.get(key, default_text) or "")
-            font_size = int(layer.get("font_size", 24))
-            font_color = layer.get("color", "#000000")
-            align = layer.get("align", "left")
-            max_width = int(layer.get("max_width", 0) or 0)
-            shadow = layer.get("shadow", "")
+    async def _load_img(source: str) -> Image.Image | None:
+        """加载图层图片：本地图片文件直接读盘，http(s) 走网络下载。"""
+        if not source:
+            return None
+        try:
+            if source.startswith("/api/image-factory/images/"):
+                fname = source.rsplit("/", 1)[-1]
+                local = os.path.join(IMAGE_DIR, fname)
+                if os.path.exists(local):
+                    return Image.open(local).convert("RGBA")
+                return None
+            if source.startswith("http"):
+                resp = await asyncio.to_thread(requests.get, source, timeout=30)
+                return Image.open(io.BytesIO(resp.content)).convert("RGBA")
+        except Exception as e:
+            logger.warning(f"模板图片层加载失败: {e}")
+        return None
 
-            try:
-                font = get_font(font_size)
-            except Exception:
-                font = ImageFont.load_default()
+    async def _render_once(batch_url: str) -> Image.Image:
+        """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
+        # 背景：支持渐变简写 "#A→#B"（自上而下），否则纯色
+        if isinstance(bg_color, str) and "→" in bg_color:
+            from image_edit_engine import make_gradient
 
-            # 自动换行（max_width>0 时按像素宽度折行）
-            if max_width > 0:
-                lines, cur = [], ""
-                for ch in text:
-                    if draw.textlength(cur + ch, font=font) > max_width:
-                        lines.append(cur)
-                        cur = ch
-                    else:
-                        cur += ch
-                if cur:
-                    lines.append(cur)
-                text_lines = lines or [""]
-            else:
-                text_lines = text.split("\n") or [""]
+            top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
+            canvas = make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
+        else:
+            canvas = Image.new("RGB", (width, height), bg_color)
+        draw = ImageDraw.Draw(canvas)
 
-            line_h = int(font_size * 1.35)
-            for i, line in enumerate(text_lines):
-                lx = x
-                if align == "center":
-                    lx = x + (max_width - int(draw.textlength(line, font=font))) // 2
-                elif align == "right":
-                    lx = x + max_width - int(draw.textlength(line, font=font))
-                ly = y + i * line_h
-                if shadow:
-                    try:
-                        sx, sy = (int(v) for v in shadow.split(","))
-                        draw.text((lx + sx, ly + sy), line, fill="#00000080", font=font)
-                    except Exception:
-                        draw.text((lx + 2, ly + 2), line, fill="#00000080", font=font)
-                draw.text((lx, ly), line, fill=font_color, font=font)
+        for layer in template.get("layers", []):
+            layer_type = layer.get("type")
 
-        elif layer_type == "image":
-            image_url = layer.get("url", "")
-            if image_url and image_url.startswith("http"):
+            if layer_type == "rect":
+                # 圆角矩形底（卡片/横幅/按钮底）
+                x = int(layer.get("x", 0))
+                y = int(layer.get("y", 0))
+                w = int(layer.get("width", 200))
+                h = int(layer.get("height", 60))
+                radius = int(layer.get("radius", 16))
+                fill = layer.get("fill", "#FFFFFF")
+                opacity = float(layer.get("opacity", 1.0))
+                overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                od = ImageDraw.Draw(overlay)
+                od.rounded_rectangle([x, y, x + w, y + h], radius=radius, fill=fill)
+                if opacity < 1.0:
+                    overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+                canvas.paste(overlay, (0, 0), overlay)
+                draw = ImageDraw.Draw(canvas)
+
+            if layer_type == "text":
+                x = int(layer.get("x", 0))
+                y = int(layer.get("y", 0))
+                key = layer.get("key", "")
+                default_text = layer.get("text", "")
+                text = str(overrides.get(key, default_text) or "")
+                font_size = int(layer.get("font_size", 24))
+                font_color = layer.get("color", "#000000")
+                align = layer.get("align", "left")
+                max_width = int(layer.get("max_width", 0) or 0)
+                shadow = layer.get("shadow", "")
+
                 try:
-                    resp = await asyncio.to_thread(requests.get, image_url, timeout=30)
-                    layer_img = Image.open(io.BytesIO(resp.content))
-                    layer_img = layer_img.convert("RGBA")
+                    font = get_font(font_size)
+                except Exception:
+                    font = ImageFont.load_default()
 
-                    x = layer.get("x", 0)
-                    y = layer.get("y", 0)
-                    w = layer.get("width", 200)
-                    h = layer.get("height", 200)
-                    layer_img = layer_img.resize((w, h), Image.LANCZOS)
+                # 自动换行（max_width>0 时按像素宽度折行）
+                if max_width > 0:
+                    lines, cur = [], ""
+                    for ch in text:
+                        if draw.textlength(cur + ch, font=font) > max_width:
+                            lines.append(cur)
+                            cur = ch
+                        else:
+                            cur += ch
+                    if cur:
+                        lines.append(cur)
+                    text_lines = lines or [""]
+                else:
+                    text_lines = text.split("\n") or [""]
 
-                    img.paste(layer_img, (x, y), layer_img)
-                except Exception as e:
-                    logger.warning(f"Layer image error: {e}")
+                line_h = int(font_size * 1.35)
+                for i, line in enumerate(text_lines):
+                    lx = x
+                    if align == "center":
+                        lx = x + (max_width - int(draw.textlength(line, font=font))) // 2
+                    elif align == "right":
+                        lx = x + max_width - int(draw.textlength(line, font=font))
+                    ly = y + i * line_h
+                    if shadow:
+                        try:
+                            sx, sy = (int(v) for v in shadow.split(","))
+                            draw.text((lx + sx, ly + sy), line, fill="#00000080", font=font)
+                        except Exception:
+                            draw.text((lx + 2, ly + 2), line, fill="#00000080", font=font)
+                    draw.text((lx, ly), line, fill=font_color, font=font)
 
+            elif layer_type == "image":
+                source = _resolve_layer_img(layer, batch_url)
+                layer_img = await _load_img(source)
+                if layer_img is None:
+                    continue
+                x = int(layer.get("x", 0))
+                y = int(layer.get("y", 0))
+                w = int(layer.get("width", 200))
+                h = int(layer.get("height", 200))
+                layer_img = layer_img.resize((w, h), Image.LANCZOS)
+                canvas.paste(layer_img, (x, y), layer_img)
+
+        return canvas
+
+    _report(30, "正在渲染模板…")
+    if batch_urls:
+        total = len(batch_urls)
+        results = []
+        for i, u in enumerate(batch_urls):
+            _report(30 + int(i * 60 / total), f"正在处理第 {i + 1}/{total} 张…")
+            img = await _render_once(u)
+            filename = save_image(img)
+            results.append({"id": filename, "url": f"/api/image-factory/images/{filename}"})
+        _report(100, "模板渲染完成")
+        out = {"images": results}
+        if results:
+            # 兼容旧客户端：单张时同时回填 url/id
+            out["url"] = results[0]["url"]
+            out["id"] = results[0]["id"]
+        return out
+
+    img = await _render_once("")
     filename = save_image(img)
     _report(100, "模板渲染完成")
     return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
@@ -1119,6 +1177,32 @@ async def delete_template(template_id: str):
     if os.path.exists(template_path):
         os.remove(template_path)
     return {"success": True}
+
+
+@router.put("/templates/{template_id}")
+async def update_template(template_id: str, req: dict):
+    """更新模板（按 id 覆盖名称/尺寸/背景/图层，保留创建时间）"""
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    if not os.path.exists(template_path):
+        raise HTTPException(404, "模板不存在")
+
+    with open(template_path, encoding="utf-8") as f:
+        template = json.load(f)
+
+    template["name"] = req.get("name", template.get("name", "未命名模板"))
+    template["width"] = req.get("width", template.get("width", 1080))
+    template["height"] = req.get("height", template.get("height", 1920))
+    template["background"] = req.get("background", template.get("background", "#FFFFFF"))
+    template["layers"] = req.get("layers", template.get("layers", []))
+    template["updated_at"] = datetime.now().isoformat()
+    # 兼容内置模板：缺 created_at 时补当前时间，保证列表按时间排序
+    if not template.get("created_at"):
+        template["created_at"] = datetime.now().isoformat()
+
+    with open(template_path, "w", encoding="utf-8") as f:
+        json.dump(template, f, ensure_ascii=False, indent=2)
+
+    return template
 
 
 # ── 人像分割 API ─────────────────────────────────────────────
