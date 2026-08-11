@@ -56,6 +56,18 @@ def setup_test_db():
                 created_at TEXT NOT NULL
             )"""
         )
+        # favorites 表由 favorites_api 模块级创建（加载顺序不确定时可能落在旧库），幂等补建
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS favorites (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                fav_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, fav_type, target_id)
+            )"""
+        )
     yield db_path
     # Cleanup
     if original_db_path:

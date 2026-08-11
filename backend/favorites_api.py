@@ -6,7 +6,9 @@
 """
 
 import logging
+import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -18,24 +20,35 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/favorites", tags=["收藏"])
 
-# 注意：favorites 表由 web_search.py init_db() 创建
-# CREATE TABLE IF NOT EXISTS favorites (
-#     id TEXT PRIMARY KEY,
-#     user_id TEXT NOT NULL,
-#     fav_type TEXT NOT NULL,
-#     target_id TEXT NOT NULL,
-#     label TEXT,
-#     created_at TEXT NOT NULL,
-#     UNIQUE(user_id, fav_type, target_id)
-# )
+
+# ── 建表（自包含：不依赖 web_search 模块加载顺序，生产/测试均幂等）──
+
+
+def init_db():
+    with get_db_context() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                fav_type TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, fav_type, target_id)
+            )
+        """)
+        conn.commit()
+
+
+init_db()
 
 # ── 模型 ──────────────────────────────────────────────────
 
 
 class FavoriteRequest(BaseModel):
-    fav_type: str = Field(..., description="收藏类型: tool/record/template/gallery")
-    target_id: str = Field(..., description="目标ID")
-    label: str = Field("", description="显示标签（可选）")
+    fav_type: Literal["tool", "record", "template", "gallery"] = Field(..., description="收藏类型: tool/record/template/gallery")
+    target_id: str = Field(..., min_length=1, max_length=200, description="目标ID")
+    label: str = Field("", max_length=100, description="显示标签（可选）")
 
 
 # ── API ──────────────────────────────────────────────────
@@ -45,7 +58,7 @@ class FavoriteRequest(BaseModel):
 async def add_favorite(req: FavoriteRequest, current_user: dict = require_auth()):
     """添加收藏。"""
     user_id = current_user.get("user_id")
-    fid = f"fav_{int(datetime.now().timestamp() * 1000)}"
+    fid = f"fav_{uuid.uuid4().hex[:12]}"  # 随机 ID，避免毫秒级时间戳并发碰撞
 
     with get_db_context() as conn:
         try:
@@ -61,21 +74,23 @@ async def add_favorite(req: FavoriteRequest, current_user: dict = require_auth()
 
 @router.get("")
 async def list_favorites(
-    fav_type: str = Query("", description="筛选类型: tool/record/template/gallery"),
+    fav_type: Literal["", "tool", "record", "template", "gallery"] = Query("", description="筛选类型: tool/record/template/gallery"),
+    limit: int = Query(100, ge=1, le=200, description="每页条数"),
+    offset: int = Query(0, ge=0, description="偏移量"),
     current_user: dict = require_auth(),
 ):
-    """收藏列表。"""
+    """收藏列表（支持类型筛选 + 分页）。"""
     user_id = current_user.get("user_id")
     with get_db_context() as conn:
         if fav_type:
             rows = conn.execute(
-                "SELECT id, fav_type, target_id, label, created_at FROM favorites WHERE user_id=? AND fav_type=? ORDER BY created_at DESC LIMIT 100",
-                (user_id, fav_type),
+                "SELECT id, fav_type, target_id, label, created_at FROM favorites WHERE user_id=? AND fav_type=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, fav_type, limit, offset),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, fav_type, target_id, label, created_at FROM favorites WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
-                (user_id,),
+                "SELECT id, fav_type, target_id, label, created_at FROM favorites WHERE user_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (user_id, limit, offset),
             ).fetchall()
 
     return [{"id": r[0], "fav_type": r[1], "target_id": r[2], "label": r[3], "created_at": r[4]} for r in rows]
