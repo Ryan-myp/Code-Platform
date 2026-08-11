@@ -557,34 +557,47 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
         raise HTTPException(400, f"图片描述：{res['suggestion']}")
 
     url = f"{AGNES_API_BASE}/images/generations"
-    headers = {"Authorization": f"Bearer {AGNES_API_KEY}"}
-    files = {"image": ("input.png", image_content, "image/png")}
-    data = {"model": model, "prompt": prompt, "size": size, "strength": strength, "n": 1}
+    # 中转站 images/generations 仅支持 JSON body：图片以 base64 Data URI 传入（与短剧插画一致）
+    headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "size": size,
+        "strength": strength,
+        "n": 1,
+        "image": "data:image/png;base64," + base64.b64encode(image_content).decode(),
+    }
     if negative:
-        data["negative_prompt"] = negative
+        body["negative_prompt"] = negative
 
     _report(20, "AI 正在基于参考图生成…")
     try:
-        resp = await asyncio.to_thread(requests.post, url, headers=headers, data=data, files=files, timeout=180)
+        resp = await asyncio.to_thread(requests.post, url, headers=headers, json=body, timeout=180)
         resp.raise_for_status()
         data = resp.json()
         if "data" in data and len(data["data"]) > 0:
-            image_url = data["data"][0].get("url")
+            item = data["data"][0]
+            image_url = item.get("url")
+            b64 = item.get("b64_json")
             if image_url:
                 img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
                 result_img = Image.open(io.BytesIO(img_resp.content))
-                filename = save_image(result_img)
-                art_id = _save_artifact(
-                    filename, project_id, prompt, {"size": size, "model": model, "strength": strength}
-                )
-                _report(100, "生成完成")
-                return {
-                    "id": filename,
-                    "artifact_id": art_id,
-                    "url": f"/api/image-factory/images/{filename}",
-                    "prompt": prompt,
-                    "project_id": project_id,
-                }
+            elif b64:
+                result_img = Image.open(io.BytesIO(base64.b64decode(b64)))
+            else:
+                raise HTTPException(500, f"生成失败: {data}")
+            filename = save_image(result_img)
+            art_id = _save_artifact(
+                filename, project_id, prompt, {"size": size, "model": model, "strength": strength}
+            )
+            _report(100, "生成完成")
+            return {
+                "id": filename,
+                "artifact_id": art_id,
+                "url": f"/api/image-factory/images/{filename}",
+                "prompt": prompt,
+                "project_id": project_id,
+            }
         raise HTTPException(500, f"生成失败: {data}")
     except HTTPException:
         raise
