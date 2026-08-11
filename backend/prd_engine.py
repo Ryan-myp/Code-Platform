@@ -449,10 +449,8 @@ async def review_prd(req: dict):
 
         profile = {
             "name": "platform",
-            "repositories": [repo_path] if repo_path else [],
-            "ir_cache": None,
-            "kb_dir": "",
-            "business_rules": {},
+            "repositories": [{"path": repo_path}] if repo_path else [],
+            "business_domain": "general",
         }
         engine = ReviewEngine(profile, output_dir=str(PROJECT_DIR / "cache"))
         result = engine.review(prd_text)
@@ -485,20 +483,24 @@ async def technical_design(req: dict):
     fallback = False
 
     try:
-        from td_engine import TDEngine
+        # 尝试加载 v2 引擎（单步调用）
+        try:
+            from td_engine_v2 import TDEngine
+        except ImportError:
+            from td_engine import TDEngine
 
         profile = {
             "name": "platform",
-            "repositories": [repo_path] if repo_path else [],
-            "ir_cache": None,
+            "repositories": [{"path": repo_path}] if repo_path else [],
+            "business_domain": "general",
         }
         engine = TDEngine(profile, output_dir=str(PROJECT_DIR / "cache"))
-        result = engine.generate_td(prd_text)
+        result = engine.generate_td(prd_text, use_llm=True)
         output = result.get("design", "") if isinstance(result, dict) else str(result)
         if not output:
             raise ValueError("empty td result")
         log_usage("prd_td", len(prd_text), len(output), time.time() - start)
-        return {"result": output, "engine": "biz-delivery"}
+        return {"result": output, "engine": "biz-delivery-v2"}
     except Exception as e:
         logger.warning(f"biz-delivery TD unavailable, fallback LLM: {e}")
         fallback = True

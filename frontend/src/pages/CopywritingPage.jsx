@@ -21,8 +21,11 @@ import {
   Tag,
   RefreshCw,
   Globe,
+  Wand2,
+  Ruler,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import PlatformPreview, { analyzeContent } from '../components/PlatformPreview'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
@@ -68,6 +71,26 @@ const PLATFORMS = [
   { value: 'zhihu', label: '知乎', icon: TrendingUp, desc: '结论先行 · 专业论证' },
   { value: 'weibo', label: '微博', icon: Megaphone, desc: '短平快 · 话题传播' },
   { value: 'toutiao', label: '头条', icon: Newspaper, desc: '数字标题 · 扫读排版' },
+]
+
+// v18-D：变体重生成角度库（轮换使用，多版本对比）
+const VARIANT_ANGLES = [
+  {
+    label: '故事化',
+    cmd: '换一个完全不同的角度重新创作：改用故事化叙事，以具体人物/场景开头，情感驱动，与上一版结构完全不同',
+  },
+  {
+    label: '理性数据派',
+    cmd: '换一个完全不同的角度重新创作：改用理性专业派风格，强化数据、逻辑论证与结构化要点清单，与上一版结构完全不同',
+  },
+  {
+    label: '反常识切入',
+    cmd: '换一个完全不同的角度重新创作：从反常识/对立观点切入制造张力，再逐步论证收敛到主张，与上一版结构完全不同',
+  },
+  {
+    label: '口语亲切风',
+    cmd: '换一个完全不同的角度重新创作：改用口语化亲切风格，像朋友聊天，多用短句与生活化比喻，与上一版结构完全不同',
+  },
 ]
 
 const RANDOM_PROMPTS = [
@@ -201,7 +224,11 @@ export default function CopywritingPage() {
   const setTone = (v) => setInputs((p) => ({ ...p, tone: v }))
   const setLength = (v) => setInputs((p) => ({ ...p, length: v }))
   const setPlatform = (v) => setInputs((p) => ({ ...p, platform: v }))
-  const [result, setResult] = useState('')
+  // v18-D：多版本变体体系（原版 + 各角度重写版，可切换对比）
+  const [variants, setVariants] = useState([{ id: 'v0', angle: '原版', content: '' }])
+  const [activeVariant, setActiveVariant] = useState('v0')
+  const [viewMode, setViewMode] = useState('preview') // preview / raw
+  const [angleIdx, setAngleIdx] = useState(0) // 变体角度轮换指针
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
   const [copied, setCopied] = useState(false)
@@ -235,7 +262,10 @@ export default function CopywritingPage() {
     }
   }
 
-  const generate = async () => {
+  const currentVariant = variants.find((v) => v.id === activeVariant) || variants[0]
+  const currentContent = currentVariant?.content || ''
+
+  const generate = async (extra = '', angleLabel = '') => {
     const finalPrompt = fileContent
       ? `${prompt}\n\n---参考材料---\n${fileContent.slice(0, 2000)}`
       : prompt
@@ -243,18 +273,27 @@ export default function CopywritingPage() {
       toast.error('请输入文案需求')
       return
     }
-    setResult('')
-    const fullPrompt = `${finalPrompt}\n\n要求：语气风格为${TONES.find((t) => t.value === tone)?.label}，篇幅控制在${LENGTHS.find((l) => l.value === length)?.desc}。`
+    const fullPrompt = `${finalPrompt}\n\n要求：语气风格为${TONES.find((t) => t.value === tone)?.label}，篇幅控制在${LENGTHS.find((l) => l.value === length)?.desc}。${extra ? `\n\n${extra}` : ''}`
     await submitTask(
       '/api/copywriting/generate',
       { type, title, platform, prompt: fullPrompt },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
-          setResult(data.result)
+          const content = data.result || ''
+          if (angleLabel) {
+            // 变体重生成：追加为新版本并自动切换
+            const id = `v${Date.now()}`
+            setVariants((prev) => [...prev, { id, angle: angleLabel, content }])
+            setActiveVariant(id)
+          } else {
+            // 普通生成：覆盖原版
+            setVariants([{ id: 'v0', angle: '原版', content }])
+            setActiveVariant('v0')
+          }
           setTask(null)
           loadHistory()
-          toast.success('文案生成完成')
+          toast.success(angleLabel ? `已生成新版本（${angleLabel}）` : '文案生成完成')
         },
         onError: (e) => {
           setTask(null)
@@ -264,8 +303,21 @@ export default function CopywritingPage() {
     )
   }
 
+  // v18-D：换个角度重写（轮换角度库，生成对比版本）
+  const handleNewVariant = () => {
+    if (!currentContent && !prompt.trim()) {
+      toast.error('请先生成内容或输入需求')
+      return
+    }
+    const angle = VARIANT_ANGLES[angleIdx % VARIANT_ANGLES.length]
+    setAngleIdx((i) => i + 1)
+    generate(angle.cmd, angle.label)
+  }
+
+  const stats = analyzeContent(currentContent)
+
   const copyResult = () => {
-    navigator.clipboard.writeText(result)
+    navigator.clipboard.writeText(currentContent)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -308,7 +360,9 @@ export default function CopywritingPage() {
     setPrompt(item.prompt)
     setType(item.type)
     setTitle(item.title || '')
-    setResult(item.result)
+    setVariants([{ id: 'v0', angle: '原版', content: item.result || '' }])
+    setActiveVariant('v0')
+    setViewMode('preview')
   }
 
   const toggleFavorite = (item, e) => {
@@ -638,10 +692,14 @@ export default function CopywritingPage() {
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-pink-500" /> 生成结果
               </h3>
-              {result && (
+              {currentContent && (
                 <div className="flex items-center gap-2">
-                  <ExportButton content={result} title="文案生成结果" />
-                  <ShareButton content={result} title="文案生成结果" contentType="copywriting" />
+                  <ExportButton content={currentContent} title="文案生成结果" />
+                  <ShareButton
+                    content={currentContent}
+                    title="文案生成结果"
+                    contentType="copywriting"
+                  />
                   <Button
                     variant="ghost"
                     size="sm"
@@ -653,17 +711,110 @@ export default function CopywritingPage() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    icon={Wand2}
+                    loading={!!task}
+                    onClick={handleNewVariant}
+                    title="换个角度重写一版，多版本对比"
+                  >
+                    换个角度
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     icon={RefreshCw}
                     loading={!!task}
-                    onClick={generate}
+                    onClick={() => generate()}
                   >
                     重新生成
                   </Button>
                 </div>
               )}
             </div>
-            {result ? (
-              <MarkdownRenderer content={result} />
+
+            {/* v18-D：变体版本切换 + 预览/原文模式 */}
+            {currentContent && (
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {variants.map((v) => (
+                    <button
+                      key={v.id}
+                      onClick={() => setActiveVariant(v.id)}
+                      title={v.angle}
+                      className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                        v.id === activeVariant
+                          ? 'bg-pink-500 text-white font-medium shadow-sm'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {v.angle}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setViewMode('preview')}
+                    className={`px-3 py-1 rounded-md text-xs transition-colors ${
+                      viewMode === 'preview'
+                        ? 'bg-white text-pink-600 font-medium shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    排版预览
+                  </button>
+                  <button
+                    onClick={() => setViewMode('raw')}
+                    className={`px-3 py-1 rounded-md text-xs transition-colors ${
+                      viewMode === 'raw'
+                        ? 'bg-white text-pink-600 font-medium shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    原文
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {task ? (
+              <div className="flex items-center justify-center py-20">
+                <div className="text-center">
+                  <Sparkles className="w-8 h-8 text-pink-400 animate-pulse mx-auto mb-3" />
+                  <p className="text-sm text-gray-500">
+                    {task.stage || 'AI 创作中…'} · {task.progress || 0}%
+                  </p>
+                </div>
+              </div>
+            ) : currentContent ? (
+              <div>
+                {viewMode === 'preview' ? (
+                  <>
+                    <PlatformPreview content={currentContent} platform={platform} title={title} />
+                    {/* v18-D 结构化深度：内容量化统计 */}
+                    {stats.chars > 0 && (
+                      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 flex items-center gap-1">
+                          <Ruler className="w-3 h-3" /> {stats.chars} 字
+                        </span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                          {stats.paragraphs} 段
+                        </span>
+                        {stats.headings > 0 && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                            {stats.headings} 个小标题
+                          </span>
+                        )}
+                        {stats.tags > 0 && (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                            {stats.tags} 个话题标签
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <MarkdownRenderer content={currentContent} />
+                )}
+              </div>
             ) : (
               <Empty icon={PenTool} title="等待生成" description="输入需求后点击生成" />
             )}

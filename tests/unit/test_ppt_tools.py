@@ -36,10 +36,19 @@ def _sample_outline():
 
 
 class TestTemplates:
-    def test_four_templates_with_palette(self):
+    def test_seven_templates_with_palette(self):
         import extended_api
 
-        assert set(extended_api.PPT_TEMPLATES) == {"business", "roadshow", "teaching", "marketing"}
+        # v18-A：模板 4→7（新增 tech/consulting/finance）
+        assert set(extended_api.PPT_TEMPLATES) == {
+            "business",
+            "roadshow",
+            "teaching",
+            "marketing",
+            "tech",
+            "consulting",
+            "finance",
+        }
         for tid, tpl in extended_api.PPT_TEMPLATES.items():
             assert tpl["name"]
             assert tpl["desc"]
@@ -55,7 +64,7 @@ class TestTemplates:
         import extended_api
 
         accents = {tid: tpl["palette"]["accent"] for tid, tpl in extended_api.PPT_TEMPLATES.items()}
-        assert len(set(accents.values())) == 4, "四类模板主色应互不相同"
+        assert len(set(accents.values())) == 7, "七类模板主色应互不相同"
 
 
 class TestSystemPrompt:

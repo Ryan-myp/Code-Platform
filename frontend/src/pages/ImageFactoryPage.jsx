@@ -27,6 +27,7 @@ import {
   Plus,
   FileJson2,
   Package,
+  ZoomIn,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -1070,8 +1071,27 @@ export default function ImageFactoryPage() {
               ) : generatedImages.length > 0 ? (
                 <div className="grid grid-cols-2 gap-4">
                   {generatedImages.map((img, idx) => (
-                    <div key={idx} className="relative group rounded-xl overflow-hidden shadow-sm">
-                      <img src={img.url} alt={img.prompt} className="w-full h-48 object-cover" />
+                    <div key={idx} className="relative group rounded-xl overflow-hidden shadow-sm bg-gray-50">
+                      {/* v18-B：object-contain + aspect-square 完整展示构图，避免裁切；hover 浮层快速预览 */}
+                      <img
+                        src={img.url}
+                        alt={img.prompt}
+                        className="w-full aspect-square object-contain transition-transform duration-300 group-hover:scale-[1.03]"
+                      />
+                      {generatedImages.length > 1 && (
+                        <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/50 text-white text-[10px] font-medium">
+                          {idx + 1}/{generatedImages.length}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setPreviewImage(img)}
+                        className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center"
+                        aria-label={`放大查看第 ${idx + 1} 张`}
+                      >
+                        <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/90 text-xs font-medium text-gray-800 shadow">
+                          <ZoomIn className="w-3.5 h-3.5" /> 放大查看
+                        </span>
+                      </button>
                       {renderImageActions(img)}
                     </div>
                   ))}
@@ -2263,7 +2283,36 @@ export default function ImageFactoryPage() {
         }
       >
         {previewImage && (
-          <img src={previewImage.url} alt={previewImage.filename} className="w-full rounded-lg" />
+          <div className="space-y-3">
+            <div className="bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden max-h-[55vh]">
+              <img
+                src={previewImage.url}
+                alt={previewImage.filename}
+                className="max-w-full max-h-[55vh] object-contain"
+              />
+            </div>
+            {/* v18-B：灯箱元信息（prompt/尺寸/时间），让每张图可追溯 */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2.5 rounded-lg bg-gray-50 border border-gray-100">
+                <div className="text-gray-400 mb-0.5">提示词</div>
+                <div className="text-gray-700 line-clamp-2">{previewImage.prompt || '-'}</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-gray-50 border border-gray-100">
+                <div className="text-gray-400 mb-0.5">尺寸</div>
+                <div className="text-gray-700">
+                  {previewImage.meta?.size || previewImage.size || '-'}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-gray-50 border border-gray-100">
+                <div className="text-gray-400 mb-0.5">创建时间</div>
+                <div className="text-gray-700">
+                  {previewImage.created_at
+                    ? String(previewImage.created_at).slice(0, 16).replace('T', ' ')
+                    : '-'}
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </Modal>
 

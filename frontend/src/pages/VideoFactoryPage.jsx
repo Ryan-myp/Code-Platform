@@ -1550,16 +1550,34 @@ export default function VideoFactoryPage() {
         }
       >
         {selectedVideo && (
-          <>
-            <video
-              ref={videoRef}
-              src={selectedVideo.url}
-              className="w-full rounded-lg"
-              controls
-              autoPlay
-            />
-            <div className="mt-3 text-sm text-gray-500">{selectedVideo.filename}</div>
-          </>
+          <div className="space-y-3">
+            {/* v18-C：影院容器 + 元信息面板（标题/格式/大小），成片展示专业感 */}
+            <div className="bg-black rounded-xl overflow-hidden flex items-center justify-center">
+              <video
+                ref={videoRef}
+                src={selectedVideo.url}
+                className="max-w-full max-h-[52vh] w-auto"
+                controls
+                autoPlay
+                playsInline
+              />
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-gray-900 truncate">
+                  {selectedVideo.title || selectedVideo.filename}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5">
+                  {selectedVideo.filename} · {formatBytes(selectedVideo.size)}
+                </div>
+              </div>
+              {selectedVideo.prompt && (
+                <div className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-2.5 py-1.5 max-w-[55%] line-clamp-2 flex-shrink-0">
+                  生成提示词：{selectedVideo.prompt}
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </Modal>
 

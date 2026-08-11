@@ -25,6 +25,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import SlidePreviewer from '../components/SlidePreviewer'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
@@ -69,6 +70,24 @@ const TEMPLATE_STYLES = [
     label: '营销方案',
     desc: '策划/活动方案',
     color: 'bg-pink-600',
+  },
+  {
+    value: 'tech',
+    label: '科技产品',
+    desc: '技术方案/产品发布',
+    color: 'bg-blue-500',
+  },
+  {
+    value: 'consulting',
+    label: '咨询分析',
+    desc: '行业研究/战略咨询',
+    color: 'bg-orange-600',
+  },
+  {
+    value: 'finance',
+    label: '金融投研',
+    desc: '投资分析/行业研究',
+    color: 'bg-teal-600',
   },
 ]
 
@@ -704,29 +723,7 @@ export default function PPTFactoryPage() {
               )}
             </div>
             {slides.length > 0 ? (
-              <div className="space-y-3 max-h-[600px] overflow-auto">
-                {slides.map((slide, i) => (
-                  <div
-                    key={i}
-                    className={`p-3 rounded-lg border ${themeColorMap[theme] || 'border-gray-200 bg-gray-50'}`}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="w-6 h-6 rounded-full bg-white/80 shadow-sm flex items-center justify-center text-xs font-bold text-gray-700">
-                        {i + 1}
-                      </span>
-                      <span className="font-medium text-sm text-gray-900">{slide.title}</span>
-                    </div>
-                    <div className="text-xs text-gray-600 ml-8 whitespace-pre-line">
-                      {slide.content}
-                    </div>
-                    {slide.notes && (
-                      <div className="text-[10px] text-gray-400 ml-8 mt-1 italic">
-                        备注: {slide.notes}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <SlidePreviewer slides={slides} template={template} title={title} />
             ) : result ? (
               <MarkdownRenderer content={result} />
             ) : (
