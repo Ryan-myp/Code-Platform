@@ -6,7 +6,7 @@ import api, { API_BASE } from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 
 export default function VoiceChatPage() {
-  const toast = useToast()
+  const toast = useRef(useToast()).current
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [messages, setMessages] = useState([])

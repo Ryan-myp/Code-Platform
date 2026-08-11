@@ -99,3 +99,60 @@ class TestEnhancePrompt:
 
         paths = [r.path for r in video_factory.router.routes]
         assert "/api/video-factory/enhance-prompt" in paths
+
+
+class TestI2vidUrlValidation:
+    """fixA：i2vid 图生视频参考图 URL 服务端校验。"""
+
+    def _call(self, mode="i2vid", image=""):
+        import video_factory
+
+        return asyncio.run(
+            video_factory.create_video_task(
+                prompt="测试描述",
+                model="agnes-video-v2.0",
+                width=1152,
+                height=768,
+                duration=5,
+                mode=mode,
+                image=image,
+                frame_rate=24,
+                sync=False,
+                current_user={"user_id": "u1", "username": "u1", "role": "user"},
+            )
+        )
+
+    def test_i2vid_missing_image_rejected(self):
+        with pytest.raises(HTTPException) as ei:
+            self._call(mode="i2vid", image="  ")
+        assert ei.value.status_code == 400
+        assert "需要填写参考图片 URL" in str(ei.value.detail)
+
+    def test_i2vid_non_http_url_rejected(self):
+        with pytest.raises(HTTPException) as ei:
+            self._call(mode="i2vid", image="file:///tmp/a.png")
+        assert ei.value.status_code == 400
+        assert "http:// 或 https://" in str(ei.value.detail)
+
+    def test_i2vid_valid_url_accepted(self):
+        import video_factory
+
+        with (
+            patch.object(video_factory, "_available_channels", return_value=["agnes"]),
+            patch("video_factory.create_task", return_value={"id": "t1", "status": "pending"}) as ct,
+        ):
+            out = self._call(mode="i2vid", image="https://example.com/ref.png")
+        assert out["task_id"] == "t1"
+        assert ct.call_args.args[0] == "video_generate"
+        assert ct.call_args.args[1]["image"] == "https://example.com/ref.png"
+
+    def test_ti2vid_without_image_still_works(self):
+        import video_factory
+
+        with (
+            patch.object(video_factory, "_available_channels", return_value=["agnes"]),
+            patch("video_factory.create_task", return_value={"id": "t2", "status": "pending"}),
+        ):
+            out = self._call(mode="ti2vid", image="")
+        assert out["task_id"] == "t2"
+

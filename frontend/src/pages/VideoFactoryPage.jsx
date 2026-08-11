@@ -214,6 +214,7 @@ export default function VideoFactoryPage() {
   const setCameraMotion = (v) => setInputs((p) => ({ ...p, cameraMotion: v ?? '' }))
   const setMood = (v) => setInputs((p) => ({ ...p, mood: v ?? '' }))
   const [image, setImage] = useState('')
+  const [imageError, setImageError] = useState(false) // 参考图预览失败提示
   const [creating, setCreating] = useState(false)
   const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
   const [lastResult, setLastResult] = useState(null)
@@ -369,7 +370,21 @@ export default function VideoFactoryPage() {
     form.append('height', height)
     form.append('duration', duration)
     form.append('mode', mode)
-    if (mode === 'i2vid') form.append('image', image)
+    if (mode === 'i2vid') {
+      // 图生视频：参考图必填且必须是可访问的 http/https 直链（提前校验，避免提交后失败）
+      const imgUrl = image.trim()
+      if (!imgUrl) {
+        toast.error('图生视频模式需要填写参考图片 URL')
+        setCreating(false)
+        return
+      }
+      if (!/^https?:\/\//.test(imgUrl)) {
+        toast.error('参考图片 URL 必须以 http:// 或 https:// 开头')
+        setCreating(false)
+        return
+      }
+      form.append('image', imgUrl)
+    }
     form.append('frame_rate', frameRate)
     const r = await submitTask('/api/video-factory/generate', form, {
       onUpdate: handleTaskUpdate,
@@ -932,6 +947,22 @@ export default function VideoFactoryPage() {
               placeholder="https://example.com/image.jpg"
               className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             />
+            {image.trim() && (
+              <div className="mt-2">
+                <img
+                  src={image.trim()}
+                  alt="参考图预览"
+                  onError={() => setImageError(true)}
+                  onLoad={() => setImageError(false)}
+                  className="max-h-40 rounded-lg border border-gray-200 object-contain bg-gray-50"
+                />
+                {imageError && (
+                  <p className="mt-1 text-xs text-red-500">
+                    图片加载失败，请检查 URL 是否可访问（需 http/https 直链）
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 

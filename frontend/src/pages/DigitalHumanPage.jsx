@@ -128,7 +128,7 @@ const EMOTION_OPTIONS = [
 const emotionLabel = (id) => EMOTION_OPTIONS.find((e) => e.id === id)?.label || id || '自动'
 
 export default function DigitalHumanPage() {
-  const toast = useToast()
+  const toast = useRef(useToast()).current
 
   // 生成表单
   const [text, setText] = useState('')

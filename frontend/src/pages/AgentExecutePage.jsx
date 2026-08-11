@@ -43,7 +43,7 @@ export default function AgentExecutePage() {
   const { id } = useParams()
   const agentId = id
   const navigate = useNavigate()
-  const toast = useToast()
+  const toast = useRef(useToast()).current
 
   const [agent, setAgent] = useState(null)
   const [sessions, setSessions] = useState([])

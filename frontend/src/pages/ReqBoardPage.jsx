@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   ListTodo,
   FolderKanban,
@@ -377,7 +377,7 @@ function ProjectFormModal({ open, onClose, onSubmit, loading }) {
 
 export default function ReqBoardPage() {
   const navigate = useNavigate()
-  const toast = useToast()
+  const toast = useRef(useToast()).current
   const [activeTab, setActiveTab] = useState('requirements')
   const [requirements, setRequirements] = useState([])
   const [projects, setProjects] = useState([])

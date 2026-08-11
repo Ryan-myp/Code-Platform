@@ -37,7 +37,7 @@ const TYPE_CONFIG = {
 }
 
 export default function NotificationsPage() {
-  const toast = useToast()
+  const toast = useRef(useToast()).current
   const navigate = useNavigate()
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(true)

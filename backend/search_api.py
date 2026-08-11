@@ -8,6 +8,7 @@ v10.3：支持 limit 参数（前端已传但此前被忽略）；agents/workflo
        修复 tools 搜索因全局结果数已达 30 而提前中断的问题。
 """
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends
@@ -168,6 +169,106 @@ def _search_history(conn, like: str, limit: int) -> list:
     return results
 
 
+def _like_patterns(like: str) -> list:
+    """LIKE 模式集合：原词 + JSON 转义形式。
+
+    metadata/content 的 JSON 文本由 json.dumps 默认 ensure_ascii=True 写入，
+    中文会存为 \\uXXXX 转义序列，直接 LIKE 中文字面无法命中，需追加转义模式。
+    """
+    pats = [like]
+    try:
+        inner = json.dumps(like, ensure_ascii=True)
+        if inner.startswith('"') and inner.endswith('"') and "\\u" in inner:
+            pats.append(f"%{inner[1:-1]}%")
+    except Exception:
+        pass
+    return pats
+
+
+def _search_works(conn, like: str, limit: int) -> list:
+    """创作工厂作品（v22.1 补齐统一搜索缺口）。
+
+    - artifacts 表：图片（image_factory / meme_factory）、视频、歌词、歌曲
+      （metadata/content 为 JSON 文本，LIKE 可模糊匹配 prompt/标题，含 \\u 转义形式）
+    - 小游戏 / 小程序：game_projects / miniapp_projects 表（名称/需求描述匹配）
+    表缺失或查询异常时静默跳过，不影响主链路。
+    """
+    results = []
+    pats = _like_patterns(like)
+    try:
+        rows = conn.execute(
+            "SELECT id, type, author, content, media_url, metadata, created_at FROM artifacts "
+            "WHERE active=1 AND type IN ('image','video','lyrics','audio') "
+            "AND (metadata LIKE ? OR content LIKE ? OR metadata LIKE ? OR content LIKE ?) "
+            "ORDER BY created_at DESC LIMIT ?",
+            (pats[0], pats[0], *pats[1:], *pats[1:], limit),
+        ).fetchall()
+    except Exception:
+        rows = []
+    for r in rows:
+        md = {}
+        try:
+            md = json.loads(r["metadata"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            pass
+        is_meme = r["type"] == "image" and r["author"] == "meme_factory"
+        if is_meme:
+            label, path, type_ = "表情包", "/meme", "meme"
+        elif r["type"] == "image":
+            label, path, type_ = "图片作品", "/image-factory", "image"
+        elif r["type"] == "video":
+            label, path, type_ = "视频作品", "/video-factory", "video"
+        elif r["type"] == "audio":
+            label, path, type_ = "歌曲作品", "/music-factory", "audio"
+        else:
+            label, path, type_ = "歌词作品", "/music-factory", "lyrics"
+        prompt = md.get("prompt") or ""
+        if not prompt:
+            try:
+                content = json.loads(r["content"] or "{}")
+                prompt = content.get("prompt", "") if isinstance(content, dict) else str(content)[:60]
+            except (TypeError, json.JSONDecodeError):
+                prompt = str(r["content"] or "")[:60]
+        title = md.get("title") or prompt[:24] or f"{label} · {(r['created_at'] or '')[:16]}"
+        results.append(
+            {
+                "type": type_,
+                "id": r["id"],
+                "title": title[:60],
+                "description": (prompt or "")[:120],
+                "module": label,
+                "path": path,
+                "created_at": r["created_at"],
+            }
+        )
+    # 小游戏 / 小程序（表可能存在也可能为空，查询失败静默跳过）
+    for table, label, path, type_ in (
+        ("game_projects", "小游戏", "/games", "game"),
+        ("miniapp_projects", "小程序", "/miniapp", "miniapp"),
+    ):
+        try:
+            rows2 = conn.execute(
+                f"SELECT id, name, requirement, created_at FROM {table} "
+                f"WHERE name LIKE ? OR requirement LIKE ? ORDER BY created_at DESC LIMIT {limit}",
+                (like, like),
+            ).fetchall()
+        except Exception:
+            rows2 = []
+        for r2 in rows2:
+            results.append(
+                {
+                    "type": type_,
+                    "id": r2["id"],
+                    "title": (r2["name"] or "")[:60],
+                    "description": (r2["requirement"] or "")[:120],
+                    "module": label,
+                    "path": path,
+                    "created_at": r2["created_at"],
+                }
+            )
+    return results[:limit]
+
+
 # ── 统一入口 ────────────────────────────────────────────────────────────────
 
 
@@ -210,6 +311,10 @@ def global_search(payload: dict, current_user: dict = Depends(require_auth)):
 
         if "history" in types:
             results.extend(_search_history(conn, like, limit))
+
+        # v22.1：创作工厂作品（图片/视频/音乐/表情包/小游戏/小程序）
+        if "works" in types:
+            results.extend(_search_works(conn, like, limit))
 
     finally:
         conn.close()

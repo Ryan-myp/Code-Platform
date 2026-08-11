@@ -5,6 +5,7 @@ import asyncio
 import io
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -693,6 +694,14 @@ async def create_video_task(
     current_user: dict = require_auth(),
 ):
     """创建视频生成任务（默认异步任务，worker 内创建外部任务并轮询到完成）。"""
+    # i2vid 图生视频：参考图必填且必须是可访问的 http/https 直链（服务端校验，防直接调 API 绕过前端）
+    is_i2vid = mode.strip().lower() in ("i2vid", "img2vid", "image")
+    img_url = (image or "").strip()
+    if is_i2vid:
+        if not img_url:
+            raise HTTPException(400, "图生视频模式需要填写参考图片 URL")
+        if not re.match(r"^https?://", img_url):
+            raise HTTPException(400, "参考图片 URL 必须以 http:// 或 https:// 开头")
     if not _available_channels():
         raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
@@ -705,7 +714,7 @@ async def create_video_task(
         "height": height,
         "duration": duration,
         "mode": mode,
-        "image": image,
+        "image": img_url,
         "frame_rate": frame_rate,
         "project_id": project_id,
     }

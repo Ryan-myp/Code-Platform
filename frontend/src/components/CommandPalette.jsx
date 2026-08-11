@@ -39,6 +39,7 @@ import {
   Send,
   Smartphone,
   Gamepad2,
+  Smile,
   Mic2,
   Sticker,
   UserCircle,
@@ -610,6 +611,14 @@ const GLOBAL_ICONS = {
   docs: Database,
   history: MessageSquare,
   requirement: FileText,
+  // v22.1：创作工厂作品
+  image: Image,
+  video: Film,
+  audio: Music,
+  lyrics: FileText,
+  meme: Smile,
+  game: Gamepad2,
+  miniapp: Smartphone,
 }
 const GLOBAL_CLS = {
   agents: 'bg-violet-100 text-violet-600',
@@ -619,6 +628,14 @@ const GLOBAL_CLS = {
   docs: 'bg-cyan-100 text-cyan-600',
   history: 'bg-gray-100 text-gray-600',
   requirement: 'bg-brand-100 text-brand-600',
+  // v22.1：创作工厂作品
+  image: 'bg-pink-100 text-pink-600',
+  video: 'bg-rose-100 text-rose-600',
+  audio: 'bg-violet-100 text-violet-600',
+  lyrics: 'bg-fuchsia-100 text-fuchsia-600',
+  meme: 'bg-orange-100 text-orange-600',
+  game: 'bg-indigo-100 text-indigo-600',
+  miniapp: 'bg-teal-100 text-teal-600',
 }
 
 export default function CommandPalette({ isOpen, onClose }) {
@@ -663,7 +680,7 @@ export default function CommandPalette({ isOpen, onClose }) {
       api
         .post('/api/search/global', {
           query: q,
-          types: ['agents', 'skills', 'workflows', 'tools', 'docs', 'history'],
+          types: ['agents', 'skills', 'workflows', 'tools', 'docs', 'history', 'works'],
           limit: 5,
         })
         .then((r) => setGlobalResults((r.data?.results || []).slice(0, 5)))

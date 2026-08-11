@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   LayoutGrid,
@@ -37,7 +37,9 @@ const C2C_CATEGORIES = ['game', 'miniapp', 'meme', 'voice', 'other']
 
 export default function TemplateMarketPage() {
   const navigate = useNavigate()
-  const toast = useToast()
+  // toast 固定引用：useToast 无 Provider 时每次 render 返回新对象，
+  // 直接放进依赖数组会导致 effect 无限重跑（挂起）；用 ref 锁住首帧引用
+  const toast = useRef(useToast()).current
   const [data, setData] = useState(null)
   const [cat] = useState('all')
   const [loading, setLoading] = useState(true)

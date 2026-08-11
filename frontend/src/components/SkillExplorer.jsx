@@ -126,7 +126,7 @@ function TreeNode({ node, depth = 0, expanded, onToggle, selectedPath, onSelect,
 
 // ─── 文件浏览器弹窗 ──────────────────────────────────────────
 export default function SkillExplorer({ open, onClose, skill, onEdit, onDelete, onChanged }) {
-  const toast = useToast()
+  const toast = useRef(useToast()).current
   const [tree, setTree] = useState(null)
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(new Set())
