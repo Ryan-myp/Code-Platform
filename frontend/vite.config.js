@@ -23,7 +23,10 @@ export default defineConfig({
     proxy: {
       // 仅代理 /api/ 前缀（带斜杠），避免 /api-platform、/api-docs 等 SPA 路由 被误转发
       // 后端监听 IPv4 *:8888，代理目标用 127.0.0.1 避免 localhost 解析到 ::1 连接失败
-      '/api/': 'http://127.0.0.1:8888'
+      '/api/': 'http://127.0.0.1:8888',
+      // 上传媒体文件（数字人形象/声音、音频缓存、视频等）由后端静态服务，
+      // 不代理则被 SPA fallback 返回 index.html → 图片/音频裂图
+      '/uploads/': 'http://127.0.0.1:8888'
     }
   }
 })

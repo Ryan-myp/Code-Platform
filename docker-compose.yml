@@ -21,6 +21,7 @@ services:
     volumes:
       - db-data:/data
       - ./backend/artifacts:/app/backend/artifacts
+      - ./backend/uploads:/app/backend/uploads  # 上传媒体（数字人形象/声音/音频视频），容器重建不丢失
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8888/api/health"]
       interval: 30s
