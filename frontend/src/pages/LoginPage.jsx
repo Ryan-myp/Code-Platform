@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Loader2, Lock, User as UserIcon, UserPlus, AtSign } from 'lucide-react'
+import { Eye, EyeOff, Loader2, Lock, User as UserIcon, UserPlus, AtSign, Sparkles, Wand2, Zap, Puzzle } from 'lucide-react'
 import { api } from '../lib/api'
 
 export default function LoginPage({ onLogin }) {
@@ -72,6 +72,13 @@ export default function LoginPage({ onLogin }) {
 
   const switchMode = (m) => {
     setMode(m)
+    setError('')
+  }
+
+  // 演示账号一键填充（降低小白用户上手门槛）
+  const fillDemoAccount = () => {
+    setUsername('admin')
+    setPassword('admin123')
     setError('')
   }
 
@@ -226,6 +233,14 @@ export default function LoginPage({ onLogin }) {
               默认账号：<span className="font-mono text-purple-600">admin</span> /{' '}
               <span className="font-mono text-purple-600">admin123</span>
             </p>
+            <button
+              type="button"
+              onClick={fillDemoAccount}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-purple-600 hover:text-purple-700 bg-purple-100 hover:bg-purple-200/70 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              一键填入演示账号
+            </button>
           </div>
         )}
         {mode === 'register' && (
@@ -237,6 +252,28 @@ export default function LoginPage({ onLogin }) {
             </p>
           </div>
         )}
+
+        {/* 平台能力亮点：让访客 3 秒感知平台价值 */}
+        <div className="mt-5 pt-5 border-t border-gray-200/70">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {[
+              { icon: <Wand2 className="w-3.5 h-3.5" />, text: '54+ 效率工具' },
+              { icon: <Puzzle className="w-3.5 h-3.5" />, text: 'AI 工坊全覆盖' },
+              { icon: <Sparkles className="w-3.5 h-3.5" />, text: '多模型智能路由' },
+            ].map((it) => (
+              <span
+                key={it.text}
+                className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-full px-3 py-1"
+              >
+                <span className="text-purple-500">{it.icon}</span>
+                {it.text}
+              </span>
+            ))}
+          </div>
+          <p className="text-center text-[11px] text-gray-400 mt-2">
+            从内容创作到代码研发，从数据分析到智能办公——一个平台解决你的全部工作
+          </p>
+        </div>
       </div>
     </div>
   )

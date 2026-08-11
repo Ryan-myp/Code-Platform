@@ -147,6 +147,79 @@ class TestPromptTimeConstraint:
         assert "[来源1] x" in prompt
 
 
+class TestSearchCache:
+    """v16 搜索结果缓存：同词重复搜索秒回，省 LLM 调用。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean_cache(self):
+        import web_search
+
+        web_search._cache_clear()
+        yield
+        web_search._cache_clear()
+
+    def test_cache_key_normalizes_query(self):
+        from web_search import _cache_key
+
+        assert _cache_key("  AI 趋势  ") == _cache_key("ai 趋势")
+        assert _cache_key("AI", "7d", "github.com") != _cache_key("AI")
+        assert _cache_key("AI", "7d", "github.com") == _cache_key("AI", "7d", "github.com")
+
+    def test_cache_set_get_roundtrip(self):
+        from web_search import _cache_get, _cache_key, _cache_set
+
+        key = _cache_key("python", "", "")
+        _cache_set(key, {"summary": "s", "sources": []})
+        assert _cache_get(key)["summary"] == "s"
+
+    def test_cache_expired_by_ttl(self, monkeypatch):
+        import web_search
+
+        key = web_search._cache_key("x")
+        web_search._cache_set(key, {"summary": "s"})
+        # 把时间拨到 TTL 之后
+        monkeypatch.setattr(web_search.time, "time", lambda: web_search._SEARCH_CACHE[key][0] + web_search._SEARCH_CACHE_TTL + 1)
+        assert web_search._cache_get(key) is None
+
+    def test_cache_cap_evicts_oldest(self, monkeypatch):
+        import web_search
+
+        monkeypatch.setattr(web_search, "_SEARCH_CACHE_MAX", 2)
+        web_search._cache_set("k1", {"summary": "a"})
+        web_search._cache_set("k2", {"summary": "b"})
+        web_search._cache_set("k3", {"summary": "c"})
+        assert web_search._cache_get("k1") is None  # 最旧被淘汰
+        assert web_search._cache_get("k3")["summary"] == "c"
+
+    def test_worker_second_call_hits_cache(self, setup_test_db, monkeypatch):
+        """worker 集成：同词第二次调用不再触发网络/LLM，直接返回首次结果。"""
+        from web_search import _web_search_worker
+
+        call_count = {"llm": 0, "ddg": 0}
+
+        def fake_ddg(q, n):
+            call_count["ddg"] += 1
+            return [{"title": "源", "snippet": "内容", "url": "https://news.example.com/a", "source": "ddg"}]
+
+        async def fake_llm(system, user, **_kw):
+            call_count["llm"] += 1
+            return "摘要内容"
+
+        monkeypatch.setattr("web_search._search_ddg", fake_ddg)
+        monkeypatch.setattr("web_search._search_fallback", lambda q, n: [])
+        monkeypatch.setattr("web_search.call_llm_async", fake_llm)
+        monkeypatch.setattr("web_search.log_usage", lambda *a, **kw: None)
+
+        payload = {"query": "缓存测试", "num_results": 5, "time_range": "", "domain_filter": ""}
+        first = asyncio.run(_web_search_worker(payload, progress=lambda p, s: None))
+        second = asyncio.run(_web_search_worker(payload, progress=lambda p, s: None))
+
+        assert first == second  # 命中缓存返回完全一致的结果
+        assert call_count["llm"] == 1  # LLM 只调了一次
+        assert call_count["ddg"] == 1  # 外部搜索也只调了一次
+        assert first["sources"][0]["url"] == "https://news.example.com/a"
+
+
 class TestWebSearchRequest:
     def test_valid_time_range_accepted(self):
         from web_search import WebSearchRequest

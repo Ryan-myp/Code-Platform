@@ -7,6 +7,7 @@
 import json
 import logging
 import re
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -136,6 +137,44 @@ def init_db():
 
 
 init_db()
+
+
+# ── 搜索结果内存缓存（v16）：同词重复搜索秒回，省一次外部搜索 + LLM 调用 ──
+
+
+_SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
+_SEARCH_CACHE_TTL = 600  # 10 分钟
+_SEARCH_CACHE_MAX = 200  # 上限防内存膨胀
+
+
+def _cache_key(query: str, time_range: str = "", domain_filter: str = "") -> str:
+    """缓存键：小写关键词 + 筛选条件（不同筛选条件结果不同，分开缓存）。"""
+    return f"{time_range}|{domain_filter}|{query.strip().lower()}"
+
+
+def _cache_get(key: str) -> dict | None:
+    """读取缓存：过期即失效并清理。"""
+    item = _SEARCH_CACHE.get(key)
+    if item and time.time() - item[0] < _SEARCH_CACHE_TTL:
+        return item[1]
+    _SEARCH_CACHE.pop(key, None)
+    return None
+
+
+def _cache_set(key: str, value: dict) -> None:
+    """写入缓存：超上限时淘汰最旧一条（简单 FIFO 近似，足够）。"""
+    if len(_SEARCH_CACHE) >= _SEARCH_CACHE_MAX:
+        try:
+            oldest = min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])
+            _SEARCH_CACHE.pop(oldest, None)
+        except ValueError:
+            pass
+    _SEARCH_CACHE[key] = (time.time(), value)
+
+
+def _cache_clear() -> None:
+    """清空缓存（测试用）。"""
+    _SEARCH_CACHE.clear()
 
 
 # ── DuckDuckGo 搜索 ────────────────────────────────────────
@@ -294,6 +333,13 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
     time_range = payload.get("time_range", "")
     domain_filter = payload.get("domain_filter", "")
 
+    # v16 缓存命中：10 分钟内同词同条件直接返回，秒回且不重复消耗 LLM 额度
+    ckey = _cache_key(query, time_range, domain_filter)
+    cached = _cache_get(ckey)
+    if cached:
+        _report(100, "完成")
+        return cached
+
     _report(15, "多源搜索中")
     results = _search_ddg(query, num_results)
     if len(results) < 2:
@@ -344,7 +390,9 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
                 ),
             )
         _report(100, "完成")
-        return {"query": query, "mode": "llm_only", "summary": summary, "sources": [], "related": related}
+        result = {"query": query, "mode": "llm_only", "summary": summary, "sources": [], "related": related}
+        _cache_set(ckey, result)
+        return result
 
     search_context = ""
     for i, r in enumerate(results):
@@ -377,7 +425,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
             ),
         )
     _report(100, "完成")
-    return {
+    result = {
         "query": query,
         "mode": "web_search",
         "summary": summary,
@@ -386,6 +434,8 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
         "sources": [{"title": r["title"], "url": r["url"], "snippet": r["snippet"][:200]} for r in results],
         "related": [r["title"] for r in results[:3]],
     }
+    _cache_set(ckey, result)
+    return result
 
 
 async def _web_search_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
