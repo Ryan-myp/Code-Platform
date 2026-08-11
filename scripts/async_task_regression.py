@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """异步任务接入回归验证：各生成端点应返回 task_id + pending，随后任务被 worker 执行。"""
 import json
-import sys
 import time
 import urllib.request
 
@@ -41,7 +40,6 @@ def check(label, resp, expect_task=True):
 
 
 def main():
-    import urllib.parse
     _, login = req("POST", "/api/auth/login", data={"username": "admin", "password": "admin123"})
     token = login.get("access_token", "")
     print("login:", "ok" if token else "FAIL")

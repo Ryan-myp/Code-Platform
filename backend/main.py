@@ -123,6 +123,7 @@ from search_api import router as search_api_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
 from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
+from short_drama import router as drama_router  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from task_queue import router as task_queue_router  # noqa: E402
@@ -293,10 +294,13 @@ _QUOTA_PATHS = (
     "/api/image-factory/template/render",
     "/api/image-factory/try-on/generate",
     "/api/video-factory/generate",
+    "/api/video-factory/tools/",
     "/api/music-factory/lyrics/generate",
     "/api/music-factory/music/generate",
     "/api/music-factory/tts/sing",
     "/api/meme/generate",
+    "/api/games/generate",
+    "/api/miniapp/generate",
     "/api/doc-qa/ask",
     "/api/mindmap/generate",
     "/api/search/web",
@@ -570,7 +574,7 @@ async def assistant_chat(request: Request, req: AssistantChatRequest, current_us
     except Exception as e:
         raise HTTPException(500, f"助手服务异常: {str(e)}") from e
     elapsed = round(time.time() - start, 2)
-    log_usage("assistant_chat", len(user_prompt), len(result), elapsed)
+    log_usage("assistant_chat", len(user_prompt), len(result), elapsed, user_id=str(current_user.get("user_id", "")))
     return {"result": result, "elapsed": elapsed}
 
 
@@ -694,6 +698,96 @@ async def showcase(limit: int = 12):
         # 无真实分享时：返回系统精选示例成果（标记 is_demo，前端跳工具页）
         if not items:
             items = _DEMO_SHOWCASE[: min(limit, len(_DEMO_SHOWCASE))]
+        return {"items": items}
+    finally:
+        conn.close()
+
+
+# 工厂作品源 → 可读名称（与 gallery.SOURCE_LABEL 保持一致）
+_FACTORY_SOURCE_LABEL = {
+    "image_factory": "图片工厂",
+    "video_factory": "视频工厂",
+    "music_factory": "音乐工厂",
+    "meme_factory": "表情包工坊",
+    "game_factory": "小游戏工坊",
+}
+
+# 工厂类型 → 首页展示跳转路由（与前端菜单一致）
+_FACTORY_ROUTE = {
+    "image_factory": "/image-factory",
+    "video_factory": "/video-factory",
+    "music_factory": "/music-factory",
+    "meme_factory": "/meme",
+    "game_factory": "/games",
+}
+
+
+def _media_file_exists(media_url: str) -> bool:
+    """按 media_url 前缀定位后端目录，校验媒体文件是否真实存在（过滤历史孤儿记录）。"""
+    if not media_url:
+        return False
+    base = os.path.join(os.path.dirname(__file__))
+    for prefix, sub in (
+        ("/api/video-factory/videos/", "video_factory"),
+        ("/api/image-factory/images/", "image_factory"),
+        ("/api/meme-factory/images/", "meme_factory"),
+    ):
+        if media_url.startswith(prefix):
+            return os.path.exists(os.path.join(base, sub, media_url[len(prefix):]))
+    return True
+
+
+@app.get("/api/factory/latest")
+async def factory_latest(limit: int = 12):
+    """最新创作墙：聚合各工厂最新生成的图片/视频作品（含封面/缩略图），供首页真实作品展示。
+
+    - 数据源：artifacts 表 type ∈ (image, video) 且 active=1 的最新记录
+    - 图片作品自带 media_url 可直显；视频作品优先 thumbnail，缺时按 video_factory 规则推断封面 URL
+    - 首页点击直达对应工厂页，展示平台最强生成能力的真实产出
+    """
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT id, type, author, media_url, thumbnail, duration, created_at, content
+               FROM artifacts
+               WHERE type IN ('image','video') AND active=1 AND media_url != ''
+               ORDER BY created_at DESC LIMIT ?""",
+            (min(limit, 30),),
+        ).fetchall()
+        items = []
+        for r in rows:
+            media_url = r["media_url"] or ""
+            # 过滤媒体文件已删除的孤儿记录（避免破损封面/黑屏视频出现在首页）
+            if not _media_file_exists(media_url):
+                continue
+            thumbnail = r["thumbnail"] or ""
+            if not thumbnail and r["type"] == "video" and "/video-factory/videos/" in media_url:
+                stem = media_url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                if stem:
+                    thumbnail = f"/api/video-factory/covers/{stem}.jpg"
+            # 提取描述（content 为 dict 时取 prompt）
+            prompt = ""
+            try:
+                obj = json.loads(r["content"] or "{}")
+                if isinstance(obj, dict):
+                    prompt = (obj.get("prompt") or "")[:80]
+            except Exception:
+                prompt = (r["content"] or "")[:80]
+            items.append(
+                {
+                    "id": r["id"],
+                    "type": r["type"],
+                    "author": _FACTORY_SOURCE_LABEL.get(r["author"], r["author"] or "平台用户"),
+                    "media_url": media_url,
+                    "thumbnail": thumbnail,
+                    "duration": float(r["duration"] or 0),
+                    "prompt": prompt,
+                    "created_at": r["created_at"] or "",
+                    "route": _FACTORY_ROUTE.get(r["author"], "/gallery"),
+                }
+            )
         return {"items": items}
     finally:
         conn.close()
@@ -3033,6 +3127,24 @@ def sandbox_project_logs(project_id: str, tail: int = 200, current_user: dict = 
 # 供代码解释器与数据分析沙箱共用）。
 
 
+@app.get("/api/sandbox/info")
+def sandbox_info(current_user: dict = require_auth()):
+    """沙箱环境说明：白名单库 / 禁用操作 / 资源上限（v15，前端提示卡片数据源）。"""
+    from common import sandbox_check as sc
+
+    return {
+        "allowed_imports": sorted(sc.ALLOWED_IMPORTS),
+        "blocked_tokens": sc.BLOCKED_TOKENS,
+        "limits": {
+            "code_max_len": sc.MAX_CODE_LEN,
+            "output_max_len": sc.MAX_OUTPUT_LEN,
+            "timeout_sec": sc.DEFAULT_TIMEOUT,
+            "cpu_sec": 10,
+            "file_max_bytes": 2 * 1024 * 1024,
+        },
+    }
+
+
 @app.post("/api/sandbox/execute")
 def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
     """AI 代码解释器：安全子进程执行 Python 代码。
@@ -3090,6 +3202,7 @@ app.include_router(sessions_router)
 app.include_router(collab_engine_router)
 app.include_router(content_strategy_router)
 app.include_router(digital_human_router)
+app.include_router(drama_router)
 app.include_router(task_queue_router)
 app.include_router(smart_dashboard_router)
 app.include_router(pdf_tools_router)

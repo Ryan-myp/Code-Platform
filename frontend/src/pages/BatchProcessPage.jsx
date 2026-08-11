@@ -12,6 +12,7 @@ import {
   Sparkles,
   ChevronDown,
   Copy,
+  RefreshCw,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -30,6 +31,12 @@ const TASK_TYPES = [
   { key: 'keywords', label: '提取关键词', icon: Zap, desc: '提取每个文档的核心关键词' },
   { key: 'translate_en', label: '批量翻译', icon: Languages, desc: '多文档翻译为英文' },
   { key: 'sentiment', label: '情感分析', icon: Sparkles, desc: '分析每个文档的情感倾向' },
+  {
+    key: 'rewrite',
+    label: '批量改写',
+    icon: Sparkles,
+    desc: '保留原意，重写为更清晰有表现力的版本',
+  },
 ]
 
 export default function BatchProcessPage() {
@@ -119,6 +126,51 @@ export default function BatchProcessPage() {
         },
       }
     )
+  }
+
+  // v15：失败项单独重试（translate 场景：按原索引原位替换）
+  const retryItems = async (items) => {
+    if (!items?.length) return
+    const pending = items.filter((it) => it.error && it.original)
+    if (pending.length === 0) {
+      toast.error('失败项缺少原文，无法重试（文件类任务请重新上传失败文件）')
+      return
+    }
+    await submitTask(
+      '/api/batch/retry',
+      {
+        task_type: 'translate',
+        items: pending.map((it) => ({
+          index: it.index,
+          original: it.original,
+          target_lang: 'en',
+          source_lang: 'auto',
+        })),
+      },
+      {
+        onUpdate: (t) => setCurrentTask(t),
+        onSuccess: (data) => {
+          setCurrentTask(null)
+          const byIndex = new Map((data.results || []).map((r) => [r.index, r]))
+          setResults((prev) => ({
+            ...prev,
+            results: (prev?.results || []).map((r) => byIndex.get(r.index) || r),
+          }))
+          loadJobs()
+          toast.success(`重试完成：成功 ${data.success}/${data.count} 条`)
+        },
+        onError: (e) => {
+          setCurrentTask(null)
+          toast.error(`重试失败：${e.message}`)
+        },
+      }
+    )
+  }
+
+  const retryAllFailed = () => {
+    const failed = (results?.results || []).filter((r) => r.error)
+    if (!failed.length) return
+    retryItems(failed)
   }
 
   // 结果 → 文本（导出/复制/分享复用）
@@ -323,6 +375,11 @@ export default function BatchProcessPage() {
                 </h3>
                 <div className="flex items-center gap-2">
                   <Badge color="green">{results.task}</Badge>
+                  {results.results?.some((r) => r.error && r.original) && (
+                    <Button variant="secondary" size="sm" icon={RefreshCw} onClick={retryAllFailed}>
+                      重试失败项
+                    </Button>
+                  )}
                   <Button variant="ghost" size="sm" icon={Download} onClick={exportResults}>
                     导出全部
                   </Button>
@@ -392,7 +449,17 @@ export default function BatchProcessPage() {
                       </div>
                     )}
                     {r.error && (
-                      <div className="p-2 bg-red-50 rounded-lg text-xs text-red-600">{r.error}</div>
+                      <div className="p-2 bg-red-50 rounded-lg text-xs text-red-600 mb-2">{r.error}</div>
+                    )}
+                    {r.error && r.original && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={RefreshCw}
+                        onClick={() => retryItems([r])}
+                      >
+                        重试此项
+                      </Button>
                     )}
                   </div>
                 ))}

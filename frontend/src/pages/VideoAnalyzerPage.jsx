@@ -12,6 +12,8 @@ import {
   Sparkles,
   Copy,
   RefreshCw,
+  Volume2,
+  Gauge,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -132,6 +134,21 @@ export default function VideoAnalyzerPage() {
       res.recommendations.forEach((r) => lines.push(`- ${r}`))
       lines.push('')
     }
+    if (res.segments) {
+      lines.push('## 分段报告（画面 / 音频 / 文本）', '')
+      ;[
+        ['visual', '画面'],
+        ['audio', '音频'],
+        ['text', '文本'],
+      ].forEach(([key, label]) => {
+        const seg = res.segments[key]
+        if (!seg) return
+        lines.push(`### ${label}${seg.score != null ? `（${seg.score} 分）` : ''}`, '')
+        lines.push(seg.analysis || '-', '')
+        ;(seg.key_points || []).forEach((p) => lines.push(`- ${p}`))
+        lines.push('')
+      })
+    }
     lines.push('---', `由小团智能平台 AI 视频分析生成 · ${new Date().toLocaleString()}`)
     return lines.join('\n')
   }
@@ -145,6 +162,39 @@ export default function VideoAnalyzerPage() {
     } catch {
       toast.error('复制失败，请手动选择复制')
     }
+  }
+
+  const downloadReport = async () => {
+    if (!result?.video_id) {
+      toast.error('暂无分析结果可导出')
+      return
+    }
+    try {
+      const res = await api.get(`/api/video/records/${result.video_id}/report`)
+      const blob = new Blob([res.data.content], { type: 'text/markdown;charset=utf-8' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = res.data.filename || '视频分析报告.md'
+      a.click()
+      URL.revokeObjectURL(a.href)
+      toast.success('分析报告已下载')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || '下载失败')
+    }
+  }
+
+  // 分段轨道渲染配置
+  const SEGMENT_ITEMS = [
+    { key: 'visual', label: '画面', icon: Film, color: 'text-amber-500', bar: 'from-amber-400 to-orange-500' },
+    { key: 'audio', label: '音频', icon: Volume2, color: 'text-sky-500', bar: 'from-sky-400 to-indigo-500' },
+    { key: 'text', label: '文本', icon: FileText, color: 'text-emerald-500', bar: 'from-emerald-400 to-teal-500' },
+  ]
+
+  const scoreColor = (s) => {
+    if (s == null) return 'bg-gray-200'
+    if (s >= 80) return 'bg-emerald-500'
+    if (s >= 60) return 'bg-amber-500'
+    return 'bg-red-500'
   }
 
   return (
@@ -284,6 +334,9 @@ export default function VideoAnalyzerPage() {
                     <Button variant="ghost" size="sm" icon={Copy} onClick={copyReport}>
                       复制报告
                     </Button>
+                    <Button variant="ghost" size="sm" icon={Download} onClick={downloadReport}>
+                      下载报告
+                    </Button>
                     <ShareButton
                       content={buildReportMd(result)}
                       title={`视频分析：${result.title}`}
@@ -318,6 +371,25 @@ export default function VideoAnalyzerPage() {
                     </div>
                   </div>
                 </div>
+                {result.overall_score != null && (
+                  <div className="mt-3 p-3 rounded-xl bg-gradient-to-r from-red-50 to-orange-50 border border-red-100">
+                    <div className="flex items-center gap-3">
+                      <Gauge className="w-5 h-5 text-red-500 flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                          <span>综合评分</span>
+                          <span className="font-bold text-gray-800">{result.overall_score} / 100</span>
+                        </div>
+                        <div className="h-2 bg-white/70 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${scoreColor(result.overall_score)}`}
+                            style={{ width: `${result.overall_score}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </Card>
 
               <Card>
@@ -331,6 +403,53 @@ export default function VideoAnalyzerPage() {
                   </div>
                 )}
               </Card>
+
+              {/* 分段报告：画面 / 音频 / 文本 */}
+              {result.segments && (
+                <Card className="border-amber-200">
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-500" /> 分段报告
+                    <span className="text-xs font-normal text-gray-400">画面 / 音频 / 文本 三轨评估</span>
+                  </h3>
+                  <div className="grid md:grid-cols-3 gap-3">
+                    {SEGMENT_ITEMS.map(({ key, label, icon: Icon, color, bar }) => {
+                      const seg = result.segments[key]
+                      if (!seg) return null
+                      return (
+                        <div key={key} className="p-3.5 rounded-xl border border-amber-100 bg-amber-50/40">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`flex items-center gap-1.5 text-sm font-medium ${color}`}>
+                              <Icon className="w-4 h-4" /> {label}
+                            </span>
+                            <span className="text-sm font-bold text-gray-800">
+                              {seg.score != null ? `${seg.score} 分` : '—'}
+                            </span>
+                          </div>
+                          {seg.score != null && (
+                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2.5">
+                              <div
+                                className={`h-full rounded-full bg-gradient-to-r ${bar}`}
+                                style={{ width: `${seg.score}%` }}
+                              />
+                            </div>
+                          )}
+                          <p className="text-xs text-gray-600 leading-relaxed">{seg.analysis}</p>
+                          {seg.key_points?.length > 0 && (
+                            <ul className="mt-2 space-y-1">
+                              {seg.key_points.map((p, i) => (
+                                <li key={i} className="flex gap-1.5 text-xs text-gray-500">
+                                  <span className="text-amber-500 flex-shrink-0">•</span>
+                                  <span className="line-clamp-2">{p}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </Card>
+              )}
 
               {/* 关键场景 */}
               {result.key_scenes?.length > 0 && (

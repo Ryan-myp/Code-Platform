@@ -15,13 +15,14 @@ import {
   Cpu,
   MessageSquare,
   RefreshCw,
+  History,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
 import { formatRelativeTime, formatDateTime } from '../lib/format'
-import { Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
+import { Button, Empty, PageLoading, ErrorState, ConfirmDialog, Modal } from '../components/ui'
 
 /** 安全解析 JSON 字段 */
 function safeParseArray(val) {
@@ -56,6 +57,10 @@ export default function AgentExecutePage() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [showSessionsMobile, setShowSessionsMobile] = useState(false)
+  // v13.23：执行历史（时间/任务/结果状态/耗时）
+  const [showHistory, setShowHistory] = useState(false)
+  const [executions, setExecutions] = useState([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -97,6 +102,28 @@ export default function AgentExecutePage() {
       // 静默，列表刷新失败不打扰
     }
   }, [agentId])
+
+  // 加载执行历史（最近 N 次：时间/任务/结果状态/耗时）
+  const loadExecutions = useCallback(async () => {
+    if (!agentId) return
+    setLoadingHistory(true)
+    try {
+      let username = ''
+      try {
+        username = JSON.parse(localStorage.getItem('user') || 'null')?.username || ''
+      } catch {
+        /* ignore */
+      }
+      const res = await api.get('/api/agent-executions', {
+        params: { agent_id: agentId, user_id: username, limit: 30 },
+      })
+      setExecutions(res.data || [])
+    } catch {
+      toast.error('加载执行历史失败')
+    } finally {
+      setLoadingHistory(false)
+    }
+  }, [agentId, toast])
 
   // 创建新会话
   const createSession = async () => {
@@ -342,6 +369,18 @@ export default function AgentExecutePage() {
           {agent.description && (
             <p className="text-xs text-gray-500 line-clamp-2">{agent.description}</p>
           )}
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={History}
+            className="w-full mt-3"
+            onClick={() => {
+              loadExecutions()
+              setShowHistory(true)
+            }}
+          >
+            执行历史
+          </Button>
         </div>
 
         <div className="p-3 border-b border-gray-200">
@@ -584,6 +623,61 @@ export default function AgentExecutePage() {
           )}
         </div>
       </aside>
+
+      {/* 执行历史（v13.23：时间/任务/结果状态/耗时） */}
+      <Modal
+        open={showHistory}
+        onClose={() => setShowHistory(false)}
+        title="Agent 执行历史"
+        size="lg"
+        footer={
+          <Button variant="secondary" onClick={() => setShowHistory(false)}>
+            关闭
+          </Button>
+        }
+      >
+        {loadingHistory ? (
+          <div className="py-10 text-center text-sm text-gray-400">加载中…</div>
+        ) : executions.length === 0 ? (
+          <Empty
+            icon={History}
+            title="暂无执行记录"
+            description="向 Agent 发送消息后，这里会记录每次执行的时间、状态与耗时"
+            className="py-12"
+          />
+        ) : (
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+            {executions.map((ex) => (
+              <div
+                key={ex.id}
+                className="p-3 rounded-xl border border-gray-100 bg-gray-50/60"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      ex.status === 'done'
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : 'bg-red-50 text-red-600'
+                    }`}
+                  >
+                    {ex.status === 'done' ? '成功' : '失败'}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {formatDateTime(ex.created_at)}
+                  </span>
+                  <span className="text-xs text-gray-400 ml-auto">
+                    耗时 {ex.elapsed ?? 0}s
+                  </span>
+                </div>
+                <p className="text-sm text-gray-800 line-clamp-2">{ex.message}</p>
+                {ex.status !== 'done' && ex.error && (
+                  <p className="text-xs text-red-500 mt-1 line-clamp-2">{ex.error}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
 
       {/* 删除会话确认 */}
       <ConfirmDialog

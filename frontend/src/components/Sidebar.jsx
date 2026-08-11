@@ -54,6 +54,7 @@ import {
   UserCircle,
   GalleryVerticalEnd,
   Store,
+  Clapperboard,
   Globe,
   Key,
   Clock,
@@ -138,6 +139,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
       items: [
         { path: '/image-factory', label: '图片工厂', icon: ImageIcon, pageId: 'image-factory' },
         { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
+        { path: '/drama', label: '短剧工厂', icon: Clapperboard, pageId: 'drama' },
         { path: '/music-factory', label: '音乐工厂', icon: Music, pageId: 'music-factory' },
         { path: '/copywriting', label: '文案工厂', icon: PenTool, pageId: 'copywriting' },
         { path: '/translation', label: '翻译中心', icon: Languages, pageId: 'translation' },
@@ -177,6 +179,7 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, onLogout })
         { path: '/voice-dubbing', label: '配音工坊', icon: Volume2, pageId: 'voice-dubbing' },
         { path: '/publish', label: '发布中心', icon: Send, pageId: 'publish' },
         { path: '/strategy', label: '内容策略', icon: Lightbulb, pageId: 'strategy' },
+        { path: '/seo', label: 'SEO 分析', icon: Search, pageId: 'seo' },
         { path: '/monitor', label: '竞品监控', icon: Radar, pageId: 'monitor' },
         { path: '/growth', label: '增长工坊', icon: Target, pageId: 'growth' },
         { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd, pageId: 'gallery' },

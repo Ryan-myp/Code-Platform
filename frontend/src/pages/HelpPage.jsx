@@ -7,6 +7,8 @@ import {
   Mail,
   MessageCircle,
   Play,
+  Search,
+  SearchX,
   Sparkles,
   UserCircle,
   Wand2,
@@ -132,6 +134,13 @@ const FAQS = [
 
 export default function HelpPage() {
   const [openIndex, setOpenIndex] = useState(0)
+  const [search, setSearch] = useState('')
+
+  // v15：按关键词过滤常见问题（标题/正文命中）
+  const keyword = search.trim().toLowerCase()
+  const filteredFAQs = keyword
+    ? FAQS.filter((f) => f.q.toLowerCase().includes(keyword) || f.a.toLowerCase().includes(keyword))
+    : FAQS
 
   const replayTour = () => {
     window.dispatchEvent(new CustomEvent('open-onboarding'))
@@ -180,35 +189,68 @@ export default function HelpPage() {
 
       {/* 常见问题 */}
       <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-6">
-        <h3 className="font-semibold text-ink-900 flex items-center gap-2 mb-4">
-          <BookOpen className="w-4 h-4 text-brand-500" />
-          常见问题
-        </h3>
-        <div className="space-y-2.5">
-          {FAQS.map((faq, i) => (
-            <div key={i} className="border border-ink-100 rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
+          <h3 className="font-semibold text-ink-900 flex items-center gap-2">
+            <BookOpen className="w-4 h-4 text-brand-500" />
+            常见问题
+            {keyword && (
+              <span className="text-xs font-normal text-ink-400">
+                命中 {filteredFAQs.length} / {FAQS.length} 条
+              </span>
+            )}
+          </h3>
+          {/* v15：按模块索引搜索 */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-ink-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索问题关键词，如：小程序 / 部署 / 额度"
+              className="w-64 pl-9 pr-8 py-2 text-sm rounded-xl border border-ink-200/60 focus:border-brand-400 focus:ring-2 focus:ring-brand-100 outline-none transition-all"
+            />
+            {search && (
               <button
-                onClick={() => setOpenIndex(openIndex === i ? -1 : i)}
-                className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-ink-800 hover:bg-ink-50 transition-colors"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-500"
               >
-                <span className="flex items-center gap-2.5">
-                  <span className="w-5 h-5 rounded-md bg-brand-50 text-brand-600 text-xs font-bold flex items-center justify-center flex-shrink-0">
-                    Q
-                  </span>
-                  {faq.q}
-                </span>
-                <ChevronDown
-                  className={`w-4 h-4 text-ink-400 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
-                />
+                ✕
               </button>
-              {openIndex === i && (
-                <div className="px-4 pb-3.5 pl-11 text-sm text-ink-500 leading-relaxed bg-ink-50/40">
-                  {faq.a}
-                </div>
-              )}
-            </div>
-          ))}
+            )}
+          </div>
         </div>
+        {filteredFAQs.length === 0 ? (
+          <div className="py-10 text-center text-ink-400">
+            <SearchX className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p className="text-sm">没有找到与「{search.trim()}」相关的问题</p>
+            <p className="text-xs text-ink-300 mt-1">换个关键词试试，或联系管理员反馈</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {filteredFAQs.map((faq, i) => (
+              <div key={i} className="border border-ink-100 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setOpenIndex(openIndex === i ? -1 : i)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-ink-800 hover:bg-ink-50 transition-colors"
+                >
+                  <span className="flex items-center gap-2.5">
+                    <span className="w-5 h-5 rounded-md bg-brand-50 text-brand-600 text-xs font-bold flex items-center justify-center flex-shrink-0">
+                      Q
+                    </span>
+                    {faq.q}
+                  </span>
+                  <ChevronDown
+                    className={`w-4 h-4 text-ink-400 transition-transform ${openIndex === i ? 'rotate-180' : ''}`}
+                  />
+                </button>
+                {openIndex === i && (
+                  <div className="px-4 pb-3.5 pl-11 text-sm text-ink-500 leading-relaxed bg-ink-50/40">
+                    {faq.a}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 联系我们 */}

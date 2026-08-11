@@ -1,15 +1,16 @@
 """真实验证自动化测试门禁：天气服务 → 生成测试 → 容器内执行 → 结果记录"""
 import os
-import sys
 import subprocess
+import sys
 
 sys.path.insert(0, "/Users/yanping.ma/PycharmProjects/Code-Platform/backend")
 os.chdir("/Users/yanping.ma/PycharmProjects/Code-Platform/backend")
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # noqa: E402
+
 load_dotenv(".env")  # 独立脚本需手动加载 .env（main.py 启动时自动加载）
 
-import extended_api as E
+import extended_api as E  # noqa: E402
 
 project_dir = "/Users/yanping.ma/PycharmProjects/Code-Platform/backend/artifacts/天气"
 cfg = {

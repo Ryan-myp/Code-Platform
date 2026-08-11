@@ -54,7 +54,7 @@ class TestBatchPipeline:
     def _create(self, auth_headers, texts, expect=200):
         resp = client.post(
             "/api/digital-human/batch",
-            json={"texts": texts},
+            json={"texts": texts, "emotion": "neutral"},  # 测试环境 LLM 不可用：显式 neutral 跳过情绪标注
             headers=auth_headers,
         )
         assert resp.status_code == expect, resp.text

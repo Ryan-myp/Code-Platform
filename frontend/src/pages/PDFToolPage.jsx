@@ -14,6 +14,7 @@ import {
   Check,
   FileWarning,
   History,
+  FileArchive,
 } from 'lucide-react'
 import { Card, Button, PageHeader, Badge, Empty, ErrorState } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -23,9 +24,18 @@ const TABS = [
   { id: 'merge', label: 'PDF合并', icon: Merge, desc: '多个PDF文件合并为一个' },
   { id: 'split', label: 'PDF拆分', icon: Scissors, desc: '按页码范围拆分PDF' },
   { id: 'extract', label: '表格提取', icon: Table, desc: '从PDF提取表格为CSV' },
+  { id: 'compress', label: 'PDF压缩', icon: FileArchive, desc: '去冗余+图片重编码减小体积' },
   { id: 'contract', label: '合同审查', icon: Shield, desc: 'AI逐条审查+修改建议' },
   { id: 'resume', label: '简历优化', icon: UserCheck, desc: 'AI简历评分+优化建议' },
 ]
+
+const QUALITY_PRESETS = [
+  { value: 3, label: '高压缩', desc: '体积最小' },
+  { value: 5, label: '均衡', desc: '推荐' },
+  { value: 8, label: '高质量', desc: '画质优先' },
+]
+
+const RISK_LABELS = { high: '高风险', medium: '中风险', low: '低风险' }
 
 export default function PDFToolPage() {
   const toast = useToast()
@@ -59,6 +69,12 @@ export default function PDFToolPage() {
   const [optimizing, setOptimizing] = useState(false)
   const [resumeResult, setResumeResult] = useState(null)
 
+  // Compress
+  const [compressFile, setCompressFile] = useState(null)
+  const [quality, setQuality] = useState(5)
+  const [compressing, setCompressing] = useState(false)
+  const [compressResult, setCompressResult] = useState(null)
+
   // 任务记录（GET /api/pdf/jobs）
   const [jobs, setJobs] = useState([])
   const [jobsLoading, setJobsLoading] = useState(false)
@@ -83,6 +99,7 @@ export default function PDFToolPage() {
     merge: 'PDF合并',
     split: 'PDF拆分',
     extract_table: '表格提取',
+    compress: 'PDF压缩',
     contract_review: '合同审查',
     resume_optimize: '简历优化',
   }
@@ -187,6 +204,32 @@ export default function PDFToolPage() {
     }
   }
 
+  // ── Compress ──
+  const uploadCompress = (e) => {
+    setCompressFile(e.target.files?.[0] || null)
+    setCompressResult(null)
+  }
+  const doCompress = async () => {
+    if (!compressFile) {
+      toast.error('请选择PDF文件')
+      return
+    }
+    setCompressing(true)
+    setCompressResult(null)
+    try {
+      const form = new FormData()
+      form.append('file', compressFile)
+      form.append('quality', String(quality))
+      const res = await api.post('/api/pdf/compress', form)
+      setCompressResult(res.data)
+      toast.success(res.data.message || '压缩完成')
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setCompressing(false)
+    }
+  }
+
   // ── Resume ──
   const doOptimize = async () => {
     if (!resumeText.trim() || resumeText.length < 20) {
@@ -216,11 +259,19 @@ export default function PDFToolPage() {
     return 'green'
   }
 
+  // 责任倾向徽标：甲方/乙方/双方/未标注
+  const partyColor = (p) => {
+    if (p === '甲方') return 'blue'
+    if (p === '乙方') return 'violet'
+    if (p === '双方') return 'emerald'
+    return 'gray'
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="PDF 工具集"
-        description="PDF合并/拆分/表格提取 + AI合同审查 + AI简历优化 — 文档处理全家桶"
+        description="PDF合并/拆分/表格提取/压缩 + AI合同审查 + AI简历优化 — 文档处理全家桶"
         icon={FileText}
         iconColor="from-red-500 to-rose-600"
       />
@@ -378,6 +429,78 @@ export default function PDFToolPage() {
         </Card>
       )}
 
+      {/* PDF压缩 */}
+      {tab === 'compress' && (
+        <Card>
+          <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <FileArchive className="w-4 h-4 text-sky-500" /> PDF压缩
+          </h3>
+          <p className="text-sm text-gray-500 mb-4">
+            去除文档冗余对象；低强度档位还会对超大图片降采样重编码，显著减小体积
+          </p>
+          <label className="flex flex-col items-center gap-2 p-8 border-2 border-dashed border-gray-200 rounded-xl hover:border-sky-400 cursor-pointer transition-colors mb-4">
+            <Upload className="w-8 h-8 text-gray-300" />
+            <span className="text-sm text-gray-400">
+              {compressFile
+                ? `${compressFile.name} (${(compressFile.size / 1024).toFixed(1)} KB)`
+                : '点击选择要压缩的PDF'}
+            </span>
+            <input type="file" accept=".pdf" onChange={uploadCompress} className="hidden" />
+          </label>
+          <div className="mb-4">
+            <label className="text-sm font-medium text-gray-700 mb-2 block">
+              压缩强度：<span className="text-sky-600 font-bold">{quality}</span>
+            </label>
+            <div className="flex gap-2">
+              {QUALITY_PRESETS.map((q) => (
+                <button
+                  key={q.value}
+                  onClick={() => setQuality(q.value)}
+                  className={`flex-1 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                    quality === q.value
+                      ? 'border-sky-500 bg-sky-50 text-sky-700 font-medium'
+                      : 'border-gray-200 text-gray-500 hover:border-sky-300'
+                  }`}
+                >
+                  {q.label}
+                  <span className="block text-xs text-gray-400">{q.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            icon={FileArchive}
+            loading={compressing}
+            onClick={doCompress}
+            disabled={!compressFile}
+          >
+            压缩PDF
+          </Button>
+          {compressResult && (
+            <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-emerald-800 font-medium mb-1">{compressResult.message}</div>
+                  <div className="flex gap-4 text-xs text-emerald-700">
+                    <span>原始 {(compressResult.original_size / 1024).toFixed(1)} KB</span>
+                    <span>→ 压缩后 {(compressResult.compressed_size / 1024).toFixed(1)} KB</span>
+                    <span className="font-bold">减小 {compressResult.ratio}%</span>
+                  </div>
+                </div>
+                <a
+                  href={compressResult.download_url}
+                  download
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors flex-shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" /> 下载
+                </a>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* 合同审查 */}
       {tab === 'contract' && (
         <Card>
@@ -410,16 +533,34 @@ export default function PDFToolPage() {
           </div>
           {contractResult && (
             <div className="mt-4 space-y-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge color={riskColor(contractResult.risk_level)}>
-                  风险等级：{contractResult.risk_level}
+                  整体风险：{RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}
                 </Badge>
-                <span className="text-sm text-gray-600">{contractResult.summary}</span>
+                {contractResult.level_count && (
+                  <div className="flex items-center gap-1.5">
+                    {contractResult.level_count.high > 0 && (
+                      <Badge color="red">高危 {contractResult.level_count.high}</Badge>
+                    )}
+                    {contractResult.level_count.medium > 0 && (
+                      <Badge color="amber">中危 {contractResult.level_count.medium}</Badge>
+                    )}
+                    {contractResult.level_count.low > 0 && (
+                      <Badge color="green">低危 {contractResult.level_count.low}</Badge>
+                    )}
+                  </div>
+                )}
+                <span className="text-sm text-gray-600 flex-1 min-w-0">
+                  {contractResult.summary}
+                </span>
               </div>
               {contractResult.risks?.map((r, i) => (
                 <div key={i} className="p-3 rounded-lg border text-sm">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Badge color={riskColor(r.risk)}>{r.risk}</Badge>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <Badge color={riskColor(r.risk)}>{RISK_LABELS[r.risk] || r.risk}</Badge>
+                    <Badge color={partyColor(r.party)} title="责任倾向">
+                      {r.party || '未标注'}
+                    </Badge>
                     <span className="font-medium">{r.clause}</span>
                   </div>
                   <p className="text-gray-600 text-xs mb-1">&ldquo;{r.content}&rdquo;</p>
@@ -537,7 +678,7 @@ export default function PDFToolPage() {
           <h3 className="font-semibold text-gray-900 flex items-center gap-2">
             <History className="w-4 h-4 text-gray-500" /> 任务记录
             <span className="text-xs text-gray-400 font-normal">
-              （合同审查 / 简历优化会在这里留痕）
+              （压缩 / 合同审查 / 简历优化会在这里留痕）
             </span>
           </h3>
           <Button
@@ -556,7 +697,7 @@ export default function PDFToolPage() {
           <Empty
             icon={History}
             title="暂无任务记录"
-            description="使用合同审查 / 简历优化后这里会显示历史记录"
+            description="使用压缩 / 合同审查 / 简历优化后这里会显示历史记录"
           />
         ) : (
           <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">

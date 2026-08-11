@@ -1032,6 +1032,12 @@ export default function PublishingPage() {
                     >
                       {m.type === 'image' ? (
                         <img src={assetFull(m.url)} alt="" className="w-full h-28 object-cover" />
+                      ) : m.thumbnail ? (
+                        <img
+                          src={assetFull(m.thumbnail)}
+                          alt=""
+                          className="w-full h-28 object-cover"
+                        />
                       ) : (
                         <div className="w-full h-28 flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
                           <Film className="w-8 h-8 text-white/70" />

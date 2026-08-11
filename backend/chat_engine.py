@@ -174,6 +174,43 @@ def get_agent_system_prompt(agent_id: str) -> str:
     return instructions
 
 
+def _record_execution(agent_id: str, user_id: str, message: str, status: str, elapsed: float, error: str = "") -> None:
+    """记录 Agent 执行历史（v13.23：时间/任务/结果状态/耗时）。失败静默，不影响主流程。"""
+    try:
+        conn = get_db()
+        conn.execute(
+            """INSERT INTO agent_executions (agent_id, user_id, message, status, elapsed, error)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (agent_id, user_id or "", (message or "")[:200], status, round(elapsed, 2), (error or "")[:300]),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+@router.get("/api/agent-executions")
+def agent_executions(agent_id: str = "", user_id: str = "", limit: int = 20):
+    """Agent 执行历史聚合：最近 N 次执行（时间/任务/结果状态/耗时），按时间倒序（v13.23）。"""
+    limit = max(1, min(limit, 100))
+    conn = get_db()
+    try:
+        sql = "SELECT * FROM agent_executions WHERE 1=1"
+        args: list = []
+        if agent_id:
+            sql += " AND agent_id=?"
+            args.append(agent_id)
+        if user_id:
+            sql += " AND user_id=?"
+            args.append(user_id)
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        rows = conn.execute(sql, args).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 @router.post("/api/agents/{agent_id}/run")
 def run_agent(agent_id: str, req: dict):
     """运行 Agent - 调用 LLM（v12.0：携带 conversation_id 时使用多轮上下文）"""
@@ -185,12 +222,19 @@ def run_agent(agent_id: str, req: dict):
     system = get_agent_system_prompt(agent_id)
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
-    if conv_id:
-        result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system))
-    elif session_id:
-        result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(session_id=session_id, system_prompt=system))
-    else:
-        result = call_llm(system, message, max_tokens=2000)
+    try:
+        if conv_id:
+            result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system))
+        elif session_id:
+            result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(session_id=session_id, system_prompt=system))
+        else:
+            result = call_llm(system, message, max_tokens=2000)
+    except HTTPException as e:
+        _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e.detail))
+        raise
+    except Exception as e:
+        _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e))
+        raise
 
     # 记录消息到最新会话（若有）
     if conv_id or session_id:
@@ -215,6 +259,7 @@ def run_agent(agent_id: str, req: dict):
             pass
 
     log_usage("agent_run", len(message), len(result), time.time() - start)
+    _record_execution(agent_id, req.get("user_id", ""), message, "done", time.time() - start)
     return {"result": result, "agent_id": agent_id, "elapsed": round(time.time() - start, 2)}
 
 
@@ -268,10 +313,13 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 except Exception:
                     pass
             log_usage("agent_run_stream", len(message), len(full), time.time() - start)
+            _record_execution(agent_id, req.get("user_id", ""), message, "done", time.time() - start)
             yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2)})
         except HTTPException as e:
+            _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e.detail))
             yield _sse_event("error", {"detail": e.detail})
         except Exception as e:
+            _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e)[:300])
             logger.exception("agent stream failed")
             yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
 

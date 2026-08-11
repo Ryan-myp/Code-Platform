@@ -26,6 +26,7 @@ import {
   Image,
   Plus,
   FileJson2,
+  Package,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -47,6 +48,14 @@ import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
+
+// 发布包平台规格预设（商业化 v14）
+const PUBLISH_PLATFORMS = [
+  { id: 'xiaohongshu', name: '小红书', spec: '1242×1660（3:4 图文笔记）' },
+  { id: 'douyin', name: '抖音', spec: '1080×1920（9:16 竖屏）' },
+  { id: 'taobao', name: '淘宝', spec: '800×800（商品主图）' },
+  { id: 'wechat', name: '公众号', spec: '900×383（头图）' },
+]
 
 // 随机提示词预设
 const RANDOM_PROMPTS = [
@@ -127,6 +136,19 @@ const TRYON_BACKGROUNDS = [
   { id: 'snow', label: '雪景', icon: '❄️' },
 ]
 
+// 背景替换场景（后端 make_scene_background 支持）
+const BG_SCENES = [
+  { id: 'beach', label: '沙滩', icon: '🏖️' },
+  { id: 'city', label: '城市', icon: '🏙️' },
+  { id: 'space', label: '太空', icon: '🚀' },
+  { id: 'studio', label: '摄影棚', icon: '📷' },
+  { id: 'forest', label: '森林', icon: '🌲' },
+  { id: 'snow', label: '雪景', icon: '❄️' },
+  { id: 'sunset', label: '日落', icon: '🌇' },
+  { id: 'night', label: '夜景', icon: '🌃' },
+  { id: 'pastel', label: '粉彩', icon: '🎨' },
+]
+
 const EDIT_TOOLS = [
   { icon: Crop, label: '裁剪', action: 'crop' },
   { icon: RotateCw, label: '旋转', action: 'rotate' },
@@ -170,6 +192,13 @@ export default function ImageFactoryPage() {
   const [viewMode, setViewMode] = useState('grid')
   const [previewImage, setPreviewImage] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+
+  // 发布包（商业化 v14）：图片库 → 平台规格成品 + 2x 高清 + 上架文案 + 质量报告
+  const [packOpen, setPackOpen] = useState(false)
+  const [packPlatform, setPackPlatform] = useState('xiaohongshu')
+  const [packTitle, setPackTitle] = useState('AI 原创插画集')
+  const [packUpscale, setPackUpscale] = useState(true)
+  const [packing, setPacking] = useState(false)
 
   // 生成
   const [generating, setGenerating] = useState(false)
@@ -215,6 +244,11 @@ export default function ImageFactoryPage() {
   })
   const [editBusy, setEditBusy] = useState(false)
   const editFileRef = useRef(null)
+  // 人像分割 / 背景替换
+  const [segFeather, setSegFeather] = useState(2)
+  const [bgScene, setBgScene] = useState('beach')
+  const [bgColor, setBgColor] = useState('')
+  const [bgAIDesc, setBgAIDesc] = useState('')
 
   // 试衣
   const [personImage, setPersonImage] = useState(null)
@@ -286,7 +320,8 @@ export default function ImageFactoryPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = image.filename || 'image.png'
+      const ext = (image.filename || 'png').split('.').pop()
+      a.download = (image.title ? `${image.title}.${ext}` : image.filename || 'image.png')
       a.click()
       URL.revokeObjectURL(url)
       toast.success('已开始下载')
@@ -562,6 +597,58 @@ export default function ImageFactoryPage() {
     }
   }
 
+  // 人像分割：rembg 语义分割，输出透明背景 PNG
+  const handleSegmentation = async () => {
+    if (!uploadedImage) return
+    setEditBusy(true)
+    try {
+      const imgResp = await fetch(uploadedImage.url)
+      const blob = await imgResp.blob()
+      const form = new FormData()
+      form.append('image', blob, uploadedImage.filename || 'image.png')
+      form.append('feather', segFeather)
+      const res = await api.post('/api/image-factory/edit/personal-segmentation', form, {
+        timeout: 180000,
+      })
+      if (res.data.url) {
+        setUploadedImage({ ...res.data, url: absUrl(res.data.url) })
+        fetchImages()
+        toast.success('人像分割完成，背景已透明化')
+      }
+    } catch (e) {
+      toast.error(`分割失败：${e.message}`)
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
+  // 背景替换：AI 抠图 + 新背景合成（场景渐变 / 纯色 / AI 生成）
+  const handleReplaceBackground = async () => {
+    if (!uploadedImage) return
+    setEditBusy(true)
+    try {
+      const imgResp = await fetch(uploadedImage.url)
+      const blob = await imgResp.blob()
+      const form = new FormData()
+      form.append('image', blob, uploadedImage.filename || 'image.png')
+      form.append('background', bgScene)
+      if (bgColor.trim()) form.append('force_color', bgColor.trim())
+      if (bgAIDesc.trim()) form.append('ai_background', bgAIDesc.trim())
+      const res = await api.post('/api/image-factory/edit/replace-background', form, {
+        timeout: 240000,
+      })
+      if (res.data.url) {
+        setUploadedImage({ ...res.data, url: absUrl(res.data.url) })
+        fetchImages()
+        toast.success('背景替换完成')
+      }
+    } catch (e) {
+      toast.error(`背景替换失败：${e.message}`)
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
   const handleTryOn = async () => {
     if (!personImage || !clothingImage) {
       toast.error('请上传人物照片和衣物照片')
@@ -606,9 +693,49 @@ export default function ImageFactoryPage() {
     }
   }
 
-  const filteredImages = images.filter((img) =>
-    img.filename.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredImages = images.filter((img) => {
+    const q = searchQuery.toLowerCase()
+    return (
+      img.filename.toLowerCase().includes(q) ||
+      (img.title || '').toLowerCase().includes(q) ||
+      (img.prompt || '').toLowerCase().includes(q)
+    )
+  })
+
+  // 发布包：当前图片库全部按选中平台规格输出成品 + 2x 高清 + 上架文案 + 质量报告
+  const downloadPublishPack = async () => {
+    const picked = filteredImages.map((f) => f.filename)
+    if (picked.length === 0) {
+      toast.error('图片库为空，请先生成或上传图片')
+      return
+    }
+    setPacking(true)
+    try {
+      const fd = new FormData()
+      picked.slice(0, 50).forEach((f) => fd.append('ids', f))
+      fd.append('platform', packPlatform)
+      fd.append('pack_title', packTitle.trim() || 'AI 原创插画集')
+      fd.append('upscale', packUpscale ? 'true' : 'false')
+      const res = await api.post('/api/image-factory/publish-pack', fd, {
+        responseType: 'blob',
+        timeout: 300000,
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `image_publish_pack_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setPackOpen(false)
+      toast.success(`图片发布包已生成：${Math.min(picked.length, 50)} 张（规格成品 + 高清版 + 上架文案）`)
+    } catch (e) {
+      toast.error(`发布包生成失败：${e.message}`)
+    } finally {
+      setPacking(false)
+    }
+  }
 
   const statsCards = [
     {
@@ -911,15 +1038,27 @@ export default function ImageFactoryPage() {
             <div className="lg:col-span-2">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900">生成结果</h3>
-                {generatedImages.length > 1 && (
-                  <button
-                    onClick={() => generatedImages.forEach((img) => handleDownload(img))}
-                    className="flex items-center gap-1 text-sm text-violet-600 hover:text-violet-700"
-                  >
-                    <DownloadCloud className="w-4 h-4" />
-                    <span>全部下载</span>
-                  </button>
-                )}
+                <div className="flex items-center gap-3">
+                  {generatedImages.length > 1 && (
+                    <button
+                      onClick={() => generatedImages.forEach((img) => handleDownload(img))}
+                      className="flex items-center gap-1 text-sm text-violet-600 hover:text-violet-700"
+                    >
+                      <DownloadCloud className="w-4 h-4" />
+                      <span>全部下载</span>
+                    </button>
+                  )}
+                  {generatedImages.length > 0 && (
+                    <button
+                      onClick={handleGenerate}
+                      disabled={generating || !prompt.trim()}
+                      className="flex items-center gap-1 text-sm text-violet-600 hover:text-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
+                      <span>换一版</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {generating ? (
@@ -1478,6 +1617,100 @@ export default function ImageFactoryPage() {
               >
                 应用调整
               </Button>
+
+              {/* 人像分割 */}
+              <div className="mt-8 border-t border-gray-100 pt-6">
+                <h4 className="font-medium text-gray-900 mb-1 flex items-center gap-2">
+                  <Scissors className="w-4 h-4 text-violet-500" />
+                  人像分割
+                </h4>
+                <p className="text-xs text-gray-500 mb-4">
+                  rembg 语义分割：将人物从背景中分离，输出透明背景 PNG（可用于合成、做贴纸）
+                </p>
+                <div className="mb-4">
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">
+                    边缘羽化: {segFeather}（发丝/毛边场景建议 2）
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="8"
+                    step="1"
+                    value={segFeather}
+                    onChange={(e) => setSegFeather(parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+                <Button
+                  variant="gradient"
+                  icon={Scissors}
+                  loading={editBusy}
+                  onClick={handleSegmentation}
+                  className="w-full"
+                >
+                  一键分割（透明背景）
+                </Button>
+              </div>
+
+              {/* 背景替换 */}
+              <div className="mt-8 border-t border-gray-100 pt-6">
+                <h4 className="font-medium text-gray-900 mb-1 flex items-center gap-2">
+                  <Wand2 className="w-4 h-4 text-violet-500" />
+                  背景替换
+                </h4>
+                <p className="text-xs text-gray-500 mb-4">
+                  AI 抠图 + 新背景合成：场景渐变 / 纯色 / AI 生成背景（优先级：AI 描述 &gt; 纯色 &gt; 场景）
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-2 block">场景</label>
+                    <select
+                      value={bgScene}
+                      onChange={(e) => setBgScene(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+                    >
+                      {BG_SCENES.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.icon} {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-2 block">
+                      纯色背景（可选，如 #FF5733）
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="#RRGGBB"
+                      value={bgColor}
+                      onChange={(e) => setBgColor(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 mb-2 block">
+                      AI 背景描述（可选）
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="如：清晨的雪山湖泊，薄雾缭绕"
+                      value={bgAIDesc}
+                      onChange={(e) => setBgAIDesc(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+                    />
+                  </div>
+                </div>
+                <Button
+                  variant="gradient"
+                  icon={Wand2}
+                  loading={editBusy}
+                  onClick={handleReplaceBackground}
+                  className="w-full"
+                >
+                  替换背景
+                </Button>
+              </div>
             </div>
           )}
         </div>
@@ -1831,6 +2064,16 @@ export default function ImageFactoryPage() {
               <Button variant="secondary" size="sm" icon={RefreshCw} onClick={fetchImages}>
                 刷新
               </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Package}
+                disabled={filteredImages.length === 0}
+                onClick={() => setPackOpen(true)}
+                title="一键打包为平台规格成品 + 高清版 + 上架文案"
+              >
+                发布包
+              </Button>
               <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
                 <button
                   onClick={() => setViewMode('grid')}
@@ -1868,13 +2111,14 @@ export default function ImageFactoryPage() {
                   className="group relative rounded-xl overflow-hidden shadow-sm"
                 >
                   <img
-                    src={absUrl(img.url)}
-                    alt={img.filename}
+                    src={absUrl(img.thumb_url || img.url)}
+                    alt={img.title || img.filename}
                     className="w-full h-40 object-cover"
+                    loading="lazy"
                   />
                   {renderImageActions({ ...img, url: absUrl(img.url) })}
                   <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs text-white truncate bg-black/50">
-                    {img.filename}
+                    {img.title || img.filename}
                   </div>
                 </div>
               ))}
@@ -1887,12 +2131,12 @@ export default function ImageFactoryPage() {
                   className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   <img
-                    src={absUrl(img.url)}
-                    alt={img.filename}
+                    src={absUrl(img.thumb_url || img.url)}
+                    alt={img.title || img.filename}
                     className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{img.filename}</p>
+                    <p className="font-medium text-gray-900 truncate">{img.title || img.filename}</p>
                     <p className="text-sm text-gray-500">
                       {formatRelativeTime(img.created_at)} · {formatBytes(img.size)}
                     </p>
@@ -1926,6 +2170,77 @@ export default function ImageFactoryPage() {
           )}
         </div>
       )}
+
+      {/* 图片发布包 Modal：平台规格成品 + 2x 高清 + 上架文案 + 质量报告 */}
+      <Modal
+        open={packOpen}
+        onClose={() => setPackOpen(false)}
+        title="图片发布包（平台规格成品）"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPackOpen(false)} disabled={packing}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              icon={Package}
+              loading={packing}
+              onClick={downloadPublishPack}
+              className="bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700"
+            >
+              生成发布包（{Math.min(filteredImages.length, 50)} 张）
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 text-xs text-violet-700">
+            将当前图片库（{filteredImages.length} 张，最多 50 张）按平台规格居中裁剪输出不变形成品，
+            附带 2 倍高清版、上架文案（标题/描述/标签）、规格说明、上传指南、商用授权与质量自检报告。
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">目标平台</label>
+            <div className="grid grid-cols-2 gap-2">
+              {PUBLISH_PLATFORMS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setPackPlatform(p.id)}
+                  className={`flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                    packPlatform === p.id
+                      ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-500/20'
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-sm font-medium text-gray-800">{p.name}</span>
+                  <span className="text-[11px] text-gray-400">{p.spec}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              合集标题（上架文案用）
+            </label>
+            <input
+              type="text"
+              value={packTitle}
+              onChange={(e) => setPackTitle(e.target.value)}
+              placeholder="如：AI 原创插画集"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={packUpscale}
+              onChange={(e) => setPackUpscale(e.target.checked)}
+              className="w-4 h-4 accent-violet-500"
+            />
+            附带 2 倍高清版（lanczos 放大 + 锐化，适合印刷/高清投放）
+          </label>
+        </div>
+      </Modal>
 
       {/* 图片预览 Modal */}
       <Modal
@@ -1979,7 +2294,12 @@ export default function ImageFactoryPage() {
                   }}
                   className={`relative rounded-lg overflow-hidden border-2 transition-all ${selected ? 'border-violet-500' : 'border-gray-200 hover:border-violet-400'}`}
                 >
-                  <img src={url} alt={img.filename} className="w-full h-32 object-cover" />
+                  <img
+                    src={absUrl(img.thumb_url || img.url)}
+                    alt={img.filename}
+                    className="w-full h-32 object-cover"
+                    loading="lazy"
+                  />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
                     <p className="text-xs text-white truncate">{img.filename}</p>
                   </div>

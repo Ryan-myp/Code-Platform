@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -272,6 +273,7 @@ INDUSTRY_TEMPLATES = [
         "opening": "好物严选 · 真实测评",
         "closing": "点击关注，好物不错过",
         "script_structure": "开头痛点钩子（3秒留人）→ 产品卖点3条（每条配使用场景）→ 价格/福利对比 → 促单引导",
+        "script_sample": "家人们，你们是不是也遇到过这样的问题？{产品}到手不会用、效果看不见，钱白花了还糟心！今天这款{产品}，三大优势直接拉满：第一，操作简单，三步就能上手；第二，效果肉眼可见，七天就有变化；第三，性价比超高，不到一顿饭钱。现在下单还送专属礼包，错过真的会后悔！",
     },
     {
         "id": "knowledge",
@@ -286,6 +288,7 @@ INDUSTRY_TEMPLATES = [
         "opening": "知识干货 · 每天3分钟",
         "closing": "收藏转发，让更多人看到",
         "script_structure": "开头提问（制造好奇）→ 核心知识3点（由浅入深）→ 案例佐证 → 总结金句",
+        "script_sample": "为什么你学了那么多方法，{主题}还是做不好？问题不在方法，而在顺序。第一，先定目标再找方法，方向错了努力白费；第二，小步快跑持续验证，一次吃不成胖子；第三，定期复盘迭代优化。我一个学员照这套逻辑，三个月就完成了别人一年的进度。方法很简单，难在坚持，收藏这条视频，明天就开始！",
     },
     {
         "id": "news",
@@ -300,6 +303,7 @@ INDUSTRY_TEMPLATES = [
         "opening": "今日资讯 · 权威速递",
         "closing": "持续关注，第一时间掌握",
         "script_structure": "导语（一句话概括事件）→ 事件经过（时间线+关键细节）→ 背景分析 → 结尾观点",
+        "script_sample": "各位观众朋友，大家好！今天是{日期}，欢迎收看本期节目。近日，{主题}引发广泛关注。据记者了解，事件发生后，相关部门第一时间启动应急预案，各项工作正在有序推进。专家分析认为，这一变化将对行业产生深远影响，未来发展趋势值得持续观察。我们将继续跟进报道，第一时间为您带来最新消息。",
     },
     {
         "id": "course",
@@ -314,6 +318,7 @@ INDUSTRY_TEMPLATES = [
         "opening": "系统课程 · 循序渐进",
         "closing": "点赞收藏，反复学习",
         "script_structure": "引入概念（生活化类比）→ 分步讲解（每步一个小结）→ 常见误区 → 课后小结",
+        "script_sample": "同学们好，欢迎来到{课程名}。很多人觉得{主题}很难，其实它就像学做饭，掌握了步骤就不难。第一步，理解核心概念，就像先认识食材；第二步，动手练习，就像下锅翻炒，熟能生巧；第三步，总结常见误区，避免踩坑。今天我们用三个例子，把每一步都讲透。课程最后还有配套练习，记得做笔记！",
     },
     {
         "id": "brand",
@@ -328,6 +333,52 @@ INDUSTRY_TEMPLATES = [
         "opening": "品牌故事 · 匠心品质",
         "closing": "了解更多，欢迎咨询",
         "script_structure": "品牌故事（创始人初心）→ 核心优势3点（数据支撑）→ 产品/服务矩阵 → 品牌愿景口号",
+        "script_sample": "五年前，我们只是一个小团队，怀着一个朴素的愿望：让{行业}变得简单一点。从第一版产品到如今服务十万家企业，我们始终坚持三件事：一是技术领先，每年研发投入占比超过百分之三十；二是客户为先，专属顾问一对一服务；三是长期主义，不做一锤子买卖。未来，我们会继续深耕{行业}，让每一个客户都能享受科技带来的效率。",
+    },
+    {
+        "id": "vlog",
+        "name": "生活记录",
+        "emoji": "🏞️",
+        "desc": "场景叙事+真实感受+互动结尾，自然风景背景亲和",
+        "scene_id": "story",
+        "background_id": "nature",
+        "voice_hint": "zh-CN-XiaoxiaoNeural",
+        "speed_hint": 0.95,
+        "subtitle": {"position": "center", "color": "#ffffff", "font_size": 30},
+        "opening": "生活记录 · 此刻分享",
+        "closing": "点赞关注，和我一起记录生活",
+        "script_structure": "场景引入（时间地点）→ 过程叙述（细节+感受）→ 情绪转折/感悟 → 互动结尾",
+        "script_sample": "今天带大家来到{地点}，这里是我一直想来的地方。刚下车，就被眼前的风景震撼到了，风很轻，空气里有青草的味道。沿着小路走了二十分钟，路过一片开满花的山坡，忍不住停下来拍了好久。突然觉得，生活里那些忙碌的日子，都值得被这样的瞬间治愈。你们最近有没有被什么风景治愈过？评论区告诉我！",
+    },
+    {
+        "id": "corporate",
+        "name": "企业宣传",
+        "emoji": "🏆",
+        "desc": "实力背书+解决方案+邀约合作，暗黑质感显高端",
+        "scene_id": "product",
+        "background_id": "dark",
+        "voice_hint": "zh-CN-YunjianNeural",
+        "speed_hint": 0.95,
+        "subtitle": {"position": "center", "color": "#ffd54f", "font_size": 34},
+        "opening": "实力企业 · 值得信赖",
+        "closing": "合作咨询，欢迎联系",
+        "script_structure": "实力背书（资质/数据）→ 解决方案（针对痛点）→ 成功案例 → 邀约合作",
+        "script_sample": "{企业名}，专注{行业}领域十五年，服务客户超过三千家，行业资质齐全，屡获权威认证。面对业务增长慢、管理效率低这些痛点，我们提供一站式解决方案：从{方案一}到{方案二}，全流程数字化管理，平均帮客户提升百分之四十的效率。某头部企业采用后，三个月业绩翻倍。如果您也有同样的困扰，欢迎联系我们，定制专属方案。",
+    },
+    {
+        "id": "quote",
+        "name": "情感语录",
+        "emoji": "💫",
+        "desc": "共情开场+故事铺陈+金句升华，暗调氛围感强",
+        "scene_id": "story",
+        "background_id": "dark",
+        "voice_hint": "zh-CN-XiaoxiaoNeural",
+        "speed_hint": 0.9,
+        "subtitle": {"position": "center", "color": "#ffffff", "font_size": 36},
+        "opening": "深夜电台 · 陪你说说话",
+        "closing": "愿你被世界温柔以待",
+        "script_structure": "共情开场（点出情绪）→ 故事铺陈（具体细节）→ 情绪转折 → 金句升华",
+        "script_sample": "你有没有过这样的时刻？明明很累，却还要笑着回答没事。成年人的世界，好像连崩溃都要挑时间。那天加完班回家，看到楼下卖馄饨的大叔还在出摊，他笑着说：热乎的，来一碗？那一刻我突然释怀了。原来生活从来不会亏待认真活着的人，只是你要先学会，对自己温柔一点。晚安，愿你今夜好梦。",
     },
 ]
 
@@ -693,6 +744,152 @@ def _clean_script_text(text: str) -> str:
     return re.sub(r"\n{2,}", "\n\n", text or "").strip()
 
 
+# ── v15 口播文案质量体检 ──────────────────────────────────────
+# 面向 TTS 朗读 + 字级口型同步的文案层检查：长句无停顿 / emoji /
+# 长数字 / 长英文会让 TTS 读岔、口型时间轴错位，提前发现并给出修复建议。
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_PUNCT_RE = re.compile(r"[，。！？；：、,.!?;:…—～~·\"'“”‘’（）()【】《》]")
+_EMOJI_RE = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]")
+_DIGIT_RE = re.compile(r"\d{3,}")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]{6,}")
+_CN_DIGIT_MAP = {
+    "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
+    "5": "五", "6": "六", "7": "七", "8": "八", "9": "九",
+}
+
+
+# 正则常量模块级定义（check_script_quality 与口型时间轴复用，文件头已 import re）
+
+
+def _digits_to_cn(text: str) -> str:
+    """数字串 → 中文数字（'399' → '三九九'，供 TTS 正确朗读）。"""
+    return "".join(_CN_DIGIT_MAP.get(ch, ch) for ch in text)
+
+
+def check_script_quality(text: str) -> dict:
+    """口播文案质量体检（纯函数，不调 LLM）。
+
+    检查项均针对 TTS 朗读 / 字级口型同步的常见错位问题：
+    - 空 / 过短：不足 10 字无法形成有效口播；
+    - 长句无停顿：按标点切分的连续汉字段 > 35 字（≈9 秒 @4字/秒）
+      TTS 易读岔、口型与停顿错位；> 60 字升级为 error；
+    - emoji / 特殊符号：TTS 可能跳过或读出乱码，建议替换为文字；
+    - 长数字串（≥3 位）：TTS 易按英文逐位朗读或读错；
+    - 长英文词（≥6 字母）：中文音色下易逐字母朗读；
+    - 连续空行（≥3）：渲染空白过多；
+    - 全文无标点：无停顿节奏，情绪与口型无法对齐。
+
+    返回 {ok, issues[{level,item,detail,suggest}], char_count, estimate_sec,
+           fixed_text, fixed_changed}；fixed_text 为自动修复后的文案
+    （去 emoji + 数字转中文 + 空行折叠），可一键应用。
+    """
+    raw = text or ""
+    char_count = len(_CJK_RE.findall(raw))
+    estimate_sec = max((char_count + 3) // 4, 1)  # 普通话语速 ≈ 4 字/秒
+    fixed = raw
+    issues = []
+
+    # 1) 空文案：直接短路返回
+    if not raw.strip():
+        return {
+            "ok": False,
+            "issues": [{
+                "level": "error", "item": "空文案",
+                "detail": "未输入任何口播内容",
+                "suggest": "请先填写文案，或点击行业模板一键填入示例文案",
+            }],
+            "char_count": 0,
+            "estimate_sec": 1,
+            "fixed_text": "",
+            "fixed_changed": False,
+        }
+
+    # 2) 文案过短
+    if char_count < 10:
+        issues.append({
+            "level": "error", "item": "文案过短",
+            "detail": f"仅 {char_count} 个汉字，难以支撑完整口播",
+            "suggest": "补充至 30 字以上，让数字人有充分的表达节奏",
+        })
+
+    # 3) 长句无停顿：按标点/空白切分后的连续汉字段过长
+    segs = [seg for seg in re.split(r"[，。！？；：、,.!?;:…—～~·\s]+", raw) if seg]
+    for seg in segs:
+        n = len(_CJK_RE.findall(seg))
+        if n > 60:
+            issues.append({
+                "level": "error", "item": "超长无停顿句",
+                "detail": f"连续 {n} 个汉字无停顿（约 {n // 4} 秒一口气念完），TTS 易读岔、口型与停顿错位",
+                "suggest": f"在第 18 字附近断句：『{seg[:18]}…』后加分号或句号",
+            })
+        elif n > 35:
+            issues.append({
+                "level": "warn", "item": "长句无停顿",
+                "detail": f"连续 {n} 个汉字无停顿，接近一口气读完的极限",
+                "suggest": f"建议在第 18 字附近断句：『{seg[:18]}…』",
+            })
+
+    # 4) emoji / 特殊符号：fixed_text 中自动移除
+    emojis = sorted(set(_EMOJI_RE.findall(raw)))
+    if emojis:
+        issues.append({
+            "level": "warn", "item": "含 emoji/特殊符号",
+            "detail": f"检测到 {len(emojis)} 种符号：{' '.join(emojis[:5])}" + ("…" if len(emojis) > 5 else ""),
+            "suggest": "TTS 可能跳过或读出乱码，建议改为文字（如 👍→点赞）",
+        })
+        fixed = _EMOJI_RE.sub("", fixed)
+
+    # 5) 长数字串：fixed_text 中自动转中文数字
+    digit_hits = _DIGIT_RE.findall(raw)
+    if digit_hits:
+        issues.append({
+            "level": "warn", "item": "长数字串",
+            "detail": f"发现 {len(digit_hits)} 处 ≥3 位数字（如 {digit_hits[0]}），TTS 易按英文逐位朗读",
+            "suggest": f"建议转中文：『{_digits_to_cn(digit_hits[0])}』",
+        })
+        fixed = _DIGIT_RE.sub(lambda m: _digits_to_cn(m.group()), fixed)
+
+    # 6) 长英文词
+    latin_words = sorted(set(_LATIN_WORD_RE.findall(raw)))
+    if latin_words:
+        issues.append({
+            "level": "warn", "item": "长英文词",
+            "detail": f"检测到 {len(latin_words)} 个 ≥6 字母英文词（如 {latin_words[0]}），中文音色易逐字母朗读",
+            "suggest": "建议拆分为中文表述（如 AI → 人工智能）",
+        })
+
+    # 7) 连续空行：fixed_text 中折叠
+    if re.search(r"\n{3,}", raw):
+        issues.append({
+            "level": "warn", "item": "连续空行过多",
+            "detail": "存在 3 行及以上连续空行，渲染会出现大段空白",
+            "suggest": "合并为单个空行，保留分段结构",
+        })
+        fixed = re.sub(r"\n{3,}", "\n\n", fixed)
+
+    # 8) 全文无标点（有内容且没有任何断句符号）
+    if char_count >= 10 and not _PUNCT_RE.search(raw):
+        issues.append({
+            "level": "warn", "item": "全文无标点",
+            "detail": "整段文案没有任何断句标点，朗读没有停顿节奏",
+            "suggest": "按语义在每 15~20 字处添加逗号或句号",
+        })
+
+    fixed = fixed.strip()
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "char_count": char_count,
+        "estimate_sec": estimate_sec,
+        "fixed_text": fixed,
+        "fixed_changed": fixed != raw.strip(),
+    }
+
+
+class ScriptCheckRequest(BaseModel):
+    text: str = Field(default="", max_length=5000, description="待体检口播文案（可为空，返回空文案提示）")
+
+
 def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
     """解码音频 → 按帧粒度 RMS 能量曲线（0~1，95 分位归一化）。
 
@@ -807,8 +1004,25 @@ def _mouth_shape_at(timeline: list, t: float, smooth: float = 0.03) -> tuple:
 # ── 逼真化渲染素材：嘴部/眼睑贴图模板 + 摄影棚光影 ─────────────
 _MOUTH_TEMPLATES: dict = {}
 _EYELID_TEMPLATES: dict = {}
+_EYEBROW_TEMPLATES: dict = {}
 _LIGHT_CACHE: dict = {}
 _BLINK_PATTERN: list = []
+
+
+# v13.24 情绪→2D 表情参数表（帧级直接查表，无状态；多线程并发帧渲染安全）
+# brow: 眉形（flat 平 / rise 上挑 / droop 内八字下垂 / knit 皱眉下压）
+# brow_k: 眉毛贴图不透明度系数（0 隐藏，表情越强越明显）
+# squint: 恒定眯眼度（叠加在眨眼之上，0=正常睁眼）
+# smile: 嘴角上翘 -1~+1（正=笑，负=哭/怒）；cheek: 腮红强度系数
+# move: 动作幅度系数（欢快=大、悲伤=小）；head: 头姿偏移角（正=抬头，负=低头）
+_EMOTION_FACE = {
+    "neutral": {"brow": "flat", "brow_k": 0.0, "squint": 0.0, "smile": 0.0, "cheek": 1.0, "move": 1.0, "head": 0.0},
+    "happy": {"brow": "rise", "brow_k": 0.55, "squint": 0.35, "smile": 0.5, "cheek": 1.35, "move": 1.15, "head": 1.0},
+    "sad": {"brow": "droop", "brow_k": 0.55, "squint": 0.15, "smile": -0.5, "cheek": 0.7, "move": 0.85, "head": -2.0},
+    "angry": {"brow": "knit", "brow_k": 0.6, "squint": 0.5, "smile": -0.3, "cheek": 0.9, "move": 1.1, "head": -1.0},
+    "gentle": {"brow": "flat", "brow_k": 0.3, "squint": 0.2, "smile": 0.3, "cheek": 1.15, "move": 0.95, "head": 0.0},
+    "serious": {"brow": "flat", "brow_k": 0.0, "squint": 0.0, "smile": 0.0, "cheek": 1.0, "move": 0.9, "head": 1.0},
+}
 
 
 def _build_blink_pattern(count: int = 260) -> list:
@@ -837,13 +1051,16 @@ def _blink_progress(t: float) -> float:
     return 0.0
 
 
-def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
-    """嘴部 RGBA 模板（128x96 基模板，按开度 6 档 x 圆度 4 档缓存）。
+def _get_mouth_template(open_idx: int, round_idx: int, smile: float = 0.0) -> Image.Image:
+    """嘴部 RGBA 模板（128x96 基模板，按开度 6 档 x 圆度 4 档 x 微笑 5 档缓存）。
 
     真实唇形：下唇饱满渐变（上缘暗→下缘亮）+ 上唇深色 + 唇间缝 + 高光 + 嘴角阴影，
     边缘高斯羽化融入皮肤；替代原来的"椭圆+直线"贴纸式画法。
+    smile（-1~+1）：嘴角上翘（笑）/下垂（哭、怒）——唇形中心线随离嘴角距离
+    二次偏移，微笑时嘴角上翘而唇中部不变，形成自然的情绪嘴型。
     """
-    key = (open_idx, round_idx)
+    smile_idx = int(round(max(-1.0, min(1.0, smile)) * 2))  # -2..2 五档
+    key = (open_idx, round_idx, smile_idx)
     if key not in _MOUTH_TEMPLATES:
         import numpy as np
 
@@ -855,9 +1072,11 @@ def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
         cx, cy = W // 2, H // 2
         y, x = np.mgrid[0:H, 0:W].astype(np.float32)
         arr = np.zeros((H, W, 4), dtype=np.float32)
+        # 微笑/下垂：唇中心线随 |x-cx| 二次偏移（嘴角端偏移 ≈ smile*0.36*mouth_h）
+        s_corr = smile_idx * 0.18 * ((np.abs(x - cx) / max(mouth_w, 1e-4)) ** 1.6)
         # 下唇：宽扁椭圆，垂直渐变（上缘暗 → 下缘亮），体现唇部体积
         dxx = (x - cx) / mouth_w
-        dyy = (y - (cy + mouth_h * 0.45)) / max(mouth_h * 0.85, 1e-4)
+        dyy = (y - (cy + mouth_h * 0.45) - s_corr) / max(mouth_h * 0.85, 1e-4)
         lower = (dxx * dxx + dyy * dyy) <= 1.0
         t = np.clip((y - (cy - mouth_h * 0.4)) / max(mouth_h * 1.6, 1e-4), 0, 1)
         lip_low = np.empty((H, W, 4), dtype=np.float32)
@@ -866,26 +1085,26 @@ def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
         lip_low[..., 2] = (66 + 46 * t) / 255.0
         lip_low[..., 3] = 1.0
         arr[lower] = lip_low[lower]
-        # 上唇：位置偏上的深色椭圆，覆盖下唇上缘形成唇间暗缝
+        # 上唇：位置偏上的深色椭圆，覆盖下唇上缘形成唇间暗缝（嘴角跟随微笑偏移）
         dxxu = (x - cx) / (mouth_w * 1.04)
-        dyyu = (y - (cy - mouth_h * 0.62)) / max(mouth_h * 0.60, 1e-4)
+        dyyu = (y - (cy - mouth_h * 0.62) - s_corr * 0.6) / max(mouth_h * 0.60, 1e-4)
         upper = (dxxu * dxxu + dyyu * dyyu) <= 1.0
         arr[upper & ~lower, :3] = np.array([86, 44, 56], dtype=np.float32) / 255.0
         arr[upper & ~lower, 3] = 1.0
-        # 唇间缝：上唇下缘的深色细线
-        seam = (np.abs(y - (cy + mouth_h * 0.05)) < 1.8) & (np.abs(x - cx) <= mouth_w * 0.9)
+        # 唇间缝：上唇下缘的深色细线（随微笑曲线偏移）
+        seam = (np.abs(y - (cy + mouth_h * 0.05) - s_corr * 0.8) < 1.8) & (np.abs(x - cx) <= mouth_w * 0.9)
         arr[seam, :3] = np.array([44, 24, 30], dtype=np.float32) / 255.0
         arr[seam, 3] = 1.0
         # 下唇高光：偏左的小椭圆（模拟单一主光方向）
         hx = (x - (cx + mouth_w * 0.26)) / max(mouth_w * 0.28, 1e-4)
-        hy = (y - (cy + mouth_h * 0.95)) / max(mouth_h * 0.30, 1e-4)
+        hy = (y - (cy + mouth_h * 0.95) - s_corr * 0.9) / max(mouth_h * 0.30, 1e-4)
         hl = (hx * hx + hy * hy <= 1.0) & lower
         arr[hl, :3] = arr[hl, :3] * 0.35 + 1.0 * 0.65
         arr[hl, 3] = np.maximum(arr[hl, 3], 0.80)
-        # 嘴角阴影：两端加深
+        # 嘴角阴影：两端加深（嘴角位置随微笑偏移）
         for s in (-1.0, 1.0):
             ex = (x - (cx + s * mouth_w * 0.95)) / 2.2
-            ey = (y - (cy + mouth_h * 0.15)) / 3.2
+            ey = (y - (cy + mouth_h * 0.15) - s * s_corr) / 3.2
             corner = (ex * ex + ey * ey <= 1.0) & (lower | upper)
             arr[corner, :3] *= 0.55
             arr[corner, 3] = np.maximum(arr[corner, 3], 0.85)
@@ -894,6 +1113,45 @@ def _get_mouth_template(open_idx: int, round_idx: int) -> Image.Image:
         img.putalpha(img.getchannel("A").filter(ImageFilter.GaussianBlur(2.2)))
         _MOUTH_TEMPLATES[key] = img
     return _MOUTH_TEMPLATES[key]
+
+
+def _get_eyebrow_template(eye_w: int, pose: str = "flat") -> Image.Image:
+    """眉毛 RGBA 贴图（按宽度 x 眉形缓存），v13.24 情绪表情层。
+
+    pose: flat 平眉 / rise 上挑（欢快）/ droop 内八字下垂（悲伤）/ knit 下压皱眉（愤怒）。
+    眉形用中心线（内端→外端的高度轮廓）+ 半厚渐变生成，半透明深棕（alpha≈0.6）
+    叠加在写真眉骨位置，改变/增强眉形以传达情绪。
+    """
+    key = (eye_w, pose)
+    if key not in _EYEBROW_TEMPLATES:
+        import numpy as np
+
+        w = max(8, int(eye_w * 1.15))
+        h = max(10, int(w * 0.34))
+        y, x = np.mgrid[0:h, 0:w].astype(np.float32)
+        t = x / max(w - 1, 1)  # 0 内端 → 1 外端
+        if pose == "rise":  # 上挑眉：内端低、外端高（欢快/惊讶）
+            cy = h * (0.62 - 0.32 * t)
+        elif pose == "droop":  # 八字眉：内端高、外端低（悲伤）
+            cy = h * (0.30 + 0.32 * t)
+        elif pose == "knit":  # 皱眉：内端下压 + 眉峰内移（愤怒/专注）
+            cy = h * (0.42 + 0.30 * np.clip(1 - t, 0, 1) ** 1.3)
+        else:  # flat：轻微平弧（眉峰微高）
+            cy = h * (0.44 - 0.08 * np.abs(t - 0.45))
+        half = h * (0.15 + 0.10 * np.abs(t - 0.45))  # 眉峰处略厚
+        dist = np.abs(y - cy) / np.maximum(half, 1e-4)
+        alpha = np.clip(1 - dist, 0, 1) ** 1.5
+        # 眉色深棕，两端自然收窄（乘端部衰减）
+        end_fade = np.clip(1 - np.abs(t - 0.5) * 1.6, 0, 1)
+        arr = np.zeros((h, w, 4), dtype=np.float32)
+        arr[..., 0] = 0.30
+        arr[..., 1] = 0.19
+        arr[..., 2] = 0.16
+        arr[..., 3] = alpha * (0.55 + 0.20 * end_fade)
+        img = Image.fromarray(np.clip(arr * 255, 0, 255).astype(np.uint8), "RGBA")
+        img.putalpha(img.getchannel("A").filter(ImageFilter.GaussianBlur(1.3)))
+        _EYEBROW_TEMPLATES[key] = img
+    return _EYEBROW_TEMPLATES[key]
 
 
 def _get_eyelid_template(eye_w: int) -> Image.Image:
@@ -1271,6 +1529,7 @@ def _render_frame(  # noqa: C901
     subtitle_style: dict | None = None,
     sub_font=None,
     sub_cache: dict | None = None,
+    emotion: str = "neutral",
 ) -> Image.Image:
     """绘制一帧：拟摄影/动态渐变背景 + 粒子光斑 + 人物动态（说话律动/眨眼/字级口型）+ 卡拉OK字幕。"""
     import math
@@ -1310,7 +1569,9 @@ def _render_frame(  # noqa: C901
     img = _apply_studio_lighting(img, t)
 
     # 说话能量 → 驱动全身律动（能量高=说话中：幅度加大；静音：回归静态呼吸）
-    talk = min(1.0, energy * 1.6)
+    # v13.24 情绪：talk 幅度乘情绪系数（欢快=更活泼、悲伤=更收敛）
+    emo = _EMOTION_FACE.get(emotion, _EMOTION_FACE["neutral"])
+    talk = min(1.0, energy * 1.6) * emo["move"]
     sway_t = math.sin(t * 1.15)
     breathe_t = math.sin(t * 1.3)
     glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))
@@ -1333,12 +1594,19 @@ def _render_frame(  # noqa: C901
             cheek_dx_c = face_meta["head_w"] * 0.32
         else:
             eye_y_c, mouth_y_c, cheek_y_c, cheek_dx_c = 240, 340, 290, 140
+            head_h_c = 320  # 默认头高（无检测时，眉毛按固定比例定位）
         # 呼吸缩放（真人幅度 ~1.2%，收敛气球感）+ 说话节奏起伏
         breath_scale = 1 + 0.012 * breathe_t + 0.010 * talk * math.sin(t * 3.2)
         p_w = max(20, int(p_base_w * breath_scale * S))
         p_h = max(20, int(p_base_h * breath_scale * S))
         # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
-        tilt = 0.9 * sway_t * (1.0 + 0.9 * talk) + 0.45 * talk * math.sin(t * 2.9) + 0.22 * math.sin(t * 5.1)
+        # v13.24 情绪头姿：欢快/严肃微抬头，悲伤低头，愤怒微前倾
+        tilt = (
+            0.9 * sway_t * (1.0 + 0.9 * talk)
+            + 0.45 * talk * math.sin(t * 2.9)
+            + 0.22 * math.sin(t * 5.1)
+            + emo["head"]
+        )
         nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
         p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
         p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
@@ -1366,7 +1634,8 @@ def _render_frame(  # noqa: C901
         img.paste(p_img, (px, py), p_mask)
 
         # 自然眨眼：随机间隔（2.2~4.8s）+ 上眼睑渐变遮罩下压（替代"画线"）
-        close = _blink_progress(t)
+        # v13.24 情绪眯眼：happy/gentle 微眯（笑眼）、angry 眯视，叠加在眨眼之上
+        close = max(_blink_progress(t), emo["squint"])
         if close > 0.03:
             eye_w = max(6, int(p_w * 0.135))
             eye_y = py + int(eye_y_c * by * breath_scale)
@@ -1376,8 +1645,21 @@ def _render_frame(  # noqa: C901
             for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
                 img.paste(lid_use, (ex - lid_use.width // 2, eye_y - lid_h), lid_use)
 
+        # v13.24 情绪眉毛：半透明眉形贴图（上挑/下垂/皱眉）叠加在眉骨位置，
+        # 传达欢快/悲伤/愤怒；轻微情绪（gentle）整体降透明度
+        if emo["brow_k"] > 0.05:
+            brow_img = _get_eyebrow_template(max(6, int(p_w * 0.15)), emo["brow"])
+            if emo["brow_k"] < 0.5:
+                brow_a = brow_img.getchannel("A").point(lambda v: int(v * (emo["brow_k"] / 0.5)))
+                brow_img = brow_img.copy()
+                brow_img.putalpha(brow_a)
+            brow_y = py + int((eye_y_c - head_h_c * 0.10) * by * breath_scale) - brow_img.height // 2
+            for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
+                img.paste(brow_img, (ex - brow_img.width // 2, brow_y), brow_img)
+
         # 颊彩表情层：柔和粉彩脸颊（说话时随能量微亮），提升生气感
-        cheek_alpha = int(22 + 14 * talk)
+        # v13.24 情绪腮红：欢快/温柔加深（笑出红晕），悲伤减淡
+        cheek_alpha = int((22 + 14 * talk) * emo["cheek"])
         cheek_w = max(8, int(p_w * 0.17))
         cheek_h = max(4, int(cheek_w * 0.55))
         cheek_y = py + int(cheek_y_c * by * breath_scale)
@@ -1399,7 +1681,8 @@ def _render_frame(  # noqa: C901
             round_idx = min(3, int(round(roundness * 3)))
             mw = max(6, int(p_w * (0.20 + 0.08 * roundness)))
             mh = max(3, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
-            mouth_layer = _get_mouth_template(open_idx, round_idx).resize(
+            # v13.24 情绪嘴型：smile 驱动嘴角上翘/下垂（笑/哭/怒）
+            mouth_layer = _get_mouth_template(open_idx, round_idx, emo["smile"]).resize(
                 (mw, mh),
                 Image.LANCZOS,
             )
@@ -1612,6 +1895,7 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
     subtitle_style: dict | None = None,
     opening: str = "",
     closing: str = "",
+    emotion: str = "neutral",
 ) -> None:
     """真实视频感多帧渲染：动态背景粒子 + 卡拉OK逐字字幕 + 镜头缓慢推近。
 
@@ -1712,6 +1996,7 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
             subtitle_style=subtitle_style,
             sub_font=sub_font,
             sub_cache=sub_cache,
+            emotion=emotion,
         )
         # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
         zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
@@ -1721,7 +2006,7 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
         pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
         x0 = (RENDER_W - win_w) // 2 + pan_x
         y0 = (RENDER_H - win_h) // 2 + pan_y
-        # 越界保护：裁剪窗口不允许超出画布
+        # 越界保护：裁剪窗口不允许超出画布（x/y 双向，防止运镜露边）
         x0 = max(0, min(x0, RENDER_W - win_w))
         y0 = max(0, min(y0, RENDER_H - win_h))
         frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
@@ -1903,6 +2188,7 @@ def _ensure_tables(conn) -> None:
         ("watermark", "INTEGER DEFAULT 0"),
         ("engine", "TEXT DEFAULT '2d'"),
         ("template_id", "TEXT DEFAULT ''"),
+        ("emotion", "TEXT DEFAULT 'auto'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE digital_human_records ADD COLUMN {col} {ddl}")
@@ -1935,6 +2221,7 @@ def _ensure_tables(conn) -> None:
         ("background_id", "TEXT DEFAULT ''"),
         ("speed", "REAL DEFAULT 1.0"),
         ("engine", "TEXT DEFAULT '2d'"),
+        ("emotion", "TEXT DEFAULT 'auto'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE digital_human_batches ADD COLUMN {col} {ddl}")
@@ -2466,7 +2753,8 @@ class GenerateRequest(BaseModel):
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
-    engine: str = Field("2d", pattern="^(2d|live_portrait)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象）")
+    engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
+    emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或 neutral/happy/sad/angry/gentle/serious 手动指定")
 
 
 # 商业水印：免费用户生成视频带平台水印（会员/管理员自动去除）
@@ -2549,6 +2837,16 @@ async def list_templates():
     return {"templates": INDUSTRY_TEMPLATES}
 
 
+@router.post("/script-check")
+async def script_check(req: ScriptCheckRequest, current_user: dict = require_auth()):
+    """v15 口播文案质量体检：面向 TTS 朗读与口型同步的文案层检查。
+
+    长句无停顿 / emoji / 长数字 / 长英文等会直接导致口型时间轴与
+    配音错位；返回问题清单 + 自动修复版文案（可一键应用）。
+    """
+    return check_script_quality(req.text)
+
+
 # ── v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（省通道调用/网络等待） ──
 _TTS_KEY_LOCKS: dict[str, threading.Lock] = {}
 _TTS_KEY_LOCKS_GUARD = threading.Lock()
@@ -2560,10 +2858,11 @@ def _tts_cache_filename(cache_key: str) -> str:
     return os.path.join(UPLOAD_AUDIO_DIR, "tts_cache", f"{cache_key}.mp3")
 
 
-def _tts_cache_key(text: str, voice: str, speed: float, pitch: int) -> str:
+def _tts_cache_key(text: str, voice: str, speed: float, pitch: int, emotion: str = "") -> str:
     import hashlib
 
-    return hashlib.sha256(f"{text}|{voice}|{speed}|{pitch}".encode()).hexdigest()[:16]
+    # v13.28 前缀 v28：情绪改 pitch 表达后旧 style 缓存音频失效（语速差异 5 倍）
+    return hashlib.sha256(f"v28|{text}|{voice}|{speed}|{pitch}|{emotion}".encode()).hexdigest()[:16]
 
 
 def _tts_key_lock(cache_key: str) -> threading.Lock:
@@ -2576,14 +2875,14 @@ def _tts_key_lock(cache_key: str) -> threading.Lock:
         return lock
 
 
-def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0) -> tuple[str, str]:
+def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> tuple[str, str]:
     """带缓存的 TTS 合成，返回 (audio_path, audio_url)。
 
-    - key = hash(text|voice|speed|pitch)：同文案同音色同语速直接复用（跨用户共享，
-      TTS 通道有成本与限速，命中零等待；批量任务 TTS 预热即依赖此机制）
+    - key = hash(text|voice|speed|pitch|emotion)：同文案同音色同语速同情绪直接复用
+      （跨用户共享，TTS 通道有成本与限速，命中零等待；批量任务 TTS 预热即依赖此机制）
     - 未命中：合成后落缓存（文件 + 表），行数超限按最后命中时间清理最旧 100 条
     """
-    cache_key = _tts_cache_key(text, voice, speed, pitch)
+    cache_key = _tts_cache_key(text, voice, speed, pitch, emotion)
     lock = _tts_key_lock(cache_key)
     with lock:
         path = _tts_cache_filename(cache_key)
@@ -2602,7 +2901,7 @@ def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0) -> tuple[st
             return path, row["audio_url"]
         from voice_factory import _tts_one
 
-        audio_bytes = _tts_one(text, voice, speed, pitch)
+        audio_bytes = _tts_one(text, voice, speed, pitch, emotion)
         if not audio_bytes or len(audio_bytes) < 512:
             raise RuntimeError("TTS 生成的音频无效（文件过小）")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2743,6 +3042,12 @@ def _generate_one(  # noqa: C901
     progress: 可选进度回调 (percent 0-100, stage 文案)，异步任务模式实时回报进度。
     """
     start = datetime.now()
+    sadtalker_render_size: int | None = None  # v13.23 真实推理分辨率（512/256），TTS 失败等路径下保持 None
+    # v13.24 情绪：auto=LLM 判断主导情绪（失败回退 neutral）；手动直接使用
+    # getattr 兼容旧调用方（测试/脚本直接传无 emotion 字段的请求对象）
+    emotion = getattr(req, "emotion", "auto")
+    if emotion == "auto":
+        emotion = _detect_emotion(req.text)
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -2777,7 +3082,7 @@ def _generate_one(  # noqa: C901
     if not bg:
         raise HTTPException(400, f"未知背景: {req.background_id}")
     # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
-    if req.engine == "live_portrait":
+    if req.engine in ("live_portrait", "sadtalker"):
         if not (
             avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])
         ):
@@ -2843,8 +3148,10 @@ def _generate_one(  # noqa: C901
                 if voice.get("is_clone"):
                     tts_voice = voice.get("edge_voice") or req.voice_id
                     tts_pitch = int(voice.get("pitch_hz") or 0)
-                # v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（命中零等待，批量预热依赖）
-                audio_path, audio_url = _tts_cached(optimized_text, tts_voice, req.speed, tts_pitch)
+                # v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（命中零等待 ，批量预热依赖）
+                # v13.24 情绪风格：同文案不同情绪使用不同缓存 key，风格失败自动降级无风格
+                tts_emotion = EMOTION_TTS_STYLE.get(emotion, "")
+                audio_path, audio_url = _tts_cached(optimized_text, tts_voice, req.speed, tts_pitch, tts_emotion)
                 # 极小/空文件视为生成失败：避免前端误显“音频已生成”、下游 ffmpeg 报错
                 if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) < 512:
                     audio_path = ""
@@ -2860,12 +3167,29 @@ def _generate_one(  # noqa: C901
                 try:
                     video_filename = f"{record_id}.mp4"
                     video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
-                    # v13.0 引擎选择：live_portrait（照片数字人）失败自动降级 2D 基础引擎，保证出片
-                    engines = [req.engine, "2d"] if req.engine == "live_portrait" else ["2d"]
+                    # v13.20 引擎选择链：sadtalker（开源 3D 数字人）→ live_portrait（Wav2Lip）→ 2d
+                    engine_chain = {
+                        "sadtalker": ["sadtalker", "live_portrait", "2d"],
+                        "live_portrait": ["live_portrait", "2d"],
+                        "2d": ["2d"],
+                    }[req.engine]
                     render_err: Exception | None = None
-                    for eng in engines:
+                    for eng in engine_chain:
                         try:
-                            if eng == "live_portrait":
+                            if eng == "sadtalker":
+                                from digital_human_sadtalker import generate_with_sadtalker
+
+                                sad_result = generate_with_sadtalker(
+                                    photo_path=avatar["local_image_path"],
+                                    audio_path=audio_path,
+                                    output_path=video_path,
+                                    resolution=req.resolution,
+                                    watermark=use_watermark,
+                                    progress=progress,
+                                    emotion=emotion,
+                                )
+                                sadtalker_render_size = sad_result.get("render_size")
+                            elif eng == "live_portrait":
                                 from live_portrait_engine import generate_from_photo
 
                                 generate_from_photo(
@@ -2889,6 +3213,7 @@ def _generate_one(  # noqa: C901
                                     subtitle_style=subtitle_style,
                                     opening=opening_text,
                                     closing=closing_text,
+                                    emotion=emotion,
                                 )
                             engine_used = eng
                             render_err = None
@@ -2919,13 +3244,13 @@ def _generate_one(  # noqa: C901
                 status = "failed"
                 error_msg = audio_error or "配音生成失败"
 
-    # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板）
+    # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板/情绪）
     conn.execute(
         """INSERT INTO digital_human_records
            (id, user_id, avatar_id, avatar_name, voice_id, voice_name,
             background_id, scene_id, template_id, text, text_length, status,
-            audio_url, video_url, error, resolution, fps, watermark, engine, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+            audio_url, video_url, error, resolution, fps, watermark, engine, emotion, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
         (
             record_id,
             user,
@@ -2946,6 +3271,7 @@ def _generate_one(  # noqa: C901
             req.fps,
             1 if use_watermark else 0,
             engine_used,
+            emotion,
             datetime.now().isoformat(),
         ),
     )
@@ -2954,7 +3280,7 @@ def _generate_one(  # noqa: C901
     _report(95, "记录已保存")
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg, error=error_msg or "")
+    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg, error=error_msg or "", user_id=str(user or ""))
     _report(100, "生成完成")
 
     return {
@@ -2968,6 +3294,8 @@ def _generate_one(  # noqa: C901
         "fps": req.fps,
         "watermark": use_watermark,
         "engine": engine_used,
+        "render_size": sadtalker_render_size,
+        "emotion": emotion,
         "quota_remaining": quota.get("remaining"),
         "sensitive_warning": (
             f"文案含风险词（{', '.join(risk_hits[:6])}），发布到平台时可能限流，建议修改" if risk_hits else ""
@@ -2983,6 +3311,55 @@ def _generate_one(  # noqa: C901
             else f"生成失败：{error_msg or '未知错误'}"
         ),
     }
+
+
+# v13.24 数字人情绪系统：统一情绪枚举 + TTS 风格映射
+# happy→cheerful、sad→sad、angry→angry、gentle→gentle、serious→serious、neutral→无风格
+EMOTION_OPTIONS = ("neutral", "happy", "sad", "angry", "gentle", "serious")
+EMOTION_TTS_STYLE = {
+    "neutral": "",
+    "happy": "cheerful",
+    "sad": "sad",
+    "angry": "angry",
+    "gentle": "gentle",
+    "serious": "serious",
+}
+_EMOTION_ALIAS = {
+    "欢快": "happy", "开心": "happy", "高兴": "happy", "快乐": "happy", "兴奋": "happy",
+    "悲伤": "sad", "难过": "sad", "伤心": "sad", "忧伤": "sad", "失落": "sad",
+    "激昂": "angry", "愤怒": "angry", "激动": "angry", "生气": "angry", "激情": "angry",
+    "温柔": "gentle", "平和": "gentle", "舒缓": "gentle", "亲切": "gentle",
+    "严肃": "serious", "认真": "serious", "郑重": "serious", "正式": "serious",
+    "自然": "neutral", "中性": "neutral", "平静": "neutral", "平淡": "neutral",
+}
+
+
+def _detect_emotion(text: str) -> str:
+    """LLM 判断文案主导情绪（v13.24）；失败/非法输出回退 neutral，绝不阻塞生成。"""
+    try:
+        from common.llm import call_llm
+
+        raw = call_llm(
+            "你是情绪分析师。判断一段口播文案的主导情绪，只输出一个英文单词："
+            + "neutral / happy / sad / angry / gentle / serious。",
+            f"文案：\n{text[:1500]}",
+            max_tokens=16,
+            temperature=0.3,
+            timeout=30,
+        )
+    except Exception as e:
+        logger.warning(f"情绪标注 LLM 失败，回退 neutral: {e}")
+        return "neutral"
+    emo = (raw or "").strip().lower().strip('\"\'。，,. ')
+    if emo in EMOTION_OPTIONS:
+        return emo
+    # LLM 可能输出中文标签或带说明：模糊匹配别名
+    lower = (raw or "").lower()
+    for k, v in _EMOTION_ALIAS.items():
+        if k in lower:
+            return v
+    logger.warning(f"情绪标注结果非法（{raw!r}），回退 neutral")
+    return "neutral"
 
 
 def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:  # noqa: C901 — 多条件校验，逐项分支保持可读
@@ -3167,7 +3544,8 @@ class BatchGenerateRequest(BaseModel):
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
-    engine: str = Field("2d", pattern="^(2d|live_portrait)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象）")
+    engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
+    emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或手动指定")
 
 
 # 批量任务缓存：batch_id → 任务（DB 为持久真相，内存仅加速轮询；重启后自动从 DB 恢复）
@@ -3216,6 +3594,7 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
         "background_id": row["background_id"],
         "speed": row["speed"],
         "engine": row["engine"] if "engine" in row.keys() else "2d",
+        "emotion": row["emotion"] if "emotion" in row.keys() else "auto",
         "created_at": row["created_at"],
         "finished_at": row["finished_at"],
         "items": [
@@ -3275,8 +3654,13 @@ def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试�
 
         def _warm(i: int) -> None:
             try:
-                _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch)
-            except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再合成
+                emo = (
+                    req.emotion
+                    if req.emotion != "auto"
+                    else _detect_emotion(texts[i].strip())
+                )
+                _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch, EMOTION_TTS_STYLE.get(emo, ""))
+            except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再 合成
                 logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
 
         with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
@@ -3308,6 +3692,7 @@ def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试�
                         fps=req.fps,
                         watermark=req.watermark,
                         engine=req.engine,
+                        emotion=req.emotion,
                     )
                     res = _generate_one(sub, user, uid, role)
                     if res["status"] == "done":
@@ -3449,9 +3834,9 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
         conn.execute(
             """INSERT INTO digital_human_batches
                (id, user_id, status, total, success, failed, skipped,
-                avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed, engine,
+                avatar_id, avatar_name, resolution, fps, voice_id, background_id, speed, engine, emotion,
                 created_at, finished_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
             (
                 batch_id,
                 user,
@@ -3468,6 +3853,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
                 req.background_id,
                 req.speed,
                 req.engine,
+                req.emotion,
                 datetime.now().isoformat(),
                 "",
             ),
@@ -3494,6 +3880,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
         "background_id": req.background_id,
         "speed": req.speed,
         "engine": req.engine,
+        "emotion": req.emotion,
         "created_at": datetime.now().isoformat(),
         "finished_at": "",
         "items": items,
@@ -3598,6 +3985,7 @@ async def retry_batch_failed(batch_id: str, current_user: dict = require_auth())
         fps=task["fps"],
         watermark=None,
         engine=task.get("engine", "2d"),
+        emotion=task.get("emotion", "auto"),  # v13.24 重试保持原情绪，避免回落 auto 重新 LLM 判断
     )
     # 重建任务（失败项重置为 pending，其余保持原结果）
     new_items = [dict(item) for item in task["items"]]

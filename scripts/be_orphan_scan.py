@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """反向对照：后端路由中从未被前端调用的孤儿接口扫描。"""
-import json, re, os, urllib.request
+import json
+import os
+import re
+import urllib.request
 
 spec = json.load(urllib.request.urlopen('http://127.0.0.1:8888/openapi.json'))
 backend_paths = set(spec['paths'].keys())
@@ -14,7 +17,7 @@ PATTERNS = [
     r"fetch\(\s*(['\"])([^'\"]*api[^'\"]*)\1",
     r"(?:src|href)=?[({]?\s*([`'\"])([^`'\"]*api[^`'\"]*)\1",
 ]
-for root, dirs, files in os.walk('frontend/src'):
+for root, _dirs, files in os.walk('frontend/src'):
     for fn in files:
         if not fn.endswith(('.jsx', '.js')) or fn.endswith('.test.js'):
             continue

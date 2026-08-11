@@ -144,6 +144,7 @@ def _ensure_tables(conn) -> None:
             account_id TEXT DEFAULT '',
             description TEXT DEFAULT '',
             profile_url TEXT DEFAULT '',
+            monitor_frequency TEXT DEFAULT 'weekly',
             created_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT ''
         )"""
@@ -158,7 +159,82 @@ def _ensure_tables(conn) -> None:
             created_at TEXT DEFAULT ''
         )"""
     )
+    # 存量库补 monitor_frequency 列（幂等，并发竞态忽略）
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(competitors)").fetchall()]
+    if "monitor_frequency" not in cols:
+        try:
+            conn.execute("ALTER TABLE competitors ADD COLUMN monitor_frequency TEXT DEFAULT 'weekly'")
+        except Exception:
+            pass
     conn.commit()
+
+
+# ── 变化摘要（确定性纯函数，可单测）──
+
+# 需要对比的列表型字段 → 中文标签
+_LIST_FIELDS = [
+    ("hot_patterns", "爆款规律"),
+    ("competitive_advantages", "竞争优势"),
+    ("competitive_weaknesses", "竞争劣势"),
+    ("recommendations", "策略建议"),
+]
+
+# 需要对比的标量型字段 → 中文标签（(字段路径, 标签)）
+_SCALAR_FIELDS = [
+    ("overview", "整体评价"),
+    ("publishing_habits.frequency", "发布频率"),
+    ("engagement_analysis.trend", "互动趋势"),
+]
+
+
+def _dig(obj: dict, path: str):
+    """按 a.b.c 路径取值，缺失返回 None。"""
+    cur = obj
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+def diff_reports(prev: dict | None, curr: dict) -> dict:
+    """对比上次与本次分析，产出变化摘要（新增/移除/变更）。
+
+    - 列表字段：集合差 → added / removed
+    - 标量字段：值不同 → modified
+    - summary：一句话概括变化规模，供前端 diff 高亮展示
+    """
+    curr = curr or {}
+    if not prev:
+        return {
+            "summary": "首次分析，无历史对比基准",
+            "changed": [],
+            "total_changed": 0,
+        }
+
+    changed = []
+    for field, label in _LIST_FIELDS:
+        p_items = [str(x).strip() for x in (prev.get(field) or []) if str(x).strip()]
+        c_items = [str(x).strip() for x in (curr.get(field) or []) if str(x).strip()]
+        added = [x for x in c_items if x not in p_items]
+        removed = [x for x in p_items if x not in c_items]
+        if added or removed:
+            changed.append({"field": field, "label": label, "added": added, "removed": removed})
+
+    for path, label in _SCALAR_FIELDS:
+        pv = _dig(prev, path)
+        cv = _dig(curr, path)
+        if pv is not None and cv is not None and pv != cv:
+            changed.append(
+                {"field": path, "label": label, "added": [], "removed": [], "modified": [{"prev": str(pv), "curr": str(cv)}]}
+            )
+
+    total = len(changed)
+    if total == 0:
+        summary = "与上次分析相比无显著变化"
+    else:
+        summary = f"发现 {total} 处变化：{('、'.join(c['label'] for c in changed))}"
+    return {"summary": summary, "changed": changed, "total_changed": total}
 
 
 # ── 模型 ──────────────────────────────────────────────────
@@ -170,6 +246,7 @@ class CompetitorAddRequest(BaseModel):
     account_id: str = Field("", max_length=200, description="账号ID/主页链接")
     description: str = Field("", max_length=500, description="竞品描述")
     profile_url: str = Field("", max_length=500, description="主页URL")
+    monitor_frequency: str = Field("weekly", pattern="^(daily|weekly|monthly|manual)$", description="监控频率：daily/weekly/monthly/manual")
 
 
 class AnalyzeRequest(BaseModel):
@@ -189,20 +266,33 @@ async def add_competitor(req: CompetitorAddRequest, current_user: dict = require
     _ensure_tables(conn)
     conn.execute(
         """INSERT INTO competitors (id, user_id, name, platform, account_id,
-           description, profile_url, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (comp_id, user, req.name, req.platform, req.account_id, req.description, req.profile_url, now, now),
+           description, profile_url, monitor_frequency, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?) """,
+        (comp_id, user, req.name, req.platform, req.account_id, req.description, req.profile_url, req.monitor_frequency, now, now),
     )
     conn.commit()
     conn.close()
-    return {"id": comp_id, "name": req.name, "platform": req.platform, "created_at": now}
+    return {
+        "id": comp_id,
+        "name": req.name,
+        "platform": req.platform,
+        "monitor_frequency": req.monitor_frequency,
+        "created_at": now,
+    }
 
 
 @router.get("/competitors")
-async def list_competitors(current_user: dict = require_auth()):
+async def list_competitors(frequency: str = "", current_user: dict = require_auth()):
+    """竞品列表（支持按监控频率筛选）。"""
     conn = get_db()
     _ensure_tables(conn)
-    rows = conn.execute("SELECT * FROM competitors ORDER BY updated_at DESC LIMIT 100").fetchall()
+    if frequency in ("daily", "weekly", "monthly", "manual"):
+        rows = conn.execute(
+            "SELECT * FROM competitors WHERE monitor_frequency=? ORDER BY updated_at DESC LIMIT 100",
+            (frequency,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM competitors ORDER BY updated_at DESC LIMIT 100").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -269,6 +359,23 @@ def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()
     except Exception:
         radar = {"chart_type": "radar", "title": "竞品对比", "option": {}}
 
+    # 3. 变化摘要：对比该批竞品最近一次报告
+    changes = None
+    conn = get_db()
+    _ensure_tables(conn)
+    try:
+        prev_row = conn.execute(
+            "SELECT analysis_data FROM competitor_reports WHERE user_id=? ORDER BY created_at DESC LIMIT 1",
+            (user,),
+        ).fetchone()
+        if prev_row and prev_row[0]:
+            prev_analysis = json.loads(prev_row[0]) if isinstance(prev_row[0], str) else prev_row[0]
+            changes = diff_reports(prev_analysis, analysis)
+    except (json.JSONDecodeError, TypeError):
+        changes = None
+    finally:
+        conn.close()
+
     # 保存报告
     report_id = f"rpt_{uuid.uuid4().hex[:10]}"
     conn = get_db()
@@ -294,9 +401,13 @@ def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()
 
     return {
         "report_id": report_id,
-        "competitors": [{"id": c["id"], "name": c["name"], "platform": c["platform"]} for c in competitors],
+        "competitors": [
+            {"id": c["id"], "name": c["name"], "platform": c["platform"], "monitor_frequency": c.get("monitor_frequency", "weekly")}
+            for c in competitors
+        ],
         "analysis": analysis,
         "radar": radar,
+        "changes": changes,
     }
 
 

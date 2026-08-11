@@ -10,6 +10,8 @@ import {
   FileText,
   Eye,
   Copy,
+  RefreshCw,
+  Settings2,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -17,7 +19,8 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
 import {
-  LineChart,
+  ComposedChart,
+  Area,
   Line,
   XAxis,
   YAxis,
@@ -134,6 +137,21 @@ export default function ForecastPage() {
       res.predictions.forecast_values.forEach((fv) => {
         lines.push(`| ${fv.period} | ${fv.value?.toLocaleString?.() || fv.value} | ${fv.low} ~ ${fv.high} |`)
       })
+      lines.push('')
+    }
+    if (res.method_explanation) {
+      lines.push('## 模型选择说明', '')
+      lines.push(`- 当前模型：${res.method_explanation.current}`)
+      Object.entries(res.method_explanation.info || {}).forEach(([k, v]) => lines.push(`- ${k}：${v}`))
+      if (res.method_explanation.alternatives?.length) {
+        lines.push('- 备选模型：')
+        res.method_explanation.alternatives.forEach((alt) => lines.push(`  - ${alt.name}：${alt['适用场景']}`))
+      }
+      lines.push('')
+    }
+    if (res.predictions?.risks?.length) {
+      lines.push('### 预测风险', '')
+      res.predictions.risks.forEach((r) => lines.push(`- ${r}`))
       lines.push('')
     }
     if (res.recommendations?.length) {
@@ -417,12 +435,16 @@ export default function ForecastPage() {
                     <BarChart3 className="w-4 h-4 text-emerald-500" /> 趋势可视化
                   </h3>
                   <ResponsiveContainer width="100%" height={320}>
-                    <LineChart
+                    <ComposedChart
                       data={result.charts.labels.map((label, i) => ({
                         name: label,
                         实际值: result.charts.actual?.[i] ?? null,
                         预测值: result.charts.forecast?.[i] ?? null,
                         趋势线: result.charts.trend_line?.[i] ?? null,
+                        预测区间: [
+                          result.charts.lower_bound?.[i] ?? null,
+                          result.charts.upper_bound?.[i] ?? null,
+                        ],
                       }))}
                       margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                     >
@@ -431,6 +453,13 @@ export default function ForecastPage() {
                       <YAxis tick={{ fontSize: 12 }} />
                       <Tooltip />
                       <Legend />
+                      <Area
+                        type="monotone"
+                        dataKey="预测区间"
+                        stroke="none"
+                        fill="rgba(245,158,11,0.14)"
+                        connectNulls={false}
+                      />
                       <Line
                         type="monotone"
                         dataKey="实际值"
@@ -457,7 +486,7 @@ export default function ForecastPage() {
                         dot={false}
                         connectNulls={false}
                       />
-                    </LineChart>
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </Card>
               )}
@@ -490,6 +519,38 @@ export default function ForecastPage() {
                       </div>
                     )}
                   </div>
+                </Card>
+              )}
+
+              {/* 模型选择说明 */}
+              {result.method_explanation && (
+                <Card>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-indigo-500" /> 模型选择说明
+                  </h3>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-sm text-gray-500">当前模型：</span>
+                    <Badge color="purple">{result.method_explanation.current}</Badge>
+                  </div>
+                  <div className="space-y-1.5">
+                    {Object.entries(result.method_explanation.info || {}).map(([k, v]) => (
+                      <div key={k} className="text-sm text-gray-600">
+                        <strong className="text-gray-700">{k}：</strong>
+                        {v}
+                      </div>
+                    ))}
+                  </div>
+                  {result.method_explanation.alternatives?.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <div className="text-sm font-medium text-gray-700 mb-1.5">备选模型：</div>
+                      {result.method_explanation.alternatives.map((alt) => (
+                        <div key={alt.name} className="text-xs text-gray-500 mb-1">
+                          <span className="font-medium text-gray-600">{alt.name}</span>
+                          ：{alt['适用场景']}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </Card>
               )}
 

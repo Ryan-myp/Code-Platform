@@ -8,6 +8,7 @@
 
 import logging
 import smtplib
+import uuid
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -49,6 +50,25 @@ def _ensure_table():
 
 
 _ensure_table()
+
+
+def send_inbox_message(user_id, title: str, content: str = "", notif_type: str = "system") -> str:
+    """站内信：写入 notifications 表（db.py 标准结构），供定时任务等后端模块复用。
+
+    返回通知 id；type 默认 system，前端按类型渲染图标。
+    """
+    conn = get_db()
+    try:
+        notif_id = f"notif_{uuid.uuid4().hex[:12]}"
+        conn.execute(
+            """INSERT INTO notifications (id, type, title, content, user_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (notif_id, notif_type, title, content, str(user_id), datetime.now().isoformat()),
+        )
+        conn.commit()
+        return notif_id
+    finally:
+        conn.close()
 
 
 @router.get("/config")

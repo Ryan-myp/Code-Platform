@@ -187,6 +187,42 @@ Click **"Run Workflow"** to start a new instance. The system will:
 
 **Result**: End-to-end automated data processing pipeline runs nightly without human intervention.
 
+## AI Content Factories & Publish-Ready Packs (v14)
+
+Six AI content factories (meme / music / image / video / game / miniapp) now output **publish-ready packs**:
+content quality gate (safety review + aesthetics self-check) + platform-spec compliance + companion
+materials, all bundled into a zip you can submit directly to the target platform.
+
+| Factory | Publish API | Pack contents |
+|---|---|---|
+| Meme | `POST /api/meme/publish-pack` | WeChat sticker spec (main 240 / thumb 120 / icon 50 / banner 750x400) + upload guide + quality report |
+| Music | `POST /api/music-factory/publish-pack` | mp3 + wav master (44.1kHz/16bit) + flac + cover + lrc/txt lyrics + platform specs (NetEase/Tencent/Douyin) |
+| Image | `POST /api/image-factory/publish-pack` | platform-spec output (Xiaohongshu/Douyin/Taobao/WeChat) + 2x upscale + listing copy |
+| Video | `POST /api/video-factory/publish-pack` | platform-spec transcode (Douyin/Bilibili/WeChat Channels) + cover frame + publish copy |
+| Game | `GET /api/games/{proj_id}/publish-pack` | web/wx build + cover + README + launch checklist + quality report |
+| Miniapp | `GET /api/miniapp/{proj_id}/export-zip` | project code + intro + review checklist + LICENSE + quality report |
+
+Every pack includes `LICENSE.txt` (AI-generated commercial-use authorization), `platform-spec.md`,
+an upload guide, and a `quality report` (text safety review + image quality score). Text is filtered by
+`check_text` before generation (high-risk content is rejected), and generated images are self-checked by
+`quality_check_image`. A `PublishProvider` registry reserves the extension point for future automatic
+publishing (requires enterprise qualification on most platforms).
+
+## Deep Evolution Across All Modules (v15)
+
+Four-dimension upgrade (feature depth / AI professionalism / frontend UX / stability) applied to every
+module — no demo-grade modules left:
+
+| Category | Highlights |
+|---|---|
+| Shared foundation | `safe_guard` error fallback decorator; three-state request hook (loading / retryable error / empty); unified page header & empty-state components |
+| Platform base (12) | AB test run/results endpoints + score cards; scheduler run history + auto-retry; in-app notifications with read state; role-permission matrix view; API key expiry/usage; admin health check |
+| Efficiency tools (10) | Contract risk-graded review + PDF compress; 4-class PPT template library; Excel formula docs + outlier detection; translation glossary memory + bilingual export; mind-map PNG export; DocQA citation tracing; sandbox whitelist/timeout hints; search time/domain filters; batch task templates with per-item retry |
+| Business analysis (8) | SEO keyword grouping/difficulty/priority matrix; insight-anomaly-advice report format; forecast confidence band; stock risk cards + report export; competitor change diff; content calendar + topic tag filters; segmented video analysis |
+| Creation factories (8) | Meme style previews + multi-set merge; music rhyme/section params + custom cover; image history thumbnail wall; video script template library + batch transcode; game template library + iteration diff; miniapp template library + review-material generator; short-drama shot-sheet Excel export + material manifest; digital-human script samples + lip-sync-friendly script check (`POST /api/digital-human/script-check`, auto-fix long segments/emoji/digits) |
+
+All modules covered by unit tests (`tests/unit/test_*_v15.py`); full pytest suite green, eslint 0 errors.
+
 ## Extending the Platform
 
 ### Creating Custom Node Types

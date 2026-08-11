@@ -65,8 +65,10 @@ const MembershipPage = lazy(() => import('./pages/MembershipPage'))
 // v9.3 内容发布 + 小程序开发
 const PublishingPage = lazy(() => import('./pages/PublishingPage'))
 const GrowthPage = lazy(() => import('./pages/GrowthPage'))
+const SEOAnalyzerPage = lazy(() => import('./pages/SEOAnalyzerPage'))
 const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
 const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
+const ShortDramaPage = lazy(() => import('./pages/ShortDramaPage'))
 const VoicePage = lazy(() => import('./pages/VoicePage'))
 const MemePage = lazy(() => import('./pages/MemePage'))
 const DigitalHumanPage = lazy(() => import('./pages/DigitalHumanPage'))
@@ -351,6 +353,14 @@ export default function App() {
                               }
                             />
                             <Route
+                              path="/seo"
+                              element={
+                                <AccessGuard path="/seo">
+                                  <SEOAnalyzerPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
                               path="/miniapp"
                               element={
                                 <AccessGuard path="/miniapp">
@@ -364,6 +374,15 @@ export default function App() {
                               element={
                                 <AccessGuard path="/games">
                                   <GameFactoryPage />
+                                </AccessGuard>
+                              }
+                            />
+                            {/* v13.23 短剧工厂（AI 编剧 + 配音 + 数字人播报） */}
+                            <Route
+                              path="/drama"
+                              element={
+                                <AccessGuard path="/drama">
+                                  <ShortDramaPage />
                                 </AccessGuard>
                               }
                             />

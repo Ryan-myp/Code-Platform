@@ -122,9 +122,10 @@ class TestQcCheck:
         assert qc["ok"] is False
         assert any(c["item"] == "开始界面" and not c["ok"] for c in qc["checks"])
 
-    def test_wx_only_project_passes(self):
-        """只生成 web 版（无 wx）时不应报 wx 文件缺失。"""
+    def test_web_only_project_intercepted(self):
+        """只生成 web 版（无 wx）时 QC 应拦截并报告 wx 三件套缺失（v13.9 双版本硬门禁）。"""
         from game_factory import _qc_check
 
         qc = _qc_check({"web": {"index.html": GOOD_HTML}})
-        assert qc["ok"] is True
+        assert qc["ok"] is False
+        assert any(c["item"].startswith("wx ") and not c["ok"] for c in qc["checks"])

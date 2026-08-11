@@ -8,6 +8,10 @@ import {
   Share2,
   Maximize2,
   Minimize2,
+  PenLine,
+  Check,
+  FileText,
+  X,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -191,6 +195,9 @@ export default function MindMapPage() {
   const [recordsLoading, setRecordsLoading] = useState(true)
   const [recordsError, setRecordsError] = useState(null)
   const [fullscreen, setFullscreen] = useState(false)
+  const [editingOutline, setEditingOutline] = useState(false)
+  const [outlineDraft, setOutlineDraft] = useState('')
+  const [applyingEdit, setApplyingEdit] = useState(false)
 
   useEffect(() => {
     loadRecords()
@@ -241,6 +248,66 @@ export default function MindMapPage() {
     a.download = `mindmap-${Date.now()}.png`
     a.click()
     toast.success('已导出PNG')
+  }
+
+  // v15：节点批量编辑（树 ↔ Tab 缩进大纲，与后端 tree_to_outline 规则一致）
+  const treeToOutline = (root) => {
+    const lines = []
+    const walk = (node, level) => {
+      if (!node?.name) return
+      lines.push('\t'.repeat(level) + node.name)
+      ;(node.children || []).forEach((c) => walk(c, level + 1))
+    }
+    walk(root, 0)
+    return lines.join('\n')
+  }
+
+  const startEditOutline = () => {
+    if (!result?.root) return
+    setOutlineDraft(treeToOutline(result.root))
+    setEditingOutline(true)
+  }
+
+  const applyOutlineEdit = async () => {
+    if (!outlineDraft.trim()) {
+      toast.error('大纲不能为空')
+      return
+    }
+    setApplyingEdit(true)
+    try {
+      const res = await api.post('/api/mindmap/apply-edit', { outline: outlineDraft })
+      const tree = res.data.tree
+      setResult((prev) => ({ ...prev, root: tree, title: tree.name }))
+      setEditingOutline(false)
+      toast.success('已应用大纲修改')
+    } catch (e) {
+      toast.error(e.message || '应用失败')
+    } finally {
+      setApplyingEdit(false)
+    }
+  }
+
+  // v15：导出大纲 Markdown（本地生成，无需后端）
+  const exportOutlineMD = () => {
+    const root = result?.root
+    if (!root) return
+    const lines = [`# ${result.title || root.name || '思维导图'}`, '']
+    const walk = (node, level) => {
+      if (!node?.name || level === 0) return
+      lines.push('  '.repeat(level - 1) + '- ' + node.name)
+      ;(node.children || []).forEach((c) => walk(c, level + 1))
+    }
+    walk(root, 0)
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${result.title || root.name || 'mindmap'}-大纲.md`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+    toast.success('已导出大纲 MD')
   }
 
   const deleteRecord = async (id) => {
@@ -404,9 +471,25 @@ export default function MindMapPage() {
                 {result ? result.title || result.topic : '预览'}
               </h3>
               {result && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
                   <Button variant="secondary" size="sm" icon={Download} onClick={exportPNG}>
                     导出PNG
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={FileText}
+                    onClick={exportOutlineMD}
+                  >
+                    大纲MD
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={PenLine}
+                    onClick={startEditOutline}
+                  >
+                    编辑大纲
                   </Button>
                   <Button
                     variant="secondary"
@@ -437,6 +520,41 @@ export default function MindMapPage() {
                 title="等待生成"
                 description="输入主题后点击生成，AI将创建思维导图"
               />
+            ) : editingOutline ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>
+                    批量编辑节点：Tab 缩进控制层级（首行为根节点），可直接增删改节点名
+                  </span>
+                  <span className="text-gray-400">缩进 → 层级；上一级 ← Shift+Tab</span>
+                </div>
+                <textarea
+                  value={outlineDraft}
+                  onChange={(e) => setOutlineDraft(e.target.value)}
+                  rows={18}
+                  spellCheck={false}
+                  className="w-full px-3 py-2 font-mono text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    icon={Check}
+                    loading={applyingEdit}
+                    onClick={applyOutlineEdit}
+                  >
+                    应用修改
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={X}
+                    onClick={() => setEditingOutline(false)}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </div>
             ) : (
               <div
                 className="mindmap-canvas flex items-center justify-center overflow-auto rounded-xl bg-gradient-to-br from-gray-50 to-purple-50/30 border border-gray-100"

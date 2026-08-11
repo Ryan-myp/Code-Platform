@@ -266,5 +266,66 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
     return {"message": "已删除"}
 
 
+# ── 大纲批量编辑（v15）：树 ↔ Tab 缩进大纲文本互转 ──
+
+
+def tree_to_outline(root: dict | None) -> str:
+    """树结构 → 缩进大纲文本（每行 Tab*层级 + 节点名，根为第0层）。"""
+    if not root:
+        return ""
+    lines: list[str] = []
+
+    def walk(node: dict, level: int) -> None:
+        name = str(node.get("name", "")).strip()
+        if not name:
+            return
+        lines.append("\t" * level + name)
+        for child in node.get("children") or []:
+            walk(child, level + 1)
+
+    walk(root, 0)
+    return "\n".join(lines)
+
+
+def outline_to_tree(outline: str) -> dict:
+    """缩进大纲文本 → 树结构。
+
+    - 首行作为根节点，其余按 Tab 缩进挂接
+    - 跳级缩进自动修复为最近合法父级；空行/空名跳过
+    - 节点名截断 60 字符，层级最多 6 层
+    """
+    root = {"name": "", "children": []}
+    stack = [(0, root)]  # (level, node)
+    max_level = 6
+    for line in (outline or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        level = min(len(line) - len(line.lstrip("\t")), max_level)
+        name = stripped[:60]
+        node = {"name": name, "children": []}
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        if not stack:
+            stack.append((0, root))
+        stack[-1][1]["children"].append(node)
+        stack.append((level, node))
+    children = root["children"]
+    if not children:
+        return {"name": "未命名主题", "children": []}
+    return children[0]
+
+
+class MindMapEditRequest(BaseModel):
+    outline: str = Field(..., max_length=20000, description="Tab 缩进大纲文本")
+
+
+@router.post("/apply-edit")
+async def apply_outline_edit(data: MindMapEditRequest, current_user: dict = require_auth()):
+    """应用大纲批量编辑：解析缩进大纲 → 返回规范化树结构（v15）。"""
+    tree = outline_to_tree(data.outline)
+    return {"ok": True, "tree": tree}
+
+
 # ── 异步任务处理器注册 ──
 register_handler("mindmap_generate", _mindmap_generate_handler, user_limit=2, max_attempts=1)

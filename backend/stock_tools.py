@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """股票分析工具 - 行情获取、趋势分析、模拟交易"""
 
+import statistics
 import time
 import uuid
 from datetime import datetime
@@ -168,6 +169,132 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
         raise HTTPException(503, f"行情数据服务暂时不可用（网络或上游限制），请稍后重试。详情: {str(e)[:150]}") from e
 
 
+# ── 风险指标计算（确定性纯函数，可单测）──
+
+
+def _volatility_level(vol_pct: float | None) -> str:
+    """年化波动率等级：<20% 低 / 20-40% 中 / >40% 高。"""
+    if vol_pct is None:
+        return "低"
+    if vol_pct >= 40:
+        return "高"
+    if vol_pct >= 20:
+        return "中"
+    return "低"
+
+
+def _drawdown_level(dd_pct: float | None) -> str:
+    """最大回撤等级：<10% 低 / 10-20% 中 / >20% 高。"""
+    if dd_pct is None:
+        return "低"
+    if dd_pct >= 20:
+        return "高"
+    if dd_pct >= 10:
+        return "中"
+    return "低"
+
+
+def _liquidity_level(avg_volume: float | None) -> str:
+    """流动性等级：日均成交 ≥1M 活跃 / ≥100K 一般 / <100K 低迷。"""
+    if avg_volume is None:
+        return "一般"
+    if avg_volume >= 1_000_000:
+        return "活跃"
+    if avg_volume >= 100_000:
+        return "一般"
+    return "低迷"
+
+
+def compute_risk_metrics(data: dict | None) -> dict:
+    """计算风险提示指标：年化波动率 / 最大回撤 / 流动性 + 综合风险等级。
+
+    纯函数（输入 get_stock_data 的输出），确定性可单测：
+    - volatility_pct：日收益率标准差年化（×√252）
+    - max_drawdown_pct：区间内从峰值到谷底的最大回撤（含发生区间）
+    - avg_volume：日均成交量 + 流动性等级
+    - risk_level：取波动率与回撤中更高者（保守原则）
+    - warnings：按阈值给出可读风险提示
+    """
+    points = (data or {}).get("data_points") or []
+    closes = [p.get("close") for p in points]
+    volumes = [p.get("volume") for p in points]
+    dates = [p.get("date", "") for p in points]
+
+    # 年化波动率（日收益率 → ×√252）
+    volatility_pct = None
+    returns = []
+    prev = None
+    for c in closes:
+        if c is None:
+            prev = None
+            continue
+        if prev is not None and prev > 0:
+            returns.append(c / prev - 1)
+        prev = c
+    if len(returns) >= 2:
+        volatility_pct = round(statistics.stdev(returns) * (252**0.5) * 100, 2)
+
+    # 最大回撤（含峰值/谷底日期）
+    max_drawdown_pct = None
+    peak_date = ""
+    trough_date = ""
+    running_max = None
+    for i, c in enumerate(closes):
+        if c is None:
+            continue
+        if running_max is None or c > running_max:
+            running_max = c
+            peak_date = dates[i] if i < len(dates) else ""
+        if running_max and running_max > 0:
+            dd = (c - running_max) / running_max * 100
+            if max_drawdown_pct is None or dd < max_drawdown_pct:
+                max_drawdown_pct = round(dd, 2)
+                trough_date = dates[i] if i < len(dates) else ""
+    if max_drawdown_pct is not None:
+        max_drawdown_pct = abs(max_drawdown_pct)
+
+    # 流动性（日均成交量）
+    valid_volumes = [v for v in volumes if v is not None]
+    avg_volume = round(sum(valid_volumes) / len(valid_volumes)) if valid_volumes else None
+
+    vol_level = _volatility_level(volatility_pct)
+    dd_level = _drawdown_level(max_drawdown_pct)
+    liq_level = _liquidity_level(avg_volume)
+    risk_level = (
+        "高"
+        if "高" in (vol_level, dd_level)
+        else ("中" if "中" in (vol_level, dd_level) else "低")
+    )
+
+    warnings = []
+    if volatility_pct is not None and vol_level == "高":
+        warnings.append(f"年化波动率 {volatility_pct}% 属高波动标的，价格短期波动剧烈")
+    elif volatility_pct is not None and vol_level == "中":
+        warnings.append(f"年化波动率 {volatility_pct}% 处于中等水平，注意仓位控制")
+    if max_drawdown_pct is not None and dd_level == "高":
+        warnings.append(
+            f"区间最大回撤 {max_drawdown_pct}%（{peak_date} → {trough_date}），注意止损纪律"
+        )
+    elif max_drawdown_pct is not None and dd_level == "中":
+        warnings.append(f"区间最大回撤 {max_drawdown_pct}%，回撤风险需关注")
+    if liq_level == "低迷":
+        warnings.append("日均成交量偏低，注意买卖价差与滑点成本")
+    if not warnings:
+        warnings.append("未发现显著风险信号，仍请关注市场系统性风险")
+
+    return {
+        "volatility_pct": volatility_pct,
+        "volatility_level": vol_level,
+        "max_drawdown_pct": max_drawdown_pct,
+        "drawdown_peak_date": peak_date,
+        "drawdown_trough_date": trough_date,
+        "avg_volume": avg_volume,
+        "liquidity_level": liq_level,
+        "risk_level": risk_level,
+        "warnings": warnings,
+    }
+
+
 def analyze_stock_trend(data: dict) -> str:
     """基于技术分析给出趋势判断"""
     indicators = data.get("indicators", {})
@@ -221,6 +348,7 @@ async def get_stock(symbol: str, period: str = "3mo", current_user: dict = requi
     """获取股票详细数据"""
     data = await get_stock_data(symbol, period)
     data["trend_analysis"] = analyze_stock_trend(data)
+    data["risk_metrics"] = compute_risk_metrics(data)
     return data
 
 
@@ -345,6 +473,7 @@ async def analyze_stock(req: StockAnalysisRequest, current_user: dict = require_
             "data_summary": {
                 "current_price": data.get("current_price"),
                 "trend_analysis": data.get("trend_analysis"),
+                "risk_metrics": compute_risk_metrics(data),
             },
         }
     except Exception as e:

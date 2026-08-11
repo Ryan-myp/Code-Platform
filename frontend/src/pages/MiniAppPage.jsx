@@ -20,6 +20,10 @@ import {
   Maximize2,
   Code2,
   Smartphone as PhoneIcon,
+  ClipboardCheck,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -63,6 +67,27 @@ const TEMPLATES = [
     icon: '📰',
     color: 'from-emerald-500 to-green-600',
     description: '文章列表 / 详情 / 分类',
+  },
+  {
+    id: 'survey',
+    name: '问卷投票',
+    icon: '📊',
+    color: 'from-cyan-500 to-blue-600',
+    description: '问卷列表 / 填写表单 / 结果统计',
+  },
+  {
+    id: 'event',
+    name: '活动报名',
+    icon: '🎪',
+    color: 'from-orange-500 to-red-600',
+    description: '活动列表 / 详情报名 / 我的票券',
+  },
+  {
+    id: 'market',
+    name: '二手闲置',
+    icon: '🔄',
+    color: 'from-yellow-500 to-amber-600',
+    description: '闲置列表 / 发布求购 / 宝贝详情',
   },
   {
     id: 'custom',
@@ -119,6 +144,10 @@ export default function MiniAppPage() {
   const [copied, setCopied] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
   const [guide, setGuide] = useState({ steps: [], note: '' })
+  // 提审材料（v15）：app.json 字段核对 + 权限扫描 + 提审清单 md
+  const [showReview, setShowReview] = useState(false)
+  const [reviewData, setReviewData] = useState(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
   const [viewMode, setViewMode] = useState('preview') // 'preview' | 'code'
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewPage, setPreviewPage] = useState('')
@@ -239,7 +268,7 @@ export default function MiniAppPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      toast.success('ZIP 包已下载，导入微信开发者工具即可运行')
+      toast.success('发布包已下载（项目代码 + 介绍 + 审核清单 + 质量报告）')
     } catch (e) {
       toast.error(`下载失败：${e.message}`)
     }
@@ -263,6 +292,33 @@ export default function MiniAppPage() {
     } catch (e) {
       toast.error(e.message)
     }
+  }
+
+  const loadReviewMaterial = async () => {
+    if (!viewing) return
+    setReviewLoading(true)
+    try {
+      const res = await api.get(`/api/miniapp/${viewing.id}/review-material`)
+      setReviewData(res.data)
+      setShowReview(true)
+    } catch (e) {
+      toast.error(`提审材料生成失败：${e.message}`)
+    } finally {
+      setReviewLoading(false)
+    }
+  }
+
+  const downloadReviewMd = () => {
+    if (!reviewData?.material) return
+    const blob = new Blob([reviewData.material], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${reviewData.name || viewing?.name || 'miniapp'}-提审材料.md`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   const tree = viewing ? fileTree(Object.keys(viewing.files)) : []
@@ -498,11 +554,14 @@ export default function MiniAppPage() {
         size="2xl"
         footer={
           <>
+            <Button variant="secondary" icon={ClipboardCheck} loading={reviewLoading} onClick={loadReviewMaterial}>
+              提审材料
+            </Button>
             <Button variant="secondary" icon={Rocket} onClick={loadGuide}>
               部署指引
             </Button>
             <Button variant="secondary" icon={Download} onClick={downloadZip}>
-              下载 ZIP
+              下载发布包
             </Button>
             <Button
               variant="primary"
@@ -645,6 +704,82 @@ export default function MiniAppPage() {
         )}
       </Modal>
 
+      {/* ── 提审材料 Modal（v15）── */}
+      <Modal
+        open={showReview}
+        onClose={() => setShowReview(false)}
+        title={`提审材料：${reviewData?.name || viewing?.name || ''}`}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" icon={Download} onClick={downloadReviewMd}>
+              下载提审材料.md
+            </Button>
+            <Button variant="primary" onClick={() => setShowReview(false)}>
+              知道了
+            </Button>
+          </>
+        }
+      >
+        {reviewData && (
+          <div className="space-y-4">
+            {/* 自检结论横幅 */}
+            <div
+              className={`flex items-start gap-2.5 px-3.5 py-3 rounded-xl border text-sm ${
+                reviewData.ok
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}
+            >
+              {reviewData.ok ? (
+                <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              )}
+              <div>
+                <p className="font-medium">
+                  {reviewData.ok
+                    ? '全部核对通过，可提交审核'
+                    : `有 ${reviewData.checks.filter((c) => c.level === 'error').length} 项不通过，请先修复`}
+                </p>
+                <p className="text-xs opacity-80">基于 app.json 字段核对 + 代码权限扫描自动生成，最终以微信审核要求为准</p>
+              </div>
+            </div>
+
+            {/* 核对项列表 */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-gray-500">核对清单（{reviewData.checks.length} 项）</p>
+              {reviewData.checks.map((c, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 px-3 py-2 rounded-lg border border-gray-100 bg-gray-50/50 text-xs"
+                >
+                  {c.level === 'error' ? (
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                  ) : c.level === 'warn' ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="min-w-0">
+                    <span className="font-medium text-gray-700">{c.item}</span>
+                    <span className="text-gray-400">：{c.detail}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 提审材料 Markdown 预览 */}
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-1.5">提审材料 Markdown（可下载后补充完善）</p>
+              <pre className="bg-gray-900 text-gray-100 text-xs leading-relaxed p-4 rounded-xl overflow-auto max-h-[36vh] font-mono whitespace-pre-wrap">
+                {reviewData.material}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* ── 部署指引 Modal ── */}
       <Modal open={showGuide} onClose={() => setShowGuide(false)} title="小程序部署指引" size="lg">
         <div className="space-y-3">
@@ -671,6 +806,7 @@ export default function MiniAppPage() {
 }
 
 // 文件树节点（递归渲染）
+/* eslint-disable react/prop-types -- 页内纯展示组件，与全站 props 校验风格一致 */
 function TreeNode({ node, depth, selected, onSelect }) {
   if (node.type === 'dir') {
     return (

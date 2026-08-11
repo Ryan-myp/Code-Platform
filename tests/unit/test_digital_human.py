@@ -770,6 +770,8 @@ def _make_dh_req(**overrides):
     """构造最小合法 GenerateRequest。"""
     from digital_human import GenerateRequest
 
+    # emotion 默认 neutral：测试环境 LLM 不可用，避免 auto 触发真实情绪标注调用
+    overrides.setdefault("emotion", "neutral")
     return GenerateRequest(text="大家好，今天分享一个实用技巧，希望对你有帮助。", **overrides)
 
 
@@ -1324,7 +1326,7 @@ def test_voice_clone_generate_pitch_passthrough(test_db_path, tmp_path, monkeypa
 
     calls = {}
 
-    def fake_tts(text, voice, speed, pitch=0):
+    def fake_tts(text, voice, speed, pitch=0, emotion=""):
         calls.update(voice=voice, speed=speed, pitch=pitch)
         return b"x" * 2048
 
@@ -1404,7 +1406,8 @@ def test_voice_clone_revoke_api(test_db_path, tmp_path, auth_headers):
 
 
 def test_templates_api_returns_five_industries(auth_headers):
-    """行业模板库：5 类模板齐备，每模板含场景背景/字幕样式/片头片尾/文案结构。"""
+    """行业模板库：8 类模板齐备（v15 新增生活记录/企业宣传/情感语录），
+    每模板含场景背景/字幕样式/片头片尾/文案结构 + 可直接填充的示例文案。"""
     from fastapi.testclient import TestClient
 
     from main import app
@@ -1414,7 +1417,10 @@ def test_templates_api_returns_five_industries(auth_headers):
     assert resp.status_code == 200, resp.text
     templates = resp.json()["templates"]
     ids = [t["id"] for t in templates]
-    assert ids == ["live_shopping", "knowledge", "news", "course", "brand"]
+    assert ids == [
+        "live_shopping", "knowledge", "news", "course", "brand",
+        "vlog", "corporate", "quote",
+    ]
     for t in templates:
         assert t["name"] and t["emoji"] and t["desc"]
         assert t["scene_id"] in {"product", "course", "news", "livestream", "story"}
@@ -1423,6 +1429,7 @@ def test_templates_api_returns_five_industries(auth_headers):
         assert sub["position"] in ("right", "center")
         assert sub["color"].startswith("#") and 20 <= sub["font_size"] <= 48
         assert t["opening"] and t["closing"] and "→" in t["script_structure"]
+        assert t["script_sample"] and len(t["script_sample"]) > 30
 
 
 def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatch):
@@ -1444,7 +1451,7 @@ def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatc
         with open(k["output_path"], "wb") as f:
             f.write(b"fake mp4")
 
-    def fake_tts(text, voice, speed, pitch=0):
+    def fake_tts(text, voice, speed, pitch=0, emotion=""):
         return b"x" * 2048
 
     with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
@@ -1706,7 +1713,7 @@ def test_batch_worker_prefetches_tts(test_db_path, auth_headers):
     client = TestClient(app)
     warmed = []
 
-    def fake_cached(text, voice, speed, pitch=0):
+    def fake_cached(text, voice, speed, pitch=0, emotion=""):
         warmed.append(text[:10])
         p = f"/tmp/fake_tts_{len(warmed)}.mp3"
         with open(p, "wb") as f:
@@ -1722,7 +1729,7 @@ def test_batch_worker_prefetches_tts(test_db_path, auth_headers):
         patch("digital_human._tts_cached", side_effect=fake_cached),
         patch("digital_human._render_video", side_effect=fake_render),
     ):
-        resp = client.post("/api/digital-human/batch", json={"texts": texts}, headers=auth_headers)
+        resp = client.post("/api/digital-human/batch", json={"texts": texts, "emotion": "neutral"}, headers=auth_headers)
         assert resp.status_code == 200, resp.text
         batch_id = resp.json()["batch_id"]
         for _ in range(150):
@@ -1763,8 +1770,8 @@ class TestUsageLogErrorField:
     """v13.1 诊断埋点：usage_logs.error 记录失败原因（含 [stage:xxx] 阶段标记）。"""
 
     def test_log_usage_records_error(self, setup_test_db):
-        from common.llm import log_usage
         from common.db import get_db_context
+        from common.llm import log_usage
 
         log_usage("digital_human", 10, 5, 1.2, success=False, error="[stage:tts] EDGE_TTS_ERROR")
         with get_db_context() as conn:
@@ -1775,8 +1782,8 @@ class TestUsageLogErrorField:
         assert row["error"] == "[stage:tts] EDGE_TTS_ERROR"
 
     def test_log_usage_error_truncated_to_500(self, setup_test_db):
-        from common.llm import log_usage
         from common.db import get_db_context
+        from common.llm import log_usage
 
         log_usage("digital_human", 10, 5, 0.5, success=False, error="x" * 2000)
         with get_db_context() as conn:
@@ -1786,8 +1793,8 @@ class TestUsageLogErrorField:
         assert len(row["error"]) == 500
 
     def test_log_usage_success_has_empty_error(self, setup_test_db):
-        from common.llm import log_usage
         from common.db import get_db_context
+        from common.llm import log_usage
 
         log_usage("digital_human", 10, 5, 0.5)
         with get_db_context() as conn:

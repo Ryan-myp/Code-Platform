@@ -89,3 +89,15 @@ backend/game_covers/
 backend/image_factory/img_*.png
 backend/uploads/qr/
 backend/pdf_factory/
+
+# ─── v16 运行时产物与模型权重（禁止入库）────────────────
+backend/drama_factory/cache/
+backend/drama_factory/drama_*
+backend/avatar_engine/gfpgan/weights/
+*.pth
+*.mp4
+*.srt
+backend/uploads/
+backend/music_factory/*.mp3
+backend/music_factory/*.wav
+backend/music_factory/*.flac

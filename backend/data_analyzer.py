@@ -32,6 +32,42 @@ PREVIEW_ROWS = 30
 
 _CODE_BLOCK_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
 
+# v15：三段式结论解析（洞察/异常/建议）
+_SECTION_RE = re.compile(r"\[(洞察|异常|建议)\]")
+_SECTION_ORDER = ["insights", "anomalies", "suggestions"]
+_SECTION_LABELS = {"洞察": "insights", "异常": "anomalies", "建议": "suggestions"}
+
+
+def parse_conclusion(output: str) -> dict:
+    """将沙箱输出解析为三段式结论（洞察/异常/建议）。
+
+    规则：按行解析，仅行首的 [洞察]/[异常]/[建议] 标记切段；
+    每段内去除编号前缀（1. 2.）与空行。无任何标记时整段视为洞察。
+    """
+    sections = {k: [] for k in _SECTION_ORDER}
+    if not output:
+        return sections
+    current = "insights"
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _SECTION_RE.match(line)
+        if m:
+            current = _SECTION_LABELS[m.group(1)]
+            line = line[m.end():].strip()
+        item = _strip_number(line)
+        if item:
+            sections[current].append(item)
+    return sections
+
+
+def _strip_number(line: str) -> str:
+    """去除条目编号前缀：'1. xxx' / '1、xxx' → 'xxx'。"""
+    import re as _re
+
+    return _re.sub(r"^\s*\d+[.、．)]\s*", "", line)
+
 _ANALYZER_SYSTEM_PROMPT = """你是资深数据分析师与 Python 工程师。用户会上传一个 CSV 表格（UTF-8，可能含中文表头）并提出数据分析问题。
 请生成一段可直接执行的 Python 代码来回答用户的问题，代码必须遵守以下约束：
 
@@ -39,7 +75,15 @@ _ANALYZER_SYSTEM_PROMPT = """你是资深数据分析师与 Python 工程师。�
 2. 允许使用的库：pandas、numpy、matplotlib、json、math、statistics、collections、itertools、functools、re、datetime。禁止导入其他任何模块。
 3. 图表：matplotlib 使用 Agg 后端，禁止 plt.show()。每张图保存为 chart1.png、chart2.png（plt.savefig('chart1.png')，dpi=100），最多 3 张。
 4. 图表文字一律使用英文（服务器没有中文字体，中文会显示为方块）；图表标题、轴标签要清晰。
-5. 文本结论：用 print() 输出中文结论，包含关键数字、趋势与业务解读。结论直接面向用户，不要出现分析步骤叙述。
+5. 文本结论：用 print() 输出中文结论。**结论必须按以下三段式结构输出**（每段用 [洞察]/[异常]/[建议] 标记开头，每条结论一行，用 1. 2. 3. 编号）：
+   [洞察] 数据中最重要的事实、趋势与关键发现（含关键数字）
+   [异常] 发现的异常值、突变、背离趋势的数据点（无异常则输出 [异常] 无显著异常）
+   [建议] 基于数据的可执行业务建议（具体到动作与目标）
+   示例：
+   [洞察] 1. 华东区销售额 3.2 万居首，占总盘 28%
+2. 2 月整体环比下滑 12%
+[异常] 1. 3 月 6 日华南销量骤降至 8，仅为均值 1/4
+[建议] 1. 对华南数码品类补货并加大促销
 6. 绝对禁止的写法（会被沙箱直接拒绝）：open 函数、os 模块、subprocess、eval 与 exec 函数、import 非白名单模块、网络请求、文件删除。
 7. 代码要健壮：先 df.head() 了解结构，处理缺失值与类型转换，避免除零。
 8. 只输出代码本身，用 ```python 代码块包裹，不要输出任何解释文字。"""
@@ -216,6 +260,8 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
     charts = [{"name": k, "data": v} for k, v in result["files"].items()]
     return {
         "conclusion": result["output"],
+        "conclusion_sections": parse_conclusion(result["output"]),
+        "overview": {"columns": info["columns"], "rows": info["rows"]},
         "error": result["error"],
         "charts": charts,
         "code": code,

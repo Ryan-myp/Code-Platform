@@ -115,6 +115,18 @@ const SCENE_SCRIPTS = {
   ],
 }
 
+// v13.24 数字人情绪选项（auto=LLM 自动判断文案情绪，声音+表情联动）
+const EMOTION_OPTIONS = [
+  { id: 'auto', label: '自动', icon: '✨' },
+  { id: 'neutral', label: '自然', icon: '🙂' },
+  { id: 'happy', label: '欢快', icon: '😄' },
+  { id: 'sad', label: '悲伤', icon: '😢' },
+  { id: 'angry', label: '激昂', icon: '🔥' },
+  { id: 'gentle', label: '温柔', icon: '😊' },
+  { id: 'serious', label: '严肃', icon: '🧐' },
+]
+const emotionLabel = (id) => EMOTION_OPTIONS.find((e) => e.id === id)?.label || id || '自动'
+
 export default function DigitalHumanPage() {
   const toast = useToast()
 
@@ -127,6 +139,7 @@ export default function DigitalHumanPage() {
   const [templateId, setTemplateId] = useState('') // 行业模板（选模板自动填充场景/背景/音色/字幕样式）
   const [templates, setTemplates] = useState([]) // 行业模板库
   const [speed, setSpeed] = useState(1.0)
+  const [emotion, setEmotion] = useState('auto') // v13.24 情绪：auto=LLM 自动判断
   const [generating, setGenerating] = useState(false)
   // 商业参数：分辨率 / 帧率 / 水印
   const [resolution, setResolution] = useState('720p')
@@ -154,6 +167,8 @@ export default function DigitalHumanPage() {
   const [scriptList, setScriptList] = useState([])
   const [scriptLoading, setScriptLoading] = useState(false)
   const [checkResult, setCheckResult] = useState(null) // 合规预检结果
+  const [qualityResult, setQualityResult] = useState(null) // v15 文案体检结果
+  const [qualityLoading, setQualityLoading] = useState(false) // v15 文案体检请求中
 
   // 数据
   const [avatars, setAvatars] = useState([])
@@ -215,6 +230,7 @@ export default function DigitalHumanPage() {
   const [playing, setPlaying] = useState(false)
   const [talking, setTalking] = useState(false)
   const [audioUrl, setAudioUrl] = useState('')
+  const [previewingVoice, setPreviewingVoice] = useState(false)
 
   // 录制
   const [recording, setRecording] = useState(false)
@@ -787,7 +803,13 @@ export default function DigitalHumanPage() {
     setBgId(t.background_id)
     if (t.voice_hint) setVoiceId(t.voice_hint)
     if (t.speed_hint) setSpeed(t.speed_hint)
-    toast.success(`已套用「${t.name}」模板：场景/背景/音色/字幕样式已按模板填充`)
+    // v15：模板附带可直接填充的示例文案，文案为空时自动填入（{占位符} 需用户替换）
+    if (t.script_sample && !text.trim()) {
+      setText(t.script_sample)
+      toast.success(`已套用「${t.name}」模板：示例文案已填入，请替换{占位符}内容`)
+    } else {
+      toast.success(`已套用「${t.name}」模板：场景/背景/音色/字幕样式已按模板填充`)
+    }
   }
   const clearTemplate = () => {
     setTemplateId('')
@@ -818,6 +840,7 @@ export default function DigitalHumanPage() {
         resolution,
         fps,
         watermark,
+        emotion,
         engine,
       })
       if (res.data?.task_id) {
@@ -889,6 +912,56 @@ export default function DigitalHumanPage() {
     setPlaying(false)
     setTalking(false)
   }, [])
+
+  // 口播试听：TTS 短句预览（复用 voice_factory 全降级链，生成前先验证音频效果）
+  const previewVoice = useCallback(async () => {
+    const sample = text.trim()
+    if (!sample) {
+      toast.error('请先输入口播文案')
+      return
+    }
+    if (customVoices.some((v) => v.id === voiceId)) {
+      toast.error('自定义/克隆声音不支持试听，请选择系统音色')
+      return
+    }
+    setPreviewingVoice(true)
+    try {
+      stopAudio()
+      const form = new FormData()
+      form.append('voice', voiceId)
+      form.append('text', sample.slice(0, 80))
+      const res = await api.post('/api/voice/preview', form, {
+        responseType: 'blob',
+        timeout: 60000,
+      })
+      const url = URL.createObjectURL(res.data)
+      setAudioUrl((prev) => {
+        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev)
+        return url
+      })
+      // 等待 audio 元素挂载后自动播放
+      setTimeout(() => {
+        if (audioRef.current) {
+          audioRef.current
+            .play()
+            .then(() => {
+              setPlaying(true)
+              setTalking(true)
+            })
+            .catch(() => {})
+        }
+      }, 100)
+      toast.success('试听已就绪，正在播放')
+    } catch (e) {
+      const msg =
+        e.status === 400 || e.status === 404
+          ? `当前音色暂不支持试听：${e.message}`
+          : `试听失败：${e.message}`
+      toast.error(msg)
+    } finally {
+      setPreviewingVoice(false)
+    }
+  }, [text, voiceId, customVoices, stopAudio, toast])
 
   // ── 录制控制 ──
   const startRecording = useCallback(() => {
@@ -1007,6 +1080,7 @@ export default function DigitalHumanPage() {
     setText(r.text || '')
     if (r.avatar_id) setAvatarId(r.avatar_id)
     if (r.voice_id) setVoiceId(r.voice_id)
+    if (r.emotion) setEmotion(r.emotion) // v13.24 回填情绪（旧记录无情绪则保持当前选择）
     if (r.background_id) setBgId(r.background_id)
     if (r.scene_id) setSceneId(r.scene_id)
     if (r.resolution) setResolution(r.resolution)
@@ -1053,6 +1127,7 @@ export default function DigitalHumanPage() {
         resolution,
         fps,
         watermark,
+        emotion,
       })
       setBatchTask(res.data)
       setCheckResult(null)
@@ -1181,6 +1256,34 @@ export default function DigitalHumanPage() {
     } catch (e) {
       toast.error(`检查失败：${e.message}`)
     }
+  }
+
+  // ── v15 文案体检：长句无停顿/emoji/长数字/长英文等口型友好性检查 ──
+  const checkScriptQuality = async () => {
+    if (!text.trim()) {
+      toast.error('请先输入文案')
+      return
+    }
+    setQualityLoading(true)
+    try {
+      const res = await api.post('/api/digital-human/script-check', { text })
+      setQualityResult(res.data)
+      if (res.data?.ok) {
+        toast.success(`朗读友好 ✓ 约 ${res.data.estimate_sec} 秒（${res.data.char_count} 字）`)
+      }
+    } catch (e) {
+      toast.error(`体检失败：${e.message}`)
+    } finally {
+      setQualityLoading(false)
+    }
+  }
+
+  // 应用体检自动修复：去 emoji/特殊符号 + 数字转中文 + 空行折叠
+  const applyQualityFix = () => {
+    if (!qualityResult?.fixed_text) return
+    setText(qualityResult.fixed_text)
+    setQualityResult(null)
+    toast.success('已应用修复版文案（可继续编辑）')
   }
 
   const loadArticle = (a) => {
@@ -1512,12 +1615,13 @@ export default function DigitalHumanPage() {
               {[
                 { id: '2d', label: '2D 基础（卡通渲染·免费）' },
                 { id: 'live_portrait', label: '照片数字人（口型同步）' },
+                { id: 'sadtalker', label: '数字人高级版（3D 口型·头部运动）' },
               ].map((e) => (
                 <button
                   key={e.id}
                   onClick={() => {
                     setEngine(e.id)
-                    if (e.id === 'live_portrait' && !customAvatars.some((a) => a.style === '照片数字人')) {
+                    if (e.id !== '2d' && !customAvatars.some((a) => a.style === '照片数字人')) {
                       toast.info('请先上传正脸照片创建照片数字人形象')
                     }
                   }}
@@ -1533,6 +1637,11 @@ export default function DigitalHumanPage() {
               {engine === 'live_portrait' && (
                 <span className="text-[10px] text-rose-500">
                   照片数字人需搭配照片形象使用，失败自动降级 2D 保证出片
+                </span>
+              )}
+              {engine === 'sadtalker' && (
+                <span className="text-[10px] text-rose-500">
+                  高级引擎推理约 20-50 分钟（CPU），需搭配照片形象，失败自动降级照片/2D 引擎
                 </span>
               )}
             </div>
@@ -1633,6 +1742,32 @@ export default function DigitalHumanPage() {
                 onChange={(e) => setSpeed(Number(e.target.value))}
                 className="w-full mt-1 accent-violet-500"
               />
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-gray-500 mb-1 block">
+                情绪：{emotionLabel(emotion)}
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {EMOTION_OPTIONS.map((e) => (
+                  <button
+                    key={e.id}
+                    onClick={() => setEmotion(e.id)}
+                    className={`px-1 py-1.5 rounded-lg text-[11px] transition-all flex flex-col items-center gap-0.5 ${
+                      emotion === e.id
+                        ? 'bg-violet-100 text-violet-700 ring-1 ring-violet-400'
+                        : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span className="text-sm leading-none">{e.icon}</span>
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+              {emotion === 'auto' && (
+                <p className="text-[10px] text-gray-400 mt-1">
+                  AI 自动分析文案情绪（声音 + 表情联动）
+                </p>
+              )}
             </div>
           </Card>
 
@@ -1756,11 +1891,29 @@ export default function DigitalHumanPage() {
                 <Button variant="secondary" size="sm" icon={ShieldCheck} onClick={checkCompliance}>
                   检查文案
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={ListChecks}
+                  loading={qualityLoading}
+                  onClick={checkScriptQuality}
+                >
+                  文案体检
+                </Button>
                 <Button variant="secondary" size="sm" icon={FileText} onClick={loadArticles}>
                   素材库
                 </Button>
                 <Button variant="secondary" size="sm" icon={Shuffle} onClick={pickRandomScript}>
                   随机台词
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Volume2}
+                  loading={previewingVoice}
+                  onClick={previewVoice}
+                >
+                  试听语音
                 </Button>
               </div>
             </div>
@@ -2366,6 +2519,12 @@ ${batchTexts
                   <span>文案长度：</span>
                   <span className="font-medium">{result.text_length} 字</span>
                 </div>
+                {result.emotion && result.emotion !== 'auto' && (
+                  <div className="flex justify-between">
+                    <span>情绪：</span>
+                    <span className="font-medium">{emotionLabel(result.emotion)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>视频参数：</span>
                   <span className="font-medium">
@@ -2608,7 +2767,11 @@ ${batchTexts
                               </div>
                               <div className="text-[10px] text-gray-400">
                                 {r.voice_name} · {r.text_length}字 · {r.resolution || '720p'}/
-                                {r.fps || 15}fps{r.watermark ? ' · 水印' : ''}
+                                {r.fps || 15}fps
+                                {r.emotion && r.emotion !== 'auto'
+                                  ? ` · ${emotionLabel(r.emotion)}`
+                                  : ''}
+                                {r.watermark ? ' · 水印' : ''}
                               </div>
                             </div>
                           </div>
@@ -3179,6 +3342,66 @@ ${batchTexts
                 </span>
               </div>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* v15 文案体检 Modal：口型友好问题清单 + 一键应用修复版 */}
+      <Modal
+        open={!!qualityResult}
+        onClose={() => setQualityResult(null)}
+        title="口播文案体检"
+        size="md"
+      >
+        {qualityResult && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <Badge color={qualityResult.ok ? 'green' : 'orange'}>
+                {qualityResult.ok ? '朗读友好' : `发现 ${qualityResult.issues.length} 个问题`}
+              </Badge>
+              <span>
+                汉字 {qualityResult.char_count} 字 · 预估朗读 {qualityResult.estimate_sec} 秒
+              </span>
+            </div>
+            {qualityResult.ok ? (
+              <div className="px-3 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" /> 文案朗读友好，口型同步无隐患，可以放心生成
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {qualityResult.issues.map((it, idx) => (
+                  <div
+                    key={idx}
+                    className={`px-3 py-2 rounded-lg border text-xs leading-relaxed ${
+                      it.level === 'error'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-amber-200 bg-amber-50 text-amber-700'
+                    }`}
+                  >
+                    <div className="font-medium flex items-center gap-1.5">
+                      {it.level === 'error' ? (
+                        <XCircle className="w-3.5 h-3.5" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                      )}
+                      {it.item}
+                    </div>
+                    <div className="mt-0.5">{it.detail}</div>
+                    <div className="mt-0.5 text-gray-600">💡 {it.suggest}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {qualityResult.fixed_changed && qualityResult.fixed_text && (
+              <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200">
+                <div className="text-xs text-violet-700 flex-1 min-w-0">
+                  已生成修复版：去 emoji/特殊符号 + 数字转中文 + 空行折叠
+                </div>
+                <Button variant="primary" size="sm" icon={CheckCircle2} onClick={applyQualityFix}>
+                  应用修复
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </Modal>

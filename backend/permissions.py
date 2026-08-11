@@ -40,6 +40,7 @@ PAGES = [
     {"id": "voice-dubbing", "path": "/voice-dubbing", "label": "配音工坊"},
     {"id": "meme", "path": "/meme", "label": "表情包工坊"},
     {"id": "digital-human", "path": "/digital-human", "label": "AI数字人"},
+    {"id": "drama", "path": "/drama", "label": "短剧工厂"},
     {"id": "voice-chat", "path": "/voice-chat", "label": "AI语音对话"},
     {"id": "video-analyzer", "path": "/video-analyzer", "label": "AI视频理解"},
     {"id": "mindmap", "path": "/mindmap", "label": "AI思维导图"},
@@ -55,6 +56,7 @@ PAGES = [
     {"id": "usage-analytics", "path": "/usage-analytics", "label": "用量分析"},
     {"id": "scheduler", "path": "/scheduler", "label": "定时任务"},
     {"id": "growth", "path": "/growth", "label": "增长工坊"},
+    {"id": "seo", "path": "/seo", "label": "SEO 分析"},
     {"id": "strategy", "path": "/strategy", "label": "内容策略"},
     {"id": "monitor", "path": "/monitor", "label": "竞品监控"},
     {"id": "favorites", "path": "/favorites", "label": "收藏中心"},
@@ -151,3 +153,60 @@ def get_all_visibility(resource_type: str, known_ids: list[str]) -> list[dict]:
     """管理后台：返回所有资源 + 当前可见范围（含未配置的默认 all）。"""
     conf = get_visibility_map(resource_type)
     return [{"resource_id": rid, "visible_to": conf.get(rid, "all")} for rid in known_ids]
+
+
+# 权限来源标注：用于管理端「角色-权限矩阵」可视化，说明每个资源对当前用户
+# 的可见状态是由哪一层配置决定的（角色 > 会员等级 > 资源配置 > 默认公开）
+SOURCE_ROLE = "role"  # 管理员角色：全量放行
+SOURCE_MEMBERSHIP = "membership"  # 会员等级：pro/vip 权益或锁定提示
+SOURCE_CONFIG = "config"  # 后台显式配置的可见范围
+SOURCE_DEFAULT = "default"  # 未配置，默认公开
+SOURCE_HIDDEN = "hidden"  # 全站下线 / admin 专属（配置所致）
+
+
+def permission_source(user_ctx: dict, visible_to: str, configured: bool) -> str:
+    """标注权限来源：判断可见状态由哪一层规则决定。"""
+    visible_to = visible_to or "all"
+    if user_ctx["role"] == "admin" and visible_to != "hidden":
+        return SOURCE_ROLE
+    if visible_to in ("hidden", "admin"):
+        return SOURCE_HIDDEN
+    if visible_to == "all":
+        return SOURCE_CONFIG if configured else SOURCE_DEFAULT
+    # pro / vip：无论是否解锁，来源都是会员等级
+    return SOURCE_MEMBERSHIP
+
+
+def build_permission_matrix(user_ctx: dict, resources: list[dict], vis_map: dict[str, str]) -> list[dict]:
+    """权限矩阵：为每个资源计算可见状态 + 权限来源（管理端可视化/单测断言用）。
+
+    - user_ctx: load_user_ctx 的产物 {user_id, role, membership}
+    - resources: [{id, path/label...}]（PAGES 或 tool_hub 定义）
+    - vis_map: get_visibility_map(resource_type) 的产物 {resource_id: visible_to}
+    返回每项追加 visible_to / visible / locked / requires / source 字段。
+    """
+    result = []
+    for r in resources:
+        visible_to = vis_map.get(r["id"], "all")
+        status = access_status(user_ctx, visible_to)
+        result.append(
+            {
+                **r,
+                "visible_to": visible_to,
+                "visible": status["visible"],
+                "locked": status.get("locked", False),
+                "requires": status.get("requires", ""),
+                "source": permission_source(user_ctx, visible_to, r["id"] in vis_map),
+            }
+        )
+    return result
+
+
+def matrix_summary(items: list[dict]) -> dict:
+    """矩阵汇总：可见/锁定/不可见计数，供管理端概览。"""
+    return {
+        "total": len(items),
+        "visible": sum(1 for i in items if i["visible"]),
+        "locked": sum(1 for i in items if i.get("locked")),
+        "hidden": sum(1 for i in items if not i["visible"]),
+    }

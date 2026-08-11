@@ -59,7 +59,12 @@ def add_message(session_id: str, role: str, content: str, metadata: dict = None)
 
 
 def get_messages(session_id: str, limit: int = 50) -> list:
-    """获取消息历史"""
+    """获取消息历史（limit 收敛到 1-500，防脏参数拖垮查询）。"""
+    try:
+        limit = int(limit) if limit is not None else 50
+        limit = max(1, min(limit, 500))
+    except (TypeError, ValueError):
+        limit = 50
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM messages WHERE session_id=? ORDER BY created_at DESC LIMIT ?", (session_id, limit)
@@ -127,9 +132,9 @@ async def api_create_session(req: dict):
 
 
 @router.get("/api/sessions/{session_id}/messages")
-async def api_get_messages(session_id: str):
+async def api_get_messages(session_id: str, limit: int = 50):
     """获取会话消息"""
-    return get_messages(session_id)
+    return get_messages(session_id, limit)
 
 
 @router.post("/api/sessions/{session_id}/messages")

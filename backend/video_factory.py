@@ -2,6 +2,8 @@
 """视频工厂模块 - 基于 Agnes AI Video API v2.0"""
 
 import asyncio
+import io
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -9,11 +11,13 @@ from pathlib import Path
 
 import requests
 from fastapi import APIRouter, Form, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
-from common.artifacts import save_artifact
+from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from content_safety import check_text, quality_report
+from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -21,10 +25,18 @@ router = APIRouter(prefix="/api/video-factory", tags=["视频工厂"])
 
 # 配置：走 common.config 单一来源
 load_config()
-from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
+from common.config import AGNES_API_BASE, AGNES_API_KEY, AI_VIDEO_CHANNELS, DASHSCOPE_API_KEY  # noqa: E402
 
 VIDEO_DIR = Path(__file__).parent / "video_factory"
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ── 视频生成通道（多通道 failover：按配置顺序尝试，未配置 key 的通道自动跳过）──
+def _available_channels() -> list[str]:
+    """返回已配置 key 的视频通道（按 AI_VIDEO_CHANNELS 顺序）。"""
+    order = [c.strip() for c in AI_VIDEO_CHANNELS.split(",") if c.strip()]
+    has = {"agnes": bool(AGNES_API_KEY), "dashscope": bool(DASHSCOPE_API_KEY)}
+    return [c for c in order if has.get(c)]
 
 # 常用提示词模板
 PRESET_PROMPTS = [
@@ -38,6 +50,127 @@ PRESET_PROMPTS = [
     "A peaceful lake reflecting snow-capped mountains",
 ]
 
+# v15：脚本文案模板库（口播 / 剧情 / 科普），可直接作为 prompt 或替换 {主题} 后使用
+SCRIPT_TEMPLATES = [
+    {
+        "id": "koubo_1",
+        "category": "口播",
+        "name": "产品种草口播",
+        "title": "30 秒种草：{主题} 的 3 个真相",
+        "structure": [
+            "0-3s 特写：{主题} 产品镜头，快切展示质感，光线明亮",
+            "3-10s 口播正面镜头：悬念开场「关于{主题}，90% 的人都不知道这 3 件事」",
+            "10-22s 产品使用特写：逐条口播 3 个卖点，字幕同步高亮关键词",
+            "22-30s 结尾正面镜头：总结 + 引导关注，背景音乐渐强收尾",
+        ],
+        "desc": "适合带货/种草短视频：钩子开场 + 三点论证 + 行动号召",
+    },
+    {
+        "id": "koubo_2",
+        "category": "口播",
+        "name": "知识干货口播",
+        "title": "1 分钟讲透：{主题}",
+        "structure": [
+            "0-5s 标题卡：大字标题「{主题}，一条视频讲清楚」",
+            "5-20s 口播：定义 {主题} 并用生活化例子解释，语速适中",
+            "20-45s 演示/素材画面：3 个要点逐条展开，配合图标动画",
+            "45-60s 总结口播：金句收尾 + 评论区引导互动",
+        ],
+        "desc": "适合知识科普/职场技能：问题引入 → 分层讲解 → 金句收尾",
+    },
+    {
+        "id": "koubo_3",
+        "category": "口播",
+        "name": "情绪共鸣口播",
+        "title": "关于{主题}，我想对你说",
+        "structure": [
+            "0-5s 空镜：黄昏/雨夜氛围画面，情绪音乐铺垫",
+            "5-25s 口播：讲述 {主题} 相关的个人故事，语气真诚缓慢",
+            "25-50s 回忆画面穿插：照片墙/生活片段蒙太奇",
+            "50-60s 口播收尾：情感升华金句，画面渐暗淡出",
+        ],
+        "desc": "适合情感/成长类：故事驱动 + 氛围镜头 + 情绪共鸣",
+    },
+    {
+        "id": "juqing_1",
+        "category": "剧情",
+        "name": "反转剧情",
+        "title": "{主题} 的反转时刻",
+        "structure": [
+            "0-5s 悬念开场：异常细节特写（{主题} 相关的反常镜头）",
+            "5-20s 铺垫：常规叙事推进，误导观众预期",
+            "20-30s 反转：关键镜头揭示真相，节奏骤变 + 音效冲击",
+            "30-40s 收尾：反转后的反应镜头 + 留白结局",
+        ],
+        "desc": "适合剧情号：悬念 → 铺垫 → 反转 → 留白，前 3 秒必须钩人",
+    },
+    {
+        "id": "juqing_2",
+        "category": "剧情",
+        "name": "双人对话剧情",
+        "title": "{主题} 的抉择",
+        "structure": [
+            "0-8s 环境镜头建立场景：{主题} 发生的场所，氛围感强",
+            "8-30s 双人对话正反打：冲突升级，台词有来有回",
+            "30-45s 情绪爆发镜头：特写表情 + 慢动作强调关键动作",
+            "45-60s 结局镜头：一人转身离开/留下，开放式结局",
+        ],
+        "desc": "适合短剧切片：场景 → 冲突 → 爆发 → 结局，对话密度高",
+    },
+    {
+        "id": "juqing_3",
+        "category": "剧情",
+        "name": "AI 视觉叙事",
+        "title": "{主题}：一场视觉诗",
+        "structure": [
+            "0-6s 宏观空镜：{主题} 的远景，大画幅电影感",
+            "6-25s 主体特写序列：3-4 个不同角度特写，光影变化",
+            "25-45s 运动镜头：跟拍/环绕/升降，节奏由缓到急",
+            "45-60s 收尾空镜：与开场呼应，色调变化暗示主题升华",
+        ],
+        "desc": "适合纯视觉/氛围号：无需对白，用镜头语言讲故事",
+    },
+    {
+        "id": "kepu_1",
+        "category": "科普",
+        "name": "冷知识科普",
+        "title": "关于{主题}的 3 个冷知识",
+        "structure": [
+            "0-5s 标题卡：大字标题 + 悬念音效",
+            "5-45s 分 3 段讲解：每段一个冷知识，动画/实拍素材切换",
+            "45-55s 验证镜头：实验/演示画面佐证第 1 个冷知识",
+            "55-60s 结尾：总结 + 关注引导「评论区告诉我你还想知道什么」",
+        ],
+        "desc": "适合科普号：标题钩子 + 三点递进 + 实证收尾",
+    },
+    {
+        "id": "kepu_2",
+        "category": "科普",
+        "name": "原理拆解",
+        "title": "{主题}是怎么工作的？",
+        "structure": [
+            "0-8s 现象开场：{主题} 的直观演示画面，引发好奇",
+            "8-35s 原理拆解：3D 示意/流程图解，分步解释工作机制",
+            "35-50s 生活应用：{主题} 在生活中的实际场景串联",
+            "50-60s 回顾总结：核心原理一句话复述 + 下期预告",
+        ],
+        "desc": "适合硬核科普：现象 → 原理 → 应用 → 总结",
+    },
+    {
+        "id": "kepu_3",
+        "category": "科普",
+        "name": "辟谣求证",
+        "title": "{主题}，是真的吗？",
+        "structure": [
+            "0-8s 抛观点：引用流传说法「{主题}是真的吗？」",
+            "8-40s 逐条验证：实验/数据/专家观点三重视角交叉验证",
+            "40-52s 结论卡：判定真假 + 依据说明",
+            "52-60s 行动建议：正确做法 + 互动提问",
+        ],
+        "desc": "适合求真类科普：抛观点 → 三重验证 → 结论卡 → 建议",
+    },
+]
+
 
 def save_video(data: bytes, filename: str) -> str:
     filepath = VIDEO_DIR / filename
@@ -45,20 +178,215 @@ def save_video(data: bytes, filename: str) -> str:
     return filename
 
 
+# 封面抽帧防重集合（list 接口对缺封面的旧视频后台补生成，避免重复触发）
+_cover_backlog: set[str] = set()
+
+# 兜底封面渐变配色池（PIL 生成，按文件名哈希稳定选取）
+_COVER_GRADIENTS = [
+    ((99, 102, 241), (139, 92, 246)),  # 靛蓝→紫
+    ((14, 165, 233), (59, 130, 246)),  # 天蓝→蓝
+    ((236, 72, 153), (168, 85, 247)),  # 粉→紫
+    ((16, 185, 129), (14, 165, 233)),  # 绿→蓝
+    ((245, 158, 11), (239, 68, 68)),   # 橙→红
+    ((59, 130, 246), (16, 185, 129)),  # 蓝→青
+]
+
+
+def _fallback_cover(filename: str, cover_path: Path) -> bool:
+    """ffmpeg 抽帧全部失败时，用 PIL 生成渐变底 + 提示词标题的兜底封面，保证视频永远有封面。"""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        w, h = 640, 360
+        # 按文件名哈希稳定选配色，同一视频重复生成结果一致
+        idx = sum(ord(c) for c in filename) % len(_COVER_GRADIENTS)
+        c1, c2 = _COVER_GRADIENTS[idx]
+        img = Image.new("RGB", (w, h), c1)
+        px = img.load()
+        for y in range(h):
+            t = y / h
+            r = int(c1[0] + (c2[0] - c1[0]) * t)
+            g = int(c1[1] + (c2[1] - c1[1]) * t)
+            b = int(c1[2] + (c2[2] - c1[2]) * t)
+            for x in range(w):
+                px[x, y] = (r, g, b)
+        # 装饰圆环
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([w * 0.62, h * 0.18, w * 1.12, h * 0.68], outline=(255, 255, 255, 40), width=2)
+        draw.ellipse([w * 0.55, h * 0.1, w * 1.05, h * 0.6], outline=(255, 255, 255, 20), width=2)
+        # 标题文字
+        title = Path(filename).stem
+        font = None
+        for fp in ("/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"):
+            if Path(fp).exists():
+                try:
+                    font = ImageFont.truetype(fp, 30)
+                    break
+                except Exception:
+                    continue
+        if font is None:
+            font = ImageFont.load_default()
+        draw.text((40, h // 2 - 24), "AI 视频作品", fill=(255, 255, 255, 235), font=font)
+        draw.text((40, h // 2 + 18), title[:28], fill=(255, 255, 255, 170), font=font)
+        img.save(cover_path, "JPEG", quality=85)
+        return True
+    except Exception:
+        return False
+
+
+def _pick_ffmpeg() -> str:
+    """ffmpeg 选择：系统 ffmpeg 无 libass（字幕烧录必需）时用 imageio-ffmpeg 自带二进制。"""
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001 — 无 imageio 时回退系统 ffmpeg
+        return "ffmpeg"
+
+
+def _pick_video_encoder() -> str:
+    """视频编码器自动选择：Apple 硬件编码优先，无则回退 libx264。"""
+    import subprocess as sp
+
+    try:
+        out = sp.run(
+            ["ffmpeg", "-nostdin", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        if "videotoolbox" in out and "h264_videotoolbox" in out:
+            return "h264_videotoolbox"
+    except Exception:  # noqa: BLE001 — 编码器探测失败回退 CPU
+        pass
+    return "libx264"
+
+
+def _probe_duration(filename: str) -> float:
+    """ffprobe 读取视频时长（秒），失败返回 0。"""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(VIDEO_DIR / filename)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return float(r.stdout.strip().split(",")[0])
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def _extract_cover(filename: str) -> str | None:  # noqa: C901
+    """用 ffmpeg 从视频抽帧生成封面图（30%/50%/70% 多点抽帧，自动选最亮帧；全失败回退首帧）。
+
+    返回封面文件名（xxx.jpg）或 None；已存在封面时直接复用。
+    注意：ffmpeg 的 -ss 不支持百分比语法（如 40%），需用 ffprobe 换算秒数；
+    AI 视频首帧常有淡入/黑屏，多点采样取最亮帧可避开暗帧。
+    ffmpeg 抽帧全失败时兜底用 PIL 生成渐变封面，保证视频永远有封面（前端不出现灰色占位）。
+    """
+    import subprocess
+
+    video_path = VIDEO_DIR / filename
+    cover_name = f"{Path(filename).stem}.jpg"
+    cover_path = VIDEO_DIR / cover_name
+    if cover_path.exists() and cover_path.stat().st_size > 0:
+        return cover_name
+    if not video_path.exists():
+        return None
+
+    # ffprobe 取视频时长（失败则仅首帧兜底）
+    dur = 0.0
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "csv=p=0", str(video_path),
+            ],
+            capture_output=True,
+            timeout=15,
+        )
+        if r.returncode == 0:
+            dur = float(r.stdout.decode().strip().split(",")[0])
+    except Exception:
+        pass
+
+    # 收集候选帧：多点采样 + 首帧兜底
+    frames: list[Path] = []
+    positions = [dur * p for p in (0.3, 0.5, 0.7)] if dur > 1 else []
+    positions.append(-1)  # -1 = 首帧兜底
+    for idx, pos in enumerate(positions):
+        tmp = VIDEO_DIR / f"{cover_name}.{idx}.tmp.jpg"
+        try:
+            cmd = ["ffmpeg", "-nostdin", "-y"]
+            if pos >= 0:
+                cmd += ["-ss", f"{max(0.5, pos):.2f}"]
+            cmd += ["-i", str(video_path), "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", str(tmp)]
+            r = subprocess.run(cmd, capture_output=True, timeout=60)
+            if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                frames.append(tmp)
+        except Exception:
+            pass
+    if not frames:
+        # 抽帧全失败：PIL 兜底渐变封面，保证视频列表永远有封面可展示
+        return cover_name if _fallback_cover(filename, cover_path) else None
+
+    # 选最亮帧作为封面（PIL 亮度均值；无 PIL 时用 jpg 体积近似）
+    best = frames[0]
+    best_score = -1.0
+    try:
+        from PIL import Image
+
+        for fp in frames:
+            try:
+                img = Image.open(fp).convert("L")
+                px = list(img.getdata())
+                score = sum(px) / len(px)
+                if score > best_score:
+                    best_score, best = score, fp
+            except Exception:
+                continue
+    except ImportError:
+        best = max(frames, key=lambda p: p.stat().st_size)
+
+    for fp in frames:
+        if fp == best:
+            fp.rename(cover_path)
+        else:
+            fp.unlink(missing_ok=True)
+    return cover_name
+
+
+async def _backfill_cover(filename: str) -> None:
+    """后台补生成缺失封面（list 接口触发，不阻塞响应）。"""
+    try:
+        await asyncio.to_thread(_extract_cover, filename)
+    except Exception:
+        pass
+    finally:
+        _cover_backlog.discard(filename)
+
+
 def generate_video_id() -> str:
     return f"video_{int(time.time() * 1000)}"
 
 
-def _save_artifact(filename: str, project_id: str, prompt: str, duration: float, extra_meta: dict | None = None) -> str:
+def _save_artifact(
+    filename: str, project_id: str, prompt: str, duration: float, extra_meta: dict | None = None, thumbnail: str = ""
+) -> str:
     """将视频产物登记到 artifacts 表（委托 common.artifacts.save_artifact），返回 artifact id。
 
     - type=video，media_url 指向 /api/video-factory/videos/{filename}
-    - metadata 含 prompt / video_id / 尺寸等
+    - metadata 含 prompt / video_id / 尺寸等；title 为语义化标题（v13.26）；thumbnail 存封面 URL
     - 失败静默
     """
     meta = {"prompt": prompt, "filename": filename}
     if extra_meta:
         meta.update(extra_meta)
+    meta.setdefault("title", derive_title("video", {"prompt": prompt}, meta))
     return save_artifact(
         art_type="video",
         project_id=project_id,
@@ -67,6 +395,7 @@ def _save_artifact(filename: str, project_id: str, prompt: str, duration: float,
         content={"filename": filename, "prompt": prompt},
         metadata=meta,
         duration=duration,
+        thumbnail=thumbnail,
     )
 
 
@@ -75,7 +404,8 @@ async def get_stats():
     video_count = len(list(VIDEO_DIR.glob("*.mp4"))) if VIDEO_DIR.exists() else 0
     return {
         "total_videos": video_count,
-        "api_configured": bool(AGNES_API_KEY),
+        "api_configured": bool(_available_channels()),
+        "channels": _available_channels(),
         "model": "agnes-video-v2.0",
         "price": "免费",
     }
@@ -110,8 +440,42 @@ def _parse_video_params(payload: dict) -> dict:
     return api_payload
 
 
-async def _create_video_task(api_payload: dict, report: Callable) -> str:
-    """创建外部视频渲染任务，返回 video_id。"""
+async def _dashscope_create_task(api_payload: dict, report: Callable) -> str:
+    """阿里云百炼 wan2.2 文生视频：创建异步任务返回 task_id（预留通道，配置 key 后自动启用）。
+
+    i2vid（图生视频）模式百炼通道暂不支持，直接抛错由 failover 切回 agnes。
+    """
+    report(10, "正在创建阿里云百炼视频任务…")
+    if api_payload.get("mode") == "i2vid":
+        raise HTTPException(400, "dashscope 通道暂不支持图生视频，跳过该通道")
+    body = {
+        "model": "wan2.2-t2v-plus",
+        "input": {"prompt": api_payload["prompt"]},
+        "parameters": {
+            "size": f"{api_payload.get('width', 1152)}*{api_payload.get('height', 768)}",
+            "duration": max(3, min(6, (api_payload.get("num_frames") or 120) // 24)),
+        },
+    }
+    resp = await asyncio.to_thread(
+        requests.post,
+        "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis",
+        headers={"Authorization": f"Bearer {DASHSCOPE_API_KEY}", "Content-Type": "application/json"},
+        json=body,
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(500, f"创建百炼视频任务失败: {resp.text}")
+    data = resp.json()
+    task_id = data.get("output", {}).get("task_id") or data.get("task_id")
+    if not task_id:
+        raise HTTPException(500, f"未获取到百炼任务ID: {data}")
+    return task_id
+
+
+async def _create_video_task(api_payload: dict, report: Callable, channel: str = "agnes") -> str:
+    """创建外部视频渲染任务，返回任务 id（按通道分派：agnes=video_id，dashscope=task_id）。"""
+    if channel == "dashscope":
+        return await _dashscope_create_task(api_payload, report)
     report(10, "正在创建视频生成任务…")
     try:
         response = await asyncio.to_thread(
@@ -136,8 +500,42 @@ async def _create_video_task(api_payload: dict, report: Callable) -> str:
         raise HTTPException(500, f"创建视频任务失败: {str(e)}") from e
 
 
-async def _poll_video_result(video_id: str, report: Callable) -> dict:
-    """轮询外部渲染结果：间隔 5s，最长约 15 分钟（超时由任务框架标记失败可重试）。"""
+async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
+    """轮询百炼任务：output.task_status SUCCEEDED → video_url；FAILED 抛错（预留通道，未配 key 不启用）。"""
+    report(20, "百炼任务已创建，等待云端渲染…")
+    for _ in range(180):
+        await asyncio.sleep(5)
+        try:
+            resp = await asyncio.to_thread(
+                requests.get,
+                f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",
+                headers={"Authorization": f"Bearer {DASHSCOPE_API_KEY}"},
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                raise HTTPException(500, f"获取百炼任务失败: {resp.text}")
+            d = resp.json()
+            out = d.get("output") or {}
+            status = (out.get("task_status") or "").upper()
+            if status == "SUCCEEDED":
+                if not out.get("video_url"):
+                    raise HTTPException(500, f"百炼任务完成但无视频地址: {d}")
+                return {"status": "completed", "output": out, "prompt": "", "duration": 0, "width": 0, "height": 0}
+            if status == "FAILED":
+                raise HTTPException(500, f"百炼视频生成失败: {out.get('message') or d}")
+            report(min(90, 20 + int(out.get("progress") or 0)), out.get("message") or "百炼渲染中…")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"获取百炼任务异常: {e}")
+            raise HTTPException(500, f"获取百炼任务失败: {str(e)}") from e
+    raise HTTPException(504, "百炼视频渲染超时（>15 分钟），请稍后在任务中心重试")
+
+
+async def _poll_video_result(video_id: str, report: Callable, channel: str = "agnes") -> dict:
+    """轮询外部渲染结果：间隔 5s，最长约 15 分钟（按通道分派；超时由任务框架标记失败可重试）。"""
+    if channel == "dashscope":
+        return await _dashscope_poll_result(video_id, report)
     report(20, "视频任务已创建，等待云端渲染…")
     for _ in range(180):
         await asyncio.sleep(5)
@@ -167,23 +565,8 @@ async def _poll_video_result(video_id: str, report: Callable) -> dict:
     raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
-async def _video_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """视频生成全流程：创建外部任务 → 轮询 → 下载保存（同步/异步任务共用执行体）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
-
-    def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
-
-    api_payload = _parse_video_params(payload)
-    project_id = payload.get("project_id") or ""
-    video_id = await _create_video_task(api_payload, _report)
-    d = await _poll_video_result(video_id, _report)
-
+async def _video_finish(video_id: str, d: dict, project_id: str, _report: Callable, channel: str, prompt: str) -> dict:
+    """渲染成功后收尾：下载视频 → 抽封面 → 落库 artifacts（各通道共用）。"""
     _report(92, "渲染完成，正在下载视频…")
     video_url = d.get("output", {}).get("video_url") or d.get("url")
     if not video_url:
@@ -194,13 +577,19 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
 
     filename = f"{video_id}.mp4"
     save_video(video_resp.content, filename)
+    cover_name = _extract_cover(filename)
+    cover_url = f"/api/video-factory/covers/{cover_name}" if cover_name else ""
     vid_duration = float(d.get("duration", 0) or 0)
+    # 外部 API 未返回时长时，用 ffprobe 读取真实时长落库（时长角标/列表展示依赖）
+    if vid_duration <= 0:
+        vid_duration = _probe_duration(filename)
     art_id = _save_artifact(
         filename,
         project_id,
-        d.get("prompt", ""),
+        d.get("prompt") or prompt,
         vid_duration,
-        {"video_id": video_id, "width": d.get("width", 0), "height": d.get("height", 0)},
+        {"video_id": video_id, "channel": channel, "width": d.get("width", 0), "height": d.get("height", 0)},
+        thumbnail=cover_url,
     )
     _report(100, "视频已保存")
     return {
@@ -208,7 +597,8 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
         "status": "completed",
         "artifact_id": art_id,
         "url": f"/api/video-factory/videos/{filename}",
-        "prompt": d.get("prompt", ""),
+        "cover_url": cover_url,
+        "prompt": d.get("prompt") or prompt,
         "duration": vid_duration,
         "width": d.get("width", 0),
         "height": d.get("height", 0),
@@ -216,6 +606,41 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
         "project_id": project_id,
         "filename": filename,
     }
+
+
+async def _video_generate_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """视频生成全流程：多通道 failover（创建外部任务 → 轮询 → 下载保存，同步/异步任务共用执行体）。"""
+    channels = _available_channels()
+    if not channels:
+        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    api_payload = _parse_video_params(payload)
+    project_id = payload.get("project_id") or ""
+
+    # 生产级内容保障：视频描述生成前安全审核（视频发布平台内容红线）
+    res = check_text(api_payload["prompt"], "prompt")
+    if not res["ok"]:
+        raise HTTPException(400, f"视频描述：{res['suggestion']}")
+
+    errors: list[str] = []
+    for idx, channel in enumerate(channels):
+        try:
+            video_id = await _create_video_task(api_payload, _report, channel)
+            d = await _poll_video_result(video_id, _report, channel)
+            return await _video_finish(video_id, d, project_id, _report, channel, api_payload["prompt"])
+        except HTTPException as e:
+            errors.append(f"{channel}: {e.detail}")
+            logger.warning(f"视频通道 {channel} 失败，尝试备用通道: {e.detail}")
+            if idx < len(channels) - 1:
+                _report(10, f"通道 {channel} 不可用（{str(e.detail)[:40]}），尝试备用通道…")
+    raise HTTPException(500, "所有视频通道均失败: " + " | ".join(errors))
 
 
 @router.post("/generate")
@@ -233,8 +658,8 @@ async def create_video_task(
     current_user: dict = require_auth(),
 ):
     """创建视频生成任务（默认异步任务，worker 内创建外部任务并轮询到完成）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not _available_channels():
+        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
@@ -266,8 +691,8 @@ async def get_video_result(video_id: str, project_id: str = ""):
 
     project_id 作为 query 参数传入；视频生成完成时写入 artifacts 表关联到项目。
     """
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not _available_channels():
+        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
 
     try:
         response = await asyncio.to_thread(
@@ -295,13 +720,18 @@ async def get_video_result(video_id: str, project_id: str = ""):
 
             filename = f"{video_id}.mp4"
             save_video(video_resp.content, filename)
+            cover_name = _extract_cover(filename)
+            cover_url = f"/api/video-factory/covers/{cover_name}" if cover_name else ""
             vid_duration = float(data.get("duration", 0) or 0)
+            if vid_duration <= 0:
+                vid_duration = _probe_duration(filename)
             art_id = _save_artifact(
                 filename,
                 project_id,
                 data.get("prompt", ""),
                 vid_duration,
                 {"video_id": video_id, "width": data.get("width", 0), "height": data.get("height", 0)},
+                thumbnail=cover_url,
             )
 
             return {
@@ -309,6 +739,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
                 "status": "completed",
                 "artifact_id": art_id,
                 "url": f"/api/video-factory/videos/{filename}",
+                "cover_url": cover_url,
                 "prompt": data.get("prompt", ""),
                 "duration": vid_duration,
                 "width": data.get("width", 0),
@@ -341,18 +772,90 @@ async def get_video(filename: str):
     return FileResponse(video_path, media_type="video/mp4")
 
 
+@router.get("/covers/{filename}")
+async def get_cover(filename: str):
+    """视频封面图（ffmpeg 抽帧产物，jpg）。
+
+    封面为公开展示资源（首页/作品广场 <img> 跨域直显），放开 CORS。
+    """
+    cover_path = VIDEO_DIR / filename
+    if not cover_path.exists():
+        raise HTTPException(404, "封面不存在")
+    return FileResponse(cover_path, media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})
+
+
 @router.get("/list")
 async def list_videos():
+    """视频列表（v13.26：从 artifacts 合并语义化标题 title，替代随机文件名展示）。"""
+    meta = _artifact_meta()
     videos = []
     for f in sorted(VIDEO_DIR.glob("*.mp4"), reverse=True):
+        cover_name = f"{f.stem}.jpg"
+        cover_url = f"/api/video-factory/covers/{cover_name}" if (VIDEO_DIR / cover_name).exists() else ""
+        # 旧视频缺封面：后台异步补抽帧（防重集合避免重复触发）
+        if not cover_url and f.name not in _cover_backlog:
+            _cover_backlog.add(f.name)
+            asyncio.create_task(_backfill_cover(f.name))
+        m = meta.get(f.name, {})
+        prompt = m.get("prompt", "")
         videos.append(
             {
                 "filename": f.name,
+                "title": m.get("title") or derive_title("video", {"prompt": prompt}, m) or _fallback_title(f.name),
                 "url": f"/api/video-factory/videos/{f.name}",
+                "cover_url": cover_url,
                 "size": f.stat().st_size,
             }
         )
     return {"videos": videos}
+
+
+def _fallback_title(filename: str) -> str:
+    """存量旧数据/后期处理产物文件名语义化兜底（v13.26）。
+
+    字幕/配乐/拼接产物不登记 artifacts，无 prompt 元数据，按前缀给可读名；
+    其余旧视频（含 base64 长名）统一归为「AI 视频作品」，避免展示随机 ID。
+    """
+    if filename.startswith("subtitle_"):
+        return "字幕合成视频"
+    if filename.startswith("music_"):
+        return "配乐视频"
+    if filename.startswith("concat_"):
+        return "视频拼接合成"
+    return "AI 视频作品"
+
+
+def _artifact_meta() -> dict:
+    """读取 artifacts 表视频产物元数据（filename → {prompt, title, …}）。"""
+    meta: dict = {}
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT content, media_url, metadata FROM artifacts "
+            "WHERE type='video' AND author='video_factory' AND active=1"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            fname = (r["media_url"] or "").rsplit("/", 1)[-1]
+            if not fname:
+                continue
+            md = {}
+            try:
+                md = json.loads(r["metadata"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                pass
+            if not md.get("prompt"):
+                try:
+                    content = json.loads(r["content"] or "{}")
+                    md["prompt"] = content.get("prompt", "") if isinstance(content, dict) else ""
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            meta[fname] = md
+    except Exception as e:
+        logger.warning(f"读取视频元数据失败: {e}")
+    return meta
 
 
 @router.delete("/delete/{filename}")
@@ -361,6 +864,10 @@ async def delete_video(filename: str):
     if not video_path.exists():
         raise HTTPException(404, "视频不存在")
     video_path.unlink()
+    # 同步清理封面（兜底封面/抽帧封面同名 .jpg），避免残留
+    cover_path = VIDEO_DIR / f"{Path(filename).stem}.jpg"
+    if cover_path.exists():
+        cover_path.unlink(missing_ok=True)
     return {"success": True}
 
 
@@ -370,6 +877,12 @@ async def get_preset_prompts():
     return {"prompts": PRESET_PROMPTS}
 
 
+@router.get("/prompts/scripts")
+async def get_script_templates():
+    """获取脚本文案模板库（口播/剧情/科普，v15）"""
+    return {"templates": SCRIPT_TEMPLATES}
+
+
 async def _video_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务处理器：包装视频生成全流程，回报进度。"""
     return await _video_generate_worker(payload, progress=update)
@@ -377,3 +890,449 @@ async def _video_generate_handler(task_id: str, payload: dict, update: Callable,
 
 # 视频生成为外部轮询类长任务：走独立 long 池，避免占用常规池 worker 阻塞轻量生成任务
 register_handler("video_generate", _video_generate_handler, user_limit=2, pool="long")
+
+
+# ── 视频发布包（商业化发布 v14）────────────────────────────
+VIDEO_PRESETS = [
+    {"id": "douyin", "name": "抖音/快手", "w": 1080, "h": 1920, "ratio": "9:16",
+     "desc": "抖音/快手短视频（9:16 竖版），封面与视频同规格"},
+    {"id": "bilibili", "name": "B站/西瓜", "w": 1920, "h": 1080, "ratio": "16:9",
+     "desc": "B站/西瓜/YouTube 横屏（1080p）"},
+    {"id": "weixin", "name": "视频号", "w": 1080, "h": 1230, "ratio": "6:7",
+     "desc": "微信视频号推荐比例 6:7（1080×1230）"},
+]
+_VIDEO_PLATFORM_SPECS = {
+    "douyin": [
+        {"name": "成片规格", "value": "1080×1920（9:16）", "desc": "时长建议 15-60 秒，前 3 秒抓住注意力"},
+        {"name": "封面", "value": "1080×1920 竖版", "desc": "封面文字 ≤3 行，主体清晰居中"},
+        {"name": "标题", "value": "≤55 字，含 1-2 个关键词", "desc": "标题带话题标签更容易被推荐"},
+    ],
+    "bilibili": [
+        {"name": "成片规格", "value": "1920×1080（16:9）", "desc": "B站推荐横屏 1080p，封面 16:9"},
+        {"name": "封面", "value": "1920×1080 JPG ≤2MB", "desc": "封面信息密度适中，标题 ≤16 字"},
+        {"name": "标题", "value": "≤60 字", "desc": "B站标题允许较长，可带悬念"},
+    ],
+    "weixin": [
+        {"name": "成片规格", "value": "1080×1230（6:7）", "desc": "视频号信息流展示比例，兼容 9:16"},
+        {"name": "封面", "value": "1080×1230 JPG", "desc": "视频号封面即视频首帧，可后台上传自定义封面"},
+        {"name": "标题", "value": "≤30 字", "desc": "视频号标题简洁为宜，可带 #话题"},
+    ],
+}
+_VIDEO_PLATFORM_TAGS = {
+    "douyin": ["#AI视频", "#视觉大片", "#治愈系", "#创意短片"],
+    "bilibili": ["#AI生成", "#科技", "#视觉艺术"],
+    "weixin": ["#AI视频", "#创意", "#视觉"],
+}
+
+
+@router.post("/publish-pack")
+async def video_publish_pack(
+    filename: str = Form(...),
+    platform: str = Form("douyin"),
+    video_title: str = Form(""),
+    video_desc: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """视频发布包：按平台规格转码成片 + 抽帧封面 + 发布文案 + 质量报告，一键下载。"""
+    preset = next((p for p in VIDEO_PRESETS if p["id"] == platform), None)
+    if not preset:
+        raise HTTPException(400, f"未知平台规格: {platform}")
+    src = (filename or "").strip()
+    if not src.endswith(".mp4") or Path(src).name != src:
+        raise HTTPException(400, "非法的视频文件名")
+    src_path = VIDEO_DIR / src
+    if not src_path.exists():
+        raise HTTPException(404, "视频不存在")
+
+    ffmpeg = _pick_ffmpeg()
+    import subprocess
+
+    w, h = preset["w"], preset["h"]
+    root = pack_dir_name("video_release")
+    out_name = f"{Path(src).stem}_{preset['id']}.mp4"
+    out_path = VIDEO_DIR / out_name
+    has_audio = _probe_has_audio(src_path)
+    # cover 模式转码：等比放大至覆盖规格后居中裁剪（不变形）；有音轨则 aac 重编码
+    cmd = [
+        ffmpeg, "-nostdin", "-y", "-i", str(src_path),
+        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+    ]
+    cmd += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]) + [str(out_path)]
+    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 1024:
+        raise HTTPException(500, "规格转码失败: " + r.stderr.decode(errors="replace")[-200:])
+
+    # 从规格成片抽帧做封面（与成片同规格）
+    cover_name = _extract_cover(out_name)
+    width, height = _probe_resolution(out_path)
+    duration = _probe_duration(out_name)
+
+    # 发布文案（模板 + 平台标签，可直接复制发布）
+    prompt = ""
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT content FROM artifacts WHERE media_url=? AND active=1",
+            (f"/api/video-factory/videos/{src}",),
+        ).fetchone()
+        conn.close()
+        if row:
+            try:
+                prompt = (json.loads(row["content"] or "{}") or {}).get("prompt", "") or ""
+            except Exception:
+                prompt = str(row["content"] or "")[:200]
+    except Exception:
+        pass
+    title = (video_title or f"AI 创意短片 · {Path(src).stem}").strip()[:60]
+    desc = (video_desc or f"AI 生成创意视频，{prompt[:60]}。").strip()[:300]
+    tags = " ".join(_VIDEO_PLATFORM_TAGS.get(platform, []))
+    entries: dict = {f"{root}/成片/{out_name}": str(out_path)}  # key=zip 路径, value=磁盘路径
+    if cover_name:
+        entries[f"{root}/封面.jpg"] = str(VIDEO_DIR / cover_name)
+    entries[f"{root}/发布文案.md"] = (
+        f"# {title}\n\n## 标题\n{title}\n\n## 描述\n{desc}\n\n## 标签\n{tags}\n\n"
+        f"## 发布建议\n- 前 3 秒为完播率关键，建议直接展示核心画面；\n"
+        f"- 本包规格 {preset['ratio']}（{w}×{h}），时长 {duration:.1f} 秒。"
+    )
+    entries[f"{root}/规格说明.md"] = platform_spec_text(preset["name"], _VIDEO_PLATFORM_SPECS.get(platform, []))
+    entries[f"{root}/上传指南.md"] = (
+        "# 视频平台上传指南\n\n"
+        f"## {preset['name']}\n"
+        "1. 登录创作者后台 → 发布作品 → 上传成片；\n"
+        "2. 上传封面（与成片同规格，本包已生成）；\n"
+        "3. 粘贴发布文案.md 中的标题/描述/标签；\n"
+        "4. 勾选原创声明 → 提交审核（通常 1-2 小时通过）。"
+    )
+    entries[f"{root}/LICENSE.txt"] = license_text(f"视频《{title}》")
+
+    # 生产级内容保障：质量自检报告（描述审核 + 成片规格合规）
+    try:
+        prompt_check = check_text(prompt, "prompt") if prompt else None
+        extra = [
+            f"成片规格：{width}×{height}（目标 {w}×{h}）{'✓' if (width, height) == (w, h) else '✗'}",
+            f"时长：{duration:.1f} 秒 / 音轨：{'有' if has_audio else '无'}",
+            f"编码：H.264 + {'AAC' if has_audio else '静音'}（平台兼容）",
+        ]
+        entries[f"{root}/质量自检报告.md"] = quality_report(
+            f"视频《{title}》", text_check=prompt_check, image_quality=None, extra=extra
+        )
+    except Exception as e:
+        logger.debug(f"视频质量自检报告生成失败: {e}")
+
+    buf = build_publish_zip(entries, "video_release")
+    publish = publish_registry.publish("video_platform", {"platform": platform, "title": title})
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="video_release_{int(time.time())}.zip"',
+            "X-Publish-Result": f"published={str(publish.get('published')).lower()}",
+        },
+    )
+
+
+# ── 视频后期工具（拼接 / 配乐 / 字幕烧录）──────────────────────────
+def _safe_video_name(filename: str) -> str:
+    """校验视频文件名：必须存在于 VIDEO_DIR，且不含路径穿越。"""
+    name = (filename or "").strip()
+    if not name or Path(name).name != name:
+        raise HTTPException(400, "非法的文件名")
+    p = VIDEO_DIR / name
+    if not p.exists():
+        raise HTTPException(404, f"视频不存在: {name}")
+    return name
+
+
+def _probe_has_audio(path: Path) -> bool:
+    """ffprobe 探测视频是否含音轨（拼接/配乐需要区分处理）。"""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
+def _probe_resolution(path: Path) -> tuple[int, int]:
+    """ffprobe 读取视频分辨率（拼接时作为统一输出尺寸，失败默认 640x360）。"""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            w, h = r.stdout.strip().split("x")
+            return int(w), int(h)
+    except Exception:
+        pass
+    return 640, 360
+
+
+@router.post("/tools/concat")
+async def concat_videos(
+    filenames: str = Form(...),
+    output_name: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """多视频拼接：统一分辨率（等比缩放+黑边补齐）后按顺序拼接；无音轨片段自动补静音。"""
+    import subprocess
+
+    names = [n.strip() for n in (filenames or "").split(",") if n.strip()]
+    if len(names) < 2:
+        raise HTTPException(400, "至少需要两个视频（filenames 用逗号分隔）")
+    paths = [VIDEO_DIR / _safe_video_name(n) for n in names]
+    w, h = _probe_resolution(paths[0])
+    n = len(paths)
+    has_audio = [_probe_has_audio(p) for p in paths]
+    ffmpeg = _pick_ffmpeg()
+    enc = _pick_video_encoder()
+    out = VIDEO_DIR / (output_name or f"concat_{int(time.time() * 1000)}.mp4")
+
+    cmd = [ffmpeg, "-nostdin", "-y"]
+    for p in paths:
+        cmd += ["-i", str(p)]
+    vf = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
+    parts = [f"[{i}:v]{vf}[v{i}]" for i in range(n)]
+    a_idx = n
+    a_parts = []
+    for i, has in enumerate(has_audio):
+        if has:
+            a_parts.append(f"[{i}:a]aresample=44100,pan=stereo|c0=c0|c1=c1[a{i}]")
+        else:
+            dur = _probe_duration(names[i]) or 1.0
+            cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+            a_parts.append(f"[{a_idx}:a]atrim=0:{dur:.2f},asetpts=PTS-STARTPTS,aresample=44100[a{i}]")
+            a_idx += 1
+    # concat filter 输入顺序为视频/音频交替：[v0][a0][v1][a1]…（先视频后音频会报 Media type mismatch）
+    ins = "".join(f"[v{i}][a{i}]" for i in range(n))
+    parts += a_parts + [f"{ins}concat=n={n}:v=1:a=1[vout][aout]"]
+    cmd += [
+        "-filter_complex", ";".join(parts),
+        "-map", "[vout]", "-map", "[aout]",
+        "-c:v", enc, "-c:a", "aac", "-movflags", "+faststart",
+        str(out),
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except Exception as e:
+        raise HTTPException(500, f"拼接失败: {e}") from None
+    if r.returncode != 0 or not out.exists():
+        raise HTTPException(500, f"拼接失败: {r.stderr[-500:]}")
+    return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "width": w, "height": h}
+
+
+@router.post("/tools/music")
+async def add_music(
+    video: str = Form(...),
+    music: str = Form(...),
+    bg_volume: float = Form(0.3),
+    output_name: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """视频配乐：原声 + BGM 混音（BGM 支持 URL 或本地路径；bg_volume 控制背景音量 0~1）。"""
+    import subprocess
+
+    video_path = VIDEO_DIR / _safe_video_name(video)
+    bgm_path = VIDEO_DIR / f".bgm_{int(time.time() * 1000)}.mp3"
+    try:
+        if music.startswith(("http://", "https://")):
+            resp = await asyncio.to_thread(requests.get, music, timeout=60)
+            if resp.status_code != 200:
+                raise HTTPException(400, "BGM 下载失败")
+            bgm_path.write_bytes(resp.content)
+        else:
+            src = Path(music)
+            if not src.exists():
+                raise HTTPException(404, f"BGM 文件不存在: {music}")
+            bgm_path.write_bytes(src.read_bytes())
+        if not bgm_path.stat().st_size:
+            raise HTTPException(400, "BGM 文件为空")
+
+        vol = max(0.0, min(1.0, bg_volume))
+        has_audio = _probe_has_audio(video_path)
+        out = VIDEO_DIR / (output_name or f"music_{int(time.time() * 1000)}.mp4")
+        ffmpeg = _pick_ffmpeg()
+        enc = _pick_video_encoder()
+        cmd = [ffmpeg, "-nostdin", "-y", "-i", str(video_path), "-i", str(bgm_path)]
+        if has_audio:
+            # 原声 + BGM 混音：以原视频时长为准（duration=first），淡出防爆音
+            cmd += [
+                "-filter_complex",
+                f"[1:a]volume={vol}[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+                "-map", "0:v", "-map", "[aout]",
+            ]
+        else:
+            # 原视频无音轨：仅 BGM 作音轨
+            cmd += ["-filter_complex", f"[1:a]volume={vol}[aout]", "-map", "0:v", "-map", "[aout]"]
+        cmd += ["-c:v", enc, "-c:a", "aac", "-movflags", "+faststart", str(out)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        except Exception as e:
+            raise HTTPException(500, f"配乐失败: {e}") from None
+        if r.returncode != 0 or not out.exists():
+            raise HTTPException(500, f"配乐失败: {r.stderr[-500:]}")
+        return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "bg_volume": vol}
+    finally:
+        bgm_path.unlink(missing_ok=True)
+
+
+@router.post("/tools/subtitle")
+async def burn_subtitle(
+    video: str = Form(...),
+    srt_content: str = Form(...),
+    output_name: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """字幕烧录：SRT 文本烧录进画面（需 libass；自动优先使用 imageio-ffmpeg 自带二进制）。"""
+    import subprocess
+
+    video_path = VIDEO_DIR / _safe_video_name(video)
+    srt_file = VIDEO_DIR / f".sub_{int(time.time() * 1000)}.srt"
+    try:
+        srt_file.write_text(srt_content, encoding="utf-8")
+        out = VIDEO_DIR / (output_name or f"subtitle_{int(time.time() * 1000)}.mp4")
+        ffmpeg = _pick_ffmpeg()
+        enc = _pick_video_encoder()
+        # subtitles filter 路径转义：\ : ' 需转义，避免 filter 解析错乱
+        escaped = str(srt_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        cmd = [
+            ffmpeg, "-nostdin", "-y", "-i", str(video_path),
+            "-vf", f"subtitles='{escaped}'",
+            "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+            str(out),
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        except Exception as e:
+            raise HTTPException(500, f"字幕烧录失败: {e}") from None
+        if r.returncode != 0 or not out.exists():
+            raise HTTPException(500, f"字幕烧录失败: {r.stderr[-500:]}")
+        return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name}
+    finally:
+        srt_file.unlink(missing_ok=True)
+
+
+# ── 批量转码（v15）：统一 H.264 + 可选分辨率，逐项报告成功/失败 ──
+MAX_TRANSCODE_BATCH = 10
+MIN_TRANSCODE_CRF = 18
+MAX_TRANSCODE_CRF = 35
+
+
+def build_transcode_plan(
+    filenames: list[str],
+    width: int | None = None,
+    height: int | None = None,
+    crf: int = 23,
+) -> list[dict]:
+    """生成批量转码计划（纯函数，不触盘）：校验数量/文件名/尺寸/CRF，返回逐项计划。
+
+    - 单次最多 MAX_TRANSCODE_BATCH 个；文件名禁止路径穿越
+    - width/height 必须成对；指定时输出等比缩放+黑边补齐，否则保持原分辨率
+    - crf 收敛到 [MIN_TRANSCODE_CRF, MAX_TRANSCODE_CRF]
+    - 输出名 {stem}_enc_{时间戳}_{序号}.mp4，同批内唯一
+    """
+    names = [str(n or "").strip() for n in (filenames or []) if str(n or "").strip()]
+    if not names:
+        raise ValueError("至少需要一个视频文件")
+    if len(names) > MAX_TRANSCODE_BATCH:
+        raise ValueError(f"单次最多转码 {MAX_TRANSCODE_BATCH} 个视频")
+    for n in names:
+        if Path(n).name != n or n.startswith("."):
+            raise ValueError(f"非法的文件名: {n}")
+    if (width is None) != (height is None):
+        raise ValueError("宽高必须成对指定")
+    c = max(MIN_TRANSCODE_CRF, min(MAX_TRANSCODE_CRF, int(crf or 23)))
+    w = h = None
+    if width is not None:
+        w, h = int(width), int(height)
+        if w < 16 or w > 7680 or h < 16 or h > 7680:
+            raise ValueError("分辨率超出支持范围（16~7680）")
+    ts = int(time.time() * 1000)
+    plan = []
+    for i, n in enumerate(names):
+        if w is not None:
+            scale = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
+        else:
+            scale = "format=yuv420p"
+        plan.append(
+            {
+                "source": n,
+                "output": f"{Path(n).stem}_enc_{ts}_{i}.mp4",
+                "crf": c,
+                "width": w,
+                "height": h,
+                "scale": scale,
+            }
+        )
+    return plan
+
+
+@router.post("/tools/transcode")
+async def transcode_videos(
+    filenames: str = Form(...),
+    width: int = Form(0),
+    height: int = Form(0),
+    crf: int = Form(23),
+    current_user: dict = require_auth(),
+):
+    """批量转码：统一 H.264 + 可选分辨率（等比缩放+黑边补齐），逐项报告成功/失败，失败不影响其他项。"""
+    import subprocess
+
+    names = [n.strip() for n in (filenames or "").split(",") if n.strip()]
+    for n in names:
+        _safe_video_name(n)  # 存在性校验
+    try:
+        plan = build_transcode_plan(names, width or None, height or None, crf)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+
+    ffmpeg = _pick_ffmpeg()
+    enc = _pick_video_encoder()
+    results = []
+    for item in plan:
+        src = VIDEO_DIR / item["source"]
+        out = VIDEO_DIR / item["output"]
+        cmd = [
+            ffmpeg, "-nostdin", "-y", "-i", str(src),
+            "-vf", item["scale"],
+            "-c:v", enc, "-crf", str(item["crf"]),
+            "-movflags", "+faststart",
+        ]
+        if _probe_has_audio(src):
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        else:
+            cmd += ["-an"]
+        cmd.append(str(out))
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0 and out.exists():
+                results.append(
+                    {
+                        "status": "ok",
+                        "source": item["source"],
+                        "filename": item["output"],
+                        "url": f"/api/video-factory/videos/{item['output']}",
+                        "width": item["width"],
+                        "height": item["height"],
+                        "crf": item["crf"],
+                    }
+                )
+            else:
+                results.append({"status": "error", "source": item["source"], "error": (r.stderr or "")[-300:]})
+        except Exception as e:  # noqa: BLE001 — 单文件失败不阻塞批量
+            results.append({"status": "error", "source": item["source"], "error": str(e)})
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {"total": len(plan), "ok": ok, "failed": len(plan) - ok, "results": results}

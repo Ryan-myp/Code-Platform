@@ -170,6 +170,11 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, title TEXT DEFAULT '',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
+    """CREATE TABLE IF NOT EXISTS agent_executions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, user_id TEXT DEFAULT '',
+        message TEXT DEFAULT '', status TEXT DEFAULT 'done', elapsed REAL DEFAULT 0,
+        error TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
     """CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY, session_id TEXT NOT NULL, agent_id TEXT,
         memory_type TEXT DEFAULT 'short', content TEXT NOT NULL,
@@ -259,7 +264,8 @@ _SCHEMA_STATEMENTS = [
     )""",
     """CREATE TABLE IF NOT EXISTS usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, task_type TEXT,
-        input_length INTEGER, output_length INTEGER, response_time REAL, success INTEGER
+        input_length INTEGER, output_length INTEGER, response_time REAL, success INTEGER,
+        error TEXT DEFAULT '', api_key TEXT DEFAULT '', user_id TEXT DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS prompt_versions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL, version INTEGER NOT NULL,
@@ -346,6 +352,12 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY, source_lang TEXT NOT NULL, target_lang TEXT NOT NULL,
         source_text TEXT NOT NULL, result TEXT DEFAULT '',
         model TEXT DEFAULT '', user_id TEXT DEFAULT '',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
+    # 翻译术语表（v15：用户自定义术语，翻译时强制应用）
+    """CREATE TABLE IF NOT EXISTS translation_glossary (
+        id TEXT PRIMARY KEY, user_id TEXT DEFAULT '',
+        source_term TEXT NOT NULL, target_term TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
     # ── v9.0: Phase 4 运营分析 ──────────────────────────────
@@ -497,8 +509,13 @@ _INDEX_STATEMENTS = [
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
-    """安全地给已有表追加列（SQLite 不支持 IF NOT EXISTS 于 ADD COLUMN）。"""
+    """安全地给已有表追加列（SQLite 不支持 IF NOT EXISTS 于 ADD COLUMN）。
+
+    表不存在时静默跳过（由 CREATE TABLE IF NOT EXISTS 路径兜底）。
+    """
     cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if not cols:
+        return  # 表不存在
     if column not in cols:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
         logger.info(f"migrate: {table}.{column} added")
@@ -608,6 +625,8 @@ def migrate() -> None:
         _add_column_if_missing(conn, "knowledge_bases", "config", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "knowledge_bases", "description", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "knowledge_bases", "subtype", "TEXT DEFAULT 'general'")
+        # v15：API Key 过期时间（apikey_api / auth 认证链路共用）
+        _add_column_if_missing(conn, "api_keys", "expires_at", "TEXT")
         # 一句话全自动流水线：AI 工作台 AutoRun 进度记录
         conn.execute("""CREATE TABLE IF NOT EXISTS auto_runs (
             id TEXT PRIMARY KEY,

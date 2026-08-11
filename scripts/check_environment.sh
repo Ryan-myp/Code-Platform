@@ -7,13 +7,14 @@
 #   ./scripts/check_environment.sh --fix        # 检查 + 自动安装缺失项
 #   ./scripts/check_environment.sh --app-dir /opt/app/backend  # 指定后端目录
 #
-# 检查项（12 项，全部通过才允许部署）:
+# 检查项（13 项，全部通过才允许部署）:
 #   [1] 操作系统/架构           [2] Python >= 3.13
 #   [3] pip                     [4] ffmpeg + ffprobe（视频/语音合成）
 #   [5] node + npm（游戏/代码沙箱）  [6] 中文字体（Noto CJK / 文泉驿）
 #   [7] emoji 字体              [8] Python 依赖（requirements.txt 全量可导入）
-#   [9] ffmpeg 编码器（libx264 必需）  [10] 磁盘空间 >= 1GB
+#   [9] ffmpeg 编码器（libx264 必需 + subtitles 滤镜探测）  [10] 磁盘空间 >= 1GB
 #   [11] 端口 8888 空闲          [12] 数据目录可写
+#   [13] 本地 AI 引擎（voice_engine 9888 / ACE-Step 9889，仅 macOS 开发环境）
 #
 # 退出码: 0 = 全部通过；1 = 存在未修复失败；2 = 自动修复失败
 # ═══════════════════════════════════════════════════════════════════
@@ -48,7 +49,7 @@ record_fail() { FAILED_ITEMS="${FAILED_ITEMS} $1"; }
 # 逐项标题（保持计数对齐）
 section() {
     local n=$1; shift
-    printf "${BOLD}[%2d/12]${NC} %s\n" "$n" "$*"
+    printf "${BOLD}[%2d/13]${NC} %s\n" "$n" "$*"
 }
 
 # ─── 参数解析 ────────────────────────────────────────────────────
@@ -207,6 +208,7 @@ MAPPING = {
     "edge-tts": "edge_tts",
     "python-pptx": "pptx",
     "pyyaml": "yaml",
+    "imageio-ffmpeg": "imageio_ffmpeg",
 }
 missing = []
 with open(sys.argv[1], encoding="utf-8") as f:
@@ -260,6 +262,14 @@ check_encoder() {
     else
         log_info "无硬件编码器，将使用 libx264 CPU 编码"
     fi
+    # subtitles 滤镜（libass）探测：短剧/数字人字幕烧录需要；
+    # 系统 ffmpeg 缺失时平台会自动使用 imageio-ffmpeg 自带二进制兜底（见 short_drama.py）
+    if ffmpeg -hide_banner -filters 2>/dev/null | grep -q "^ .. subtitles"; then
+        log_info "已编译: subtitles 滤镜（libass，短剧字幕烧录可用）"
+    else
+        log_warn "系统 ffmpeg 无 subtitles 滤镜（短剧字幕将使用 imageio-ffmpeg 兜底）"
+        record_fail libass
+    fi
 }
 
 # [10] 磁盘空间（数据/产物目录所在分区 >= 1GB）
@@ -309,6 +319,58 @@ check_writable() {
         log_fail "$APP_DIR 不存在或不可写（检查权限/挂载）"
         record_fail writable
     fi
+}
+
+# [13] 本地 AI 引擎（阶段①③④：CosyVoice 9888 / ACE-Step 9889 / 数字人 9890）
+# 仅 macOS 开发环境检查；Linux 生产环境引擎不部署在此机，跳过并提示。
+# 引擎未运行不阻塞部署：平台侧有探活防抖 + 自动降级本地链路。
+check_ai_engines() {
+    section 13 "本地 AI 引擎"
+    case "$(uname -s)" in
+        Darwin)
+            local miss=""
+            # CosyVoice 语音/歌声引擎（voice_engine 9888）
+            if nc -z 127.0.0.1 9888 >/dev/null 2>&1; then
+                log_ok "voice_engine(9888) 运行中（CosyVoice 语音/歌声）"
+            else
+                miss="$miss voice_engine(9888)"
+            fi
+            # ACE-Step 音乐大模型引擎（acestep-api 9889）
+            if nc -z 127.0.0.1 9889 >/dev/null 2>&1; then
+                log_ok "acestep(9889) 运行中（ACE-Step 音乐大模型）"
+            else
+                miss="$miss acestep(9889)"
+            fi
+            # ACE-Step 模型目录（DiT + 5Hz LM，约 8GB）
+            if [ -d "$HOME/ai-models/ACE-Step-1.5" ]; then
+                log_ok "ACE-Step 模型目录存在"
+            else
+                miss="$miss acestep-models"
+            fi
+            # SadTalker 数字人引擎（avatar_engine 9890）
+            if nc -z 127.0.0.1 9890 >/dev/null 2>&1; then
+                log_ok "avatar_engine(9890) 运行中（SadTalker 数字人）"
+            else
+                miss="$miss avatar_engine(9890)"
+            fi
+            # SadTalker 模型目录（checkpoints ~1.3GB：mapping + safetensors + BFM）
+            if [ -d "$HOME/ai-models/SadTalker/checkpoints" ] && ls "$HOME/ai-models/SadTalker/checkpoints"/*.safetensors >/dev/null 2>&1; then
+                log_ok "SadTalker 模型目录存在"
+            else
+                miss="$miss sadtalker-models"
+            fi
+            if [ -n "$miss" ]; then
+                log_warn "缺失:$miss（平台自动降级本地合成链路，不影响部署）"
+                record_fail ai-engines
+            else
+                PASS=$((PASS + 1))
+            fi
+            ;;
+        *)
+            log_info "非 macOS：跳过（本地 AI 引擎仅开发环境使用，生产用云 API）"
+            PASS=$((PASS + 1))
+            ;;
+    esac
 }
 
 # ─── 自动修复 ────────────────────────────────────────────────────
@@ -397,6 +459,8 @@ fix_attempt() {
         *" disk"*)      echo "  ⚠️ 磁盘不足无法自动修复：请清理磁盘或扩容后重试" ;;
         *" writable"*)  echo "  ⚠️ 目录不可写无法自动修复：请检查挂载权限（chown/chmod）" ;;
         *" encoder"*)   echo "  ⚠️ 编码器缺失无法自动修复：请安装带 libx264 的 ffmpeg（apt 默认包含）" ;;
+        *" libass"*)    echo "  ⚠️ 系统 ffmpeg 无 libass：pip install imageio-ffmpeg 可启用字幕烧录兜底" ;;
+        *" ai-engines"*) echo "  ⚠️ 本地 AI 引擎未就绪：启动 voice_engine/acestep/avatar_engine 服务即可（平台会自动降级，不阻塞部署）" ;;
     esac
 
     [ "$ok" -eq 1 ] || { echo ""; printf "${RED}── 部分修复失败，请按上方提示手动处理 ──${NC}\n"; exit 2; }
@@ -422,6 +486,7 @@ main() {
     check_disk
     check_port
     check_writable
+    check_ai_engines
 
     echo ""
     printf "${BOLD}── 检查结果 ──${NC}  ${GREEN}${PASS} 通过${NC} / ${RED}${FAIL} 失败${NC} / ${YELLOW}${WARN} 警告${NC}\n"

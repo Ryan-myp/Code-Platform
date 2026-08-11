@@ -161,7 +161,7 @@ class TestShowcaseApi:
         assert len(items) > 0
         assert all(it["is_demo"] for it in items)
         assert all(it["route"] for it in items)
-    
+
     def test_public_no_auth_required(self):
         """showcase 无需登录即可访问。"""
         uid = _insert_user("showcase_owner")
@@ -170,7 +170,7 @@ class TestShowcaseApi:
         assert resp.status_code == 200
         assert len(resp.json()["items"]) == 1
         assert not resp.json()["items"][0].get("is_demo")
-    
+
     def test_filters_short_or_empty_content(self):
         """空内容 / 过短内容不出现在精选里（此时回落为示例成果，不返回脏数据）。"""
         uid = _insert_user("showcase_filter")

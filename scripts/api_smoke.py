@@ -21,7 +21,7 @@ def http(method, path, token=None, body=None):
     except Exception as e:
         return -1, str(e).encode()
 
-def main():
+def main():  # noqa: C901
     spec = json.loads(urllib.request.urlopen(BASE + "/openapi.json").read())
     # 登录
     code, body = http("POST", "/api/auth/login", body={"username": "admin", "password": "admin123"})
@@ -48,7 +48,7 @@ def main():
     }
 
     for path, methods in spec["paths"].items():
-        for method, info in methods.items():
+        for method, _info in methods.items():
             if method not in ("get", "delete"):
                 continue
             test_path = path
@@ -73,7 +73,7 @@ def main():
                 results["fail"].append(f"{method.upper()} {path} → {code}: {body[:100]}")
                 results["errors"].append((method.upper(), path, code, body[:150]))
 
-    print(f"\n=== 结果汇总 ===")
+    print("\n=== 结果汇总 ===")
     print(f"成功(200/404): {len(results['ok'])}")
     print(f"跳过(需参数/4xx): {len(results['skip'])}")
     print(f"失败(5xx/异常): {len(results['fail'])}")

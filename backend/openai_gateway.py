@@ -136,6 +136,7 @@ async def chat_completions(request: Request, body: dict):  # noqa: C901
         )
     stream = bool(body.get("stream"))
     start = time.time()
+    api_key_id = auth.get("api_key_id", "") if isinstance(auth, dict) else ""
 
     # 流式：OpenAI chunk 格式
     if stream:
@@ -164,10 +165,12 @@ async def chat_completions(request: Request, body: dict):  # noqa: C901
                 }
                 yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
-                log_usage("openai_gateway_stream", len(json.dumps(messages, ensure_ascii=False)), len(full), time.time() - start)
+                log_usage("openai_gateway_stream", len(json.dumps(messages, ensure_ascii=False)), len(full), time.time() - start, api_key=api_key_id)
             except HTTPException as e:
+                log_usage("openai_gateway_stream", len(json.dumps(messages, ensure_ascii=False)), 0, time.time() - start, success=False, error=str(e.detail), api_key=api_key_id)
                 yield f"data: {json.dumps({'error': {'message': str(e.detail), 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
             except Exception as e:
+                log_usage("openai_gateway_stream", len(json.dumps(messages, ensure_ascii=False)), 0, time.time() - start, success=False, error=str(e)[:200], api_key=api_key_id)
                 logger.exception("gateway stream failed")
                 yield f"data: {json.dumps({'error': {'message': f'内部错误: {e}', 'type': 'server_error'}}, ensure_ascii=False)}\n\n"
 
@@ -180,11 +183,12 @@ async def chat_completions(request: Request, body: dict):  # noqa: C901
         )
     except HTTPException as e:
         status = e.status_code if e.status_code < 500 else 502
+        log_usage("openai_gateway", len(json.dumps(messages, ensure_ascii=False)), 0, time.time() - start, success=False, error=str(e.detail), api_key=api_key_id)
         return JSONResponse(
             status_code=status,
             content={"error": {"message": str(e.detail), "type": "server_error"}},
         )
-    log_usage("openai_gateway", len(json.dumps(messages, ensure_ascii=False)), len(content), time.time() - start)
+    log_usage("openai_gateway", len(json.dumps(messages, ensure_ascii=False)), len(content), time.time() - start, api_key=api_key_id)
     return {
         "id": _chat_id(),
         "object": "chat.completion",

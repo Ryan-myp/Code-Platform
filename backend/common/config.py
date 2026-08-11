@@ -41,6 +41,12 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
 AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.5-flash")
 
+# ── 视频生成备用通道（预留）：阿里云百炼 wan2.2 文生视频 ─────────
+# 配置 DASHSCOPE_API_KEY 后 video_factory 自动启用 dashscope 通道（agnes 失败时 failover）
+DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
+# 通道顺序（逗号分隔，可被 .env / config 表覆盖）；未配置 key 的通道自动跳过
+AI_VIDEO_CHANNELS = os.environ.get("AI_VIDEO_CHANNELS", "agnes,dashscope")
+
 # 内置默认模型列表（config 表未配置 model_list 时使用，供全局模型切换 / Agent 创建下拉）
 # base_url 留空 = 继承全局 AGNES_API_BASE；api_key 留空 = 继承全局 AGNES_API_KEY（.env / config 表）
 # 多供应商模型需各自配置 base_url + api_key（均为 OpenAI 兼容 /chat/completions）

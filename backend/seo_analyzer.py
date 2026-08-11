@@ -74,7 +74,7 @@ SEO_ANALYZE_SYSTEM = """你是一位拥有10年+经验的资深SEO策略顾问�
 
 只输出JSON，不要其他内容。"""
 
-KEYWORD_SYSTEM = """你是一位资深SEO关键词策略顾问，精通百度关键词规划师、5118、Ahrefs等工具的分析方法，擅长从种子词出发构建完整的关键词矩阵。
+KEYWORD_SYSTEM = """你是一位拥有20年+经验的资深SEO关键词策略顾问，服务过 500+ 企业站与内容站的搜索增长，精通百度关键词规划师、5118、Ahrefs、SEMrush 等工具的分析方法，擅长从种子词出发构建完整的关键词矩阵。
 
 ## 研究框架
 基于用户输入的种子词和行业信息，进行4层关键词拓展：
@@ -141,6 +141,81 @@ class KeywordResearchRequest(BaseModel):
     language: str = Field("zh", max_length=10, description="语言：zh/en")
 
 
+# ── 优先级矩阵（v15：确定性计算，关键词分组 + 难度分级 + 执行优先级）──
+
+_COMPETITION_SCORE = {"高": 1, "中": 2, "低": 3}
+_DIFFICULTY_SCORE = {"高": 1, "中": 2, "低": 3}
+_PRIORITY_ACTIONS = {
+    "P1": "立即行动：优先创作并优化该关键词内容（高相关 + 低竞争）",
+    "P2": "规划执行：纳入内容规划，两周内产出内容",
+    "P3": "长期布局：结合长尾词持续覆盖，等待权重提升后主攻",
+}
+
+
+def _priority_level(score: int) -> str:
+    """总分 8-9 → P1（速赢），6-7 → P2（规划），3-5 → P3（观察）。"""
+    if score >= 8:
+        return "P1"
+    if score >= 6:
+        return "P2"
+    return "P3"
+
+
+def build_priority_matrix(keyword_data: dict, limit: int = 10) -> list[dict]:
+    """从关键词研究结果构建优先级矩阵（确定性规则，不依赖 LLM 输出格式）。
+
+    评分 = 相关度分 + 竞争度分 + 难度分（每项 1-3 分，总分 3-9）：
+    - relevance ≥90 → 3，80-89 → 2，<80 → 1
+    - competition 低/中/高 → 3/2/1
+    - difficulty 低/中/高 → 3/2/1（长尾词有，相关词缺省按 2）
+    返回按总分降序的 top N 矩阵条目。
+    """
+    keyword_data = keyword_data or {}
+    matrix = []
+    seen = set()
+
+    def _add(keyword: str, relevance: int, competition: str, difficulty: str) -> None:
+        key = keyword.strip().lower()
+        if not key or key in seen:
+            return
+        seen.add(key)
+        rel_score = 3 if relevance >= 90 else 2 if relevance >= 80 else 1
+        comp_score = _COMPETITION_SCORE.get(competition, 2)
+        diff_score = _DIFFICULTY_SCORE.get(difficulty, 2)
+        total = rel_score + comp_score + diff_score
+        if relevance < 80:
+            total = min(total, 5)  # 相关度不足时封顶 P3，避免低相关+低竞争误判为速赢项
+        matrix.append(
+            {
+                "keyword": keyword.strip(),
+                "relevance": relevance,
+                "competition": competition or "-",
+                "difficulty": difficulty or "-",
+                "score": total,
+                "priority": _priority_level(total),
+                "action": _PRIORITY_ACTIONS[_priority_level(total)],
+            }
+        )
+
+    for k in keyword_data.get("related_keywords", []) or []:
+        _add(
+            k.get("keyword", ""),
+            int(k.get("relevance", 0) or 0),
+            k.get("competition", ""),
+            "",  # 相关词无难度字段，缺省按 2 分
+        )
+    for k in keyword_data.get("long_tail_keywords", []) or []:
+        _add(
+            k.get("keyword", ""),
+            75,  # 长尾词无相关度字段，缺省按 75（2 分）
+            "",  # 长尾词无竞争度字段，缺省按 2 分
+            k.get("difficulty", ""),
+        )
+
+    matrix.sort(key=lambda m: (-m["score"], m["priority"]))
+    return matrix[:limit]
+
+
 # ── API ──────────────────────────────────────────────────
 
 
@@ -202,6 +277,9 @@ def research_keywords(req: KeywordResearchRequest, current_user: dict = require_
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("seo_keywords", len(req.seed_keyword), len(raw), elapsed)
+
+    # v15：优先级矩阵（关键词分组 + 难度分级 + 执行优先级，后端确定性计算兜底）
+    result["priority_matrix"] = build_priority_matrix(result)
 
     return {
         "seed_keyword": req.seed_keyword,

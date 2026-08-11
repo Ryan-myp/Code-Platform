@@ -15,6 +15,7 @@ import {
   Disc,
   Volume2,
   Copy,
+  Package,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -26,6 +27,7 @@ import {
   ErrorState,
   PageHeader,
   ConfirmDialog,
+  Modal,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
@@ -132,6 +134,20 @@ const LENGTHS = [
   { value: 'long', label: '长歌 (3-5分钟)' },
 ]
 
+// v15：歌词押韵/段落结构参数
+const RHYMES = [
+  { value: 'natural', label: '自然押韵（推荐）' },
+  { value: 'strict', label: '严格押韵（说唱/快歌）' },
+  { value: 'soft', label: '弱押韵（意境优先）' },
+]
+
+const STRUCTURES = [
+  { value: 'verse_chorus', label: '主歌+副歌' },
+  { value: 'verse_chorus_bridge', label: '主歌+副歌+桥段' },
+  { value: 'free', label: '自由段落' },
+  { value: 'rap_verse', label: '说唱+Hook' },
+]
+
 const VOICES = [
   { value: 'female', label: '女声' },
   { value: 'male', label: '男声' },
@@ -168,7 +184,7 @@ const LYRICS_TEMPLATES = [
 const TABS = [
   { key: 'lyrics', label: '歌词生成', icon: FileText },
   { key: 'music', label: '音乐生成', icon: Music2 },
-  { key: 'tts', label: '虚拟人声', icon: Mic },
+  { key: 'tts', label: '人声合成', icon: Mic },
 ]
 
 export default function MusicFactoryPage() {
@@ -181,16 +197,32 @@ export default function MusicFactoryPage() {
     language: 'zh',
     length: 'medium',
     mood: 'happy',
+    rhyme: 'natural',
+    structure: 'verse_chorus',
     musicDuration: 30,
+    musicVoice: 'female',
   })
-  const { activeTab, theme, style, language, length, mood, musicDuration } = inputs
+  const {
+    activeTab,
+    theme,
+    style,
+    language,
+    length,
+    mood,
+    rhyme,
+    structure,
+    musicDuration,
+    musicVoice,
+  } = inputs
   const setActiveTab = (v) => setInputs((p) => ({ ...p, activeTab: v }))
   const setTheme = (v) => setInputs((p) => ({ ...p, theme: v ?? '' }))
   const setStyle = (v) => setInputs((p) => ({ ...p, style: v }))
   const setLanguage = (v) => setInputs((p) => ({ ...p, language: v }))
   const setLength = (v) => setInputs((p) => ({ ...p, length: v }))
   const setMood = (v) => setInputs((p) => ({ ...p, mood: v }))
-  const setMusicDuration = (v) => setInputs((p) => ({ ...p, musicDuration: v }))
+  const setRhyme = (v) => setInputs((p) => ({ ...p, rhyme: v }))
+  const setStructure = (v) => setInputs((p) => ({ ...p, structure: v }))
+  const setMusicVoice = (v) => setInputs((p) => ({ ...p, musicVoice: v }))
   const [stats, setStats] = useState({ total_tracks: 0, api_configured: false })
   const [audios, setAudios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -221,6 +253,16 @@ export default function MusicFactoryPage() {
 
   // 删除
   const [deleteTarget, setDeleteTarget] = useState(null)
+
+  // 发布包（商业化 v14）：单曲打包为可提交网易云/腾讯/抖音音乐人的成套物料
+  const [packAudio, setPackAudio] = useState(null)
+  const [packTitle, setPackTitle] = useState('')
+  const [packArtist, setPackArtist] = useState('')
+  const [packGenre, setPackGenre] = useState('')
+  // v15：发布包封面自定义上传（File + dataURL 预览）
+  const [packCoverFile, setPackCoverFile] = useState(null)
+  const [packCoverPreview, setPackCoverPreview] = useState('')
+  const [packing, setPacking] = useState(false)
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
@@ -273,6 +315,8 @@ export default function MusicFactoryPage() {
     form.append('language', language)
     form.append('length', length)
     form.append('mood', mood)
+    form.append('rhyme', rhyme)
+    form.append('structure', structure)
     await submitTask('/api/music-factory/lyrics/generate', form, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
@@ -300,20 +344,29 @@ export default function MusicFactoryPage() {
     }
     setGeneratingMusic(true)
     setMusicResult(null)
-    try {
-      const form = new FormData()
-      form.append('lyrics', lyricsText)
-      form.append('style', style)
-      form.append('mood', mood)
-      form.append('duration', musicDuration)
-      const res = await api.post('/api/music-factory/music/generate', form, { timeout: 120000 })
-      setMusicResult(res.data)
-      toast.info(res.data.message || '音乐任务已提交')
-    } catch (e) {
-      toast.error(`生成音乐失败：${e.message}`)
-    } finally {
-      setGeneratingMusic(false)
-    }
+    setGenTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('lyrics', lyricsText)
+    form.append('style', style)
+    form.append('mood', mood)
+    form.append('voice', musicVoice)
+    form.append('theme', theme || 'AI 音乐作品')
+    form.append('duration', musicDuration)
+    await submitTask('/api/music-factory/music/generate', form, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: (data) => {
+        setMusicResult(data)
+        if (data.url) {
+          toast.success('歌曲生成完成，可以听了！')
+          fetchAudios()
+        }
+        setGeneratingMusic(false)
+      },
+      onError: (e) => {
+        setGeneratingMusic(false)
+        toast.error(`生成音乐失败：${e.message}`)
+      },
+    })
   }
 
   const generateTts = async () => {
@@ -333,7 +386,7 @@ export default function MusicFactoryPage() {
       onSuccess: (data) => {
         setTtsResult(data)
         if (data.url) {
-          toast.success('人声合成完成')
+          toast.success('人声朗读合成完成')
           fetchAudios()
         }
         setGeneratingTts(false)
@@ -377,6 +430,40 @@ export default function MusicFactoryPage() {
     }
   }
 
+  // 音乐发布包：mp3 + wav 母带（44.1kHz/16bit）+ flac 无损 + 封面 + lrc/txt 歌词 + 质量报告
+  const downloadPublishPack = async () => {
+    if (!packAudio) return
+    setPacking(true)
+    try {
+      const fd = new FormData()
+      fd.append('audio_id', packAudio.filename)
+      fd.append('song_title', packTitle.trim() || packAudio.title || 'AI 音乐作品')
+      fd.append('artist', packArtist.trim())
+      fd.append('genre', packGenre.trim())
+      if (packCoverFile) fd.append('cover_image', packCoverFile)
+      const res = await api.post('/api/music-factory/publish-pack', fd, {
+        responseType: 'blob',
+        timeout: 300000,
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `music_publish_pack_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setPackAudio(null)
+      setPackCoverFile(null)
+      setPackCoverPreview('')
+      toast.success('音乐发布包已生成：mp3 + wav 母带 + flac 无损 + 封面 + 歌词 + 质量报告')
+    } catch (e) {
+      toast.error(`发布包生成失败：${e.message}`)
+    } finally {
+      setPacking(false)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleteTarget) return
     try {
@@ -397,7 +484,15 @@ export default function MusicFactoryPage() {
       value: stats.api_configured ? '已配置' : '未配置',
       color: stats.api_configured ? 'text-green-600' : 'text-red-600',
     },
-    { label: '功能模块', value: 3, color: 'text-blue-600' },
+    {
+      label: 'AI 引擎',
+      value: stats.engine?.acestep_ok
+        ? 'ACE-Step 大模型'
+        : stats.engine?.cosyvoice_ok
+          ? '本地真歌声'
+          : '本地引擎',
+      color: stats.engine?.acestep_ok ? 'text-green-600' : 'text-purple-600',
+    },
     { label: '歌词生成', value: lyrics ? '已生成' : '-', color: 'text-orange-600' },
   ]
 
@@ -405,7 +500,7 @@ export default function MusicFactoryPage() {
     <div className="space-y-6">
       <PageHeader
         title="音乐工厂"
-        description="生成歌词、创作音乐、合成虚拟人声"
+        description="生成歌词、创作歌曲、AI 歌手演唱"
         icon={Music}
         iconColor="from-purple-500 to-pink-500"
         actions={
@@ -524,6 +619,34 @@ export default function MusicFactoryPage() {
                 {LENGTHS.map((l) => (
                   <option key={l.value} value={l.value}>
                     {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">押韵（v15）</label>
+              <select
+                value={rhyme}
+                onChange={(e) => setRhyme(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {RHYMES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">段落结构（v15）</label>
+              <select
+                value={structure}
+                onChange={(e) => setStructure(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {STRUCTURES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
                   </option>
                 ))}
               </select>
@@ -702,7 +825,7 @@ export default function MusicFactoryPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">音乐风格</label>
               <select
@@ -731,24 +854,24 @@ export default function MusicFactoryPage() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">演唱声音</label>
+              <select
+                value={musicVoice}
+                onChange={(e) => setMusicVoice(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              >
+                {VOICES.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              时长（秒）: {musicDuration}s
-            </label>
-            <input
-              type="range"
-              min="15"
-              max="120"
-              value={musicDuration}
-              onChange={(e) => setMusicDuration(Number(e.target.value))}
-              className="w-full accent-purple-500"
-            />
-            <div className="flex justify-between text-xs text-gray-400">
-              <span>15s</span>
-              <span>120s</span>
-            </div>
+          <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2 text-xs text-gray-500">
+            🎼 AI 歌声引擎：根据歌词智能谱曲，AI 歌手按旋律逐字演唱（音高/节奏/颤音对齐），自动伴奏混音与封面，约 1-2 分钟完成
           </div>
 
           <Button
@@ -760,25 +883,70 @@ export default function MusicFactoryPage() {
             onClick={generateMusic}
             className="w-full"
           >
-            {generatingMusic ? '正在创作音乐...' : '生成音乐'}
+            {generatingMusic ? 'AI 歌手演唱合成中…' : '生成音乐'}
           </Button>
-
-          {musicResult && (
-            <div
-              className={`p-4 rounded-xl ${
-                musicResult.status === 'pending'
-                  ? 'bg-blue-50 border border-blue-200'
-                  : musicResult.status === 'error'
-                    ? 'bg-red-50 border border-red-200'
-                    : 'bg-purple-50 border border-purple-200'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Volume2 className="w-5 h-5 text-purple-600 flex-shrink-0" />
-                <span className="text-sm text-gray-700">
-                  {musicResult.message || '音乐正在生成中，请稍候...'}
-                </span>
+          {generatingMusic && genTask && (
+            <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-purple-700">
+                <Sparkles className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
               </div>
+              <div className="mt-1.5 h-1.5 bg-purple-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                  style={{ width: `${genTask.progress || 0}%` }}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-gray-400">
+                任务已提交后台执行，可关闭页面稍后在「任务中心」查看结果
+              </p>
+            </div>
+          )}
+
+          {musicResult?.url && (
+            <div className="p-4 bg-gradient-to-br from-purple-50 to-pink-50 border border-purple-100 rounded-xl">
+              <div className="flex items-center gap-3 mb-3">
+                {musicResult.cover_url ? (
+                  <img
+                    src={absUrl(musicResult.cover_url)}
+                    alt=""
+                    className="w-16 h-16 rounded-xl object-cover shadow-sm flex-shrink-0"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+                    <Music2 className="w-7 h-7 text-white" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-gray-900 truncate">
+                    {musicResult.theme || 'AI 音乐作品'}
+                  </div>
+                  <div className="text-sm text-gray-500 mt-0.5">
+                    {STYLES.find((s) => s.value === musicResult.style)?.label || musicResult.style}
+                    {musicResult.duration > 0 ? ` · ${musicResult.duration.toFixed(1)}s` : ''}
+                  </div>
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Download}
+                  onClick={() => handleDownload({ filename: musicResult.audio_id, url: musicResult.url })}
+                >
+                  下载
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={RefreshCw}
+                  loading={generatingMusic}
+                  disabled={!selectedLyrics.trim()}
+                  onClick={generateMusic}
+                >
+                  换一版
+                </Button>
+              </div>
+              <audio controls src={absUrl(musicResult.url)} className="w-full" />
             </div>
           )}
         </div>
@@ -789,7 +957,7 @@ export default function MusicFactoryPage() {
         <div className="bg-white rounded-2xl border border-gray-200 p-6 space-y-4">
           <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
             <Volume2 className="w-5 h-5 text-purple-500" />
-            AI 虚拟人声
+            AI 人声朗读
           </h2>
 
           <div>
@@ -925,6 +1093,17 @@ export default function MusicFactoryPage() {
                 className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0">
+                  {audio.cover_url ? (
+                    <img
+                      src={absUrl(audio.cover_url)}
+                      alt=""
+                      className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+                      <Music className="w-5 h-5 text-white" />
+                    </div>
+                  )}
                   <button
                     onClick={() => handlePlayAudio(audio)}
                     className="w-10 h-10 rounded-full bg-purple-100 hover:bg-purple-200 flex items-center justify-center transition-colors flex-shrink-0"
@@ -937,9 +1116,17 @@ export default function MusicFactoryPage() {
                   </button>
                   <div className="min-w-0">
                     <div className="font-medium text-gray-900 truncate">
-                      {audio.filename.replace('.mp3', '').replace('music_', '')}
+                      {audio.title || audio.filename}
                     </div>
-                    <div className="text-sm text-gray-500">{formatBytes(audio.size)}</div>
+                    <div className="text-sm text-gray-500 flex items-center gap-1.5 mt-0.5">
+                      {audio.duration > 0 && <span>{audio.duration.toFixed(1)}s</span>}
+                      {audio.style && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 text-[10px] border border-purple-100">
+                          {STYLES.find((s) => s.value === audio.style)?.label || audio.style}
+                        </span>
+                      )}
+                      <span>{formatBytes(audio.size)}</span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
@@ -949,6 +1136,20 @@ export default function MusicFactoryPage() {
                     title="下载"
                   >
                     <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPackAudio(audio)
+                      setPackTitle(audio.title || '')
+                      setPackArtist('')
+                      setPackGenre('')
+                      setPackCoverFile(null)
+                      setPackCoverPreview('')
+                    }}
+                    className="p-2 text-gray-500 hover:text-pink-600 hover:bg-pink-50 rounded-lg transition-colors"
+                    title="发布包（可提交网易云/腾讯/抖音音乐人）"
+                  >
+                    <Package className="w-4 h-4" />
                   </button>
                   <span onClick={(e) => e.stopPropagation()}>
                     <ShareButton
@@ -982,6 +1183,115 @@ export default function MusicFactoryPage() {
         )}
       </div>
 
+      {/* 音乐发布包 Modal：mp3 + wav 母带 + flac 无损 + 封面 + lrc 歌词 + 质量报告 */}
+      <Modal
+        open={!!packAudio}
+        onClose={() => setPackAudio(null)}
+        title="音乐发布包（音乐人平台成套物料）"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPackAudio(null)} disabled={packing}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              icon={Package}
+              loading={packing}
+              onClick={downloadPublishPack}
+              className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
+            >
+              生成发布包
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2 text-xs text-purple-700">
+            将自动生成：mp3 成品 + wav 母带（44.1kHz/16bit）+ flac 无损 + 封面 + lrc/txt 歌词
+            + 各平台规格说明（网易云/腾讯/抖音音乐人）+ 上传指南 + 商用授权 + 质量自检报告。
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              歌曲标题
+            </label>
+            <input
+              type="text"
+              value={packTitle}
+              onChange={(e) => setPackTitle(e.target.value)}
+              placeholder="如：星空下的告白"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">歌手/作者</label>
+              <input
+                type="text"
+                value={packArtist}
+                onChange={(e) => setPackArtist(e.target.value)}
+                placeholder="如：AI 音乐工坊"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">流派</label>
+              <select
+                value={packGenre}
+                onChange={(e) => setPackGenre(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 outline-none focus:border-purple-500 bg-white"
+              >
+                <option value="">默认</option>
+                {STYLES.map((s) => (
+                  <option key={s.value} value={s.label}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              自定义封面（可选，≤8MB，自动裁剪为 640×640；不传则用 AI 生成封面）
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (!f) return
+                  setPackCoverFile(f)
+                  const reader = new FileReader()
+                  reader.onload = () => setPackCoverPreview(reader.result)
+                  reader.readAsDataURL(f)
+                }}
+                className="w-full text-sm text-gray-500 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-purple-50 file:text-purple-700 file:text-xs file:font-medium hover:file:bg-purple-100"
+              />
+              {packCoverPreview && (
+                <div className="relative shrink-0">
+                  <img
+                    src={packCoverPreview}
+                    alt="封面预览"
+                    className="w-14 h-14 rounded-lg object-cover border border-gray-200"
+                  />
+                  <button
+                    onClick={() => {
+                      setPackCoverFile(null)
+                      setPackCoverPreview('')
+                    }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center"
+                    title="移除封面"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       {/* 使用指南 */}
       <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-100">
         <h3 className="font-medium text-purple-900 mb-3 flex items-center gap-2">
@@ -995,11 +1305,13 @@ export default function MusicFactoryPage() {
           </div>
           <div className="bg-white rounded-lg p-3">
             <div className="font-medium text-gray-900">音乐生成</div>
-            <div className="text-sm text-gray-600 mt-1">基于歌词生成完整音乐作品（开发中）</div>
+            <div className="text-sm text-gray-600 mt-1">
+              基于歌词合成完整歌曲：AI 谱曲伴奏 + AI 歌手按旋律演唱 + 自动混音封面
+            </div>
           </div>
           <div className="bg-white rounded-lg p-3">
-            <div className="font-medium text-gray-900">虚拟人声</div>
-            <div className="text-sm text-gray-600 mt-1">TTS 合成人声（需要 TTS API 支持）</div>
+            <div className="font-medium text-gray-900">人声朗读</div>
+            <div className="text-sm text-gray-600 mt-1">TTS 语音合成朗读（支持男声/女声）</div>
           </div>
         </div>
       </div>

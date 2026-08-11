@@ -1,0 +1,1316 @@
+#!/usr/bin/env python3
+"""短剧工厂模块 - LLM 剧本分镜 + CosyVoice 配音 + ffmpeg 视频组装（本地管线）。
+
+流水线：主题 → LLM 剧本（分幕/分镜/台词/旁白）→ 每镜 CosyVoice 配音 →
+PIL 镜头背景图 → ffmpeg 逐镜合成 → 拼接 + 字幕烧录 → mp4 产物。
+镜头素材当前为本地生成（渐变+文案背景图），后续可平滑替换为数字人口播/云 API 视频素材。
+"""
+
+import asyncio
+import hashlib
+import io
+import json
+import logging
+import math
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+from fastapi import APIRouter, Form, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
+
+from common.artifacts import save_artifact
+from common.auth import require_auth
+from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config
+from common.llm import call_llm_async
+from task_queue import create_task, register_handler
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/drama", tags=["短剧工厂"])
+
+load_config()
+
+DRAMA_DIR = Path(__file__).parent / "drama_factory"
+DRAMA_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── 素材库（v13.25 开源化：Pexels 实时素材 → 本地素材目录 → 渐变卡片兜底）──
+# Pexels 免费 key 注册：https://www.pexels.com/api/ （填入 backend/.env 的 PEXELS_API_KEY）
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "").strip()
+MATERIALS_DIR = DRAMA_DIR / "materials"  # 用户本地素材：*关键词*.mp4/jpg（无 key 时兜底）
+CACHE_DIR = DRAMA_DIR / "cache"  # Pexels 下载缓存（按 URL 哈希去重）
+MUSIC_DIR = DRAMA_DIR / "music"  # 背景音乐目录（*.mp3/wav，可选）
+for _d in (MATERIALS_DIR, CACHE_DIR, MUSIC_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
+
+
+def _ffmpeg_bin() -> str:
+    """优先使用 imageio-ffmpeg 自带二进制（含 libass，支持 subtitles 滤镜烧录）。"""
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "/usr/local/bin/ffmpeg"
+
+
+FFMPEG_BIN = _ffmpeg_bin()
+FFPROBE_BIN = "/usr/local/bin/ffprobe"
+FPS = 25
+
+_VIDEO_EXTS = (".mp4", ".mov", ".webm")
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+_MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".aac")
+
+
+def _pexels_search_video(query: str) -> str | None:
+    """Pexels API 按关键词搜索竖屏视频素材，返回合适的 mp4 直链（失败/无 key 返回 None）。
+
+    v13.25 借鉴 MoneyPrinterTurbo 素材管线：LLM 输出每镜搜索关键词 → 实时拉取真实素材。
+    v13.29 相关性增强：per_page 5→15、时长过滤 8-40s（利于单镜循环）、
+    按 (关键词+日期) 哈希轮换 top 5 候选（同词每天换一批，避免缓存死锁同画面）。
+    """
+    if not PEXELS_API_KEY:
+        return None
+    try:
+        import requests
+
+        r = requests.get(
+            "https://api.pexels.com/videos/search",
+            params={"query": query, "orientation": "portrait", "per_page": 15},
+            headers={"Authorization": PEXELS_API_KEY},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            logger.warning(f"Pexels 搜索失败 HTTP {r.status_code}: {query}")
+            return None
+        links = []
+        for v in r.json().get("videos") or []:
+            try:
+                dur = float(v.get("duration") or 0)
+            except (TypeError, ValueError):
+                dur = 0.0
+            if not (8 <= dur <= 40):  # 太短循环突兀 / 太长超出单镜
+                continue
+            files = [
+                f for f in (v.get("video_files") or [])
+                if f.get("file_type") == "video/mp4" and f.get("link") and f.get("width") and f.get("height")
+            ]
+            pool = [f for f in files if f["height"] >= f["width"]] or files
+            for f in pool:
+                w = f.get("width") or 0
+                if w:
+                    links.append((f["link"], w))
+        if not links:
+            return None
+        # 720-1920 宽优先（清晰度与体积平衡），不足时任意宽度兜底
+        ok = [lnk for lnk, w in links if 720 <= w <= 1920]
+        pool = ok or [lnk for lnk, _ in links]
+        picks = pool[:5]
+        idx = int(hashlib.sha256(f"{query}|{time.strftime('%Y-%m-%d')}".encode()).hexdigest(), 16) % len(picks)
+        return picks[idx]
+    except Exception as e:
+        logger.warning(f"Pexels 素材搜索异常: {e}")
+    return None
+
+
+def _download_material(url: str, dest: Path) -> bool:
+    """流式下载素材到缓存（.part 临时文件 + 原子重命名，失败清理）。"""
+    tmp = dest.with_name(dest.name + ".part")
+    try:
+        import requests
+
+        with requests.get(url, stream=True, timeout=60) as r:
+            if r.status_code != 200:
+                logger.warning(f"素材下载失败 HTTP {r.status_code}: {url[:80]}")
+                return False
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(1 << 16):
+                    f.write(chunk)
+        tmp.rename(dest)
+        return True
+    except Exception as e:
+        logger.warning(f"素材下载异常: {e}")
+        tmp.unlink(missing_ok=True)
+        return False
+
+
+def _find_local_material(query: str) -> Path | None:
+    """本地素材目录模糊匹配：文件名含关键词（中文/英文均可）的视频或图片。"""
+    q = (query or "").strip()
+    if not q:
+        return None
+    for ext in _VIDEO_EXTS + _IMAGE_EXTS:
+        for p in MATERIALS_DIR.rglob(f"*{q}*.{ext.lstrip('.')}"):
+            if p.is_file():
+                return p
+    return None
+
+
+def _fetch_material(query: str) -> tuple[Path | None, str]:
+    """获取镜头素材：Pexels 搜索下载（带 URL 哈希缓存）→ 本地素材目录。返回 (路径, 类型 video/image)。"""
+    q = (query or "").strip()
+    if not q:
+        return None, ""
+    url = _pexels_search_video(q)
+    if url:
+        ext = Path(url.split("?")[0]).suffix.lower() or ".mp4"
+        cache = CACHE_DIR / f"{hashlib.sha256(f'{q}|{url}'.encode()).hexdigest()[:16]}{ext}"
+        if cache.exists() and cache.stat().st_size > 4096:
+            return cache, ("video" if ext in _VIDEO_EXTS else "image")
+        if _download_material(url, cache):
+            kind = "video" if cache.suffix.lower() in _VIDEO_EXTS else "image"
+            return cache, kind
+    local = _find_local_material(q)
+    if local:
+        return local, ("video" if local.suffix.lower() in _VIDEO_EXTS else "image")
+    return None, ""
+
+_SCRIPT_SYSTEM = """你是资深短剧编剧。把用户主题扩写成一部节奏紧凑的竖屏短剧脚本。
+要求：
+1. 输出严格的 JSON（不要 markdown 代码块，不要多余文字）
+2. 结构：{"title": "剧名", "characters": [{"id": "lin", "name": "林小满", "gender": "女", "age": "24岁", "appearance": "黑色长发齐刘海，圆脸大眼睛", "outfit": "白色连衣裙配红色围巾", "search": "young chinese woman black hair"}], "scenes": [{"id": 1, "chars": ["lin"], "shot": "镜头画面描述", "search": "英文素材关键词", "narrator": "旁白", "dialogue": "角色台词", "emotion": "情绪", "sec": 25}]}
+3. 角色一致性（最重要，v13.30）：先定义全剧 1-3 个主要角色 characters，每个角色的性别/年龄/发型/发色/服装在整部剧固定不变；每镜 chars 列出场角色 id（1-2 个为宜）；每个角色首次出场安排单人镜定妆，后续出场必须沿用该外貌服装；shot 必须点名出场角色并沿用其外貌与服装，禁止临时换外貌或引入新主角形象；search 以该镜主角的英文特征词开头（如 young chinese woman black hair）
+4. 场次与目标时长匹配（v13.27 长剧）：场次数 ≈ 目标秒数 ÷ 每场 25-30 秒，向上取整（如 300 秒 → 10-12 场；600 秒 → 20-24 场；≤2 分钟不少于 4 场，最多 28 场）；每场 sec 15-40 秒（单镜保底时长，配音不足时画面素材循环补足）
+5. shot 必须是"画面里能拍到的东西"（具体场景/道具/人物动作/天气/光线），禁止抽象概念；search 给出 2-4 个与 shot 完全对应的英文关键词（如 night city rain neon），禁止抽象词（dream/hope/life 等搜不到素材的词）
+6. 每场旁白+台词合计约 60-100 字（约 20-30 秒口播量），全场总时长贴近目标时长 ±20%，禁止每场超长台词；台词/旁白必须提到本镜画面里的具体元素（画面有雨才能说"雨"），与 shot 强呼应，禁止写与画面无关的抽象感慨
+7. 每镜必须标注情绪 emotion（v13.24）：happy 欢快 / sad 悲伤 / angry 激昂愤怒 / gentle 温柔 / serious 严肃 / neutral 自然，台词口吻与情绪一致
+8. 剧情有起承转合，结尾留悬念钩子"""
+
+
+async def _generate_script(theme: str, duration_hint: int) -> dict:
+    """LLM 生成剧本（v13.29：worker 与 /script 接口共用）。
+
+    最多重试 3 次解析（LLM 偶发坏 JSON），返回经时长防御校验的剧本，
+    保证接口返回的剧本与最终成片剧本一致（所见即所得）。
+    """
+    last_err = ""
+    for attempt in range(3):
+        raw = await call_llm_async(
+            _SCRIPT_SYSTEM,
+            f"主题：{theme}\n目标时长约 {duration_hint} 秒，场次数与每场秒数按编剧规则匹配。",
+            max_tokens=8000,
+            temperature=0.85,
+            timeout=300,
+        )
+        try:
+            script = _parse_script(raw)
+            break
+        except (ValueError, json.JSONDecodeError) as e:
+            last_err = str(e)
+            logger.warning(f"剧本解析失败（第 {attempt + 1} 次）: {e}")
+    else:
+        raise HTTPException(502, f"剧本生成失败：{last_err}，请重试")
+    scenes = _enforce_duration(script["scenes"], duration_hint)
+    script["scenes"] = scenes
+    return script
+
+
+def _enforce_duration(scenes: list[dict], duration_hint: int) -> list[dict]:
+    """v13.28 时长硬校验：场次数 + 台词量 + 单镜 sec 三重防御（LLM 不守编剧规则时的兜底）。
+
+    - 场次上限：每场至少约 20s 起步；
+    - 台词预算：口播约 2.5 字/秒（v13.28 情绪镜改 pitch 表达后实测 3-4.8 字/s，
+      预算保守取 2.5，保证配音短于单镜 sec 兜底值）；
+    - 单镜 sec：超出目标均场值 1.25 倍或不足 0.75 倍的收敛到均场值（配音不足时画面按
+      sec 循环补足，sec 失控会直接拉长或缩短成片）。
+    """
+    max_scenes = min(32, max(4, math.ceil(duration_hint / 20)))
+    if len(scenes) > max_scenes:
+        scenes = scenes[:max_scenes]
+        logger.info(f"[时长防御] 场次截断至 {max_scenes}（目标 {duration_hint}s）")
+    budget = max(120, int(duration_hint * 2.5))
+    words = sum(
+        len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes
+    )
+    if words > budget:
+        ratio = budget / words
+        for s in scenes:
+            for key in ("narrator", "dialogue"):
+                v = (s.get(key) or "").strip()
+                if not v:
+                    continue
+                cut = max(1, int(len(v) * ratio))
+                s[key] = v[:cut].rstrip() + ("…" if len(v) > cut else "")
+        logger.info(f"[时长防御] 台词 {words}→{budget} 字（比例 {ratio:.2f}）")
+    if scenes:
+        base = max(2, min(45, math.ceil(duration_hint * 0.95 / len(scenes))))
+        for s in scenes:
+            orig = max(2, int(s.get("sec") or base))
+            if orig > base * 1.25 or orig < base * 0.75:
+                s["sec"] = base
+        words_now = sum(
+            len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes
+        )
+        est = sum(max(len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) / 1.5, s.get("sec", base)) for s in scenes)
+        logger.info(
+            f"[时长防御] {len(scenes)} 场 / 台词 {words_now} 字 / 均场 sec {base} / 预估成片约 {est:.0f}s（目标 {duration_hint}s）"
+        )
+    return scenes
+
+
+def _parse_characters(data: dict) -> list[dict]:
+    """解析剧本角色表（v13.30）：id 规范化去重，生成插画/素材锚定文本。
+
+    每个角色产出 anchor（姓名+性别+年龄+外貌+服装，插画 prompt 锚定用）
+    与 search（英文特征词，素材搜索同性别/同特征锚定）。
+    """
+    chars, seen = [], set()
+    for c in data.get("characters") or []:
+        if not isinstance(c, dict):
+            continue
+        cid = re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").lower())
+        name = str(c.get("name") or "").strip()[:20]
+        if not cid or not name or cid in seen:
+            continue
+        seen.add(cid)
+        gender = str(c.get("gender") or "").strip()[:6]
+        age = str(c.get("age") or "").strip()[:10]
+        appearance = str(c.get("appearance") or "").strip()[:80]
+        outfit = str(c.get("outfit") or "").strip()[:80]
+        search = re.sub(r"[\"'\[\]]", "", str(c.get("search") or "").strip())[:60]
+        anchor = "，".join(x for x in (name, gender, age, appearance, outfit) if x)
+        chars.append({
+            "id": cid, "name": name, "gender": gender, "age": age,
+            "appearance": appearance, "outfit": outfit, "search": search, "anchor": anchor,
+        })
+    return chars
+
+
+def _parse_script(raw: str) -> dict:
+    """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音，失败抛错）。"""
+    text = raw.strip()
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    if m:
+        text = m.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("剧本输出不是 JSON")
+    data = json.loads(text[start : end + 1])
+    scenes = data.get("scenes") or []
+    if not scenes:
+        raise ValueError("剧本没有分镜")
+    # v13.30 角色表：先解析，供每镜 chars 白名单校验
+    chars = _parse_characters(data)
+    char_ids = {c["id"] for c in chars}
+    for s in scenes:
+        if not s.get("shot") and not s.get("narrator") and not s.get("dialogue"):
+            raise ValueError(f"分镜 {s.get('id')} 内容为空")
+        if not s.get("sec"):
+            s["sec"] = 5
+        s["sec"] = max(2, min(45, int(s["sec"])))
+        # v13.24 情绪白名单清洗：LLM 可能输出非法/中文情绪标签，非法回落 neutral
+        emo = str(s.get("emotion") or "neutral").strip().lower()
+        if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
+            emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
+                   "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
+        s["emotion"] = emo
+        # v13.25 素材关键词：search 清洗（限长/去引号），缺失回退 shot 前 30 字符（Pexels 兼容中文）
+        search = str(s.get("search") or "").strip()
+        search = re.sub(r"[\"'\[\]]", "", search)[:60]
+        if not search:
+            search = (s.get("shot") or "").strip()[:30]
+        s["search"] = search
+        # v13.30 出场角色：chars 数组（兼容旧 char 单值），与角色表同一规范化后白名单过滤
+        raw_chars = s.get("chars") or s.get("char") or []
+        if isinstance(raw_chars, str):
+            raw_chars = [raw_chars]
+        s["chars"] = [
+            re.sub(r"[^a-z0-9]", "", str(x).strip().lower())
+            for x in raw_chars
+            if re.sub(r"[^a-z0-9]", "", str(x).strip().lower()) in char_ids
+        ]
+    return {"title": data.get("title") or "未命名短剧", "scenes": scenes, "characters": chars}
+
+
+def _anchor_search(char: dict | None, search: str) -> str:
+    """素材搜索锚定（v13.30）：主角英文特征词前缀 → 素材同性别/同特征（尽力而为）。"""
+    q = (search or "").strip()
+    if char and char.get("search"):
+        return f"{char['search']} {q}".strip()
+    return q
+
+
+def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None) -> bytes | None:
+    """AGNES 文生图/图生图镜头插画（v13.30 角色一致性）。
+
+    参考图 refs（按出场角色顺序，每角色最近一张单人插画）非空 → 图生图/多图合成
+    （顶层 image 参数传 Data URI），配合 anchors 文字锚定，保证「同一角色每次出场一致」；
+    无参考图 → 纯文生图（文字锚定兜底）。统一 scale+crop 到 720x1280；
+    无 key/超时/接口异常一律返回 None，由调用方静默回退渐变卡片，不阻塞主链路。
+    """
+    if not shot or not AGNES_API_KEY:
+        return None
+    try:
+        import base64
+        import io
+        import requests
+        from PIL import Image
+
+        prompt = (
+            "竖屏短剧电影分镜插画，写实电影感，竖构图，画面只有场景与人物，画面中无任何文字。"
+            + (f"角色必须保持{anchors}的外貌与服装不变。" if anchors else "")
+            + shot
+        )
+        body = {
+            "model": "agnes-image-2.1-flash",
+            "prompt": prompt,
+            "size": "1K",
+            "ratio": "9:16",
+            "n": 1,
+            "extra_body": {"response_format": "url"},
+        }
+        if refs:
+            body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs]
+        r = requests.post(
+            f"{AGNES_API_BASE}/images/generations",
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json=body,
+            timeout=90,
+        )
+        r.raise_for_status()
+        url = (r.json().get("data") or [{}])[0].get("url")
+        if not url:
+            return None
+        img_resp = requests.get(url, timeout=60)
+        if img_resp.status_code != 200:
+            return None
+        img = Image.open(io.BytesIO(img_resp.content))
+        # 等比放大裁剪到 720x1280（与封面/成片一致，无黑边）
+        scale = max(720 / img.width, 1280 / img.height)
+        img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
+        left, top = (img.width - 720) // 2, (img.height - 1280) // 2
+        img = img.crop((left, top, left + 720, top + 1280))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"镜头插画生成失败: {e}")
+        return None
+
+
+def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, shot: str = "") -> bool:
+    """PIL 生成镜头背景图：优先 AGNES 插画（shot 画面描述），失败回退渐变海报。
+
+    v13.29 去"大字报"：渐变底不再印整段台词（字幕才是文字载体，避免画面=字幕），
+    只保留剧名 + 镜头序号 + 短标题；插画失败静默回退，不阻塞主链路。
+    """
+    if shot:
+        data = _generate_scene_image(shot)
+        if data:
+            try:
+                with open(path, "wb") as f:
+                    f.write(data)
+                return True
+            except OSError:
+                pass
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+
+        w, h = 720, 1280
+        grads = [
+            ((147, 51, 234), (236, 72, 153)),
+            ((59, 130, 246), (16, 185, 129)),
+            ((245, 158, 11), (239, 68, 68)),
+            ((16, 185, 129), (14, 165, 233)),
+            ((99, 102, 241), (217, 70, 239)),
+        ]
+        c1, c2 = grads[idx % len(grads)]
+        img = Image.new("RGB", (w, h))
+        draw = ImageDraw.Draw(img)
+        for y in range(h):
+            t = y / h
+            draw.line(
+                [(0, y), (w, y)],
+                fill=tuple(int(a + (b - a) * t) for a, b in zip(c1, c2, strict=False)),
+            )
+        try:
+            font_big = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", 56)
+            font_mid = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", 36)
+        except OSError:
+            font_big = font_mid = ImageFont.load_default()
+        draw.text((w // 2, 260), title, fill="white", font=font_big, anchor="mm")
+        # v13.29 短标题（shot 前 12 字，替代旧版整段台词大字报）
+        heading = (shot or text or "").strip()[:12]
+        if heading:
+            draw.text((w // 2, 520), heading, fill=(255, 255, 255, 230), font=font_mid, anchor="mm")
+        draw.text((w // 2, 1060), f"第 {idx + 1} 镜 / 共 {total} 镜", fill=(255, 255, 255, 180), font=font_mid, anchor="mm")
+        img.save(path, quality=88)
+        return True
+    except Exception as e:
+        logger.warning(f"镜头背景图生成失败: {e}")
+        return False
+
+
+def _probe_seconds(path: str) -> float:
+    """ffprobe 读取音/视频时长（秒），失败返回 0。"""
+    try:
+        out = subprocess.run(
+            [FFPROBE_BIN, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        return float(out.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
+                 motion: str = "zoom_in", fade_in: bool = True, fade_out: bool = True) -> None:
+    """单镜合成：背景图 + 配音 → mp4 片段（Ken Burns 运镜 + 可选首尾淡入淡出）。
+
+    v13.31 插画镜流畅度：zoompan 运镜（motion 交替推近/拉远/横摇，静态图动起来）；
+    注意 zoompan 必须用 on（输出帧计数）——in 是输入帧计数，按需求值只拉 1 个
+    输入帧时全部输出帧共享 in=0，画面静止（素材模式旧代码踩过此坑）；
+    fade_in/fade_out 按镜序控制（首镜淡入、末镜淡出、中间镜硬切），消除镜间黑场闪烁。
+    无声段 apad 补静音到 -t 目标时长（v13.28 移除 -shortest，sec 画面保底生效）。
+    """
+    total = max(1, int(duration * FPS))
+    amp = 0.10 if total >= 250 else 0.06  # 短镜减速，避免急促
+    vf = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
+    if motion and motion != "still":
+        if motion == "zoom_out":
+            zexpr, sway = f"{1 + amp}-{amp}*on/{total}", ""
+        elif motion == "pan_in":
+            zexpr, sway = f"1+{amp}*on/{total}", "+(iw*0.012)*sin(2*PI*on/" + str(total) + ")"
+        elif motion == "pan_out":
+            zexpr, sway = f"{1 + amp}-{amp}*on/{total}", "-(iw*0.012)*sin(2*PI*on/" + str(total) + ")"
+        else:  # zoom_in
+            zexpr, sway = f"1+{amp}*on/{total}", ""
+        # 2x 放大防抖 + zoompan 平滑运镜（s=720x1280 输出，fps 与全局 FPS 对齐便于 concat）
+        vf = (
+            "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
+            f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2){sway}':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS}"
+        )
+    if fade_in:
+        vf += ",fade=t=in:st=0:d=0.25"
+    if fade_out:
+        vf += f",fade=t=out:st={max(0.25, duration - 0.25):.2f}:d=0.25"
+    cmd = [
+        FFMPEG_BIN, "-nostdin", "-y",
+        "-loop", "1", "-i", img_path,
+        "-i", audio_path,
+        "-t", f"{duration:.2f}",
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+        "-af", "apad", "-c:a", "aac", "-b:a", "128k",
+        "-r", str(FPS),
+        out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
+        raise RuntimeError("单镜合成失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
+_SCENE_MOTIONS = ("zoom_in", "zoom_out", "pan_in", "pan_out")
+
+
+def _material_scene_video(query: str, audio_path: str, out_path: str, duration: float,
+                          fade_in: bool = True, fade_out: bool = True) -> bool:
+    """素材镜头合成：Pexels/本地真实素材（视频 cover 裁剪或图片 Ken Burns 推近）+ 配音。
+
+    v13.25 核心升级（借鉴 MoneyPrinterTurbo 素材管线）：告别纯渐变卡片，镜头画面改为
+    真实视频/图片素材；素材不可用时返回 False，由上层逐镜卡片兜底。
+    """
+    material, kind = _fetch_material(query)
+    if material is None:
+        return False
+    try:
+        vf_base = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
+        if fade_in:
+            vf_base += ",fade=t=in:st=0:d=0.25"
+        if fade_out:
+            vf_base += f",fade=t=out:st={max(0.25, duration - 0.25):.2f}:d=0.25"
+        if kind == "video":
+            # cover 裁剪无黑边 + 短素材循环补足时长 + 丢弃素材原音、混入配音
+            # v13.28 移除 -shortest 改 apad：短配音时画面按 sec 循环补足到目标时长
+            cmd = [
+                FFMPEG_BIN, "-nostdin", "-y",
+                "-stream_loop", "-1", "-i", str(material),
+                "-i", audio_path,
+                "-t", f"{duration:.2f}",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-vf", vf_base,
+                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-af", "apad", "-c:a", "aac", "-b:a", "128k",
+                "-r", str(FPS),
+                out_path,
+            ]
+        else:
+            # 图片 Ken Burns：2x 放大防抖 + zoompan 缓慢推近 + 配音
+            # v13.31 修复：zoompan 必须用 on（输出帧计数），in 是输入帧计数会导致画面静止
+            total = max(1, int(duration * FPS))
+            amp = 0.10 if total >= 250 else 0.06
+            cmd = [
+                FFMPEG_BIN, "-nostdin", "-y",
+                "-loop", "1", "-i", str(material),
+                "-i", audio_path,
+                "-t", f"{duration:.2f}",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-vf", (
+                    "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
+                    f"zoompan=z='1+{amp}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS},"
+                    + vf_base.split(",", 1)[1]  # 复用 fade 段（去掉 cover 裁剪前缀）
+                ),
+                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                "-af", "apad", "-c:a", "aac", "-b:a", "128k",
+                "-r", str(FPS),
+                out_path,
+            ]
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
+            logger.warning(f"素材镜头合成失败: {r.stderr.decode(errors='replace')[-200:]}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"素材镜头合成异常: {e}")
+        return False
+
+
+def _concat_videos(clip_paths: list[str], out_path: str) -> None:
+    """concat demuxer 拼接镜头片段（编码参数一致可直接拼接）。"""
+    list_file = out_path + ".txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        for p in clip_paths:
+            f.write(f"file '{p}'\n")
+    r = subprocess.run(
+        [FFMPEG_BIN, "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+        capture_output=True,
+        timeout=300,
+    )
+    os.remove(list_file)
+    if r.returncode != 0 or not os.path.exists(out_path):
+        raise RuntimeError("片段拼接失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
+def _pick_bgm() -> str | None:
+    """随机选一首背景音乐（music 目录），目录为空/无音频返回 None。"""
+    tracks = [p for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in _MUSIC_EXTS]
+    if not tracks:
+        return None
+    import random
+
+    return str(random.choice(tracks))
+
+
+def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None) -> None:
+    """字幕烧录（subtitles 滤镜）+ 背景音乐混音（v13.25：合并一次 re-encode）。
+
+    BGM 音量 12%（配音优先）+ 首尾 2s 淡入淡出；无 BGM 时保持原逻辑。
+    """
+    esc = srt_path.replace(":", "\\:").replace("'", "\\'")
+    subtitle_vf = f"subtitles='{esc}':force_style='FontName=PingFang SC,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,Outline=1,Shadow=0,MarginV=24'"
+    if bgm_path and os.path.exists(bgm_path):
+        total = max(_probe_seconds(video_path), 1.0)
+        fade_st = max(0.0, total - 2.0)
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", bgm_path,
+            "-filter_complex",
+            f"[1:a]volume=0.12,afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
+            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+            "-map", "0:v", "-map", "[a]",
+            "-vf", subtitle_vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            out_path,
+        ]
+    else:
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
+            "-vf", subtitle_vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            out_path,
+        ]
+    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0 or not os.path.exists(out_path):
+        raise RuntimeError("字幕烧录失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
+def _extract_cover(video_path: str, out_jpg: str) -> None:
+    """从首镜视频抽帧生成真 JPG 封面（竖屏 720x1280 无黑边，失败静默）。"""
+    try:
+        subprocess.run(
+            [
+                FFMPEG_BIN, "-nostdin", "-y", "-ss", "0.4", "-i", video_path,
+                "-frames:v", "1",
+                "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+                "-q:v", "2", out_jpg,
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+    except Exception as e:
+        logger.warning(f"封面抽帧失败: {e}")
+
+
+def _make_preview(video_path: str, out_mp4: str) -> None:
+    """截取首镜前 6 秒作列表 hover 动态预览（失败静默，前端回退静态封面）。"""
+    try:
+        subprocess.run(
+            [
+                FFMPEG_BIN, "-nostdin", "-y", "-ss", "0", "-t", "6", "-i", video_path,
+                "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
+                "-movflags", "+faststart", out_mp4,
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+    except Exception as e:
+        logger.warning(f"预览视频生成失败: {e}")
+
+
+def _make_srt(scenes: list[dict], durations: list[float], voice_durs: list[float], out_path: str) -> None:
+    """生成 SRT：每镜一条（旁白/台词合并为字幕文本）。
+
+    v13.29 字幕时序收敛：字幕显示时长 = min(画面时长, 配音时长 + 0.6s)，
+    配音结束后字幕即消失，避免素材循环补足段"有字无声"；时间轴仍按画面时长推进。
+    voice_durs 缺省时退化为整镜显示（数字人模式全镜有声）。
+    """
+
+    def ts(sec: float) -> str:
+        sec = max(0.0, sec)
+        h, rem = int(sec // 3600), sec % 3600
+        m, s = int(rem // 60), rem % 60
+        return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
+
+    lines, cursor = [], 0.0
+    for i, (sc, dur) in enumerate(zip(scenes, durations, strict=False), 1):
+        text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
+        vd = voice_durs[i - 1] if i - 1 < len(voice_durs) else dur
+        show = min(max(dur, 1.0), max(float(vd) + 0.6, 1.2)) if vd else max(dur, 1.0)
+        start = cursor
+        lines.append(f"{i}\n{ts(start)} --> {ts(start + show)}\n{text.strip()}\n")
+        cursor += max(dur, 1.0)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def _tts_scene(text: str, emotion: str = "neutral") -> bytes:
+    """单镜配音：复用 voice_factory._tts_one 全降级链路（CosyVoice → edge → 中转站）。
+
+    v13.24 情绪：neutral 保持 CosyVoice「中文女」高质量音色；带情绪镜切 Azure 音色。
+    v13.28 起情绪在 voice_factory._tts_edge 内改为 pitch 叠加表达（SSML style 语速黑洞），
+    此处仍传 style 别名（cheerful 等）以便 _tts_edge 映射，兼容旧调用链。
+    """
+    from voice_factory import _tts_one
+
+    if emotion and emotion != "neutral":
+        style = {"happy": "cheerful", "sad": "sad", "angry": "angry",
+                 "gentle": "gentle", "serious": "serious"}.get(emotion, "")
+        if style:
+            return _tts_one(text, "zh-CN-XiaoxiaoNeural", 1.05, 0, style)
+    return _tts_one(text, "中文女", 1.05)
+
+
+def _dh_scene_video(
+    text: str, avatar_id: str, engine: str, user: str, uid: str, role: str, out_path: str,
+    emotion: str = "neutral", fade_in: bool = False, fade_out: bool = False,
+) -> bool:
+    """单镜数字人口播：调 digital_human._generate_one 生成人像视频并转竖屏 720x1280。
+
+    返回 True=成功；失败返回 False（由上层回退背景图模式）；
+    配额超限（402）向上抛出，由上层整体切换背景图避免逐镜空转。
+    emotion（v13.24）：每镜情绪，驱动 TTS 风格 + 表情渲染。
+    v13.32 竖屏化升级：纯色 pad 深色底 → 模糊填充背景（split 放大模糊底 + 原画居中
+    overlay，无黑边，与插画镜全屏风格统一）；fade_in/fade_out 按镜序控制与
+    插画/素材镜对齐（首镜淡入、末镜淡出、中间镜硬切，消除镜间黑场闪烁）。
+    """
+    try:
+        from digital_human import GenerateRequest, _generate_one
+
+        req = GenerateRequest(
+            text=text[:5000],
+            avatar_id=avatar_id or "business-female",
+            resolution="720p",
+            engine=engine,
+            watermark=False,  # 短剧为平台内容线，不打数字人水印
+            emotion=emotion,
+        )
+        result = _generate_one(req, user, uid, role)
+        if result.get("status") != "done" or not result.get("video_url"):
+            logger.warning(f"数字人镜头未出片: {result.get('error') or result.get('status')}")
+            return False
+        src = os.path.join(Path(__file__).parent, result["video_url"].lstrip("/"))
+        if not os.path.exists(src):
+            logger.warning(f"数字人镜头产物缺失: {src}")
+            return False
+        # 横屏 1280x720 → 竖屏 720x1280：模糊填充背景（无黑边）+ 可选首尾淡入淡出
+        # （v13.32 替代纯色 pad；编码参数与 _scene_video 对齐便于 concat）
+        vf = (
+            "split=2[bg][fg];"
+            "[bg]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,"
+            "gblur=sigma=25,eq=brightness=-0.10:saturation=0.9[bg];"
+            "[fg]scale=720:1280:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p"
+        )
+        if fade_in:
+            vf += ",fade=t=in:st=0:d=0.25"
+        if fade_out:
+            dur = _probe_seconds(src)
+            vf += f",fade=t=out:st={max(0.25, dur - 0.25):.2f}:d=0.25"
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", src,
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-r", str(FPS),
+            out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
+            logger.warning("数字人镜头竖屏转换失败: " + r.stderr.decode(errors="replace")[-200:])
+            return False
+        return True
+    except HTTPException as e:
+        if e.status_code == 402:
+            raise  # 配额超限：上层整体切换背景图模式
+        logger.warning(f"数字人镜头失败(HTTP {e.status_code}): {e.detail}")
+        return False
+    except Exception as e:
+        logger.warning(f"数字人镜头失败: {e}")
+        return False
+
+
+async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+    """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            try:
+                progress(pct, stage)
+            except Exception:
+                pass
+
+    theme = (payload.get("theme") or "").strip()
+    scenes_override = payload.get("scenes") or []  # 可选：用户自定义分镜
+    if not theme and not scenes_override:
+        raise HTTPException(400, "请输入短剧主题")
+    title = (payload.get("title") or "").strip() or "未命名短剧"
+    user = payload.get("user") or ""
+    uid = payload.get("uid") or ""
+    role = payload.get("role") or ""
+    avatar_mode = bool(payload.get("avatar_mode"))
+    avatar_id = (payload.get("avatar_id") or "business-female").strip()
+    dh_engine = (payload.get("dh_engine") or "2d").strip()
+    # v13.30 AI 插画模式 + 角色表：角色一致性（A 出场即锁定，再出场不变）
+    illust_mode = bool(payload.get("illust_mode"))
+    characters = payload.get("characters") or []
+    if not avatar_mode:
+        # 经典动画卡模式：worker 内扣费（不进 _QUOTA_PATHS 中间件，避免双重扣费）；
+        # 数字人模式由 digital_human._generate_one 每镜内部扣费
+        from common.auth import consume_quota
+
+        quota = consume_quota(uid)
+        if not quota.get("allowed"):
+            raise HTTPException(
+                402,
+                "今日短剧生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+            )
+
+    tmpdir = tempfile.mkdtemp(prefix="drama_")
+    try:
+        # 1. 剧本：自定义分镜优先，否则 LLM 生成
+        _report(5, "剧本创作中…")
+        # v13.28 目标时长统一计算（自定义分镜也参与台词量防御）
+        duration_hint = max(20, min(1800, int(payload.get("duration") or 45)))
+        script = {"title": title, "scenes": scenes_override} if scenes_override else None
+        if script is None:
+            # v13.29 剧本生成共用（worker 与 /script 接口）：LLM 重试 3 次 + 时长防御
+            script = await _generate_script(theme, duration_hint)
+        scenes = script["scenes"]
+        # v13.28 时长硬校验：场次数 + 台词量双重防御（自定义分镜也兜底；LLM 剧本已校验，幂等）
+        scenes = _enforce_duration(scenes, duration_hint)
+        script["scenes"] = scenes
+
+        # 2. 逐镜配音 + 画面（v13.25 三级回退：数字人 → 素材 → 卡片）
+        _report(15, "分镜配音与画面生成中…")
+        clip_paths, srt_durations, voice_durations = [], [], []
+        total = len(scenes)
+        dh_off = False  # 数字人整体不可用（配额超限）时后续镜头直接素材模式
+        char_map = {c.get("id"): c for c in characters if c.get("id")}
+        char_refs: dict[str, bytes] = {}  # v13.30 每角色最近一张单人插画（图生图参考锚定）
+        for i, sc in enumerate(scenes):
+            _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
+            text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
+            if not text:
+                continue
+            clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
+            audio_path = ""  # v13.29 素材/卡片镜的配音文件（数字人镜不生成）
+            scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]  # v13.30 本镜出场角色
+            # v13.31 镜序 fade：首镜淡入、末镜淡出、中间镜硬切（消除镜间黑场闪烁）；
+            # 插画镜 Ken Burns 运镜按镜序交替（zoom_in/zoom_out/pan_in/pan_out）
+            fade_in, fade_out = i == 0, i == total - 1
+            motion = _SCENE_MOTIONS[i % len(_SCENE_MOTIONS)]
+            ok = False
+            # ① 数字人播报（avatar_mode 且配额可用）：每镜人像口播，失败落到素材模式
+            if avatar_mode and not dh_off:
+                try:
+                    ok = await asyncio.to_thread(
+                        _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
+                        sc.get("emotion", "neutral"), fade_in, fade_out,
+                    )
+                except HTTPException as e:
+                    if e.status_code == 402:
+                        dh_off = True
+                        ok = False
+                        _report(15 + int(50 * i / max(total, 1)), "数字人额度不足，切换素材模式…")
+                    else:
+                        raise
+            if not ok:
+                # ② 配音（素材/插画模式共用）：v13.24 情绪 → Azure 风格音色
+                audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
+                audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+                with open(audio_path, "wb") as f:
+                    f.write(audio)
+                dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
+                if not illust_mode:
+                    # 素材模式：Pexels/本地真实素材（Ken Burns/cover），主角特征词锚定同性别（v13.30）
+                    lead = char_map.get(scene_chars[0]) if scene_chars else None
+                    search_q = _anchor_search(lead, sc.get("search", ""))
+                    ok = await asyncio.to_thread(_material_scene_video, search_q, audio_path, clip, dur, fade_in, fade_out)
+            if not ok:
+                # ③ 插画（v13.30 角色参考图链路：首镜定妆 → 后续镜图生图锚定）→ 渐变兜底
+                img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
+                shot = sc.get("shot", "")
+                data = None
+                if shot:
+                    anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
+                    refs = [char_refs[c] for c in scene_chars if c in char_refs]
+                    data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
+                if data:
+                    with open(img_path, "wb") as f:
+                        f.write(data)
+                    await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                    ok = True
+                    # 定妆存储：仅单人镜（多人镜含多角色，不作角色标准像）
+                    if len(scene_chars) == 1:
+                        char_refs[scene_chars[0]] = data
+                else:
+                    ok = await asyncio.to_thread(_make_scene_card, text, i, total, script["title"], img_path)
+                    if ok:
+                        await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
+            if ok:
+                clip_paths.append(clip)
+                srt_durations.append(_probe_seconds(clip))
+                # v13.29 字幕时序：素材镜字幕=配音时长（配音后字幕消失）；
+                # 数字人镜整镜有声（voice_dur=画面时长，字幕整镜显示）
+                vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
+                voice_durations.append(vd)
+                continue
+        if not clip_paths:
+            raise HTTPException(502, "所有分镜合成失败，请重试")
+
+        # 3. 拼接 + 字幕
+        _report(72, "片段拼接中…")
+        raw_video = os.path.join(tmpdir, "merged.mp4")
+        await asyncio.to_thread(_concat_videos, clip_paths, raw_video)
+        stem = f"drama_{int(time.time() * 1000)}"
+        srt_path = os.path.join(tmpdir, f"{stem}.srt")
+        _make_srt(scenes[: len(srt_durations)], srt_durations, voice_durations, srt_path)
+        final_name = f"{stem}.mp4"
+        final_path = DRAMA_DIR / final_name
+        _report(88, "字幕合成中…")
+        await asyncio.to_thread(_burn_subtitles, raw_video, srt_path, str(final_path), _pick_bgm())
+        shutil.copyfile(srt_path, DRAMA_DIR / f"{stem}.srt")
+        # v13.28 真封面：首镜抽帧 JPG + 6s 预览视频（旧实现把 mp4 复制成 .jpg，素材库/分享处裂图）
+        cover_path = DRAMA_DIR / f"{stem}.jpg"
+        preview_path = DRAMA_DIR / f"{stem}_preview.mp4"
+        await asyncio.to_thread(_extract_cover, clip_paths[0], str(cover_path))
+        await asyncio.to_thread(_make_preview, clip_paths[0], str(preview_path))
+
+        duration = _probe_seconds(str(final_path))
+        cover_url = f"/api/drama/covers/{stem}.jpg"
+        art_id = save_artifact(
+            art_type="video",
+            author="short_drama",
+            media_url=f"/api/drama/videos/{final_name}",
+            content=theme,
+            metadata={
+                "title": script["title"],
+                "theme": theme,
+                "scenes": len(srt_durations),
+                "duration": duration,
+                "engine": "dh" if avatar_mode else "local",
+                "avatar_mode": avatar_mode,
+                "cover": cover_url,
+            },
+            duration=duration,
+            thumbnail=cover_url,
+        )
+        _report(100, "短剧已生成")
+        return {
+            "id": final_name,
+            "artifact_id": art_id,
+            "url": f"/api/drama/videos/{final_name}",
+            "srt_url": f"/api/drama/srt/{stem}.srt",
+            "cover_url": cover_url,
+            "title": script["title"],
+            "theme": theme,
+            "scenes": len(srt_durations),
+            "duration": duration,
+            "avatar_mode": avatar_mode,
+            "engine": "dh" if avatar_mode else "local",
+        }
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _drama_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务 handler（register_handler 约定签名）。"""
+
+    async def run() -> dict:
+        return await _drama_generate_worker(payload, update)
+
+    return asyncio.run(run())
+
+
+register_handler("drama_generate", _drama_handler, user_limit=1, pool="long", max_attempts=2)
+
+
+@router.get("/config")
+async def drama_config(current_user: dict = require_auth()):
+    """素材源状态（v13.25）：前端据此提示 Pexels key / 本地素材 / BGM 就绪情况。"""
+    local_count = 0
+    if MATERIALS_DIR.exists():
+        local_count = sum(
+            1 for p in MATERIALS_DIR.rglob("*")
+            if p.is_file() and p.suffix.lower() in _VIDEO_EXTS + _IMAGE_EXTS
+        )
+    music_count = sum(1 for p in MUSIC_DIR.glob("*") if p.is_file() and p.suffix.lower() in _MUSIC_EXTS)
+    return {
+        "pexels_configured": bool(PEXELS_API_KEY),
+        "local_materials": local_count,
+        "music_tracks": music_count,
+    }
+
+
+# ─── v15 分镜表导出 + 素材清单（纯函数，供端点与单测复用）───
+_EMOTION_CN = {
+    "neutral": "自然",
+    "happy": "欢快",
+    "sad": "悲伤",
+    "angry": "激昂",
+    "gentle": "温柔",
+    "serious": "严肃",
+}
+
+_SHOT_SHEET_COLS = ["镜号", "时长(秒)", "情绪", "出场角色", "画面描述(shot)", "素材关键词(search)", "旁白(narrator)", "台词(dialogue)"]
+
+
+def build_shot_sheet(scenes: list[dict], title: str = "", characters: list[dict] | None = None) -> bytes:
+    """分镜表 xlsx（openpyxl）：标题行（可选）+ 表头 + 每镜一行。纯函数，返回文件字节。"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    char_map = {str(c.get("id")): str(c.get("name") or c.get("id")) for c in (characters or []) if c.get("id")}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "分镜表"
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="7C3AED")
+    if title:
+        ws.append([f"《{title}》分镜表"])
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(_SHOT_SHEET_COLS))
+        ws.cell(1, 1).font = Font(bold=True, size=13)
+        ws.append([])  # 空行分隔标题与表头
+    ws.append(list(_SHOT_SHEET_COLS))
+    for cell in ws[ws.max_row]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    for i, s in enumerate(scenes or [], 1):
+        chars = "、".join(char_map.get(cid, cid) for cid in (s.get("chars") or []))
+        ws.append(
+            [
+                i,
+                int(s.get("sec") or 5),
+                _EMOTION_CN.get(str(s.get("emotion") or "").lower(), s.get("emotion") or "自然"),
+                chars,
+                s.get("shot") or "",
+                s.get("search") or "",
+                s.get("narrator") or "",
+                s.get("dialogue") or "",
+            ]
+        )
+    # 列宽自适应（按内容上限 50 字符，避免超宽）
+    for idx, col in enumerate(_SHOT_SHEET_COLS, 1):
+        letter = get_column_letter(idx)
+        max_len = max((len(col) * 2 + 4, 10))
+        for row in ws.iter_rows(min_row=2, min_col=idx, max_col=idx):
+            val = row[0].value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[letter].width = min(max_len, 50)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_material_manifest(scenes: list[dict]) -> dict:
+    """批量生成素材清单：每镜素材需求（关键词/时长/情绪/文案）+ 汇总统计 + md。纯函数。"""
+    items = []
+    for i, s in enumerate(scenes or [], 1):
+        keyword = (s.get("search") or "").strip()
+        shot = (s.get("shot") or "").strip()
+        text = " ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)
+        items.append(
+            {
+                "no": i,
+                "keyword": keyword or shot[:30] or f"scene_{i}",
+                "sec": int(s.get("sec") or 5),
+                "emotion": _EMOTION_CN.get(str(s.get("emotion") or "").lower(), "自然"),
+                "text": text,
+                "text_len": len(text),
+            }
+        )
+    keywords: list[str] = []
+    for it in items:
+        for kw in re.split(r"[,，;；/\\|\s]+", it["keyword"]):
+            kw = kw.strip()
+            if kw and kw not in keywords:
+                keywords.append(kw)
+    summary = {
+        "total_scenes": len(items),
+        "total_sec": sum(it["sec"] for it in items),
+        "total_text_chars": sum(it["text_len"] for it in items),
+        "keywords": keywords,
+    }
+    lines = [
+        "# 短剧素材清单",
+        "",
+        f"共 {len(items)} 镜，总时长约 {summary['total_sec']} 秒，台词/旁白共 {summary['total_text_chars']} 字",
+        "",
+        "| 镜号 | 素材关键词 | 建议时长 | 情绪 | 文案字数 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines += [f"| {it['no']} | {it['keyword']} | {it['sec']}s | {it['emotion']} | {it['text_len']} |" for it in items]
+    lines += ["", "## 关键词汇总", ""]
+    lines += [f"- {kw}" for kw in keywords] or ["- （无）"]
+    lines += [
+        "",
+        "## 使用说明",
+        "- 素材模式：将关键词命名的素材（*关键词*.mp4/jpg）放入 backend/drama_factory/materials/ 目录，生成时自动匹配",
+        "- Pexels Key 已配置时优先实时搜索真实视频素材，本地素材作为兜底",
+        "- 配音不足时画面按 sec 循环补足，建议素材时长 ≥ 对应镜长（8-40 秒为佳）",
+    ]
+    return {"items": items, "summary": summary, "manifest_md": "\n".join(lines)}
+
+
+@router.post("/export-shots")
+async def export_shot_sheet(
+    title: str = Form(""),
+    scenes_json: str = Form(""),
+    characters_json: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """导出分镜表 Excel（xlsx）：每镜一行（时长/情绪/角色/画面/关键词/台词）。"""
+    try:
+        scenes = json.loads(scenes_json or "[]")
+        if not isinstance(scenes, list) or not scenes:
+            raise ValueError("分镜为空")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+    characters = []
+    if characters_json:
+        try:
+            characters = json.loads(characters_json)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"角色表 JSON 格式错误: {e}") from e
+    data = build_shot_sheet(scenes, title.strip(), characters)
+    from urllib.parse import quote
+
+    filename = f"{title.strip() or '短剧'}-分镜表.xlsx"
+    try:
+        filename.encode("latin-1")
+        ascii_name = filename
+    except UnicodeEncodeError:
+        ascii_name = "drama-shots.xlsx"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'},
+    )
+
+
+@router.post("/material-manifest")
+async def material_manifest(
+    scenes_json: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """批量生成素材清单：每镜素材需求（关键词/时长/情绪）+ 汇总统计 + 清单 md。"""
+    try:
+        scenes = json.loads(scenes_json or "[]")
+        if not isinstance(scenes, list) or not scenes:
+            raise ValueError("分镜为空")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+    return build_material_manifest(scenes)
+
+
+@router.post("/script")
+async def generate_script(
+    theme: str = Form(""),
+    duration: int = Form(45),
+    current_user: dict = require_auth(),
+):
+    """AI 写剧本（v13.29）：主题 + 目标时长 → 剧本 JSON（分镜/台词/画面描述/素材关键词）。
+
+    返回的 scenes 可直接作为 /generate 的 scenes_json 提交——前端剧本工作台
+    编辑后确认生成，保证"所见即所得"（返回即最终成片剧本，已过时长防御）。
+    """
+    theme = theme.strip()
+    if not theme:
+        raise HTTPException(400, "请输入短剧主题")
+    duration_hint = max(20, min(1800, int(duration) or 45))
+    script = await _generate_script(theme, duration_hint)
+    return {
+        "title": script["title"],
+        "scenes": script["scenes"],
+        "characters": script.get("characters") or [],  # v13.30 角色表（角色一致性）
+    }
+
+
+@router.post("/generate")
+async def generate_drama(
+    theme: str = Form(""),
+    title: str = Form(""),
+    duration: int = Form(45),
+    scenes_json: str = Form(""),
+    characters_json: str = Form("", description="角色表 JSON（[{id,name,gender,age,appearance,outfit,search}]）"),
+    illust_mode: bool = Form(False, description="true=AI 插画模式（AGNES 文生图/图生图，角色一致性）"),
+    avatar_mode: bool = Form(False, description="true=数字人播报模式（每镜生成人像口播视频）"),
+    avatar_id: str = Form("business-female", description="数字人形象ID（avatar_mode 时生效）"),
+    dh_engine: str = Form("2d", description="数字人引擎：2d/live_portrait（sadtalker 耗时过长不适用）"),
+    sync: bool = Query(False, description="true=同步执行（脚本/测试用）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """生成短剧（默认异步任务，立即返回 task_id）。
+
+    - theme: 主题（LLM 自动生成剧本分镜）
+    - scenes_json: 可选自定义分镜 JSON（[{shot,narrator,dialogue,sec}]）
+    - characters_json: 可选角色表 JSON（v13.30，角色一致性锚定）
+    - illust_mode: AI 插画模式（每镜文生图/图生图，角色参考图锚定同人）
+    - avatar_mode: 数字人播报模式（每镜生成人像口播视频，失败自动回退背景图）
+    - 本地管线：CosyVoice 配音 + 画面 + 字幕，无外部视频 API 依赖
+    """
+    scenes = []
+    if scenes_json:
+        try:
+            scenes = json.loads(scenes_json)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+    characters = []
+    if characters_json:
+        try:
+            characters = json.loads(characters_json)
+            if not isinstance(characters, list):
+                raise ValueError("characters 必须是数组")
+        except (json.JSONDecodeError, ValueError) as e:
+            raise HTTPException(400, f"角色表 JSON 格式错误: {e}") from e
+    if not theme.strip() and not scenes:
+        raise HTTPException(400, "请输入短剧主题或提供自定义分镜")
+    if avatar_mode and dh_engine not in ("2d", "live_portrait"):
+        raise HTTPException(400, "短剧数字人引擎仅支持 2d / live_portrait（sadtalker 耗时过长不适用）")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {
+        "theme": theme,
+        "title": title,
+        "duration": duration,
+        "scenes": scenes,
+        "characters": characters,
+        "illust_mode": illust_mode,
+        "avatar_mode": avatar_mode,
+        "avatar_id": avatar_id,
+        "dh_engine": dh_engine,
+        "user": user,
+        "uid": uid,
+        "role": role,
+    }
+    if sync:
+        return await _drama_generate_worker(payload)
+    task = create_task("drama_generate", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "短剧创作任务已提交（剧本 + 配音 + 视频合成，约 2-15 分钟，随时长增加）",
+        "task": task,
+    }
+
+
+@router.get("/videos/{filename}")
+async def get_video(filename: str):
+    """下载/播放短剧视频。"""
+    path = DRAMA_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "视频不存在")
+    return FileResponse(path, media_type="video/mp4")
+
+
+@router.get("/srt/{filename}")
+async def get_srt(filename: str):
+    """下载字幕文件。"""
+    path = DRAMA_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "字幕不存在")
+    return FileResponse(path, media_type="application/x-subrip")
+
+
+@router.get("/covers/{filename}")
+async def get_cover(filename: str):
+    """获取封面图。"""
+    path = DRAMA_DIR / filename
+    if not path.exists():
+        raise HTTPException(404, "封面不存在")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.get("/list")
+async def list_dramas(current_user: dict = require_auth()):
+    """短剧作品列表（按时间倒序）。v13.25：标题从 artifacts 表 metadata 补全。"""
+    # 生成时已登记 artifacts（author=short_drama, type=video），metadata 含 title/theme
+    titles: dict[str, str] = {}
+    try:
+        from common.db import get_db_context
+
+        with get_db_context() as conn:
+            rows = conn.execute(
+                "SELECT media_url, metadata FROM artifacts WHERE type='video' AND author='short_drama'"
+            ).fetchall()
+        for media_url, metadata in rows:
+            try:
+                md = json.loads(metadata or "{}")
+                if md.get("title"):
+                    titles[Path(media_url or "").name] = md["title"]
+            except (TypeError, json.JSONDecodeError):
+                continue
+    except Exception as e:
+        logger.debug(f"读取短剧标题失败: {e}")
+    items = []
+    if DRAMA_DIR.exists():
+        # v13.28 过滤首镜预览片段（_preview.mp4），避免被当作独立作品展示
+        files = sorted(
+            (f for f in DRAMA_DIR.glob("drama_*.mp4") if not f.name.endswith("_preview.mp4")),
+            reverse=True,
+        )
+        for f in files:
+            items.append(
+                {
+                    "id": f.name,
+                    "title": titles.get(f.name, ""),
+                    "url": f"/api/drama/videos/{f.name}",
+                    "srt_url": f"/api/drama/srt/{f.stem}.srt",
+                    "cover_url": f"/api/drama/covers/{f.stem}.jpg",
+                    "preview_url": f"/api/drama/videos/{f.stem}_preview.mp4",
+                    "duration": _probe_seconds(str(f)),
+                    "created_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime)),
+                }
+            )
+    return {"items": items}

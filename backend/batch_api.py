@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -92,6 +92,19 @@ class BatchTextRequest(BaseModel):
 
 class BatchProcessRequest(BaseModel):
     task: str = Field(..., description="批量处理任务描述")
+
+
+# v15：失败项单独重试（translate 场景：源文本保留在结果中，可直接重跑）
+class BatchRetryItem(BaseModel):
+    index: int = Field(..., ge=0, description="原结果中的条目索引")
+    original: str = Field(..., min_length=1, max_length=10000, description="原文（失败项完整文本）")
+    target_lang: str = Field("en", description="目标语言")
+    source_lang: str = Field("auto", description="源语言")
+
+
+class BatchRetryRequest(BaseModel):
+    task_type: str = Field(..., description="任务类型（当前支持 translate）")
+    items: list[BatchRetryItem] = Field(..., min_length=1, max_length=20, description="需重试的失败项")
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
@@ -279,7 +292,8 @@ async def _batch_translate_worker(payload: dict, progress: Callable | None = Non
             raw = await call_llm_async(BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30)
             results.append({"index": i, "original": text[:200], "translated": raw.strip()})
         except Exception as e:
-            results.append({"index": i, "original": text[:200], "translated": "", "error": str(e)})
+            # v15：失败项保留完整原文，支持后续单独重试（成功项仍截断省存储）
+            results.append({"index": i, "original": text, "translated": "", "error": str(e)})
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     total_chars = sum(len(t) for t in texts)
@@ -383,6 +397,8 @@ async def _batch_process_worker(payload: dict, progress: Callable | None = None)
         "keywords": "请提取以下文档的5-8个核心关键词，用逗号分隔。只输出关键词。",
         "sentiment": "请分析以下文本的情感倾向，只输出：正面/负面/中性，并附一句话原因。",
         "translate_en": "将以下文本翻译为英文，只输出译文：",
+        # v15：批量改写模板（保留原意、提升表达力）
+        "rewrite": "请改写以下文本：保留原意和关键信息，重写为更清晰、更有表现力的版本（语言自然、逻辑顺畅、避免冗余）。只输出改写结果，不要解释。",
     }
     task_prompt = task_prompts.get(task, task_prompts["summarize"])
 
@@ -445,6 +461,73 @@ def _save_job(job_id: str, task_type: str, file_count: int, result: dict, user_i
         logger.warning("save batch_jobs failed: %s", e)
 
 
+async def _batch_retry_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """失败项单独重试 worker：仅重跑失败条目，保留原索引，成功后可原位合并。"""
+
+    def _report(pct: float, stage: str) -> None:
+        if progress:
+            progress(pct, stage)
+
+    items = payload.get("items", [])
+    user_id = payload.get("user_id", "")
+    start = datetime.now()
+    results = []
+    total = len(items)
+
+    for i, item in enumerate(items):
+        _report(round((i / total) * 90, 1) if total else 10, f"重试第 {i + 1}/{total} 条")
+        try:
+            user_prompt = (
+                f"将以下{item.get('source_lang', 'auto')}文本翻译为{item.get('target_lang', 'en')}：\n\n"
+                f"{item.get('original', '')[:2000]}"
+            )
+            raw = await call_llm_async(
+                BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30
+            )
+            results.append({"index": item["index"], "original": item.get("original", "")[:200], "translated": raw.strip()})
+        except Exception as e:
+            results.append(
+                {"index": item["index"], "original": item.get("original", "")[:200], "translated": "", "error": str(e)}
+            )
+
+    elapsed = round((datetime.now() - start).total_seconds(), 2)
+    log_usage("batch_retry", sum(len(i.get("original", "")) for i in items), len(json.dumps(results)), elapsed)
+
+    return {
+        "task": "translate_retry",
+        "count": total,
+        "success": sum(1 for r in results if not r.get("error")),
+        "results": results,
+    }
+
+
+@router.post("/retry")
+async def batch_retry(req: BatchRetryRequest, sync: bool = Query(False), current_user: dict = require_auth()):
+    """失败项单独重试（异步任务）：仅重跑失败条目，保留原索引。
+
+    文件类任务（doc-summary/process）的源文件已随处理完成删除，无法重试，
+    请重新上传失败文件；文本类任务（translate）可直接重试。
+    """
+    if req.task_type != "translate":
+        raise HTTPException(400, f"暂不支持 {req.task_type} 失败项重试（文件类任务请重新上传失败文件）")
+    payload = {
+        "task_type": req.task_type,
+        "items": [item.model_dump() for item in req.items],
+        "user_id": str(current_user.get("user_id", "")),
+        "username": current_user.get("username", ""),
+    }
+    if sync is True:
+        return await _batch_retry_worker(payload)
+    task = create_task(
+        "batch_retry",
+        payload,
+        username=current_user.get("username", ""),
+        user_id=str(current_user.get("user_id", "")),
+        role=current_user.get("role", ""),
+    )
+    return {"ok": True, "task_id": task["id"], "status": task["status"]}
+
+
 async def _batch_translate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务处理器：包装批量翻译，回报进度。"""
     return await _batch_translate_worker(payload, progress=update)
@@ -460,10 +543,16 @@ async def _batch_process_handler(task_id: str, payload: dict, update: Callable, 
     return await _batch_process_worker(payload, progress=update)
 
 
+async def _batch_retry_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：包装失败项重试，回报进度。"""
+    return await _batch_retry_worker(payload, progress=update)
+
+
 # ── 异步任务处理器注册（进度/自动重试/并发控制）──
 register_handler("batch_translate", _batch_translate_handler, user_limit=1, max_attempts=1)
 register_handler("batch_doc_summary", _batch_doc_summary_handler, user_limit=1, max_attempts=1)
 register_handler("batch_process", _batch_process_handler, user_limit=1, max_attempts=1)
+register_handler("batch_retry", _batch_retry_handler, user_limit=1, max_attempts=1)
 
 
 @router.get("/jobs")

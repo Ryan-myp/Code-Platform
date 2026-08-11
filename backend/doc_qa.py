@@ -9,6 +9,7 @@
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from datetime import datetime
 
@@ -31,13 +32,13 @@ MAX_DOC_CHARS = 15000  # 文档最大字符数（用于LLM上下文窗口）
 
 # ── System Prompts ─────────────────────────────────────────
 
-DOC_QA_SYSTEM = """你是资深文档分析师，擅长从各类文档中精准提取信息并回答专业问题。
+DOC_QA_SYSTEM = """你是资深文档分析师，擅长从文档中精准提取信息并回答专业问题。
 
 核心能力：
-1. 精准定位：快速在文档中找到与问题最相关的段落和关键句
+1. 精准定位：快速在检索片段中找到与问题最相关的段落和关键句
 2. 结构化回答：用简洁清晰的结构呈现答案，先结论后细节
-3. 引用溯源：关键信息标注原文出处（段落/行号）
-4. 诚实边界：文档无相关信息时明确告知，不编造不推测
+3. 引用溯源：每个关键结论后用 [N] 标注对应检索片段编号
+4. 诚实边界：检索片段无相关信息时明确告知，不编造不推测
 
 回答规范：
 - 合同/法律类：重点关注风险条款、违约责任、关键期限
@@ -45,10 +46,16 @@ DOC_QA_SYSTEM = """你是资深文档分析师，擅长从各类文档中精准�
 - 研报/论文：抓取核心观点、数据来源、方法论
 - 通用文档：总结要点 + 关键摘录
 
-文档内容：
+引用溯源规则（必须遵守）：
+- 每个关键结论或数据后标注引用标记 [N]，N 对应检索片段编号
+- 只引用检索片段中出现的内容，不得编造编号
+- 无对应片段的信息不得标注引用
+- 多文档联合问答时，优先交叉印证各文档信息
+
+检索片段：
 {context}
 
-请基于以上文档内容回答用户的问题。回答要求：先给结论（1-2句），再展开细节，最后标注引用来源。"""
+请基于以上检索片段回答用户的问题。回答要求：先给结论（1-2句），再展开细节，引用处标注 [N]。"""
 
 DOC_EXTRACT_SYSTEM = """你是文档结构化学者，擅长从文本中提炼关键信息并构建知识图谱。
 
@@ -89,7 +96,8 @@ DOC_EXTRACT_SYSTEM = """你是文档结构化学者，擅长从文本中提炼�
 
 
 class AskRequest(BaseModel):
-    doc_id: str = Field(..., description="文档ID")
+    doc_id: str = Field("", description="文档ID（兼容单文档问答）")
+    doc_ids: list[str] = Field(default_factory=list, description="多文档联合问答（最多5篇）")
     question: str = Field(..., min_length=1, max_length=500)
     history: list[dict] = Field(default_factory=list, description="对话历史")
 
@@ -255,6 +263,77 @@ async def _summarize_doc_async(did: str, text: str, filename: str) -> None:
         logger.warning(f"doc summary persist failed: {e}")
 
 
+# ── 检索与引用溯源（v15）：切块 / 2-gram 检索 / 引用标记提取 ──
+
+
+def _chunk_text(text: str, chunk_size: int = 500) -> list[dict]:
+    """按段落切块（尽量以完整段落为边界），返回 [{id, text}]。"""
+    chunks: list[dict] = []
+    buf = ""
+    for para in re.split(r"\n+", text or ""):
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) > chunk_size:
+            # 超长段落（单段超过上限）：先落盘已有 buf，再按固定大小拆段
+            if buf.strip():
+                chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
+                buf = ""
+            for i in range(0, len(para), chunk_size):
+                chunks.append({"id": f"c{len(chunks) + 1}", "text": para[i : i + chunk_size]})
+            continue
+        if len(buf) + len(para) > chunk_size and buf:
+            chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
+            buf = ""
+        buf += para + "\n"
+    if buf.strip():
+        chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
+    return chunks
+
+
+def _retrieve_chunks(question: str, chunks: list[dict], top_k: int = 4) -> list[dict]:
+    """2-gram 重叠检索：问题与片段字符级 2-gram 集合的 Jaccard 相似度打分。
+
+    无重叠命中时回退返回前 top_k 块（保证 LLM 有上下文可用）。
+    """
+
+    def _sig(text: str) -> set:
+        t = re.sub(r"\s+", "", str(text or "")).lower()
+        return {t[i : i + 2] for i in range(max(0, len(t) - 1))}
+
+    qsig = _sig(question)
+    if not qsig or not chunks:
+        return chunks[:top_k]
+    scored = []
+    for c in chunks:
+        csig = _sig(c["text"])
+        score = len(qsig & csig) / max(len(qsig), 1)
+        scored.append((score, c))
+    scored.sort(key=lambda x: -x[0])
+    top = [c for s, c in scored[:top_k] if s > 0]
+    return top or chunks[:top_k]
+
+
+def _extract_citations(answer: str, retrieved: list[dict]) -> list[dict]:
+    """从回答中提取 [N] 引用标记 → 映射到检索片段（去重、越界忽略）。"""
+    citations = []
+    seen = set()
+    for m in re.finditer(r"\[(\d+)\]", answer or ""):
+        idx = int(m.group(1))
+        if idx < 1 or idx > len(retrieved) or idx in seen:
+            continue
+        seen.add(idx)
+        src = retrieved[idx - 1]
+        citations.append(
+            {
+                "id": src.get("id", f"c{idx}"),
+                "doc_name": src.get("doc_name", ""),
+                "text": src.get("text", "")[:200],
+            }
+        )
+    return citations
+
+
 # ── 异步任务：文档问答（进度/自动重试/并发控制）──
 
 
@@ -266,25 +345,43 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
             progress(pct, stage)
 
     _report(10, "定位文档")
-    doc_id = payload.get("doc_id", "")
+    doc_ids = payload.get("doc_ids") or []
+    if not doc_ids and payload.get("doc_id"):
+        doc_ids = [payload["doc_id"]]
+    if not doc_ids:
+        raise HTTPException(400, "请先选择文档")
+    if len(doc_ids) > 5:
+        raise HTTPException(400, "一次最多联合问答 5 篇文档")
     with get_db_context() as conn:
-        row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (doc_id,)).fetchone()
-        if not row:
-            raise HTTPException(404, "文档记录不存在")
-        filename = row[1]
-        text = row[4] or ""
+        docs = []
+        for did in doc_ids:
+            row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (did,)).fetchone()
+            if not row:
+                raise HTTPException(404, f"文档记录不存在：{did}")
+            text = row[4] or ""
+            if text and not text.startswith("["):
+                docs.append({"doc_id": row[0], "doc_name": row[1], "text": text})
+    if not docs:
+        raise HTTPException(400, "所选文档文本为空或提取失败，无法问答")
 
-    if not text or text.startswith("["):
-        raise HTTPException(400, "文档文本为空或提取失败，无法问答")
-
-    _report(35, "构建检索上下文")
-    context = text[:8000]
-    system_prompt = DOC_QA_SYSTEM.replace("{context}", context)
+    _report(35, "检索相关片段")
+    chunks: list[dict] = []
+    for doc in docs:
+        for c in _chunk_text(doc["text"]):
+            c["doc_id"] = doc["doc_id"]
+            c["doc_name"] = doc["doc_name"]
+            chunks.append(c)
+    question = payload.get("question", "")
+    retrieved = _retrieve_chunks(question, chunks, top_k=4)
+    context_lines = [
+        f"[{i}]（来源：{c['doc_name']}）\n{c['text']}" for i, c in enumerate(retrieved, 1)
+    ]
+    system_prompt = DOC_QA_SYSTEM.replace("{context}", "\n\n".join(context_lines))
     history_text = ""
     for h in (payload.get("history") or [])[-6:]:
         role = "用户" if h.get("role") == "user" else "助手"
         history_text += f"{role}：{h.get('content', '')}\n"
-    user_prompt = f"{history_text}用户：{payload.get('question', '')}"
+    user_prompt = f"{history_text}用户：{question}"
 
     _report(50, "AI 回答中")
     # 注意：必须 (await …) 整体括起再 strip，否则 .strip() 会作用在协程对象上；
@@ -294,10 +391,13 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
     log_usage("doc_qa", len(user_prompt), len(answer), 0)
     _report(100, "完成")
     return {
-        "doc_id": doc_id,
-        "question": payload.get("question", ""),
+        "doc_id": doc_ids[0],
+        "doc_ids": doc_ids,
+        "sources": [{"doc_id": d["doc_id"], "doc_name": d["doc_name"]} for d in docs],
+        "question": question,
         "answer": answer,
-        "source": filename,
+        "citations": _extract_citations(answer, retrieved),
+        "source": "、".join(d["doc_name"] for d in docs),
         "confidence": "基于文档内容",
     }
 

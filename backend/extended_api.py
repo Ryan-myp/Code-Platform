@@ -18,7 +18,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
@@ -2499,6 +2499,7 @@ class CopywritingRequest(BaseModel):
     title: str = ""
     prompt: str
     model: str = ""
+    platform: str = ""  # v15：平台适配（wechat/xiaohongshu/douyin/zhihu/weibo/toutiao）
 
 
 class TranslationRequest(BaseModel):
@@ -2506,6 +2507,7 @@ class TranslationRequest(BaseModel):
     target_lang: str = "English"
     text: str
     model: str = ""
+    use_glossary: bool = True
 
 
 # ── 文案工厂：专家级文案类型规格（异步任务 worker 复用）──
@@ -2538,8 +2540,82 @@ _COPYWRITING_SPECS = {
 }
 
 
-def _build_copywriting_prompt(copy_type: str, user_prompt: str) -> str:
+# ── 文案工厂：平台适配风格（v15：公众号/小红书/抖音/知乎/微博/头条）──
+_PLATFORM_STYLES = {
+    "wechat": {
+        "label": "微信公众号",
+        "title": "标题突出利益点或悬念钩子，12-20字，避免标题党",
+        "rules": [
+            "正文开篇1-2句点明主题与读者收益，避免冗长铺垫",
+            "善用小标题分段（每300字左右一个），增强可扫读性",
+            "段落不超过4行，结尾设置『点赞/在看/转发』引导与话题互动",
+            "金句收尾，方便转载与二次传播",
+        ],
+    },
+    "xiaohongshu": {
+        "label": "小红书",
+        "title": "标题含关键词+数字+情绪词（如：3个方法/必看/绝了），可带emoji",
+        "rules": [
+            "正文开头直接给结论或场景代入，第一行即抓住注意力",
+            "口语化表达，多用『我』『姐妹』等亲切人称",
+            "分段清晰，每段2-3行，重点用emoji/符号标注",
+            "结尾带3-5个精准话题标签 #",
+        ],
+    },
+    "douyin": {
+        "label": "抖音",
+        "title": "视频文案前3秒钩子：悬念/冲突/利益，字数不超过20字",
+        "rules": [
+            "口播文案短句为主，单句不超过15字，节奏明快",
+            "开头3秒必须抛出钩子（反问/痛点/反常识）",
+            "中段干货密集，每15-20秒一个记忆点",
+            "结尾引导关注/评论/转发，可加互动问题",
+        ],
+    },
+    "zhihu": {
+        "label": "知乎",
+        "title": "标题即问题，正文以直接回答开头，体现专业性与真诚",
+        "rules": [
+            "结构：结论先行 → 分点论证（数据/案例）→ 总结",
+            "使用专业术语但辅以通俗解释，建立可信度",
+            "适度使用小标题与加粗突出关键结论",
+            "结尾可附『如果对你有帮助，欢迎点赞收藏』",
+        ],
+    },
+    "weibo": {
+        "label": "微博",
+        "title": "话题词+核心信息前置，字数不超过30字，可带#话题#",
+        "rules": [
+            "正文短平快，100-200字以内",
+            "内容要具备传播性：共鸣/争议/实用/趣味任一要素",
+            "善用@提及与#话题#提升曝光",
+            "结尾引导转发互动",
+        ],
+    },
+    "toutiao": {
+        "label": "今日头条",
+        "title": "标题信息明确+数字量化（如：5个技巧/3年经验），不超过25字",
+        "rules": [
+            "开篇2-3句交代背景与核心信息，符合信息流阅读习惯",
+            "内容密度高，避免注水，每段都要有信息量",
+            "小标题分段，适合快速扫读",
+            "结尾总结要点+引导关注",
+        ],
+    },
+}
+
+
+def _build_copywriting_prompt(copy_type: str, user_prompt: str, platform: str = "") -> str:
     spec = _COPYWRITING_SPECS.get(copy_type, _COPYWRITING_SPECS["marketing"])
+    platform_block = ""
+    if platform and platform in _PLATFORM_STYLES:
+        p = _PLATFORM_STYLES[platform]
+        platform_block = f"""
+
+## 平台适配（发布目标：{p["label"]}）
+标题要求：{p["title"]}
+正文规则：
+{chr(10).join(f"- {r}" for r in p["rules"])}"""
     return f"""你是{spec["role"]}。
 
 核心能力：
@@ -2553,7 +2629,8 @@ def _build_copywriting_prompt(copy_type: str, user_prompt: str) -> str:
 2. 语言简洁有力，避免行业黑话和空洞形容词
 3. 每个观点用数据或场景支撑，拒绝泛泛而谈
 4. 结尾始终包含可衡量的下一步行动建议
-5. 如涉及品牌，需注明品牌调性建议（如：年轻活泼/专业稳重/温暖亲切）"""
+5. 如涉及品牌，需注明品牌调性建议（如：年轻活泼/专业稳重/温暖亲切）
+{platform_block}"""
 
 
 async def _copywriting_worker(payload: dict, progress: Callable | None = None) -> dict:
@@ -2564,7 +2641,9 @@ async def _copywriting_worker(payload: dict, progress: Callable | None = None) -
             progress(pct, stage)
 
     _report(5, "解析需求")
-    system_prompt = _build_copywriting_prompt(payload.get("type", "marketing"), payload.get("prompt", ""))
+    system_prompt = _build_copywriting_prompt(
+        payload.get("type", "marketing"), payload.get("prompt", ""), payload.get("platform", "")
+    )
     _report(30, "AI 创作中")
     result = call_llm(system_prompt, payload.get("prompt", ""))
     _report(85, "保存记录")
@@ -2601,6 +2680,7 @@ async def generate_copywriting(data: CopywritingRequest, current_user: dict = re
         "title": data.title,
         "prompt": data.prompt,
         "model": data.model,
+        "platform": data.platform,
         "user_id": str(current_user.get("user_id", "")),
         "username": current_user.get("username", ""),
     }
@@ -2641,7 +2721,21 @@ async def delete_copywriting(task_id: str, current_user: dict = require_auth()):
         conn.close()
 
 
-def _build_translation_prompt(source_lang: str, target_lang: str) -> str:
+def _build_translation_prompt(
+    source_lang: str, target_lang: str, glossary_items: list | None = None
+) -> str:
+    """翻译 System Prompt；glossary_items 非空时附加强制术语表规则（v15）。"""
+    glossary_block = ""
+    if glossary_items:
+        lines = "\n".join(
+            f"- {g['source_term']} → {g['target_term']}" for g in glossary_items[:50]
+        )
+        glossary_block = f"""
+
+## 强制术语表（最高优先级规则）
+以下术语是用户自定义的固定译文，原文中出现时必须使用指定译文，不得另行翻译、不得意译、不得保留原文：
+{lines}
+"""
     return f"""你是专业翻译，精通{source_lang}和{target_lang}双语互译。
 
 翻译原则：
@@ -2650,6 +2744,7 @@ def _build_translation_prompt(source_lang: str, target_lang: str) -> str:
 3. 风格一致：保持原文的正式/非正式语体、行业术语、修辞手法
 4. 文化适配：涉及文化特定概念时，提供等效表达并标注注释
 5. 格式保留：保持原文的段落结构、列表、编号、Markdown标记
+{glossary_block}
 
 输出要求：
 - 只返回翻译结果，不要任何前置说明或后记
@@ -2658,15 +2753,35 @@ def _build_translation_prompt(source_lang: str, target_lang: str) -> str:
 - 技术术语统一使用目标语言行业标准译法"""
 
 
+def _load_glossary(user_id: str) -> list:
+    """加载用户术语表（个人数据，按 user_id 精确过滤）。"""
+    if not user_id:
+        return []
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, source_term, target_term FROM translation_glossary WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 async def _translation_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """翻译 worker：LLM 翻译 → 记录入库（带用户归属）。"""
+    """翻译 worker：LLM 翻译（含强制术语表）→ 记录入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
         if progress:
             progress(pct, stage)
 
     _report(10, "AI 翻译中")
-    system_prompt = _build_translation_prompt(payload.get("source_lang", "中文"), payload.get("target_lang", "English"))
+    glossary = []
+    if payload.get("use_glossary", True):
+        glossary = _load_glossary(payload.get("user_id", ""))
+    system_prompt = _build_translation_prompt(
+        payload.get("source_lang", "中文"), payload.get("target_lang", "English"), glossary
+    )
     result = call_llm(system_prompt, payload.get("text", ""))
     _report(85, "保存记录")
     trans_id = f"trans_{uuid.uuid4().hex[:12]}"
@@ -2702,6 +2817,7 @@ async def translate_text(data: TranslationRequest, current_user: dict = require_
         "target_lang": data.target_lang,
         "text": data.text,
         "model": data.model,
+        "use_glossary": data.use_glossary,
         "user_id": str(current_user.get("user_id", "")),
         "username": current_user.get("username", ""),
     }
@@ -2740,6 +2856,131 @@ async def delete_translation(task_id: str, current_user: dict = require_auth()):
         return {"ok": True}
     finally:
         conn.close()
+
+
+# ── 翻译术语表（v15）：用户自定义术语 → 翻译时强制应用 ──
+class GlossaryItemRequest(BaseModel):
+    source_term: str = Field(..., min_length=1, max_length=100)
+    target_term: str = Field(..., min_length=1, max_length=200)
+
+
+@router.get("/api/translation/glossary")
+async def list_glossary(current_user: dict = require_auth()):
+    """用户术语表列表（个人数据，按 user_id 隔离）。"""
+    return _load_glossary(str(current_user.get("user_id", "")))
+
+
+@router.post("/api/translation/glossary")
+async def add_glossary_item(data: GlossaryItemRequest, current_user: dict = require_auth()):
+    """新增术语条目（同用户同原文已存在时更新译文）。"""
+    source = data.source_term.strip()
+    target = data.target_term.strip()
+    if not source or not target:
+        raise HTTPException(400, "术语原文与译文均不能为空")
+    user_id = str(current_user.get("user_id", ""))
+    conn = get_db()
+    try:
+        gid = f"glossary_{uuid.uuid4().hex[:10]}"
+        conn.execute(
+            "INSERT INTO translation_glossary (id, user_id, source_term, target_term) VALUES (?,?,?,?)",
+            (gid, user_id, source, target),
+        )
+        conn.commit()
+        return {"ok": True, "id": gid}
+    finally:
+        conn.close()
+
+
+@router.delete("/api/translation/glossary/{gid}")
+async def delete_glossary_item(gid: str, current_user: dict = require_auth()):
+    """删除术语条目（归属校验，仅能删自己的）。"""
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM translation_glossary WHERE id=? AND user_id=?",
+            (gid, str(current_user.get("user_id", ""))),
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ── 双语对照导出（v15）：md / docx ──
+TRANSLATION_EXPORT_DIR = os.path.join(os.path.dirname(__file__), "uploads", "translations")
+os.makedirs(TRANSLATION_EXPORT_DIR, exist_ok=True)
+
+
+class TranslationExportRequest(BaseModel):
+    source: str = Field(..., max_length=50000)
+    translation: str = Field(..., max_length=50000)
+    format: str = "md"  # md | docx
+
+
+def _align_paragraphs(source: str, translation: str) -> list:
+    """段落级对齐：行数一致逐行对照，否则整块对照。"""
+    src_lines = [l for l in (source or "").splitlines() if l.strip()]
+    tgt_lines = [l for l in (translation or "").splitlines() if l.strip()]
+    if len(src_lines) == len(tgt_lines) and len(src_lines) > 0:
+        return [{"source": s, "translation": t} for s, t in zip(src_lines, tgt_lines)]
+    return [{"source": source or "", "translation": translation or ""}]
+
+
+def _build_bilingual_md(source: str, translation: str) -> str:
+    """双语对照 Markdown（段落级原文/译文成对）。"""
+    pairs = _align_paragraphs(source, translation)
+    lines = ["# 双语对照翻译", ""]
+    for i, p in enumerate(pairs, 1):
+        lines += [f"## 第 {i} 段", "", "**原文**", "", p["source"], "", "**译文**", "", p["translation"], ""]
+    return "\n".join(lines)
+
+
+def _build_bilingual_docx(source: str, translation: str, path: str) -> None:
+    """双语对照 Word 文档。"""
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("双语对照翻译", level=0)
+    for i, p in enumerate(_align_paragraphs(source, translation), 1):
+        doc.add_heading(f"第 {i} 段", level=1)
+        doc.add_paragraph(p["source"])
+        doc.add_paragraph(p["translation"])
+    doc.save(path)
+
+
+@router.post("/api/translation/export")
+async def export_translation(data: TranslationExportRequest, current_user: dict = require_auth()):
+    """双语对照导出（md/docx），返回下载地址。"""
+    fmt = data.format.lower()
+    if fmt not in ("md", "docx"):
+        raise HTTPException(400, "仅支持 md/docx 格式")
+    fname = f"translation_{uuid.uuid4().hex[:10]}.{fmt}"
+    fpath = os.path.join(TRANSLATION_EXPORT_DIR, fname)
+    try:
+        if fmt == "docx":
+            _build_bilingual_docx(data.source, data.translation, fpath)
+        else:
+            with open(fpath, "w", encoding="utf-8") as wf:
+                wf.write(_build_bilingual_md(data.source, data.translation))
+        return {"ok": True, "filename": fname, "download_url": f"/api/translation/download/{fname}"}
+    except Exception as e:
+        logger.exception("translation export failed")
+        raise HTTPException(500, f"导出失败：{e}") from e
+
+
+@router.get("/api/translation/download/{filename}")
+async def download_translation_export(filename: str, current_user: dict = require_auth()):
+    """下载导出的双语对照文件（basename 白名单防目录穿越）。"""
+    safe = os.path.basename(filename)
+    path = os.path.join(TRANSLATION_EXPORT_DIR, safe)
+    if not os.path.exists(path):
+        raise HTTPException(404, "文件不存在或已过期清理")
+    media = (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if safe.endswith(".docx")
+        else "text/markdown"
+    )
+    return FileResponse(path, filename=safe, media_type=media)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -2836,6 +3077,252 @@ async def delete_ab_test(tid: str, current_user: dict = require_auth()):
         conn.close()
 
 
+class ABTestRunRequest(BaseModel):
+    objective: str = "整体效果"  # 实验目标维度，如：标题吸引力 / 转化率 / 用户偏好
+
+
+# AB 实验评分维度（营销专家口径，与结果展示前端一一对应）
+_AB_DIMENSIONS = ["吸引力", "清晰度", "转化力", "专业度", "记忆点"]
+
+_AB_RUN_SYSTEM = """你是拥有 20 年经验的增长实验与文案转化专家，擅长 A/B 测试设计、
+方案评估与数据化决策。请基于给定的 A/B 两个方案，完成四件事：
+1. 将 A、B 方案各自扩写为完整、可落地、有细节的终稿内容（保留原意，增强说服力）；
+2. 从五个维度分别对 A、B 打分（0-100 整数）：吸引力、清晰度、转化力、专业度、记忆点；
+3. 给出明确胜出方、置信度（0-100）与一句话结论建议；
+4. 给出结构化分析：胜出原因（结合维度分差说明为什么赢）、风险提示（采用胜出方案的潜在风险）与下一步行动（验证/发布建议）。
+只返回 JSON，不要任何其他文字。"""
+
+_AB_RUN_USER = """实验名称：{name}
+实验目标：{objective}
+方案 A：{variant_a}
+方案 B：{variant_b}
+
+请严格按此 JSON 结构返回：
+{{
+  "generated_a": "方案A扩写后的完整终稿",
+  "generated_b": "方案B扩写后的完整终稿",
+  "scores": [{{"dimension": "吸引力", "a": 0, "b": 0}}],
+  "winner": "A" | "B",
+  "confidence": 0,
+  "conclusion": "一句话结论与建议",
+  "analysis": {{
+    "winner_reason": "胜出原因分析（结合维度分差）",
+    "risks": ["风险1", "风险2"],
+    "next_steps": ["下一步行动1", "下一步行动2"]
+  }}
+}}"""
+
+
+def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
+    """AB 实验结果结构化兜底（纯函数，可单测）。
+
+    LLM 输出可能缺失维度分/胜出方/置信度/分析段，此处补齐五维空分、
+    按总分推断胜出方、按分差推断置信度，并派生胜出原因，保证前端渲染字段齐全。
+    """
+    parsed = parsed or {}
+
+    # 维度分：非法值钳制 0-100；缺失维度补 0 分；LLM 额外维度保留
+    scores_map: dict = {}
+    for s in parsed.get("scores") or []:
+        if not isinstance(s, dict) or not s.get("dimension"):
+            continue
+        dim = s["dimension"]
+
+        def _num(v):
+            try:
+                return max(0, min(100, int(v)))
+            except (ValueError, TypeError):
+                return 0
+
+        scores_map[dim] = {"dimension": dim, "a": _num(s.get("a")), "b": _num(s.get("b"))}
+    scores = [scores_map.get(d, {"dimension": d, "a": 0, "b": 0}) for d in _AB_DIMENSIONS]
+    for dim, s in scores_map.items():
+        if dim not in _AB_DIMENSIONS:
+            scores.append(s)
+
+    total_a = sum(s["a"] for s in scores)
+    total_b = sum(s["b"] for s in scores)
+    winner = parsed.get("winner")
+    if winner not in ("A", "B"):
+        winner = "A" if total_a >= total_b else "B"
+
+    try:
+        confidence = max(0, min(100, int(parsed.get("confidence") or 0)))
+    except (ValueError, TypeError):
+        confidence = 0
+    if confidence == 0 and total_a != total_b:
+        # 按总分分差推断置信度（50-90 区间，避免空分时误判高置信）
+        diff = abs(total_a - total_b)
+        confidence = round(min(90, max(50, diff / max(total_a, total_b, 1) * 100)))
+
+    analysis = parsed.get("analysis") if isinstance(parsed.get("analysis"), dict) else {}
+    winner_reason = (analysis.get("winner_reason") or "").strip()
+    risks = [str(r).strip() for r in (analysis.get("risks") or []) if str(r).strip()]
+    next_steps = [str(n).strip() for n in (analysis.get("next_steps") or []) if str(n).strip()]
+    if not winner_reason:
+        # 派生：用分差最大的维度说明胜出原因
+        diffs = sorted(scores, key=lambda s: abs(s["a"] - s["b"]), reverse=True)
+        if diffs and diffs[0]["a"] != diffs[0]["b"]:
+            top = diffs[0]
+            win_side = top["a"] if winner == "A" else top["b"]
+            lose_side = top["b"] if winner == "A" else top["a"]
+            winner_reason = (
+                f"方案 {winner} 在「{top['dimension']}」维度领先 {win_side - lose_side} 分，"
+                f"五维总分亦占优（{total_a} vs {total_b}），故判定胜出。"
+            )
+        else:
+            winner_reason = f"方案 {winner} 五维评分更高，判定胜出。"
+
+    return {
+        "status": "completed",
+        "objective": (objective or "整体效果").strip()[:40],
+        "generated_a": parsed.get("generated_a", ""),
+        "generated_b": parsed.get("generated_b", ""),
+        "scores": scores,
+        "winner": winner,
+        "confidence": confidence,
+        "conclusion": (parsed.get("conclusion") or "").strip(),
+        "analysis": {
+            "winner_reason": winner_reason,
+            "risks": risks,
+            "next_steps": next_steps,
+        },
+        "ran_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def build_ab_report_md(test: dict, result: dict) -> str:
+    """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""
+    result = result or {}
+    lines = [
+        "# A/B 测试分析报告",
+        "",
+        f"- 实验名称：{test.get('name') or '-'}",
+        f"- 实验目标：{result.get('objective') or '-'}",
+        f"- 运行时间：{result.get('ran_at') or '-'}",
+        "",
+    ]
+    if test.get("description"):
+        lines += ["## 实验背景", "", test["description"], ""]
+    lines += ["## 方案对比", "", f"**方案 A**：{test.get('variant_a') or '-'}", "", f"**方案 B**：{test.get('variant_b') or '-'}", ""]
+    if result.get("generated_a") or result.get("generated_b"):
+        lines.append("## AI 扩写终稿")
+        if result.get("generated_a"):
+            lines += ["", "### 方案 A", "", result["generated_a"], ""]
+        if result.get("generated_b"):
+            lines += ["", "### 方案 B", "", result["generated_b"], ""]
+    scores = result.get("scores") or []
+    if scores:
+        lines += ["## 五维评分对比", "", "| 维度 | 方案A | 方案B |", "| --- | ---: | ---: |"]
+        lines += [f"| {s.get('dimension') or '-'} | {s.get('a') or 0} | {s.get('b') or 0} |" for s in scores]
+        lines.append("")
+    lines += [
+        "## 结论",
+        "",
+        f"- 胜出方：方案 {result.get('winner') or '-'}",
+        f"- 置信度：{result.get('confidence') or 0}%",
+        f"- 决策建议：{result.get('conclusion') or '-'}",
+        "",
+    ]
+    analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+    if analysis.get("winner_reason"):
+        lines += ["## 胜出原因", "", analysis["winner_reason"], ""]
+    if analysis.get("risks"):
+        lines += ["## 风险提示", ""]
+        lines += [f"- {r}" for r in analysis["risks"]]
+        lines.append("")
+    if analysis.get("next_steps"):
+        lines += ["## 下一步行动", ""]
+        lines += [f"- {n}" for n in analysis["next_steps"]]
+        lines.append("")
+    lines += ["---", "由小团智能平台 AI A/B 测试生成"]
+    return "\n".join(lines)
+
+
+@router.post("/api/ab-tests/{tid}/run")
+async def run_ab_test(tid: str, data: ABTestRunRequest, current_user: dict = require_auth()):
+    """运行 A/B 实验：LLM 分别扩写 A/B 方案并按 5 维度打分，产出胜出方与置信度。
+
+    结果落库 ab_tests.result（JSON），供结果页直接读取；同步返回完整结果。
+    """
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM ab_tests WHERE id=? AND active=1", (tid,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "实验不存在")
+    if not (row["variant_a"] or row["variant_b"]):
+        raise HTTPException(400, "A/B 方案为空，无法运行")
+
+    user_prompt = _AB_RUN_USER.format(
+        name=row["name"],
+        objective=(data.objective or "整体效果").strip()[:40],
+        variant_a=row["variant_a"] or "（未设置）",
+        variant_b=row["variant_b"] or "（未设置）",
+    )
+    payload = await call_llm_async(_AB_RUN_SYSTEM, user_prompt, json_mode=True)
+    parsed = parse_llm_json(payload)
+
+    result = normalize_ab_result(parsed, objective=data.objective)
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE ab_tests SET status='completed', result=?, updated_at=? WHERE id=?",
+            (json.dumps(result, ensure_ascii=False), datetime.now().isoformat(), tid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return result
+
+
+@router.get("/api/ab-tests/{tid}/results")
+async def get_ab_test_results(tid: str, current_user: dict = require_auth()):
+    """读取实验运行结果（未运行时返回 status=pending）。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT result, status FROM ab_tests WHERE id=? AND active=1", (tid,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "实验不存在")
+    try:
+        result = json.loads(row["result"] or "{}")
+    except Exception:
+        result = {}
+    if not result.get("status"):
+        result = {"status": "pending"}
+    return result
+
+
+@router.get("/api/ab-tests/{tid}/report")
+async def get_ab_test_report(tid: str, current_user: dict = require_auth()):
+    """导出 A/B 实验分析报告（Markdown）；实验不存在或未运行返回 404。"""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM ab_tests WHERE id=? AND active=1", (tid,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(404, "实验不存在")
+    try:
+        result = json.loads(row["result"] or "{}")
+    except Exception:
+        result = {}
+    if not result.get("status"):
+        raise HTTPException(404, "实验尚未运行")
+    test = {
+        "name": row["name"],
+        "description": row["description"],
+        "variant_a": row["variant_a"],
+        "variant_b": row["variant_b"],
+    }
+    content = build_ab_report_md(test, result)
+    base = row["name"] or "ab-test"
+    return {"filename": f"{base}-AB实验报告.md", "content": content}
+
+
 # ══════════════════════════════════════════════════════════════
 # 办公效率: PPT + Excel
 # ══════════════════════════════════════════════════════════════
@@ -2845,6 +3332,7 @@ class PPTGenerateRequest(BaseModel):
     title: str
     outline: str = ""
     model: str = ""
+    template: str = "business"
 
 
 class ExcelRequest(BaseModel):
@@ -2853,35 +3341,135 @@ class ExcelRequest(BaseModel):
     data: dict = {}
 
 
-# ── PPT 商业化：专家级大纲 prompt（异步任务 worker 复用）──
-_PPT_SYSTEM_PROMPT = """你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
+# ── PPT 模板库（v15）：4 类场景模板 = 色板 + 结构原则 + 字体 ──
+PPT_TEMPLATES = {
+    "business": {
+        "name": "商务汇报",
+        "desc": "面向管理层的工作汇报/项目提案",
+        "palette": {
+            "dark": (0x1B, 0x26, 0x3B),
+            "accent": (0x4F, 0x46, 0xE5),
+            "accent_light": (0xEE, 0xF0, 0xFF),
+            "gray": (0x6B, 0x72, 0x80),
+            "text": (0x33, 0x3A, 0x4A),
+            "white": (0xFF, 0xFF, 0xFF),
+        },
+        "font": "Microsoft YaHei",
+        "principles": (
+            "1. 黄金结构：封面→目录→背景/问题（Why）→方案/举措（What）→执行/数据（How）→案例/成果→下一步→感谢页\n"
+            "2. 每页一个结论式标题（一句话结论，非描述性标题）\n"
+            "3. 数据说话：观点用可量化数据支撑，标注数据来源\n"
+            "4. 视觉思维：对比用柱状图、趋势用折线图、占比用饼图\n"
+            "5. 语言风格：严谨克制、决策导向，避免空话套话"
+        ),
+    },
+    "roadshow": {
+        "name": "融资路演",
+        "desc": "面向投资人的融资路演/产品发布",
+        "palette": {
+            "dark": (0x16, 0x0E, 0x2B),
+            "accent": (0xE1, 0x1D, 0x48),
+            "accent_light": (0xFD, 0xEC, 0xF0),
+            "gray": (0x8A, 0x84, 0x9A),
+            "text": (0x2A, 0x24, 0x3B),
+            "white": (0xFF, 0xFF, 0xFF),
+        },
+        "font": "Microsoft YaHei",
+        "principles": (
+            "1. 故事线：痛点→解决方案→市场机会（TAM/SAM/SOM）→产品→商业模式→竞争壁垒→团队→里程碑→融资需求\n"
+            "2. 市场机会量化：市场规模、增长率、可服务市场占比，引用权威数据源\n"
+            "3. 商业模式清晰：收入模型、单位经济模型（LTV/CAC）、毛利结构\n"
+            "4. 竞争格局：对比表展示差异化壁垒（技术/渠道/数据/成本）\n"
+            "5. 语言风格：激情与克制并重，每页回答投资人最关心的一个疑问"
+        ),
+    },
+    "teaching": {
+        "name": "教学课件",
+        "desc": "面向学员的知识培训/课堂课件",
+        "palette": {
+            "dark": (0x0F, 0x33, 0x24),
+            "accent": (0x0E, 0x9F, 0x6E),
+            "accent_light": (0xE6, 0xF7, 0xF1),
+            "gray": (0x6B, 0x72, 0x80),
+            "text": (0x1F, 0x29, 0x37),
+            "white": (0xFF, 0xFF, 0xFF),
+        },
+        "font": "Microsoft YaHei",
+        "principles": (
+            "1. 知识结构：导入（为什么学）→概念定义→原理讲解→案例演示→练习/互动→小结复习\n"
+            "2. 每页聚焦一个知识点，概念先行、实例紧随\n"
+            "3. 善用类比与图示降低理解门槛，关键术语加粗并给出通俗解释\n"
+            "4. 设计互动环节：提问、随堂练习、小组讨论建议\n"
+            "5. 语言风格：亲切易懂、循序渐进，避免堆砌术语"
+        ),
+    },
+    "marketing": {
+        "name": "营销方案",
+        "desc": "面向团队的营销策划/活动方案",
+        "palette": {
+            "dark": (0x2B, 0x16, 0x3B),
+            "accent": (0xDB, 0x27, 0x77),
+            "accent_light": (0xFD, 0xEF, 0xF7),
+            "gray": (0x7A, 0x70, 0x80),
+            "text": (0x35, 0x2B, 0x3D),
+            "white": (0xFF, 0xFF, 0xFF),
+        },
+        "font": "Microsoft YaHei",
+        "principles": (
+            "1. 方案主线：市场洞察（用户/竞争/趋势）→策略核心（定位/主张/差异化）→创意内容（话题/物料/渠道）→执行节奏（甘特/里程碑）→预算与KPI→风险预案\n"
+            "2. 洞察先行：每个策略决策附用户痛点/数据证据\n"
+            "3. 创意具体化：给出可直接执行的文案方向、视觉风格、投放组合\n"
+            "4. 结果导向：设定可量化的 KPI（曝光/转化/ROI）与达成路径\n"
+            "5. 语言风格：生动有画面感，策略严谨、创意大胆"
+        ),
+    },
+}
 
-PPT大纲设计原则：
-1. 黄金结构：封面→目录→问题/背景（Why）→方案/产品（What）→执行/数据（How）→案例/成果→下一步行动→感谢页
-2. 每页原则：一页一个核心观点，标题即是结论（非描述性标题）
-3. 视觉思维：优先用图表代替文字（对比用柱状图、趋势用折线图、占比用饼图、流程用箭头）
-4. 数据说话：每个观点尽量用可量化数据支撑，标注数据来源
-5. 记忆锚点：设计一个贯穿全篇的视觉隐喻或故事线
+
+# ── PPT 商业化：专家级大纲 prompt（异步任务 worker 复用）──
+def _build_ppt_system_prompt(template_id: str = "business") -> str:
+    """按模板生成 PPT 大纲 System Prompt（模板结构原则 + 段落级结构化输出要求）。"""
+    tpl = PPT_TEMPLATES.get(template_id) or PPT_TEMPLATES["business"]
+    return f"""你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
+
+## 模板：{tpl['name']}（{tpl['desc']}）
+
+### 结构设计原则
+{tpl['principles']}
+
+## 段落级结构化要求
+每页 content 使用段落级结构（level 分层 + emphasis 强调），便于渲染为层级清晰的版面：
+- level 0：主论点（结论式短句，一页仅1-2条）
+- level 1：支撑论据/细节（每页2-4条，具体、有数据）
+- emphasis：strong（关键数字或结论，渲染加粗高亮）、quote（引用/金句，渲染为引用样式）、normal（普通）
+
+## 通用设计原则
+1. 每页原则：一页一个核心观点，标题即是结论（非描述性标题）
+2. 视觉思维：优先用图表代替文字（对比用柱状图、趋势用折线图、占比用饼图、流程用箭头）
+3. 记忆锚点：设计一个贯穿全篇的视觉隐喻或故事线
 
 请严格按以下JSON格式返回（只返回JSON，不要任何其他文字）：
-{
-  "meta": {
+{{
+  "meta": {{
     "storyline": "一句话概括全篇叙述逻辑",
     "visual_theme": "建议配色方案和视觉风格",
     "estimated_duration": "预计演讲时长（分钟）"
-  },
+  }},
   "slides": [
-    {
+    {{
       "type": "cover|toc|content|data|case|summary|thanks",
       "title": "结论式标题（不超过15字）",
       "subtitle": "副标题或上下文说明",
-      "content": ["要点1", "要点2", "要点3"],
+      "content": [
+        {{"text": "主论点", "level": 0, "emphasis": "strong"}},
+        {{"text": "支撑论据", "level": 1, "emphasis": "normal"}}
+      ],
       "chart_suggestion": "如适用，建议的图表类型和数据维度",
       "notes": "演讲备注：过渡语、强调点、互动问题",
       "duration_seconds": 60
-    }
+    }}
   ]
-}
+}}
 
 生成8-12页幻灯片，确保逻辑递进、首尾呼应。"""
 
@@ -2905,24 +3493,30 @@ def _parse_ppt_outline(result: str) -> dict:
     return data
 
 
-def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
-    """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。"""
+def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
+    """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。
+
+    template 决定主题色板与字体（PPT_TEMPLATES），content 支持段落级结构（level/emphasis）。
+    """
     from pptx import Presentation
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Inches, Pt
 
+    tpl = PPT_TEMPLATES.get(template) or PPT_TEMPLATES["business"]
+    pal = tpl["palette"]
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
-    DARK = RGBColor(0x1B, 0x26, 0x3B)
-    ACCENT = RGBColor(0x4F, 0x46, 0xE5)
-    ACCENT_LIGHT = RGBColor(0xEE, 0xF0, 0xFF)
-    GRAY = RGBColor(0x6B, 0x72, 0x80)
-    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-    FONT = "Microsoft YaHei"
+    DARK = RGBColor(*pal["dark"])
+    ACCENT = RGBColor(*pal["accent"])
+    ACCENT_LIGHT = RGBColor(*pal["accent_light"])
+    GRAY = RGBColor(*pal["gray"])
+    TEXT = RGBColor(*pal["text"])
+    WHITE = RGBColor(*pal["white"])
+    FONT = tpl["font"]
 
     def _rect(slide, left, top, w, h, color):
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(top), Inches(w), Inches(h))
@@ -2947,19 +3541,40 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
         return box
 
     def _bullets(slide, items: list, left, top, w, h, size=18, color=None, gap=10):
-        color = color or RGBColor(0x33, 0x3A, 0x4A)
+        color = color or TEXT
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
         tf = box.text_frame
         tf.word_wrap = True
         for i, item in enumerate(items):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.space_after = Pt(gap)
+            # 段落级结构：字符串 → level 0 普通条目；dict → 解析 level/emphasis
+            if isinstance(item, dict):
+                text = str(item.get("text", ""))
+                level = int(item.get("level", 0) or 0)
+                emphasis = str(item.get("emphasis", "normal"))
+            else:
+                text = str(item)
+                level = 0
+                emphasis = "normal"
+            if not text:
+                continue
+            indent = "  " if level >= 1 else ""
+            prefix = "•  " if level == 0 else "–  "
             run = p.add_run()
-            run.text = f"•  {item}"
+            run.text = f"{indent}{prefix}{text}"
             f = run.font
             f.name = FONT
-            f.size = Pt(size)
-            f.color.rgb = color
+            f.size = Pt(max(size - (3 if level >= 1 else 0), 10))
+            if emphasis == "strong":
+                f.bold = True
+                f.color.rgb = ACCENT
+            elif emphasis == "quote":
+                f.italic = True
+                f.color.rgb = GRAY
+            else:
+                f.bold = False
+                f.color.rgb = color
         return box
 
     def _notes(slide, text: str):
@@ -2973,7 +3588,7 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
         _text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, WHITE, bold=True, align=PP_ALIGN.CENTER)
         if subtitle:
             _text(
-                slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER, first=False
+                slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER, first=False
             )
         _text(
             slide,
@@ -2983,7 +3598,7 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
             0.4,
             f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
             12,
-            RGBColor(0x9A, 0xA3, 0xB8),
+            GRAY,
             align=PP_ALIGN.CENTER,
         )
 
@@ -2991,14 +3606,14 @@ def _build_pptx_file(title: str, outline: dict) -> str:  # noqa: C901 - 版式�
         _rect(slide, 0, 0, 13.333, 7.5, DARK)
         _text(slide, 1.2, 3.1, 10.9, 1.0, title_text, 44, WHITE, bold=True, align=PP_ALIGN.CENTER)
         if subtitle:
-            _text(slide, 1.2, 4.2, 10.9, 0.6, subtitle, 20, RGBColor(0xC7, 0xCE, 0xE0), align=PP_ALIGN.CENTER)
+            _text(slide, 1.2, 4.2, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER)
 
     def _render_toc(slide, title_text, content):
         _rect(slide, 0, 0, 13.333, 7.5, WHITE)
         _rect(slide, 0, 0, 0.25, 7.5, ACCENT)
         _text(slide, 0.8, 0.6, 8, 0.8, "目录", 30, DARK, bold=True)
         for j, item in enumerate(content):
-            _text(slide, 1.0, 1.9 + j * 0.95, 10, 0.7, f"{j + 1:02d}    {item}", 20, RGBColor(0x33, 0x3A, 0x4A))
+            _text(slide, 1.0, 1.9 + j * 0.95, 10, 0.7, f"{j + 1:02d}    {item}", 20, TEXT)
 
     def _render_case(slide, title_text, content, chart_suggestion):
         _rect(slide, 0, 0, 13.333, 7.5, ACCENT_LIGHT)
@@ -3075,15 +3690,16 @@ async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
             progress(pct, stage)
 
     _report(5, "规划大纲")
+    template = payload.get("template", "business")
     prompt = f"主题：{payload.get('title', '')}"
     if payload.get("outline"):
         prompt += f"\n大纲：{payload['outline']}"
     _report(30, "AI 生成大纲中")
-    result = await call_llm_async(_PPT_SYSTEM_PROMPT, prompt)
+    result = await call_llm_async(_build_ppt_system_prompt(template), prompt)
     _report(55, "解析大纲结构")
     outline_data = _parse_ppt_outline(result)
     _report(70, "排版 PPTX 文件")
-    pptx_path = _build_pptx_file(payload.get("title", "未命名演示"), outline_data)
+    pptx_path = _build_pptx_file(payload.get("title", "未命名演示"), outline_data, template)
     filename = os.path.basename(pptx_path)
     _report(90, "保存记录")
     ppt_id = f"ppt_{uuid.uuid4().hex[:12]}"
@@ -3125,10 +3741,13 @@ async def generate_ppt(data: PPTGenerateRequest, current_user: dict = require_au
         raise HTTPException(400, "PPT 主题中还有未填写的占位符（如 [产品名]），请先替换为实际内容")
     if len(data.title.strip()) > 200:
         raise HTTPException(400, "PPT 主题过长（上限 200 字）")
+    if data.template not in PPT_TEMPLATES:
+        raise HTTPException(400, f"未知PPT模板: {data.template}（可选: {'/'.join(PPT_TEMPLATES)}）")
     payload = {
         "title": data.title,
         "outline": data.outline,
         "model": data.model,
+        "template": data.template,
         "user_id": str(current_user.get("user_id", "")),
         "username": current_user.get("username", ""),
     }
@@ -3169,9 +3788,85 @@ async def list_ppt_history(current_user: dict = require_auth()):
         conn.close()
 
 
+# ── Excel 异常值检测（v15）：IQR 四分位距法，纯函数无 LLM 依赖 ──
+def _percentile(sorted_nums: list, p: float) -> float:
+    """线性插值分位数（p ∈ [0,1]）。"""
+    if not sorted_nums:
+        return 0.0
+    k = (len(sorted_nums) - 1) * p
+    f = int(k)
+    c = min(f + 1, len(sorted_nums) - 1)
+    return sorted_nums[f] + (sorted_nums[c] - sorted_nums[f]) * (k - f)
+
+
+def _detect_outliers(text: str, max_cols: int = 20) -> dict:
+    """文本表格数据（TSV/CSV/空格分隔）IQR 异常值检测。
+
+    返回结构化结果：每列上下界 + 异常值明细（行号/值/方向）。
+    """
+    import re
+
+    lines = [l.rstrip() for l in (text or "").strip().splitlines() if l.strip()]
+    if len(lines) < 3:
+        return {"success": False, "message": "数据至少需要 3 行（1 行表头 + 2 行数据）"}
+    first = lines[0]
+    if "\t" in first:
+        split = lambda s: s.split("\t")  # noqa: E731
+    elif "," in first:
+        split = lambda s: s.split(",")  # noqa: E731
+    else:
+        split = lambda s: re.split(r"\s{2,}", s.strip())  # noqa: E731
+    headers = [h.strip() for h in split(first)]
+    rows = [split(l) for l in lines[1:]]
+    ncols = min(len(headers), max_cols)
+    columns = []
+    for ci in range(ncols):
+        values = []
+        for ri, row in enumerate(rows):
+            if ci >= len(row):
+                continue
+            cell = row[ci].strip().replace(",", "") if "," in first else row[ci].strip()
+            try:
+                values.append((ri + 2, float(cell)))
+            except ValueError:
+                continue
+        if len(values) < 4:  # 数值样本过少无统计意义
+            continue
+        nums = [v for _, v in values]
+        sorted_nums = sorted(nums)
+        q1 = _percentile(sorted_nums, 0.25)
+        q3 = _percentile(sorted_nums, 0.75)
+        iqr = q3 - q1
+        if iqr == 0:
+            continue
+        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        outliers = [
+            {"row": ri, "value": v, "direction": "偏高" if v > upper else "偏低"}
+            for ri, v in values
+            if v < lower or v > upper
+        ]
+        if outliers:
+            columns.append(
+                {
+                    "name": headers[ci],
+                    "count": len(outliers),
+                    "lower_bound": round(lower, 4),
+                    "upper_bound": round(upper, 4),
+                    "outliers": outliers,
+                }
+            )
+    return {
+        "success": True,
+        "method": "IQR 四分位距法（界 = Q1 − 1.5×IQR / Q3 + 1.5×IQR）",
+        "total_rows": len(rows),
+        "columns": columns,
+        "summary": f"共检测 {len(columns)} 个数值列，发现 {sum(c['count'] for c in columns)} 个异常值",
+    }
+
+
 @router.post("/api/excel/operate")
 def excel_operate(data: ExcelRequest, current_user: dict = require_auth()):
-    """Excel 操作"""
+    """Excel 操作（analyze/formula/outliers/clean/create）"""
     conn = get_db()
     try:
         op_id = f"excel_{uuid.uuid4().hex[:12]}"
@@ -3208,29 +3903,32 @@ def excel_operate(data: ExcelRequest, current_user: dict = require_auth()):
         elif data.operation == "formula":
             system_prompt = """你是Excel高级公式专家，精通VLOOKUP/XLOOKUP/INDEX-MATCH/SUMIFS/数组公式/Power Query等高级功能。
 
-输出格式：
-## 推荐公式
-```excel
-=公式表达式
-```
+对用户需求，给出可直接粘贴使用的公式，并附参数表逐项说明。
 
-## 公式解读
-- 函数说明：每个函数的用途
-- 参数解释：每个参数的含义
-- 计算逻辑：逐步解释公式如何工作
+输出严格JSON（只输出JSON，不要任何其他文字）：
+{
+  "formula": "=SUMIFS(金额列, 部门列, A2, 月份列, B2)",
+  "description": "公式用途的一句话说明",
+  "params": [
+    {"name": "参数名或单元格引用", "meaning": "含义与取值规则", "example": "示例取值"}
+  ],
+  "logic": ["计算步骤1", "计算步骤2"],
+  "scenarios": "适用场景、数据前置条件与版本要求",
+  "alternatives": [
+    {"formula": "替代公式表达式", "scenario": "适用场景/优缺点"}
+  ],
+  "pitfalls": "常见使用陷阱与避坑建议"
+}
 
-## 使用场景
-- 适用版本：Excel 2016/2019/365/Mac
-- 前置条件：数据需要满足什么格式
-- 常见陷阱：使用时容易犯的错误
-
-## 替代方案（如有）
-- 方案2：XX公式（适用YY场景）
-- 方案的优缺点对比
-
-要求：用通俗语言解释，让非技术用户也能理解。"""
+要求：
+- formula 必须是可直接粘贴到单元格的完整表达式
+- params 覆盖公式中每一个引用范围/条件（逐项解释）
+- 用通俗语言解释，让非技术用户也能理解"""
             prompt = data.data.get("prompt", "")
             result = call_llm(system_prompt, prompt)
+        elif data.operation == "outliers":
+            raw = data.data.get("raw", "") or data.data.get("content", "")
+            result = json.dumps(_detect_outliers(raw), ensure_ascii=False)
         else:
             result = json.dumps({"status": "created", "data": data.data})
 

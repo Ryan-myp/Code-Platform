@@ -19,12 +19,14 @@ import {
   Lightbulb,
   Download,
   RefreshCw,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
-import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState, Badge } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
@@ -43,9 +45,15 @@ const RANDOM_FORMULAS = [
 
 const OPERATIONS = [
   { value: 'analyze', label: '数据分析', icon: BarChart3, desc: 'AI 分析数据，给出洞察和建议' },
-  { value: 'formula', label: '公式生成', icon: Calculator, desc: '根据需求生成 Excel 公式' },
+  { value: 'formula', label: '公式生成', icon: Calculator, desc: '根据需求生成 Excel 公式（附参数表）' },
   { value: 'create', label: '数据创建', icon: FileSpreadsheet, desc: '创建结构化数据表格' },
   { value: 'clean', label: '数据清洗', icon: Eraser, desc: '去重、格式化、异常值处理' },
+  {
+    value: 'outliers',
+    label: '异常检测',
+    icon: AlertTriangle,
+    desc: 'IQR 法检测数值列异常值（无需 AI，秒级返回）',
+  },
 ]
 
 const QUICK_TEMPLATES = [
@@ -129,6 +137,8 @@ export default function ExcelPage() {
   const [uploadedFile, setUploadedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
   const [previewData, setPreviewData] = useState(null)
+  const [formulaData, setFormulaData] = useState(null)
+  const [outlierData, setOutlierData] = useState(null)
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState(null)
   const fileInputRef = useRef(null)
@@ -163,15 +173,36 @@ export default function ExcelPage() {
         data = { raw: finalInput, prompt }
       } else if (operation === 'formula') {
         data = { prompt: prompt || finalInput }
+      } else if (operation === 'outliers') {
+        data = { raw: finalInput }
       } else {
         data = { content: finalInput, prompt }
       }
       const res = await api.post('/api/excel/operate', {
         operation,
-        title: prompt.slice(0, 50) || uploadedFile?.name || '未命名',
+        title: (prompt || dataInput || '').slice(0, 50) || uploadedFile?.name || '未命名',
         data,
       })
       setResult(res.data.result)
+      // 结构化结果解析：formula（参数表）/ outliers（异常可视化），失败回退 markdown
+      if (operation === 'formula') {
+        try {
+          setFormulaData(JSON.parse(res.data.result))
+        } catch {
+          setFormulaData(null)
+        }
+      } else {
+        setFormulaData(null)
+      }
+      if (operation === 'outliers') {
+        try {
+          setOutlierData(JSON.parse(res.data.result))
+        } catch {
+          setOutlierData(null)
+        }
+      } else {
+        setOutlierData(null)
+      }
       loadHistory()
       toast.success('操作完成')
     } catch (e) {
@@ -504,7 +535,167 @@ export default function ExcelPage() {
               )}
             </div>
             {result ? (
-              <MarkdownRenderer content={result} />
+              operation === 'formula' && formulaData ? (
+                <div className="space-y-3">
+                  {/* 推荐公式 */}
+                  <div className="p-3 rounded-lg bg-green-50 border border-green-200">
+                    <div className="text-xs text-green-700 font-medium mb-1">推荐公式</div>
+                    <code className="block font-mono text-sm text-green-900 break-all">
+                      {formulaData.formula}
+                    </code>
+                  </div>
+                  {formulaData.description && (
+                    <p className="text-sm text-gray-600">{formulaData.description}</p>
+                  )}
+                  {/* 参数说明表 */}
+                  {formulaData.params?.length > 0 && (
+                    <div>
+                      <div className="text-xs font-medium text-gray-500 mb-1.5">参数说明表</div>
+                      <div className="overflow-x-auto rounded-lg border">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-gray-50">
+                              <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                参数
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                含义
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                示例
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {formulaData.params.map((p, i) => (
+                              <tr key={i} className="hover:bg-gray-50">
+                                <td className="px-2 py-1.5 font-mono text-green-700 border-b border-gray-100">
+                                  {p.name}
+                                </td>
+                                <td className="px-2 py-1.5 text-gray-700 border-b border-gray-100">
+                                  {p.meaning}
+                                </td>
+                                <td className="px-2 py-1.5 text-gray-500 border-b border-gray-100">
+                                  {p.example}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {/* 计算逻辑 */}
+                  {formulaData.logic?.length > 0 && (
+                    <div className="p-3 rounded-lg bg-gray-50 text-sm">
+                      <div className="text-xs font-medium text-gray-500 mb-1">计算逻辑</div>
+                      <ol className="list-decimal list-inside space-y-0.5 text-gray-600 text-xs">
+                        {formulaData.logic.map((l, i) => (
+                          <li key={i}>{l}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                  {/* 使用场景 */}
+                  {formulaData.scenarios && (
+                    <div className="text-xs text-gray-600 bg-blue-50 border border-blue-100 rounded-lg p-3">
+                      {formulaData.scenarios}
+                    </div>
+                  )}
+                  {/* 替代方案 */}
+                  {formulaData.alternatives?.length > 0 && (
+                    <div>
+                      <div className="text-xs font-medium text-gray-500 mb-1.5">替代方案</div>
+                      {formulaData.alternatives.map((a, i) => (
+                        <div
+                          key={i}
+                          className="p-2 rounded-lg border text-xs mb-1.5 flex flex-wrap items-baseline gap-2"
+                        >
+                          <code className="font-mono text-green-700">{a.formula}</code>
+                          <span className="text-gray-500">{a.scenario}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* 常见陷阱 */}
+                  {formulaData.pitfalls && (
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">
+                      <AlertTriangle className="w-3.5 h-3.5 inline mr-1" />
+                      {formulaData.pitfalls}
+                    </div>
+                  )}
+                </div>
+              ) : operation === 'outliers' && outlierData ? (
+                <div className="space-y-3">
+                  {!outlierData.success ? (
+                    <div className="text-amber-700 text-sm">{outlierData.message}</div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge color={outlierData.columns?.length > 0 ? 'red' : 'green'}>
+                          {outlierData.summary}
+                        </Badge>
+                        <span className="text-xs text-gray-400">{outlierData.method}</span>
+                      </div>
+                      {outlierData.columns?.length === 0 ? (
+                        <Empty
+                          icon={CheckCircle2}
+                          title="未发现异常值"
+                          description="所有数值列均落在正常范围内"
+                        />
+                      ) : (
+                        outlierData.columns?.map((col, i) => (
+                          <div key={i} className="p-3 rounded-lg border">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              <span className="font-medium text-sm">{col.name}</span>
+                              <Badge color="red">{col.count} 个异常</Badge>
+                              <span className="text-xs text-gray-400">
+                                正常区间 [{col.lower_bound}, {col.upper_bound}]
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto rounded-lg border">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-gray-50">
+                                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                      行号
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                      数值
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 border-b">
+                                      方向
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {col.outliers?.map((o, j) => (
+                                    <tr key={j} className="hover:bg-gray-50">
+                                      <td className="px-2 py-1 text-gray-700 border-b border-gray-100">
+                                        {o.row}
+                                      </td>
+                                      <td className="px-2 py-1 font-mono text-red-600 border-b border-gray-100">
+                                        {o.value}
+                                      </td>
+                                      <td className="px-2 py-1 border-b border-gray-100">
+                                        <Badge color={o.direction === '偏高' ? 'red' : 'blue'}>
+                                          {o.direction}
+                                        </Badge>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <MarkdownRenderer content={result} />
+              )
             ) : (
               <Empty icon={FileSpreadsheet} title="等待操作" description="输入数据后点击执行" />
             )}

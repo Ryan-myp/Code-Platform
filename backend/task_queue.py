@@ -55,8 +55,10 @@ if "ASYNC_TASK_DEFAULT_WORKERS" not in os.environ and os.environ.get("ASYNC_TASK
 DEFAULT_WORKERS = max(1, _default_workers)
 # 进程重启时标记为中断的任务状态：下次启动由 recover_interrupted_tasks 处理
 _INTERRUPT_MSG = "服务重启导致任务中断，可点击重试"
-# running 超时阈值（秒）：看门狗将超时任务标记为 failed
-TASK_TIMEOUT_SECONDS = max(60, int(os.environ.get("ASYNC_TASK_TIMEOUT_SECONDS", "7200")))
+# running 超时阈值（秒）：看门狗将超时任务标记为 failed。
+# 默认 10800（180 分钟）：须大于业务客户端自身超时（如 SadTalker 7200s），
+# 保证客户端超时抛错→引擎降级链执行完毕后仍能写回 success，不被看门狗截胡。
+TASK_TIMEOUT_SECONDS = max(60, int(os.environ.get("ASYNC_TASK_TIMEOUT_SECONDS", "10800")))
 # 终态任务保留天数（历史清理）
 TASK_RETENTION_DAYS = max(1, int(os.environ.get("ASYNC_TASK_RETENTION_DAYS", "30")))
 

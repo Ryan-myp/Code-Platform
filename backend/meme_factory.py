@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from content_safety import check_text, quality_check_image, quality_report
+from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,11 @@ from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
 
 MEME_DIR = os.path.join(os.path.dirname(__file__), "meme_factory")
 os.makedirs(MEME_DIR, exist_ok=True)
+
+# 风格预览图：模板风格=真实底图渲染，AI 风格=本地示意卡（不调文生图，秒出）
+PREVIEW_DIR = os.path.join(MEME_DIR, "previews")
+os.makedirs(PREVIEW_DIR, exist_ok=True)
+PREVIEW_SIZE = 480
 
 STYLES = [
     {"id": "yellow", "name": "经典黄底", "desc": "Doge 经典黄，大字冲击力强", "bg": "#FFD84D"},
@@ -63,6 +70,18 @@ AI_STYLES = {
     "film": "电影写实质感，胶片颗粒与自然光影，浅景深，故事感强",
 }
 
+# AI 风格中文名（风格预览卡与前端展示共用）
+AI_STYLE_LABELS = {
+    "flat": "扁平插画",
+    "3d": "3D 软萌",
+    "pixel": "像素复古",
+    "ink": "水墨国风",
+    "neon": "霓虹赛博",
+    "oil": "油画质感",
+    "anime": "赛璐璐动漫",
+    "film": "电影写实",
+}
+
 CANVAS = 1080  # 正方形画布（微信表情标准 1080×1080）
 MARGIN = 80  # 文字边距
 TOP_H = 240  # 顶部文字区高度
@@ -75,6 +94,25 @@ SIZE_SPECS = [
     {"size": 1080, "name": "原图", "desc": "1080×1080 默认产物"},
     {"size": 2160, "name": "高清印刷", "desc": "2160×2160 印刷/大屏高清"},
 ]
+
+# 微信表情开放平台发布规格（提交审核需 16 张成套）
+WECHAT_PACK_MAX = 16
+WECHAT_PACK_SPECS = [
+    {"name": "表情主图", "value": "240×240 PNG，透明或纯色背景，单张 ≤500KB", "desc": "16 张成套提交审核；本包已按原图等比缩放"},
+    {"name": "表情缩略图", "value": "120×120 PNG（与主图内容一致）", "desc": "聊天面板内的小图预览"},
+    {"name": "聊天页图标", "value": "50×50 PNG", "desc": "聊天面板入口图标"},
+    {"name": "详情页横幅", "value": "750×400 PNG/JPG", "desc": "表情商店详情页展示图，本包已生成 4×4 宫格预览"},
+    {"name": "表情名称", "value": "4-12 个汉字（或 2-8 个英文单词）", "desc": "提交审核时填写，避免与已有表情重名"},
+    {"name": "表情介绍", "value": "50 字以内", "desc": "提交审核时填写"},
+    {"name": "版权信息", "value": "真实有效的版权人信息", "desc": "提交审核时填写，随本包 LICENSE.txt 一并存档"},
+]
+WECHAT_PACK_NOTES = (
+    "1. 微信表情开放平台（sticker.weixin.qq.com）提交审核需注册表情开放平台账号；"
+    "2. 一套表情必须为 16 张才能提交审核；"
+    "3. 图片不得包含二维码、联系方式、广告水印；"
+    "4. 文字内容需通过内容安全审核，请勿使用违规用语；"
+    "5. 审核通过后可上架微信表情商店，可按份数设置付费或免费发布。"
+)
 
 _BREAK_CHARS = "，。！？、；：,.!?;: "  # 智能换行优先断点（标点/空格）
 
@@ -208,8 +246,10 @@ def _style_bg(style: str) -> Image.Image:
         img = Image.new("RGB", (CANVAS, CANVAS), (255, 216, 77))  # yellow 默认
     if style in ("yellow", "white"):
         # 高斯噪点叠加：±16 亮度颗粒，纸张质感，避免大面积纯色（商用质感）
+        # 注意 ImageChops.add 的 scale 作用于两图之和，需先把噪声中心化到 ±16 再纯加
         noise = Image.effect_noise((CANVAS, CANVAS), 10).convert("RGB")
-        img = ImageChops.add(img, noise, scale=8, offset=-16)
+        noise = noise.point(lambda v: v // 8 - 16)
+        img = ImageChops.add(img, noise)
     return img
 
 
@@ -294,6 +334,121 @@ def _overlay_text_bars(img: Image.Image, top_text: str, bottom_text: str) -> Ima
     if bottom_text:
         od.rectangle([0, CANVAS - BOTTOM_H, CANVAS, CANVAS], fill=(0, 0, 0, 110))
     return Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+
+
+# ══════════════════════════════════════════════════════════════
+# v15：风格预览图（模板风格=真实底图渲染，AI 风格=示意卡）
+# ══════════════════════════════════════════════════════════════
+
+
+def _draw_centered_label(img: Image.Image, text: str, y: int, fill: str, stroke: str, max_font: int = 64) -> None:
+    """在画布中央绘制一行自动缩字号文字（含投影描边），供预览卡使用。"""
+    d = ImageDraw.Draw(img)
+    font = get_font(max_font)
+    while font.size > 24 and d.textlength(text, font=font) > img.width - 80:
+        font = get_font(font.size - 4)
+    w = d.textlength(text, font=font)
+    x = (img.width - w) // 2
+    d.text((x + 4, y + 4), text, font=font, fill="#000000", stroke_width=4, stroke_fill="#000000")
+    d.text((x, y), text, font=font, fill=fill, stroke_width=4, stroke_fill=stroke)
+
+
+def _build_ai_style_card(size: int, name: str, desc: str) -> Image.Image:
+    """AI 画面风格示意卡：深色渐变底 + 风格名 + 说明 + 「AI 效果示意」徽标。
+
+    本地 PIL 绘制（不调文生图），用于生成前预览画面质感方向。
+    """
+    img = _gradient_bg((30, 30, 60), (96, 32, 82)).resize((size, size), Image.LANCZOS)
+    _draw_centered_label(img, name, size // 2 - 70, "#FFFFFF", "#B026FF", max_font=56)
+    d = ImageDraw.Draw(img)
+    if desc:
+        font = get_font(26)
+        while font.size > 15 and d.textlength(desc, font=font) > size - 50:
+            font = get_font(font.size - 2)
+        w = d.textlength(desc, font=font)
+        d.text(((size - w) // 2, size // 2 + 30), desc, font=font, fill="#C9C9E8")
+    badge = "AI 效果示意"
+    font2 = get_font(24)
+    w2 = d.textlength(badge, font=font2)
+    d.text(((size - w2) // 2, size - 70), badge, font=font2, fill="#8E8EA8")
+    return img
+
+
+def build_style_preview(style_id: str) -> Image.Image:
+    """生成单风格预览图（480×480，纯函数可单测）。
+
+    - 模板风格：复用 _style_bg/_text_color 渲染真实底图 + 居中风格名，预览与成图一致；
+    - upload：灰格示意卡；ai 与未知 id：AI 风格示意卡。
+    """
+    style_ids = {s["id"] for s in STYLES}
+    if style_id not in style_ids:
+        return _build_ai_style_card(PREVIEW_SIZE, style_id or "未知", "")
+    info = next(s for s in STYLES if s["id"] == style_id)
+    if style_id == "ai":
+        return _build_ai_style_card(PREVIEW_SIZE, info["name"], info["desc"])
+    if style_id == "upload":
+        img = Image.new("RGB", (PREVIEW_SIZE, PREVIEW_SIZE), (226, 232, 240))
+        # 棋盘格纹样示意「上传自己的图片」
+        d = ImageDraw.Draw(img)
+        for r in range(0, PREVIEW_SIZE, 60):
+            for c in range(0, PREVIEW_SIZE, 60):
+                if (r // 60 + c // 60) % 2 == 0:
+                    d.rectangle([c, r, c + 60, r + 60], fill=(203, 213, 225))
+        _draw_centered_label(img, info["name"], PREVIEW_SIZE // 2 - 70, "#FFFFFF", "#64748B", max_font=56)
+        d2 = ImageDraw.Draw(img)
+        font = get_font(26)
+        w = d2.textlength(info["desc"], font=font)
+        d2.text(((PREVIEW_SIZE - w) // 2, PREVIEW_SIZE // 2 + 30), info["desc"], font=font, fill="#64748B")
+        return img
+    bg = _style_bg(style_id)
+    img = bg.resize((PREVIEW_SIZE, PREVIEW_SIZE), Image.LANCZOS) if bg.size != (PREVIEW_SIZE, PREVIEW_SIZE) else bg
+    fill, stroke = _text_color(style_id)
+    _draw_centered_label(img, info["name"], PREVIEW_SIZE // 2 - 70, fill, stroke, max_font=64)
+    d = ImageDraw.Draw(img)
+    font = get_font(26)
+    while font.size > 15 and d.textlength(info["desc"], font=font) > PREVIEW_SIZE - 60:
+        font = get_font(font.size - 2)
+    w = d.textlength(info["desc"], font=font)
+    d.text(((PREVIEW_SIZE - w) // 2, PREVIEW_SIZE // 2 + 30), info["desc"], font=font, fill="#444444" if style_id == "paper" else stroke)
+    return img
+
+
+@router.get("/style-previews")
+async def style_previews(current_user: dict = require_auth()):
+    """全部风格预览图列表（本地生成并缓存，秒出）：模板风格 + AI 风格。"""
+    out = []
+    for s in STYLES:
+        fname = f"{s['id']}.png"
+        path = os.path.join(PREVIEW_DIR, fname)
+        if not os.path.exists(path):
+            try:
+                build_style_preview(s["id"]).save(path, "PNG")
+            except Exception as e:
+                logger.debug(f"style preview {s['id']} failed: {e}")
+                continue
+        out.append({"id": s["id"], "name": s["name"], "url": f"/api/meme/previews/{fname}"})
+    for sid, desc in AI_STYLES.items():
+        fname = f"ai_{sid}.png"
+        path = os.path.join(PREVIEW_DIR, fname)
+        if not os.path.exists(path):
+            try:
+                _build_ai_style_card(PREVIEW_SIZE, AI_STYLE_LABELS.get(sid, sid), desc).save(path, "PNG")
+            except Exception as e:
+                logger.debug(f"ai style preview {sid} failed: {e}")
+                continue
+        out.append({"id": f"ai:{sid}", "style_id": sid, "name": AI_STYLE_LABELS.get(sid, sid), "url": f"/api/meme/previews/{fname}"})
+    return out
+
+
+@router.get("/previews/{filename}")
+async def get_style_preview(filename: str):
+    """风格预览图静态服务（仅 previews 目录内的 PNG）。"""
+    if not filename.endswith(".png") or "/" in filename or ".." in filename:
+        raise HTTPException(404, "预览图不存在")
+    path = os.path.join(PREVIEW_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, "预览图不存在")
+    return FileResponse(path, media_type="image/png")
 
 
 def _ai_bg(prompt: str) -> Image.Image:
@@ -411,12 +566,21 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
     bg_upload = payload.get("bg_upload") or ""
     decoration = payload.get("decoration") or ""
     ai_prompt = payload.get("ai_prompt") or ""
+    character = (payload.get("character") or "").strip()  # 成套生成：角色一致性约束
     if not top_text and not bottom_text:
         raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
     if style not in {s["id"] for s in STYLES}:
         raise HTTPException(400, f"未知风格: {style}")
     if style == "upload" and not bg_upload:
         raise HTTPException(400, "上传背景模式需要提供 bg_upload 图片（base64）")
+
+    # 生产级内容保障：生成前全量文本安全审核（表情包文字需过平台审核，违规直接拒绝）
+    for label, t in (("顶部文字", top_text), ("底部文字", bottom_text), ("AI 画面描述", ai_prompt)):
+        if not t:
+            continue
+        res = check_text(t, "表情包")
+        if not res["ok"]:
+            raise HTTPException(400, f"{label}：{res['suggestion']}")
 
     # 背景
     if style == "ai":
@@ -426,6 +590,8 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
             f"{AI_STYLES.get(ai_style, AI_STYLES['flat'])}，画面主体居中偏下，"
             "顶部与底部各预留 20% 高度纯净留白区域用于叠加文字，背景简洁不杂乱"
         )
+        if character:
+            scene += f"，角色设定（全套必须完全一致）：{character}；所有画面中的角色形象、服装、画风保持一致"
         img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}")
         # 顶部 + 底部半透明底条，保证大字在任何画面上都可读（商用标准）
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -507,6 +673,107 @@ async def generate_meme(
         "status": "pending",
         "message": "表情包生成任务已提交，后台执行中，可在任务中心查看进度",
         "task": task,
+    }
+
+
+@router.post("/generate-set")
+async def generate_meme_set(
+    items: list[str] = Form(...),
+    style: str = Form("yellow"),
+    ai_style: str = Form("flat"),
+    character: str = Form("", description="成套角色设定，全套保持一致，如：一只圆滚滚的橘猫，穿黄色卫衣"),
+    sync: bool = Query(False, description="true=同步执行；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """成套生成（商业化关键能力）：一次输入最多 16 个文案，产出风格/角色统一的成套表情包。
+
+    每项格式：``顶部文字|底部文字``（可只填顶部）。全部文字生成前做安全审核，
+    命中违规直接拒绝整包生成（避免废包）；AI 模式注入角色一致性约束保证成套观感统一。
+    """
+    parsed = []
+    for it in items:
+        it = (it or "").strip().replace("／", "/")
+        if not it:
+            continue
+        if "|" in it:
+            top, _, bottom = it.partition("|")
+        elif "/" in it:
+            top, _, bottom = it.partition("/")
+        else:
+            top, bottom = it, ""
+        parsed.append((top.strip(), bottom.strip()))
+    parsed = [p for p in parsed if p[0] or p[1]][:WECHAT_PACK_MAX]
+    if not parsed:
+        raise HTTPException(400, "请输入至少一条表情文案（格式：顶部文字|底部文字）")
+
+    # 成套前置审核：任一文案违规则拒绝整包（保证成套不废）
+    for top, bottom in parsed:
+        for label, t in (("顶部文字", top), ("底部文字", bottom)):
+            if not t:
+                continue
+            res = check_text(t, "表情包")
+            if not res["ok"]:
+                raise HTTPException(400, f"第 {parsed.index((top, bottom)) + 1} 条{label}：{res['suggestion']}")
+
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {
+        "items": [{"top_text": t, "bottom_text": b} for t, b in parsed],
+        "style": style,
+        "ai_style": ai_style,
+        "character": (character or "").strip(),
+    }
+    if sync:
+        return await _meme_generate_set_worker(payload)
+    task = create_task("meme_generate_set", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"],
+        "status": "pending",
+        "message": f"成套生成任务已提交（{len(parsed)} 张），后台执行中，可在任务中心查看进度",
+        "task": task,
+    }
+
+
+async def _meme_generate_set_worker(payload: dict, progress: Callable | None = None) -> dict:
+    """成套生成执行体：逐张调用单张 worker（同风格/角色），产出成套列表。"""
+    items = payload.get("items") or []
+    style = payload.get("style") or "yellow"
+    ai_style = payload.get("ai_style") or "flat"
+    character = (payload.get("character") or "").strip()
+    results = []
+    total = len(items)
+    for i, it in enumerate(items):
+        if progress:
+            try:
+                progress(10 + int(85 * i / max(total, 1)), f"正在生成第 {i + 1}/{total} 张…")
+            except Exception:
+                pass
+        try:
+            r = await _meme_generate_worker(
+                {
+                    "top_text": it.get("top_text", ""),
+                    "bottom_text": it.get("bottom_text", ""),
+                    "style": style,
+                    "ai_style": ai_style,
+                    "character": character,
+                }
+            )
+            results.append(r)
+        except HTTPException as e:
+            results.append({"error": str(e.detail), "top_text": it.get("top_text", "")})
+    if progress:
+        try:
+            progress(100, "成套表情包已生成")
+        except Exception:
+            pass
+    return {
+        "set_id": f"meme_set_{int(time.time() * 1000)}",
+        "count": len(results),
+        "style": style,
+        "ai_style": ai_style,
+        "character": character,
+        "items": results,
     }
 
 
@@ -639,6 +906,174 @@ async def batch_download_memes(ids: list[str] = Form(...), current_user: dict = 
     )
 
 
+def _wechat_banner(images: list[Image.Image], title: str) -> bytes:
+    """微信详情页横幅（750×400 PNG）：白底 + 首图代表作 + 表情名称，开箱即用。"""
+    W, H = 750, 400
+    banner = Image.new("RGB", (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(banner)
+    if images:
+        cover = images[0].copy()
+        cover.thumbnail((300, 300), Image.LANCZOS)
+        banner.paste(cover, ((W - cover.width) // 2, 16))
+    if title:
+        font = get_font(44)
+        # 标题超宽自动缩字号
+        while font.size > 24 and d.textlength(title, font=font) > W - 80:
+            font = get_font(font.size - 4)
+        w = d.textlength(title, font=font)
+        d.text(((W - w) // 2, 322), title, font=font, fill="#111111")
+    buf = io.BytesIO()
+    banner.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def split_pack_sets(ids: list[str], max_per_set: int = WECHAT_PACK_MAX) -> list[list[str]]:
+    """发布包多套拆分（纯函数，可单测）：按 max_per_set 张为一套分组。
+
+    输入自动去重、跳过非 png 项；返回空列表表示无可打包内容。
+    微信审核要求每套 16 张成套，勾选超出一套时按 16 张/套拆分目录打包。
+    """
+    cleaned = []
+    seen = set()
+    for f in ids or []:
+        if not isinstance(f, str):
+            continue
+        f = f.strip()
+        if not f.endswith(".png") or f in seen:
+            continue
+        seen.add(f)
+        cleaned.append(f)
+    if not cleaned:
+        return []
+    return [cleaned[i : i + max_per_set] for i in range(0, len(cleaned), max_per_set)]
+
+
+def _pack_set_entries(sets: list[list[str]], meta: dict, pack_title: str, pack_desc: str) -> tuple[dict, list[Image.Image]]:
+    """按套构建发布包条目（纯函数，可单测）：每套主图/缩略图 + 表情说明。
+
+    单套时目录即根目录；多套时按「表情包第 N 套」分目录。返回 (entries, 第一套原图列表)。
+    """
+    root = pack_dir_name("wechat_meme")
+    entries: dict = {}
+    images: list[Image.Image] = []
+    set_total = len(sets)
+    for si, picked in enumerate(sets, 1):
+        if set_total == 1:
+            set_root = root
+        else:
+            set_root = f"{root}/表情包第{si}套"
+        main_dir = f"{set_root}/主图"
+        thumb_dir = f"{set_root}/缩略图"
+        rows: list[str] = []
+        for i, fname in enumerate(picked, 1):
+            with Image.open(os.path.join(MEME_DIR, fname)) as im:
+                m = meta.get(fname, {})
+                cap = " / ".join(x for x in (m.get("top_text"), m.get("bottom_text")) if x) or fname
+                rows.append(f"{i:02d}. {cap}")
+                b_main = io.BytesIO()
+                b_thumb = io.BytesIO()
+                im.resize((240, 240), Image.LANCZOS).save(b_main, "PNG")
+                im.resize((120, 120), Image.LANCZOS).save(b_thumb, "PNG")
+                entries[f"{main_dir}/{i:02d}_{fname}"] = b_main.getvalue()
+                entries[f"{thumb_dir}/{i:02d}_{fname}"] = b_thumb.getvalue()
+                if si == 1:
+                    images.append(im.copy())
+        suffix = f"（第{si}套）" if set_total > 1 else ""
+        entries[f"{set_root}/表情说明.md"] = (
+            f"# {pack_title}{suffix}\n\n{pack_desc}\n\n共 {len(picked)} 张（微信审核需 16 张成套）\n\n"
+            + "\n".join(rows)
+        )
+    return entries, images
+
+
+@router.post("/publish-pack")
+async def meme_publish_pack(
+    ids: list[str] = Form(...),
+    pack_title: str = Form("我的表情包"),
+    pack_desc: str = Form("AI 生成趣味表情包"),
+    current_user: dict = require_auth(),
+):
+    """微信表情包发布包：勾选表情打包为可提交微信表情开放平台的成套物料，支持多套合并。
+
+    - 勾选 ≤16 张按一套打包（主图 240 / 缩略图 120 / 图标 50 / 横幅 750×400）；
+    - 勾选 >16 张自动按 16 张/套拆分为「表情包第1套/第2套…」多套目录合并打包；
+    - 含上传指南、平台规格说明、商用授权说明、质量自检报告。
+    """
+    pack_title = (pack_title or "我的表情包").strip()[:30]
+    pack_desc = (pack_desc or "").strip()[:200]
+    sets = split_pack_sets(ids)
+    # 过滤磁盘上不存在的文件，空套丢弃
+    sets = [[f for f in s if os.path.exists(os.path.join(MEME_DIR, f))] for s in sets]
+    sets = [s for s in sets if s]
+    if not sets:
+        raise HTTPException(400, "没有可打包的表情包（请先勾选已生成的表情）")
+    meta = _artifact_meta()
+
+    root = pack_dir_name("wechat_meme")
+    entries, images = _pack_set_entries(sets, meta, pack_title, pack_desc)
+    total = sum(len(s) for s in sets)
+    set_total = len(sets)
+
+    icon_buf = io.BytesIO()
+    images[0].resize((50, 50), Image.LANCZOS).save(icon_buf, "PNG")
+    entries[f"{root}/icon_50x50.png"] = icon_buf.getvalue()
+    entries[f"{root}/banner_750x400.png"] = _wechat_banner(images, pack_title)
+    entries[f"{root}/上传指南_微信表情开放平台.md"] = (
+        "# 微信表情开放平台上传指南\n\n"
+        "1. 注册登录表情开放平台：https://sticker.weixin.qq.com\n"
+        "2. 选择「上传表情」→「静态表情」→ 填写表情名称/介绍/版权信息\n"
+        "3. 依次上传 16 张主图（240×240）与缩略图（120×120），本包已按规格生成"
+        + (f"（共 {set_total} 套，每套独立成目录，需分别提交）" if set_total > 1 else "")
+        + "\n"
+        "4. 上传聊天页图标（50×50）与详情页横幅（750×400），本包已生成\n"
+        "5. 提交审核（约 1-3 个工作日）；通过后可在商店上架，设置免费或付费"
+    )
+    entries[f"{root}/规格说明.md"] = platform_spec_text("微信表情开放平台", WECHAT_PACK_SPECS, WECHAT_PACK_NOTES)
+    entries[f"{root}/LICENSE.txt"] = license_text(f"微信表情包《{pack_title}》")
+
+    # 生产级内容保障：发布包附质量自检报告（安全审核汇总 + 每张美观度评分）
+    try:
+        text_results = []
+        img_scores = []
+        for fname in [f for s in sets for f in s]:
+            m = meta.get(fname, {})
+            for t in (m.get("top_text", ""), m.get("bottom_text", "")):
+                if t:
+                    text_results.append(check_text(t, "表情包"))
+            try:
+                with Image.open(os.path.join(MEME_DIR, fname)) as im:
+                    img_scores.append(quality_check_image(im))
+            except Exception:
+                pass
+        ok_all = all(r.get("ok") for r in text_results)
+        avg = int(sum(q.get("score", 0) for q in img_scores) / max(len(img_scores), 1))
+        extra = [
+            f"打包套数：{set_total} 套（微信审核每套需 16 张）",
+            f"总张数：{total} 张",
+            f"规格合规：主图 240×240 / 缩略图 120×120 / 图标 50×50 / 横幅 750×400 ✓",
+            f"平均美观度：{avg}/100" if img_scores else "美观度：未检测",
+        ]
+        entries[f"{root}/质量自检报告.md"] = quality_report(
+            f"微信表情包《{pack_title}》",
+            text_check={"ok": ok_all, "risk": "none" if ok_all else "high", "risk_words": [], "categories": [], "suggestion": ""},
+            image_quality={"score": avg, "grade": "A" if avg >= 85 else ("B" if avg >= 65 else "C"), "checks": [], "suggestions": []},
+            extra=extra,
+        )
+    except Exception as e:
+        logger.debug(f"质量自检报告生成失败: {e}")
+
+    buf = build_publish_zip(entries, "wechat_meme")
+    publish = publish_registry.publish("wechat_meme", {"pack_title": pack_title, "count": total, "sets": set_total})
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="wechat_meme_pack_{int(time.time())}.zip"',
+            "X-Publish-Result": f"published={str(publish.get('published')).lower()}",
+        },
+    )
+
+
 @router.get("/stats")
 async def meme_stats(current_user: dict = require_auth()):
     """表情包工坊统计：总数 / 风格分布 / AI 占比。"""
@@ -690,4 +1125,10 @@ async def _meme_generate_handler(task_id: str, payload: dict, update: Callable, 
     return await _meme_generate_worker(payload, progress=update)
 
 
+async def _meme_generate_set_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：成套生成。"""
+    return await _meme_generate_set_worker(payload, progress=update)
+
+
 register_handler("meme_generate", _meme_generate_handler, user_limit=2)
+register_handler("meme_generate_set", _meme_generate_set_handler, user_limit=1)

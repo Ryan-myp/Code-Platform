@@ -59,6 +59,22 @@ VOICES = [
     },
 ]
 
+# ── CosyVoice 本地引擎通道（独立推理服务 voice_engine，端口 9888，MPS 加速） ──
+COSYVOICE_API_BASE = os.environ.get("COSYVOICE_API_BASE", "http://127.0.0.1:9888")
+_COSYVOICE_STATE = {"ok": None, "checked_at": 0.0}
+_COSYVOICE_CHECK_INTERVAL = 60  # 每 60s 探活一次（引擎进程/模型加载状态）
+_COSYVOICE_TIMEOUT = 180  # 长文本合成超时（秒，MPS 推理 RTF≈1-2）
+
+# AI 克隆音色（CosyVoice 本地引擎专用，中文名音色，非 Azure Neural）
+COSYVOICE_VOICES = [
+    {"id": "中文女", "name": "中文女声", "gender": "女", "style": "AI 克隆音色，自然拟真（本地引擎）", "emoji": "🤖"},
+    {"id": "中文男", "name": "中文男声", "gender": "男", "style": "AI 克隆音色，自然拟真（本地引擎）", "emoji": "🤖"},
+    {"id": "中文童声", "name": "中文童声", "gender": "童", "style": "AI 克隆音色，活泼童真（本地引擎）", "emoji": "🤖"},
+    {"id": "粤语女", "name": "粤语女声", "gender": "女", "style": "AI 克隆音色，粤语流利（本地引擎）", "emoji": "🤖"},
+]
+VOICES.extend(COSYVOICE_VOICES)
+COSYVOICE_VOICE_IDS = {v["id"] for v in COSYVOICE_VOICES}
+
 # 场景预设：一键套用「音色 + 语速」
 SCENES = [
     {
@@ -162,26 +178,80 @@ def _split_text(text: str) -> list[str]:
     return final
 
 
-def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:  # noqa: C901 — 多通道降级逻辑，复杂度可控
-    """单段 TTS 合成，返回 mp3 字节。
+def _cosyvoice_health(force: bool = False) -> bool:
+    """探活 CosyVoice 本地引擎（voice_engine 服务），带 60s 防抖。"""
+    now = time.time()
+    if not force and now - _COSYVOICE_STATE["checked_at"] < _COSYVOICE_CHECK_INTERVAL:
+        return _COSYVOICE_STATE["ok"]
+    _COSYVOICE_STATE["checked_at"] = now
+    try:
+        r = requests.get(f"{COSYVOICE_API_BASE}/health", timeout=3)
+        ok = r.status_code == 200 and r.json().get("status") == "ok"
+    except Exception:
+        ok = False
+    _COSYVOICE_STATE["ok"] = ok
+    return ok
 
-    优先 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
+
+def _tts_cosyvoice(text: str, voice: str, speed: float) -> bytes:
+    """CosyVoice 本地引擎合成（返回 wav 字节）。"""
+    resp = requests.post(
+        f"{COSYVOICE_API_BASE}/tts/sft",
+        data={"text": text, "spk_id": voice, "speed": speed},
+        timeout=_COSYVOICE_TIMEOUT,
+    )
+    if resp.status_code == 200:
+        return resp.content
+    raise RuntimeError(f"CosyVoice 引擎返回 {resp.status_code}: {resp.text[:200]}")
+
+
+def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> bytes:  # noqa: C901 — 多通道降级逻辑，复杂度可控
+    """单段 TTS 合成，返回 mp3/wav 字节。
+
+    AI 克隆音色（中文名）优先走 CosyVoice 本地引擎（高质量自然音色，不依赖外网）；
+    Azure Neural 音色走 edge-tts（子进程隔离，超时 45s 自动 kill，绝不阻塞主进程），
     子进程偶发崩溃/空输出时带间隔重试，仍失败回退中转站 /audio/speech（需开通 tts-1 渠道）；
     中转站也不可用时再回试 edge-tts（免费通道网络抖动可能已自愈）。
     pitch 为音调百分比（-20~+20）。
+    emotion 为 Azure 情绪风格名（v13.24：happy/sad/angry/gentle/serious 等），
+    空串=无风格；CosyVoice 通道不支持风格时忽略该参数。
     """
 
+    if voice in COSYVOICE_VOICE_IDS:
+        # CosyVoice 音色专属通道：引擎不可用时明确报错（音色名非 Azure 格式，不能静默换通道）
+        if _cosyvoice_health():
+            try:
+                return _tts_cosyvoice(text, voice, speed)
+            except Exception as e:
+                logger.warning(f"CosyVoice 合成失败: {e}")
+        else:
+            logger.warning("CosyVoice 引擎不可用（voice_engine 服务未启动）")
+        raise HTTPException(500, f"CosyVoice 本地引擎不可用（音色 {voice}），请先启动 voice_engine 服务")
+
     def _edge_with_retry(rounds: int = 2) -> bytes:
-        """带 1s 间隔的 edge-tts 重试；全部失败抛最后一个异常。"""
+        """带 1s 间隔的 edge-tts 重试；全部失败抛最后一个异常。
+
+        情绪风格（SSML express-as）失败时降级为无风格再试：部分音色不支持风格，
+        重复同风格无意义；无风格通道更稳定。
+        """
         last = None
         for attempt in range(rounds):
             try:
-                return _tts_edge(text, voice, speed, pitch)
+                return _tts_edge(text, voice, speed, pitch, emotion)
             except Exception as e:
                 last = e
                 logger.warning(f"edge-tts 失败: {e}")
                 if attempt < rounds - 1:
                     time.sleep(1)  # 网络抖动短暂等待后可自愈
+        if emotion:
+            logger.warning(f"edge-tts 情绪风格({emotion})失败，降级无风格重试: {last}")
+            for attempt in range(2):
+                try:
+                    return _tts_edge(text, voice, speed, pitch, "")
+                except Exception as e:
+                    last = e
+                    if attempt < 1:
+                        time.sleep(1)
         raise last
 
     try:
@@ -211,11 +281,20 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:  # n
             raise HTTPException(500, f"TTS 通道均不可用: {e}") from e
 
 
-def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
-    """edge-tts 合成（Azure Neural 音色，免费通道，子进程隔离）。"""
+def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> bytes:
+    """edge-tts 合成（Azure Neural 音色，免费通道，子进程隔离）。
+
+    v13.28 情绪改音调表达：SSML express-as 实测强制 ~0.6 字/s 极慢语速（rate/prosody
+    均无法修正），全局将 emotion 映射为 pitch 叠加（happy 高亢 / sad 低沉 / angry 激昂 /
+    gentle 柔和），语速恢复正常，情绪通过音调区分。
+    """
     import subprocess
     import sys
 
+    if emotion:
+        # cheerful 为 happy 的 Azure 风格别名（数字人/短剧调用方映射），一并映射高亢
+        pitch = pitch + {"happy": 15, "cheerful": 15, "sad": -15, "angry": 12, "gentle": -5, "serious": 0}.get(emotion, 0)
+        emotion = ""  # v13.28 不再使用 SSML style（语速黑洞）
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge_tts_worker.py")
     rate = f"{int(round((speed - 1) * 100)):+d}%"
     fd, tmp = tempfile.mkstemp(suffix=".mp3")
@@ -224,6 +303,11 @@ def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0) -> bytes:
         args = [sys.executable, worker, text, voice, rate, tmp]
         if pitch:
             args.append(f"{pitch:+d}Hz")
+        else:
+            args.append("")
+        args.append("")
+        if emotion:
+            args.append(emotion)
         # stdin=DEVNULL：nohup 后台环境下父进程 fd 0 可能无效，子进程继承后
         # Python 3.13 初始化标准流崩溃（Fatal Python error: init_sys_streams）
         result = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, timeout=_TTS_EDGE_TIMEOUT)

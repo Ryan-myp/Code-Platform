@@ -10,12 +10,16 @@ import {
   Pencil,
   Target,
   BarChart3,
-  ExternalLink,
-  Loader2,
   TrendingUp,
   CheckCircle2,
   AlertTriangle,
   Copy,
+  CalendarDays,
+  BookMarked,
+  ChevronLeft,
+  ChevronRight,
+  Search,
+  Archive,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -47,13 +51,15 @@ export default function ContentStrategyPage() {
     <div className="space-y-6">
       <PageHeader
         title="内容策略"
-        description="热点追踪 · AI 选题 · 合规预检 · 最佳发布时间 · 内容系列"
+        description="热点追踪 · AI 选题 · 合规预检 · 最佳时间 · 内容日历 · 主题库 · 内容系列"
       />
       <div className="flex gap-2 flex-wrap">
         {[
           { key: 'hotspots', label: '热点追踪', icon: Flame },
           { key: 'compliance', label: '合规预检', icon: ShieldCheck },
           { key: 'besttime', label: '最佳时间', icon: Clock },
+          { key: 'calendar', label: '内容日历', icon: CalendarDays },
+          { key: 'topics', label: '主题库', icon: BookMarked },
           { key: 'series', label: '内容系列', icon: FolderOpen },
         ].map((t) => (
           <button
@@ -72,6 +78,8 @@ export default function ContentStrategyPage() {
       {tab === 'hotspots' && <HotspotsTab />}
       {tab === 'compliance' && <ComplianceTab />}
       {tab === 'besttime' && <BestTimeTab />}
+      {tab === 'calendar' && <CalendarTab />}
+      {tab === 'topics' && <TopicsTab />}
       {tab === 'series' && <SeriesTab />}
     </div>
   )
@@ -823,5 +831,575 @@ function SeriesTab() {
         icon={Trash2}
       />
     </Card>
+  )
+}
+
+/* ── 内容日历（排期 + 已发布聚合月历） ── */
+const CAL_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
+const CAL_CONTENT_LABELS = { article: '文章', image: '图片', video: '视频', audio: '音频' }
+const CAL_STATUS_LABELS = { pending: '待发布', published: '已发布', cancelled: '已取消', failed: '失败' }
+
+function CalendarTab() {
+  const nowDate = new Date()
+  const [month, setMonth] = useState(
+    `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}`
+  )
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [selected, setSelected] = useState(null) // 选中的日期明细
+
+  const fetchCalendar = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await api.get('/api/strategy/calendar', { params: { month } })
+      setData(res.data)
+      setError(null)
+    } catch (e) {
+      setError(e.message || '加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [month])
+
+  useEffect(() => {
+    fetchCalendar()
+  }, [fetchCalendar])
+
+  const shiftMonth = (delta) => {
+    const [y, m] = month.split('-').map(Number)
+    const d = new Date(y, m - 1 + delta, 1)
+    setMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+  }
+
+  const todayStr = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(
+    nowDate.getDate()
+  ).padStart(2, '0')}`
+  const days = data?.days || {}
+  const cells = []
+  if (data) {
+    for (let i = 0; i < (data.first_weekday || 0); i += 1) cells.push('blank')
+    for (let d = 1; d <= (data.day_count || 0); d += 1) {
+      cells.push(`${data.month}-${String(d).padStart(2, '0')}`)
+    }
+  }
+  const selectedDay = selected ? days[selected] : null
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-ink-900 flex items-center gap-2">
+          <CalendarDays className="w-4 h-4 text-brand-500" /> 内容日历
+          <Badge color="amber">{data?.summary?.scheduled || 0} 排期</Badge>
+          <Badge color="green">{data?.summary?.published || 0} 已发布</Badge>
+        </h3>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => shiftMonth(-1)}
+            className="p-2 rounded-lg border border-ink-200 text-ink-500 hover:border-brand-300 hover:text-brand-600 transition-all"
+            title="上一月"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-sm font-semibold text-ink-800 w-24 text-center">
+            {data ? `${Number(data.month.slice(0, 4))}年${Number(data.month.slice(5))}月` : month}
+          </span>
+          <button
+            onClick={() => shiftMonth(1)}
+            className="p-2 rounded-lg border border-ink-200 text-ink-500 hover:border-brand-300 hover:text-brand-600 transition-all"
+            title="下一月"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <PageLoading />
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchCalendar} />
+      ) : (
+        <div>
+          <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+            {CAL_WEEKDAYS.map((w, i) => (
+              <div
+                key={w}
+                className={`text-center text-[11px] font-medium py-1 ${i >= 5 ? 'text-rose-400' : 'text-ink-400'}`}
+              >
+                周{w}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1.5">
+            {cells.map((c, i) =>
+              c === 'blank' ? (
+                <div key={`blank-${i}`} />
+              ) : (
+                <button
+                  key={c}
+                  onClick={() => setSelected(c)}
+                  className={`min-h-[78px] rounded-xl border p-1.5 text-left transition-all ${
+                    days[c]?.total > 0
+                      ? 'border-brand-200 bg-brand-50/40 hover:border-brand-400 hover:shadow-soft'
+                      : 'border-ink-100 bg-white hover:border-brand-300'
+                  } ${c === todayStr ? 'ring-2 ring-brand-400/60' : ''}`}
+                >
+                  <span className={`text-xs font-semibold ${c === todayStr ? 'text-brand-600' : 'text-ink-600'}`}>
+                    {Number(c.slice(8))}
+                  </span>
+                  {days[c]?.total > 0 && (
+                    <div className="mt-1 space-y-0.5">
+                      {days[c].schedules.length > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 rounded-md px-1 py-0.5">
+                          <Clock className="w-3 h-3" /> 排期 {days[c].schedules.length}
+                        </span>
+                      )}
+                      {days[c].records.length > 0 && (
+                        <span className="flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 rounded-md px-1 py-0.5">
+                          <CheckCircle2 className="w-3 h-3" /> 发布 {days[c].records.length}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </button>
+              )
+            )}
+          </div>
+          {data && cells.filter((c) => c !== 'blank').length > 0 && Object.keys(days).length === 0 && (
+            <p className="text-xs text-ink-400 mt-4 text-center">
+              本月暂无排期与发布，可在发布中心创建排期后回到这里查看
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 当日明细 */}
+      <Modal
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        title={selected ? `${selected} 内容明细` : ''}
+        size="lg"
+      >
+        {selectedDay ? (
+          <div className="space-y-4">
+            {selectedDay.schedules.length === 0 && selectedDay.records.length === 0 && (
+              <Empty icon={CalendarDays} title="当日无内容" description="可在发布中心创建排期或发布内容" />
+            )}
+            {selectedDay.schedules.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-ink-500 mb-2 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-500" /> 排期计划
+                </p>
+                <div className="space-y-1.5">
+                  {selectedDay.schedules.map((s) => (
+                    <div key={s.id} className="flex items-center gap-3 p-2.5 rounded-xl border border-ink-100 text-sm">
+                      <Badge color={s.status === 'published' ? 'green' : s.status === 'cancelled' ? 'gray' : 'amber'}>
+                        {CAL_STATUS_LABELS[s.status] || s.status}
+                      </Badge>
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-ink-800">{s.title}</p>
+                        <p className="text-[11px] text-ink-400">
+                          {s.time} · {s.platform || '—'} · {CAL_CONTENT_LABELS[s.content_type] || s.content_type || '—'}
+                        </p>
+                      </div>
+                      {(s.topics || []).length > 0 && (
+                        <div className="flex gap-1 flex-shrink-0">
+                          {s.topics.slice(0, 3).map((t) => (
+                            <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-brand-50 text-brand-600">
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedDay.records.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-ink-500 mb-2 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> 已发布内容
+                </p>
+                <div className="space-y-1.5">
+                  {selectedDay.records.map((r) => (
+                    <div key={r.id} className="flex items-center gap-3 p-2.5 rounded-xl border border-ink-100 text-sm">
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-ink-800">{r.title}</p>
+                        <p className="text-[11px] text-ink-400">
+                          {r.time} · {r.platform || '—'} · {CAL_CONTENT_LABELS[r.content_type] || r.content_type || '—'}
+                        </p>
+                      </div>
+                      <div className="text-xs text-ink-400 flex gap-3 flex-shrink-0">
+                        <span>👁 {r.views || 0}</span>
+                        <span>👍 {r.likes || 0}</span>
+                        <span>💬 {r.comments || 0}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <PageLoading />
+        )}
+      </Modal>
+    </Card>
+  )
+}
+
+/* ── 主题库（选题方向沉淀 + 标签筛选） ── */
+const PRIORITY_META = [
+  { value: 0, label: 'P0', desc: '本周必做', cls: 'bg-red-500 text-white' },
+  { value: 1, label: 'P1', desc: '近期重点', cls: 'bg-orange-500 text-white' },
+  { value: 2, label: 'P2', desc: '常规规划', cls: 'bg-sky-500 text-white' },
+  { value: 3, label: 'P3', desc: '灵感备选', cls: 'bg-gray-400 text-white' },
+]
+const TOPIC_CATEGORIES_FALLBACK = ['干货', '热点', '案例拆解', '教程', '观点', '清单', '其他']
+const EMPTY_TOPIC_FORM = { name: '', description: '', category: '', tags: '', goal: '', priority: 2 }
+
+function TopicsTab() {
+  const toast = useToast()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [tag, setTag] = useState('')
+  const [category, setCategory] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(null)
+  const [form, setForm] = useState(EMPTY_TOPIC_FORM)
+
+  const fetchTopics = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params = {}
+      if (tag) params.tag = tag
+      if (category) params.category = category
+      if (keyword.trim()) params.keyword = keyword.trim()
+      const res = await api.get('/api/strategy/topics', { params })
+      setData(res.data)
+      setError(null)
+    } catch (e) {
+      setError(e.message || '加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [tag, category, keyword])
+
+  useEffect(() => {
+    fetchTopics()
+  }, [fetchTopics])
+
+  const parseTags = (s) =>
+    (s || '')
+      .split(/[,，]/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+
+  const handleSave = async () => {
+    if (!form.name.trim()) {
+      toast.error('请填写主题名称')
+      return
+    }
+    setSaving(true)
+    const payload = { ...form, tags: parseTags(form.tags) }
+    try {
+      if (editing) {
+        await api.put(`/api/strategy/topics/${editing}`, payload)
+        toast.success('主题已更新')
+      } else {
+        await api.post('/api/strategy/topics', payload)
+        toast.success('主题已创建')
+      }
+      setOpen(false)
+      setEditing(null)
+      setForm(EMPTY_TOPIC_FORM)
+      fetchTopics()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    try {
+      await api.delete(`/api/strategy/topics/${deleting}`)
+      toast.success('主题已删除')
+      setDeleting(null)
+      fetchTopics()
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+
+  const categories = data?.categories || TOPIC_CATEGORIES_FALLBACK
+  const items = data?.items || []
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-300" />
+            <input
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="搜索主题名称 / 描述…"
+              className="w-full pl-9 pr-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+            />
+          </div>
+          <Button
+            variant="primary"
+            icon={Plus}
+            onClick={() => {
+              setEditing(null)
+              setForm(EMPTY_TOPIC_FORM)
+              setOpen(true)
+            }}
+          >
+            新建主题
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          <button
+            onClick={() => setCategory('')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              !category ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            全部分类
+          </button>
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(category === c ? '' : c)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                category === c ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        {(data?.tags || []).length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2 items-center">
+            <button
+              onClick={() => setTag('')}
+              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                !tag ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5" /> 全部标签
+            </button>
+            {data.tags.map((t) => (
+              <button
+                key={t.tag}
+                onClick={() => setTag(tag === t.tag ? '' : t.tag)}
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  tag === t.tag ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                #{t.tag}
+                <span className={tag === t.tag ? 'opacity-80' : 'text-ink-400'}>{t.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {loading ? (
+        <PageLoading />
+      ) : error ? (
+        <ErrorState message={error} onRetry={fetchTopics} />
+      ) : items.length === 0 ? (
+        <Empty
+          icon={BookMarked}
+          title={data?.total ? '没有匹配的主题' : '主题库还是空的'}
+          description={
+            data?.total ? '调整筛选条件，或清除标签 / 分类筛选' : '沉淀选题方向与内容素材，用标签高效筛选复用'
+          }
+        />
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {items.map((t) => {
+            const pm = PRIORITY_META.find((p) => p.value === t.priority) || PRIORITY_META[3]
+            return (
+              <div
+                key={t.id}
+                className="group bg-white rounded-2xl border border-ink-100 p-4 hover:shadow-soft hover:border-brand-200 transition-all"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold flex-shrink-0 ${pm.cls}`} title={pm.desc}>
+                      {pm.label}
+                    </span>
+                    <p className="font-medium text-ink-900 truncate">{t.name}</p>
+                  </div>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                    <button
+                      onClick={() => {
+                        setEditing(t.id)
+                        setForm({
+                          name: t.name,
+                          description: t.description || '',
+                          category: t.category || '',
+                          tags: (t.tags || []).join(', '),
+                          goal: t.goal || '',
+                          priority: t.priority ?? 2,
+                        })
+                        setOpen(true)
+                      }}
+                      className="p-1.5 rounded-lg text-ink-300 hover:text-brand-500 hover:bg-brand-50 transition-colors"
+                      title="编辑"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDeleting(t.id)}
+                      className="p-1.5 rounded-lg text-ink-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                {t.category && (
+                  <div className="mt-2">
+                    <Badge color="brand">{t.category}</Badge>
+                  </div>
+                )}
+                <p className="text-xs text-ink-400 mt-2 line-clamp-2 min-h-[32px]">{t.description || '暂无描述'}</p>
+                {(t.tags || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2.5">
+                    {t.tags.map((tg) => (
+                      <span
+                        key={tg}
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-600 border border-brand-100"
+                      >
+                        #{tg}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-ink-50">
+                  <span className="text-[11px] text-ink-500 truncate">{t.goal || '—'}</span>
+                  <span className="text-[11px] text-ink-300 flex-shrink-0">
+                    {t.created_at ? formatDateTime(t.created_at).slice(0, 10) : ''}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 新建 / 编辑主题 */}
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? '编辑主题' : '新建主题'} size="lg">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">主题名称 *</label>
+            <input
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="如：AI 工具提效实操"
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">分类</label>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setForm({ ...form, category: '' })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  !form.category ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                未分类
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setForm({ ...form, category: c })}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    form.category === c ? 'bg-brand-500 text-white shadow-soft' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">标签（逗号分隔）</label>
+            <input
+              value={form.tags}
+              onChange={(e) => setForm({ ...form, tags: e.target.value })}
+              placeholder="AI, 效率, 涨粉"
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">优先级</label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {PRIORITY_META.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setForm({ ...form, priority: p.value })}
+                  className={`px-2 py-2 rounded-xl text-xs font-medium transition-all border ${
+                    form.priority === p.value
+                      ? 'border-brand-400 bg-brand-50 text-brand-700 shadow-soft'
+                      : 'border-ink-100 bg-white text-ink-500 hover:border-brand-300'
+                  }`}
+                >
+                  <span className={`inline-block px-1.5 py-0.5 rounded-md font-bold ${p.cls}`}>{p.label}</span>
+                  <span className="block mt-1 text-[10px] text-ink-400">{p.desc}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">内容目标</label>
+            <input
+              value={form.goal}
+              onChange={(e) => setForm({ ...form, goal: e.target.value })}
+              placeholder="受众与转化目的，如：面向新媒体运营涨粉"
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">描述</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              rows={3}
+              placeholder="选题思路、素材方向…"
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button variant="primary" icon={editing ? Pencil : Plus} loading={saving} onClick={handleSave}>
+            {editing ? '保存修改' : '创建'}
+          </Button>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        title="删除主题？"
+        message="删除后该选题方向将不可恢复，请谨慎操作。"
+        confirmLabel="删除"
+        icon={Trash2}
+      />
+    </div>
   )
 }

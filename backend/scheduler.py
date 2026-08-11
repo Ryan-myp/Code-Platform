@@ -41,8 +41,21 @@ def _ensure_table():
                 enabled INTEGER DEFAULT 1,
                 last_run TEXT,
                 next_run TEXT,
+                last_status TEXT DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"""
+        )
+        # v15：执行历史（每次运行落库：状态/时间/输出/错误）
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS scheduler_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                output TEXT DEFAULT '',
+                error TEXT DEFAULT '',
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                finished_at TEXT
             )"""
         )
         conn.commit()
@@ -53,32 +66,167 @@ def _ensure_table():
 _ensure_table()
 
 
-def _parse_cron(expr: str):
-    """简易 cron 解析（支持 5 段：分 时 日 月 周），返回下次运行时间。"""
-    parts = expr.strip().split()
-    if len(parts) != 5:
+def _field_values(spec: str, lo: int, hi: int):
+    """cron 单字段展开为取值集合：`*` 全部 / `*/n` 步进 / `a-b` 范围 / `a,b,c` 枚举。
+
+    非法值返回 None（供调用方判定表达式非法）。
+    """
+    spec = (spec or "*").strip()
+    if not spec:
         return None
     try:
-        minute, hour, day, month, weekday = parts
-        now = datetime.now()
-        # 简化实现：检查当前时间是否匹配
-        if minute != "*" and now.minute != int(minute):
+        if spec == "*":
+            return set(range(lo, hi + 1))
+        if "/" in spec:
+            base, _, step = spec.partition("/")
+            step = int(step)
+            if step <= 0:
+                return None
+            start = lo if base in ("*", "") else min(_field_values(base, lo, hi) or {lo})
+            return set(range(start, hi + 1, step))
+        if "-" in spec:
+            a, _, b = spec.partition("-")
+            a, b = int(a), int(b)
+            if a < lo or b > hi or a > b:
+                return None
+            return set(range(a, b + 1))
+        if "," in spec:
+            vals = set()
+            for part in spec.split(","):
+                sub = _field_values(part, lo, hi)
+                if sub is None:
+                    return None
+                vals |= sub
+            return vals
+        v = int(spec)
+        if v < lo or v > hi:
             return None
-        if hour != "*" and now.hour != int(hour):
-            return None
-        if day != "*" and now.day != int(day):
-            return None
-        if month != "*" and now.month != int(month):
-            return None
-        if weekday != "*" and now.weekday() != int(weekday):
-            return None
-        return now.isoformat()
-    except (ValueError, IndexError):
+        return {v}
+    except (ValueError, TypeError):
         return None
+
+
+def _parse_cron(expr: str, now=None):
+    """cron 解析（5 段：分 时 日 月 周），计算**下一次**运行时间（精确到分钟）。
+
+    - 支持 `*` / `*/n` / `a-b` / `a,b` / 单值
+    - 找不到未来匹配点（如 2 月 30 日）返回 None
+    """
+    parts = (expr or "").strip().split()
+    if len(parts) != 5:
+        return None
+    minute, hour, day, month, weekday = parts
+    minutes = _field_values(minute, 0, 59)
+    hours = _field_values(hour, 0, 23)
+    days = _field_values(day, 1, 31)
+    months = _field_values(month, 1, 12)
+    # cron 约定：0/7=周日，1-6=周一..周六 → 映射为 Python weekday（0=周一..6=周日）
+    cron_weekdays = _field_values(weekday, 0, 7)
+    if None in (minutes, hours, days, months, cron_weekdays):
+        return None
+    if not (minutes and hours and days and months and cron_weekdays):
+        return None
+    weekdays = {6 if w in (0, 7) else w - 1 for w in cron_weekdays}
+
+    now = now or datetime.now()
+    cur = now.replace(second=0, microsecond=0)
+    # 从下一分钟开始向后找，最多 400 天（覆盖跨年/闰年）
+    from datetime import timedelta
+
+    for _ in range(400 * 24 * 60):
+        cur += timedelta(minutes=1)
+        if cur.month not in months or cur.day not in days:
+            continue
+        if cur.weekday() not in weekdays:
+            continue
+        if cur.hour not in hours or cur.minute not in minutes:
+            continue
+        return cur.isoformat()
+    return None
+
+
+def _record_run(job_id: int, status: str, output: str = "", error: str = ""):
+    """执行历史落库：新增一条运行记录，并回写 job 的 last_run/last_status。"""
+    now = datetime.now().isoformat()
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO scheduler_runs (job_id, status, output, error, started_at, finished_at) VALUES (?,?,?,?,?,?)",
+            (job_id, status, output[:2000], error[:1000], now, now),
+        )
+        conn.execute(
+            "UPDATE scheduler_jobs SET last_run=?, last_status=?, updated_at=? WHERE id=?",
+            (now, status, now, job_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _execute_job(job) -> tuple:
+    """真正执行定时任务体，按 job_type 分发。返回 (ok, output)。"""
+    job_type = (job.get("job_type") or "report").strip()
+    try:
+        if job_type == "notify":
+            # 站内信：user_id→username 转换后复用 notify_api 统一发送函数
+            from notify_api import send_inbox_message
+
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT username FROM users WHERE id=?", (str(job.get("user_id", 0)),)
+                ).fetchone()
+            finally:
+                conn.close()
+            username = row["username"] if row else "all"
+            send_inbox_message(username, f"定时任务：{job.get('name', '')}", "由定时任务引擎自动发送")
+            return True, "站内信已发送"
+        if job_type == "backup":
+            # 数据备份：复用 common.backup（失败不中断）
+            from common.backup import run_backup
+
+            out = run_backup()
+            return True, f"备份完成：{out if isinstance(out, str) else 'ok'}"
+        # 默认 report：生成调度运行统计摘要
+        conn = get_db()
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM scheduler_jobs").fetchone()[0]
+            runs = conn.execute("SELECT COUNT(*) FROM scheduler_runs WHERE status='success'").fetchone()[0]
+        finally:
+            conn.close()
+        return True, f"调度自检报告：共 {total} 个任务，历史成功 {runs} 次"
+    except Exception as e:
+        logger.exception("[Scheduler] 任务执行失败: %s", job.get("name"))
+        return False, str(e)
+
+
+def _run_with_retry(fn, max_attempts: int = 3, base_delay: float = 2.0):
+    """失败自动重试：最多 max_attempts 次，指数退避（2^n * base_delay 秒）。
+
+    返回 (ok, output)；全部失败时 output 为最后一次错误。
+    """
+    attempts = 0
+    last_err = ""
+    while attempts < max(max_attempts, 1):
+        attempts += 1
+        ok, out = fn()
+        if ok:
+            return True, out
+        last_err = out
+        if attempts < max(max_attempts, 1):
+            time.sleep(base_delay * (2 ** (attempts - 1)))
+    return False, f"重试 {attempts} 次仍失败：{last_err}"
+
+
+def _run_job(job) -> None:
+    """执行单个任务（带重试），并落库运行历史。"""
+    ok, out = _run_with_retry(lambda: _execute_job(job))
+    _record_run(job["id"], "success" if ok else "failed", output=out if ok else "", error="" if ok else out)
+    logger.info("[Scheduler] 任务 %s 执行%s: %s", job.get("name"), "成功" if ok else "失败", out)
 
 
 def _run_scheduler_loop():
-    """后台调度循环：每分钟检查一次待执行任务。"""
+    """后台调度循环：每 30 秒检查一次到期任务（next_run <= now 则执行并重算 next_run）。"""
     global _scheduler_running
     while _scheduler_running:
         try:
@@ -90,22 +238,33 @@ def _run_scheduler_loop():
 
             now = datetime.now()
             for job in jobs:
-                next_time = _parse_cron(job["cron_expression"])
-                if next_time:
-                    logger.info(f"[Scheduler] 执行任务: {job['name']} (id={job['id']})")
+                # 首次调度：无 next_run 时按 cron 计算
+                if not job["next_run"]:
+                    next_time = _parse_cron(job["cron_expression"])
                     conn = get_db()
                     try:
-                        conn.execute(
-                            "UPDATE scheduler_jobs SET last_run=?, updated_at=? WHERE id=?",
-                            (now.isoformat(), now.isoformat(), job["id"]),
-                        )
+                        conn.execute("UPDATE scheduler_jobs SET next_run=? WHERE id=?", (next_time, job["id"]))
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    continue
+                try:
+                    due = datetime.fromisoformat(job["next_run"]) <= now
+                except (ValueError, TypeError):
+                    due = False
+                if due:
+                    _run_job(dict(job))
+                    next_time = _parse_cron(job["cron_expression"])
+                    conn = get_db()
+                    try:
+                        conn.execute("UPDATE scheduler_jobs SET next_run=? WHERE id=?", (next_time, job["id"]))
                         conn.commit()
                     finally:
                         conn.close()
         except Exception as e:
             logger.error(f"[Scheduler] 调度循环异常: {e}")
 
-        time.sleep(60)
+        time.sleep(30)
 
 
 def start_scheduler():
@@ -148,18 +307,22 @@ def create_job(payload: dict, current_user: dict = Depends(require_auth)):
     """创建定时任务。
 
     请求体：{"name":"日报","job_type":"report","cron_expression":"0 9 * * *","description":"","config":{}}
+    创建时校验 cron 表达式并初始化首次调度时间。
     """
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "任务名称不能为空")
     cron = (payload.get("cron_expression") or "0 9 * * *").strip()
+    next_run = _parse_cron(cron)
+    if not next_run:
+        raise HTTPException(400, f"cron 表达式非法：{cron}（格式：分 时 日 月 周）")
     now = datetime.now().isoformat()
 
     conn = get_db()
     try:
         cur = conn.execute(
-            """INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, config, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, config, next_run, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 current_user["user_id"],
                 name,
@@ -167,13 +330,14 @@ def create_job(payload: dict, current_user: dict = Depends(require_auth)):
                 payload.get("job_type", "report"),
                 cron,
                 json.dumps(payload.get("config", {})),
+                next_run,
                 now,
                 now,
             ),
         )
         conn.commit()
         job_id = cur.lastrowid
-        return {"id": job_id, "name": name, "cron_expression": cron, "created_at": now, "message": "任务创建成功"}
+        return {"id": job_id, "name": name, "cron_expression": cron, "next_run": next_run, "created_at": now, "message": "任务创建成功"}
     finally:
         conn.close()
 
@@ -197,6 +361,14 @@ def update_job(job_id: int, payload: dict, current_user: dict = Depends(require_
                 if field == "config" and isinstance(val, dict):
                     val = json.dumps(val)
                 updates[field] = val
+        # cron 变更时重算 next_run；启用时若有 next_run 缺失也补算
+        if "cron_expression" in updates:
+            next_run = _parse_cron(updates["cron_expression"])
+            if not next_run:
+                raise HTTPException(400, f"cron 表达式非法：{updates['cron_expression']}")
+            updates["next_run"] = next_run
+        elif updates.get("enabled") == 1 and not job["next_run"]:
+            updates["next_run"] = _parse_cron(job["cron_expression"])
         if updates:
             updates["updated_at"] = datetime.now().isoformat()
             set_clause = ", ".join(f"{k}=?" for k in updates)
@@ -225,9 +397,29 @@ def delete_job(job_id: int, current_user: dict = Depends(require_auth)):
         conn.close()
 
 
+@router.get("/{job_id}/runs")
+def list_job_runs(job_id: int, current_user: dict = Depends(require_auth)):
+    """获取任务执行历史（最近 50 条：状态/起止时间/输出摘要/错误）。"""
+    conn = get_db()
+    try:
+        job = conn.execute(
+            "SELECT id FROM scheduler_jobs WHERE id=? AND user_id=?",
+            (job_id, current_user["user_id"]),
+        ).fetchone()
+        if not job:
+            raise HTTPException(404, "任务不存在")
+        rows = conn.execute(
+            "SELECT * FROM scheduler_runs WHERE job_id=? ORDER BY id DESC LIMIT 50",
+            (job_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 @router.post("/{job_id}/trigger")
 def trigger_job(job_id: int, current_user: dict = Depends(require_auth)):
-    """手动触发一次任务。"""
+    """手动触发一次任务：立即执行（带重试）并落库运行历史，返回真实结果。"""
     conn = get_db()
     try:
         job = conn.execute(
@@ -236,13 +428,24 @@ def trigger_job(job_id: int, current_user: dict = Depends(require_auth)):
         ).fetchone()
         if not job:
             raise HTTPException(404, "任务不存在")
-
-        now = datetime.now().isoformat()
-        conn.execute(
-            "UPDATE scheduler_jobs SET last_run=?, updated_at=? WHERE id=?",
-            (now, now, job_id),
-        )
-        conn.commit()
-        return {"message": f"任务「{job['name']}」已手动触发"}
+        job = dict(job)
     finally:
         conn.close()
+
+    _run_job(job)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM scheduler_runs WHERE job_id=? ORDER BY id DESC LIMIT 1",
+            (job_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    run = dict(row) if row else {}
+    ok = run.get("status") == "success"
+    return {
+        "message": f"任务「{job['name']}」执行{'成功' if ok else '失败'}",
+        "status": run.get("status", ""),
+        "output": run.get("output", ""),
+        "error": run.get("error", ""),
+    }

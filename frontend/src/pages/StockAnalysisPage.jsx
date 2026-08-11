@@ -22,6 +22,8 @@ import {
   Minus,
   Copy,
   Download,
+  ShieldAlert,
+  AlertTriangle,
 } from 'lucide-react'
 import {
   LineChart as RechartsLine,
@@ -136,23 +138,71 @@ export default function StockAnalysisPage() {
     }
   }
 
-  // AI 分析报告 → 复制 / 导出 / 分享
+  // 结构化报告：行情概览 + 技术指标 + 风险提示 + AI 分析（导出/复制/分享复用）
+  const buildReportMd = () => {
+    if (!stockData) return ''
+    const rm = stockData.risk_metrics || {}
+    const lines = [
+      '# 股票分析报告',
+      '',
+      `> 代码：${stockData.symbol} · ${stockData.name || ''} · 周期：${period}`,
+      `> 当前价格：$${stockData.current_price?.toFixed(2)} · 生成时间：${new Date().toLocaleString()}`,
+      '',
+      '## 行情概览',
+      '',
+      '| 指标 | 数值 |',
+      '|---|---|',
+      `| 开盘 | $${stockData.open?.toFixed(2)} |`,
+      `| 最高 | $${stockData.day_high?.toFixed(2)} |`,
+      `| 最低 | $${stockData.day_low?.toFixed(2)} |`,
+      `| 成交量 | ${formatNumber(stockData.volume)} |`,
+      `| 市值 | ${formatNumber(stockData.market_cap)} |`,
+      `| 市盈率 | ${stockData.pe_ratio?.toFixed(2) || 'N/A'} |`,
+      `| 52周最高 | $${stockData['52w_high']?.toFixed(2)} |`,
+      `| 52周最低 | $${stockData['52w_low']?.toFixed(2)} |`,
+      '',
+      '## 技术指标',
+      '',
+      `- RSI(14)：${stockData.indicators?.rsi?.toFixed(2) || 'N/A'}`,
+      `- MACD：${stockData.indicators?.macd?.toFixed(4) || 'N/A'}`,
+      `- 均线：MA5=${stockData.indicators?.ma5?.toFixed(2) || 'N/A'}，MA20=${stockData.indicators?.ma20?.toFixed(2) || 'N/A'}，MA60=${stockData.indicators?.ma60?.toFixed(2) || 'N/A'}`,
+      '',
+      '## 风险提示',
+      '',
+      `- 综合风险等级：${rm.risk_level || '-'}`,
+      `- 年化波动率：${rm.volatility_pct ?? '-'}%（${rm.volatility_level || '-'}）`,
+      `- 最大回撤：${rm.max_drawdown_pct ?? '-'}%（${rm.drawdown_peak_date || '-'} → ${rm.drawdown_trough_date || '-'}）`,
+      `- 日均成交量：${rm.avg_volume ? formatNumber(rm.avg_volume) : '-'}（流动性${rm.liquidity_level || '-'}）`,
+      '',
+    ]
+    ;(rm.warnings || []).forEach((w) => lines.push(`- ⚠️ ${w}`))
+    lines.push('')
+    if (analysis) {
+      lines.push('## AI 分析', '', analysis, '')
+    }
+    lines.push('---', '⚠️ 免责声明：本报告仅供参考，不构成任何投资建议。投资有风险，入市需谨慎。')
+    return lines.join('\n')
+  }
+
+  // AI 分析报告 → 导出 / 复制 / 分享
   const exportAnalysis = () => {
-    if (!analysis) return
-    const blob = new Blob([analysis], { type: 'text/markdown;charset=utf-8' })
+    const md = buildReportMd()
+    if (!md) return
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${symbol}_AI分析报告_${new Date().toISOString().slice(0, 10)}.md`
+    a.download = `${symbol}_分析报告_${new Date().toISOString().slice(0, 10)}.md`
     a.click()
     URL.revokeObjectURL(url)
     toast.success('分析报告已导出')
   }
 
   const copyAnalysis = async () => {
-    if (!analysis) return
+    const md = buildReportMd()
+    if (!md) return
     try {
-      await navigator.clipboard.writeText(analysis)
+      await navigator.clipboard.writeText(md)
       toast.success('报告已复制，可直接粘贴到文档/微信')
     } catch {
       toast.error('复制失败，请手动选择复制')
@@ -412,6 +462,99 @@ export default function StockAnalysisPage() {
               </Card>
             </div>
 
+            {/* 风险提示卡片 */}
+            {stockData.risk_metrics && (
+              <Card className="mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                    <ShieldAlert
+                      className={`w-4 h-4 ${
+                        stockData.risk_metrics.risk_level === '高'
+                          ? 'text-red-500'
+                          : stockData.risk_metrics.risk_level === '中'
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
+                      }`}
+                    />
+                    风险提示
+                  </h3>
+                  <Badge
+                    color={
+                      stockData.risk_metrics.risk_level === '高'
+                        ? 'red'
+                        : stockData.risk_metrics.risk_level === '中'
+                          ? 'amber'
+                          : 'green'
+                    }
+                  >
+                    综合风险：{stockData.risk_metrics.risk_level}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                  <div className="p-3 rounded-lg bg-gray-50">
+                    <div className="text-xs text-gray-500 mb-1">年化波动率</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xl font-bold text-gray-900">
+                        {stockData.risk_metrics.volatility_pct ?? '-'}%
+                      </span>
+                      <span
+                        className={`text-xs font-medium ${
+                          stockData.risk_metrics.volatility_level === '高'
+                            ? 'text-red-500'
+                            : stockData.risk_metrics.volatility_level === '中'
+                              ? 'text-amber-500'
+                              : 'text-emerald-500'
+                        }`}
+                      >
+                        {stockData.risk_metrics.volatility_level}波动
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50">
+                    <div className="text-xs text-gray-500 mb-1">最大回撤</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xl font-bold text-gray-900">
+                        {stockData.risk_metrics.max_drawdown_pct ?? '-'}%
+                      </span>
+                      <span
+                        className={`text-xs font-medium ${
+                          stockData.risk_metrics.max_drawdown_pct >= 20
+                            ? 'text-red-500'
+                            : stockData.risk_metrics.max_drawdown_pct >= 10
+                              ? 'text-amber-500'
+                              : 'text-emerald-500'
+                        }`}
+                      >
+                        {stockData.risk_metrics.drawdown_peak_date || ''} →{' '}
+                        {stockData.risk_metrics.drawdown_trough_date || ''}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-50">
+                    <div className="text-xs text-gray-500 mb-1">日均成交量（流动性）</div>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xl font-bold text-gray-900">
+                        {stockData.risk_metrics.avg_volume
+                          ? formatNumber(stockData.risk_metrics.avg_volume)
+                          : '-'}
+                      </span>
+                      <span className="text-xs font-medium text-gray-500">
+                        {stockData.risk_metrics.liquidity_level}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  {(stockData.risk_metrics.warnings || []).map((w, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm text-amber-800">
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                      {w}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
             {/* 图表 */}
             <Card className="mb-6">
               <h3 className="font-medium text-gray-900 mb-4">价格走势</h3>
@@ -475,7 +618,7 @@ export default function StockAnalysisPage() {
                     <Button variant="ghost" size="sm" icon={Download} onClick={exportAnalysis}>
                       导出
                     </Button>
-                    <ShareButton content={analysis} title={`${symbol} AI 股票分析报告`} contentType="stock_analysis" />
+                    <ShareButton content={buildReportMd()} title={`${symbol} AI 股票分析报告`} contentType="stock_analysis" />
                   </div>
                 </div>
                 <MarkdownRenderer content={analysis} />

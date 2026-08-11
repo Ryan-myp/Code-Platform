@@ -177,6 +177,113 @@ def parse_csv(filepath: str) -> dict:
     }
 
 
+# ── 预测区间规范化 / 模型选择说明（确定性纯函数）──
+
+
+_METHOD_EXPLANATIONS = {
+    "趋势外推": {
+        "适用场景": "数据呈稳定上升/下降趋势、无明显季节波动时，用历史趋势线性外推",
+        "优点": "实现简单，短期预测准确率较高",
+        "缺点": "对拐点和外部冲击不敏感，长期预测偏差可能扩大",
+    },
+    "移动平均": {
+        "适用场景": "数据波动较大、噪声明显时，通过平滑历史值降低噪声影响",
+        "优点": "对短期波动平滑效果好，抗噪声",
+        "缺点": "存在滞后性，难以捕捉趋势拐点",
+    },
+    "季节性分解": {
+        "适用场景": "数据存在明显的周/月/季周期性规律（如销售旺季、流量周期）",
+        "优点": "能分离趋势与季节成分，周期性预测更准",
+        "缺点": "需要足够长的历史周期数据支撑，数据不足时不可靠",
+    },
+}
+
+
+def build_method_explanation(method: str | None) -> dict:
+    """生成模型选择说明：当前方法的适用场景/优缺点 + 备选方法对比。"""
+    method = (method or "").strip()
+    info = _METHOD_EXPLANATIONS.get(method)
+    if not info:
+        info = {
+            "适用场景": "由 AI 结合数据特征综合判断（趋势外推/移动平均/季节性分解）",
+            "优点": "自动适配数据形态",
+            "缺点": "建议结合业务经验复核预测结果",
+        }
+    return {
+        "current": method or "AI 自动选择",
+        "info": info,
+        "alternatives": [
+            {"name": name, "适用场景": detail["适用场景"]}
+            for name, detail in _METHOD_EXPLANATIONS.items()
+            if name != method
+        ],
+    }
+
+
+def _num_or_none(value):
+    """尽力转 float，非数字返回 None（区间兜底用）。"""
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_forecast_ranges(result: dict | None) -> dict:
+    """规范化预测区间：确保 low ≤ value ≤ high，charts 上下界与 labels 对齐。
+
+    LLM 输出偶发区间倒置（low > high）、字段缺失或图表数组长度不一致，
+    这里做确定性兜底，保证前端区间带渲染不越界、不破图。
+    """
+    result = result or {}
+    predictions = result.get("predictions")
+    if isinstance(predictions, dict):
+        values = predictions.get("forecast_values")
+        if isinstance(values, list):
+            for item in values:
+                if not isinstance(item, dict):
+                    continue
+                v = _num_or_none(item.get("value"))
+                if v is None:
+                    continue
+                low = _num_or_none(item.get("low"))
+                high = _num_or_none(item.get("high"))
+                if low is None:
+                    low = v
+                if high is None:
+                    high = v
+                if low > high:
+                    low, high = high, low
+                item["value"] = v
+                item["low"] = low
+                item["high"] = high
+
+    charts = result.get("charts")
+    if isinstance(charts, dict):
+        labels = charts.get("labels")
+        if isinstance(labels, list) and labels:
+            n = len(labels)
+            upper = charts.get("upper_bound")
+            lower = charts.get("lower_bound")
+            if not isinstance(upper, list):
+                upper = []
+            if not isinstance(lower, list):
+                lower = []
+            norm_upper, norm_lower = [], []
+            for i in range(n):
+                u = _num_or_none(upper[i]) if i < len(upper) else None
+                l = _num_or_none(lower[i]) if i < len(lower) else None
+                if u is not None and l is not None and l > u:
+                    u, l = l, u
+                norm_upper.append(u)
+                norm_lower.append(l)
+            charts["upper_bound"] = norm_upper
+            charts["lower_bound"] = norm_lower
+
+    return result
+
+
 # ── API ──────────────────────────────────────────────────
 
 
@@ -273,6 +380,7 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
                 lines = raw.split("\n")
                 raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
             result = parse_llm_json(raw)
+            result = normalize_forecast_ranges(result)
             break
         except Exception as e:
             if attempt == 0:
@@ -300,6 +408,9 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
         "data_id": data_id,
         "filename": filename,
         **result,
+        "method_explanation": build_method_explanation(
+            (result.get("predictions") or {}).get("method")
+        ),
     }
 
 

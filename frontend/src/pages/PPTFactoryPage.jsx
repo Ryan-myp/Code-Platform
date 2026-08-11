@@ -45,6 +45,33 @@ const PPT_TYPES = [
   { value: 'review', label: '个人述职', icon: ClipboardList, color: 'teal' },
 ]
 
+const TEMPLATE_STYLES = [
+  {
+    value: 'business',
+    label: '商务汇报',
+    desc: '工作汇报/项目提案',
+    color: 'bg-indigo-500',
+  },
+  {
+    value: 'roadshow',
+    label: '融资路演',
+    desc: '投资人/产品发布',
+    color: 'bg-rose-600',
+  },
+  {
+    value: 'teaching',
+    label: '教学课件',
+    desc: '培训/课堂课件',
+    color: 'bg-emerald-600',
+  },
+  {
+    value: 'marketing',
+    label: '营销方案',
+    desc: '策划/活动方案',
+    color: 'bg-pink-600',
+  },
+]
+
 const AUDIENCES = [
   { value: 'executive', label: '高管/决策层' },
   { value: 'client', label: '客户/合作伙伴' },
@@ -160,14 +187,16 @@ export default function PPTFactoryPage() {
     audience: 'executive',
     scale: 'standard',
     theme: 'business_blue',
+    template: 'business',
   })
-  const { title, outline, pptType, audience, scale, theme } = inputs
+  const { title, outline, pptType, audience, scale, theme, template } = inputs
   const setTitle = (v) => setInputs((p) => ({ ...p, title: v ?? '' }))
   const setOutline = (v) => setInputs((p) => ({ ...p, outline: v ?? '' }))
   const setPptType = (v) => setInputs((p) => ({ ...p, pptType: v }))
   const setAudience = (v) => setInputs((p) => ({ ...p, audience: v }))
   const setScale = (v) => setInputs((p) => ({ ...p, scale: v }))
   const setTheme = (v) => setInputs((p) => ({ ...p, theme: v }))
+  const setTemplate = (v) => setInputs((p) => ({ ...p, template: v }))
     const [pptxUrl, setPptxUrl] = useState('')
     const [downloading, setDownloading] = useState(false)
   const [task, setTask] = useState(null)
@@ -220,6 +249,7 @@ export default function PPTFactoryPage() {
       {
         title: `${title}（类型:${typeLabel}, 受众:${audienceLabel}, 规模:${scaleDesc}, 风格:${themeLabel}）`,
         outline: fullOutline,
+        template,
       },
       {
         onUpdate: (t) => setTask(t),
@@ -479,6 +509,31 @@ export default function PPTFactoryPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+              {/* 模板风格（PPTX 主题色板 + 结构原则） */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                  模板风格（PPTX 主题色板 + 结构原则）
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {TEMPLATE_STYLES.map((t) => (
+                    <button
+                      key={t.value}
+                      onClick={() => setTemplate(t.value)}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border transition-all text-left ${
+                        template === t.value
+                          ? 'border-orange-400 bg-orange-50'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <span className={`w-2.5 h-2.5 rounded-full ${t.color} flex-shrink-0`} />
+                      <span>
+                        <span className="block font-medium text-gray-800">{t.label}</span>
+                        <span className="block text-[10px] text-gray-400">{t.desc}</span>
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
               {/* 设计主题 */}

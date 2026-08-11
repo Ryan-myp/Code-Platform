@@ -18,6 +18,7 @@ import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
+import { ErrorState } from '../components/ui'
 
 /**
  * 统一记录中心：工具使用记录 + 分享记录。
@@ -27,16 +28,19 @@ export default function RecordsPage() {
   const [tab, setTab] = useState('tools') // tools | shares
   const [records, setRecords] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [expanded, setExpanded] = useState(null)
   const [shareStats, setShareStats] = useState(null)
   const [shareStatsLoaded, setShareStatsLoaded] = useState(false)
 
   const load = async () => {
     setLoading(true)
+    setLoadError('')
     try {
       const res = await api.get('/api/records')
       setRecords(res.data)
     } catch (err) {
+      setLoadError(err.message || '加载记录失败')
       toast.error(err.message || '加载记录失败')
     } finally {
       setLoading(false)
@@ -72,6 +76,14 @@ export default function RecordsPage() {
       <div className="flex items-center justify-center h-64 text-ink-400">
         <Loader2 className="w-6 h-6 animate-spin mr-2" />
         加载记录…
+      </div>
+    )
+  }
+
+  if (loadError && !records) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <ErrorState message={loadError} onRetry={load} />
       </div>
     )
   }

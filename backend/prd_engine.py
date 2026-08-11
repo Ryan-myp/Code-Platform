@@ -744,7 +744,16 @@ async def save_config(req: dict):
 
 
 @router.get("/api/usage-stats")
-async def usage_stats(request: Request):
+async def usage_stats(
+    request: Request,
+    days: int = 7,
+    module: str = "",
+    user: str = "",
+):
+    """使用统计（v15 参数化）：趋势区间 days（7/30/90）+ 按模块/按用户筛选。
+
+    筛选同时作用于总览卡片与趋势；模块分布不受 module 筛选影响（否则只剩一个模块）。
+    """
     # 可选：从 Authorization 头解析当前用户，返回会员等级与今日剩余额度（未登录则返回 free）
     member_level, remaining_today = "free", None
     auth_header = request.headers.get("Authorization", "")
@@ -758,30 +767,51 @@ async def usage_stats(request: Request):
                 remaining_today = profile.get("remaining_today")
         except Exception:
             pass
+    days = min(max(int(days), 1), 90)
+    module = (module or "").strip()
+    user = (user or "").strip()
+    where, params = "", []
+    if module:
+        where += " AND task_type=?"
+        params.append(module)
+    if user:
+        where += " AND user_id=?"
+        params.append(user)
     conn = get_db()
-    total = conn.execute("SELECT COUNT(*) c FROM usage_logs").fetchone()["c"]
-    success = conn.execute("SELECT COUNT(*) c FROM usage_logs WHERE success=1").fetchone()["c"]
-    avg_time = conn.execute("SELECT AVG(response_time) a FROM usage_logs").fetchone()["a"]
+    total = conn.execute(f"SELECT COUNT(*) c FROM usage_logs WHERE 1=1{where}", params).fetchone()["c"]
+    success = conn.execute(f"SELECT COUNT(*) c FROM usage_logs WHERE 1=1{where} AND success=1", params).fetchone()["c"]
+    avg_time = conn.execute(f"SELECT AVG(response_time) a FROM usage_logs WHERE 1=1{where}", params).fetchone()["a"]
     by_type = conn.execute(
-        "SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs GROUP BY task_type"
+        f"SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs WHERE 1=1{where} GROUP BY task_type"
+        , params
     ).fetchall()
-    recent = conn.execute("SELECT * FROM usage_logs ORDER BY timestamp DESC LIMIT 10").fetchall()
-    # 近7天每日趋势（date → 调用次数 + token 消耗）
+    recent = conn.execute(
+        f"SELECT * FROM usage_logs WHERE 1=1{where} ORDER BY timestamp DESC LIMIT 10", params
+    ).fetchall()
+    # 趋势区间：days 天窗口（按日聚合调用次数 + token 消耗）
     daily = conn.execute(
-        "SELECT substr(timestamp,1,10) d, COUNT(*) c, SUM(input_length + output_length) tokens "
-        "FROM usage_logs WHERE timestamp >= datetime('now', '-7 days') GROUP BY d ORDER BY d"
+        f"SELECT substr(timestamp,1,10) d, COUNT(*) c, SUM(input_length + output_length) tokens "
+        f"FROM usage_logs WHERE timestamp >= datetime('now', ?) AND 1=1{where} GROUP BY d ORDER BY d",
+        [f"-{days} days"] + params,
     ).fetchall()
-    # 模块分布（按任务类型聚合）
-    module = conn.execute(
-        "SELECT task_type module, COUNT(*) c FROM usage_logs GROUP BY task_type ORDER BY c DESC"
+    # 模块分布（只受 user 筛选影响，展示全部模块占比）
+    dist_where, dist_params = "", []
+    if user:
+        dist_where += " AND user_id=?"
+        dist_params.append(user)
+    module_agg = conn.execute(
+        f"SELECT task_type module, COUNT(*) c FROM usage_logs WHERE 1=1{dist_where} GROUP BY task_type ORDER BY c DESC",
+        dist_params,
     ).fetchall()
     # 今日统计
     today = conn.execute(
-        "SELECT COUNT(*) c, COALESCE(SUM(input_length + output_length), 0) tokens FROM usage_logs WHERE substr(timestamp,1,10) = substr(date('now'),1,10)"
+        f"SELECT COUNT(*) c, COALESCE(SUM(input_length + output_length), 0) tokens FROM usage_logs "
+        f"WHERE substr(timestamp,1,10) = substr(date('now'),1,10) AND 1=1{where}",
+        params,
     ).fetchone()
-    total_tokens = conn.execute("SELECT COALESCE(SUM(input_length + output_length), 0) t FROM usage_logs").fetchone()[
-        "t"
-    ]
+    total_tokens = conn.execute(
+        f"SELECT COALESCE(SUM(input_length + output_length), 0) t FROM usage_logs WHERE 1=1{where}", params
+    ).fetchone()["t"]
     conn.close()
     return {
         "total_calls": total,
@@ -790,14 +820,35 @@ async def usage_stats(request: Request):
         "by_type": [dict(r) for r in by_type],
         "recent": [dict(r) for r in recent],
         "daily_breakdown": [{"date": r["d"], "count": r["c"], "tokens": r["tokens"] or 0} for r in daily],
-        "module_breakdown": [{"module": r["module"], "count": r["c"]} for r in module],
+        "module_breakdown": [{"module": r["module"], "count": r["c"]} for r in module_agg],
         "total_tokens": total_tokens,
         "today_calls": today["c"],
         "today_tokens": today["tokens"],
-        "most_used": module[0]["module"] if module else "无",
+        "most_used": module_agg[0]["module"] if module_agg else "无",
         "member_level": member_level,
         "remaining_today": remaining_today,
     }
+
+
+@router.get("/api/usage-stats/users")
+async def usage_stats_users(current_user: dict = Depends(require_auth)):
+    """用量分析可选用户列表：usage_logs 中有埋点 user_id 的去重（附用户名）。"""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT DISTINCT user_id FROM usage_logs WHERE user_id != '' ORDER BY user_id"
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return []
+    ids = [r["user_id"] for r in rows]
+    ph = ",".join("?" * len(ids))
+    conn = get_db()
+    try:
+        users = conn.execute(f"SELECT id, username FROM users WHERE id IN ({ph})", ids).fetchall()
+    finally:
+        conn.close()
+    um = {r["id"]: r["username"] for r in users}
+    return [{"id": u, "username": um.get(u, u)} for u in ids]
 
 
 @router.get("/api/usage-stats/export")

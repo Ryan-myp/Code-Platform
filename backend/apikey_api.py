@@ -9,7 +9,7 @@
 import hashlib
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -26,7 +26,31 @@ router = APIRouter(prefix="/api", tags=["API密钥"])
 
 class ApiKeyCreateRequest(BaseModel):
     label: str = Field("", max_length=100, description="备注标签（可选）")
+    expire_days: int = Field(0, ge=0, le=3650, description="有效期天数（0=永不过期）")
 
+
+# 可用有效期档位（前端下拉展示）
+EXPIRE_PRESETS = [
+    {"days": 0, "label": "永不过期"},
+    {"days": 7, "label": "7 天"},
+    {"days": 30, "label": "30 天"},
+    {"days": 90, "label": "90 天"},
+    {"days": 365, "label": "1 年"},
+]
+
+
+def _calc_expires_at(expire_days: int) -> str:
+    """按有效天数计算过期时间（0=永不过期返回空串）。"""
+    if not expire_days:
+        return ""
+    return (datetime.now() + timedelta(days=expire_days)).isoformat()
+
+
+def _key_status(expires_at: str) -> str:
+    """密钥状态：expired=已过期 / active=生效中（永不过期也视为 active）。"""
+    if expires_at and expires_at <= datetime.now().isoformat():
+        return "expired"
+    return "active"
 
 # ── API文档定义 ─────────────────────────────────────────────
 # 注意：web_search.py/batch_api.py/favorites_api.py 的 init_db() 已初始化 api_keys 表
@@ -90,10 +114,11 @@ async def create_api_key(req: ApiKeyCreateRequest, current_user: dict = require_
     key_prefix = raw_key[:12]
 
     kid = f"apikey_{int(datetime.now().timestamp() * 1000)}"
+    expires_at = _calc_expires_at(req.expire_days)
     with get_db_context() as conn:
         conn.execute(
-            "INSERT INTO api_keys (id, user_id, key_hash, key_prefix, label, created_at) VALUES (?,?,?,?,?,?)",
-            (kid, user_id, key_hash, key_prefix, req.label or "", datetime.now().isoformat()),
+            "INSERT INTO api_keys (id, user_id, key_hash, key_prefix, label, created_at, expires_at) VALUES (?,?,?,?,?,?,?)",
+            (kid, user_id, key_hash, key_prefix, req.label or "", datetime.now().isoformat(), expires_at),
         )
 
     return {
@@ -101,21 +126,113 @@ async def create_api_key(req: ApiKeyCreateRequest, current_user: dict = require_
         "api_key": raw_key,
         "prefix": key_prefix,
         "label": req.label,
+        "expire_days": req.expire_days,
+        "expires_at": expires_at,
         "message": "API Key 创建成功！请立即复制保存，后续无法再次查看完整Key。",
     }
 
 
 @router.get("/api-keys")
 async def list_api_keys(current_user: dict = require_auth()):
-    """列出我的API Keys。"""
+    """列出我的API Keys（含过期时间 / 状态 / 累计用量统计）。"""
     user_id = current_user.get("user_id")
     with get_db_context() as conn:
         rows = conn.execute(
-            "SELECT id, key_prefix, label, last_used, created_at FROM api_keys WHERE user_id=? ORDER BY created_at DESC",
+            "SELECT id, key_prefix, label, last_used, expires_at, created_at FROM api_keys WHERE user_id=? ORDER BY created_at DESC",
             (user_id,),
         ).fetchall()
+        key_ids = [r["id"] for r in rows]
+        # 单次聚合所有 Key 的用量（与 /api-keys/usage 口径一致）
+        usage_map = {}
+        if key_ids:
+            ph = ",".join("?" * len(key_ids))
+            for r in conn.execute(
+                f"""SELECT api_key, COUNT(*) requests, SUM(success) ok,
+                            SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) err,
+                            COALESCE(SUM(input_length+output_length),0) tokens
+                    FROM usage_logs WHERE api_key IN ({ph}) AND api_key != ''
+                    GROUP BY api_key""",
+                key_ids,
+            ).fetchall():
+                usage_map[r["api_key"]] = {
+                    "requests": r["requests"],
+                    "ok": r["ok"],
+                    "err": r["err"],
+                    "tokens": r["tokens"],
+                }
 
-    return [{"id": r[0], "prefix": r[1], "label": r[2], "last_used": r[3], "created_at": r[4]} for r in rows]
+    result = []
+    for r in rows:
+        result.append(
+            {
+                "id": r["id"],
+                "prefix": r["key_prefix"],
+                "label": r["label"],
+                "last_used": r["last_used"],
+                "created_at": r["created_at"],
+                "expires_at": r["expires_at"],
+                "status": _key_status(r["expires_at"] or ""),
+                "usage": usage_map.get(r["id"], {"requests": 0, "ok": 0, "err": 0, "tokens": 0}),
+            }
+        )
+    return result
+
+
+@router.get("/api-keys/usage")
+async def api_key_usage(current_user: dict = require_auth()):
+    """API Key 使用报表：按天聚合请求数/成功数/错误数/LLM token 消耗（v13.23）。
+
+    数据来自 openai_gateway 调用时写入 usage_logs 的 api_key 标记。
+    """
+    user_id = current_user.get("user_id")
+    with get_db_context() as conn:
+        key_rows = conn.execute(
+            "SELECT id, key_prefix, label, last_used FROM api_keys WHERE user_id=?", (user_id,)
+        ).fetchall()
+        key_ids = [r["id"] for r in key_rows]
+        if not key_ids:
+            return {"daily": [], "per_key": [], "total": {"requests": 0, "ok": 0, "err": 0, "tokens": 0}}
+        ph = ",".join("?" * len(key_ids))
+        daily = conn.execute(
+            f"""SELECT substr(timestamp,1,10) day, COUNT(*) requests,
+                        SUM(success) ok, SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) err,
+                        COALESCE(SUM(input_length+output_length),0) tokens
+                FROM usage_logs WHERE api_key IN ({ph}) AND api_key != ''
+                GROUP BY day ORDER BY day DESC LIMIT 30""",
+            key_ids,
+        ).fetchall()
+        per_key = conn.execute(
+            f"""SELECT api_key, COUNT(*) requests, SUM(success) ok,
+                        SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) err,
+                        COALESCE(SUM(input_length+output_length),0) tokens
+                FROM usage_logs WHERE api_key IN ({ph}) AND api_key != ''
+                GROUP BY api_key ORDER BY requests DESC""",
+            key_ids,
+        ).fetchall()
+        total = conn.execute(
+            f"""SELECT COUNT(*) requests, COALESCE(SUM(success),0) ok,
+                        COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0) err,
+                        COALESCE(SUM(input_length+output_length),0) tokens
+                FROM usage_logs WHERE api_key IN ({ph}) AND api_key != ''""",
+            key_ids,
+        ).fetchone()
+    key_meta = {r["id"]: dict(r) for r in key_rows}
+    return {
+        "daily": [dict(r) for r in daily],
+        "per_key": [
+            {
+                "id": r["api_key"],
+                "prefix": key_meta.get(r["api_key"], {}).get("key_prefix", ""),
+                "label": key_meta.get(r["api_key"], {}).get("label", ""),
+                "requests": r["requests"],
+                "ok": r["ok"],
+                "err": r["err"],
+                "tokens": r["tokens"],
+            }
+            for r in per_key
+        ],
+        "total": dict(total) if total else {"requests": 0, "ok": 0, "err": 0, "tokens": 0},
+    }
 
 
 @router.delete("/api-keys/{key_id}")

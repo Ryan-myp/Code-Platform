@@ -15,6 +15,7 @@ import {
   Flame,
   Clock3,
   Copy,
+  Play,
 } from 'lucide-react'
 import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -86,7 +87,34 @@ function WorkCard({ work, onLike, onComment, onPreview }) {
             </div>
           ))}
         {work.type === 'video' && (
-          <video src={mediaUrl} controls className="w-full max-h-80 bg-black" preload="metadata" />
+          <div className="relative w-full aspect-video bg-gradient-to-br from-gray-800 to-gray-900 group/video">
+            {work.thumbnail ? (
+              <img
+                src={mediaFull(work.thumbnail)}
+                alt={work.prompt?.slice(0, 50) || '视频作品'}
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                <Film className="w-10 h-10 mb-2" />
+                <span className="text-xs px-4 text-center">
+                  {work.prompt?.slice(0, 30) || '视频作品'}
+                </span>
+              </div>
+            )}
+            {/* 播放按钮浮层：点击卡片播放，无需先进入详情 */}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover/video:bg-black/40 transition-colors">
+              <span className="w-12 h-12 rounded-full bg-white/90 flex items-center justify-center shadow-lg group-hover/video:scale-110 transition-transform">
+                <Play className="w-5 h-5 text-gray-900 ml-0.5 fill-gray-900" />
+              </span>
+            </div>
+            {work.duration > 0 && (
+              <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px]">
+                {work.duration.toFixed(1)}s
+              </span>
+            )}
+          </div>
         )}
         {work.type === 'audio' && (
           <div className="w-full h-36 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-sky-50 to-indigo-100">

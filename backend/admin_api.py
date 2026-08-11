@@ -16,7 +16,11 @@ from common.db import get_db
 from permissions import (
     PAGES,
     VISIBLE_TO_VALUES,
+    build_permission_matrix,
     get_all_visibility,
+    get_visibility_map,
+    load_user_ctx,
+    matrix_summary,
     set_visibility,
 )
 
@@ -215,6 +219,69 @@ async def admin_set_visibility(
         raise HTTPException(400, "无效的可见范围")
     set_visibility(req.resource_type, req.resource_id, req.visible_to)
     return {"message": "可见范围已更新", "resource_type": req.resource_type, "resource_id": req.resource_id}
+
+
+@router.get("/permissions/matrix")
+async def admin_permission_matrix(
+    type: str = "page",
+    user_id: str = "",
+    current_user: dict = require_auth(),
+):
+    """角色-权限矩阵（v15）：查看指定用户视角下各资源的可见状态与权限来源。
+
+    - type: page（独立页面）/ tool（效率工具）
+    - user_id: 可选，不传则按当前管理员视角；传了则模拟该用户（用于排查会员权益）
+    每项标注 source：role=管理员角色 / membership=会员等级 / config=后台配置 / default=默认公开
+    """
+    _check_admin(current_user)
+    if type not in ("tool", "page"):
+        raise HTTPException(400, "type 仅支持 tool / page")
+
+    conn = get_db()
+    try:
+        if user_id:
+            row = conn.execute("SELECT id, role, membership, membership_expires FROM users WHERE id=?", (user_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "用户不存在")
+            user_ctx = {
+                "user_id": row["id"],
+                "role": row["role"] or "viewer",
+                "membership": row["membership"] or "free",
+            }
+            # 会员过期降级（与 load_user_ctx 一致）
+            exp = row["membership_expires"]
+            if user_ctx["membership"] != "free" and exp and exp <= datetime.now().isoformat():
+                user_ctx["membership"] = "free"
+        else:
+            user_ctx = load_user_ctx(current_user)
+    finally:
+        conn.close()
+
+    if type == "page":
+        resources = PAGES
+    else:
+        try:
+            from tool_hub import TOOL_DEFINITIONS
+
+            resources = [{"id": t.get("id", tid), "label": t.get("name", tid), "category": t.get("category", "")} for tid, t in TOOL_DEFINITIONS.items()]
+        except Exception:
+            resources = []
+
+    vis_map = get_visibility_map(type)
+    items = build_permission_matrix(user_ctx, resources, vis_map)
+    return {
+        "user": user_ctx,
+        "type": type,
+        "items": items,
+        "summary": matrix_summary(items),
+        "legend": {
+            "role": "管理员角色：全量放行",
+            "membership": "会员等级：pro/vip 权益或锁定引导",
+            "config": "后台显式配置的可见范围",
+            "default": "未配置，默认公开",
+            "hidden": "全站下线 / admin 专属",
+        },
+    }
 
 
 @router.get("/top-tools")

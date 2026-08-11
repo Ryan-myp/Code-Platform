@@ -22,6 +22,7 @@ import {
   ListOrdered,
   BookMarked,
   Plus,
+  Download,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -103,13 +104,15 @@ export default function TranslationPage() {
     targetLang: 'English',
     domain: 'general',
     style: 'free',
+    useGlossary: true,
   })
-  const { text, sourceLang, targetLang, domain, style } = inputs
+  const { text, sourceLang, targetLang, domain, style, useGlossary } = inputs
   const setText = (v) => setInputs((p) => ({ ...p, text: v ?? '' }))
   const setSourceLang = (v) => setInputs((p) => ({ ...p, sourceLang: v }))
   const setTargetLang = (v) => setInputs((p) => ({ ...p, targetLang: v }))
   const setDomain = (v) => setInputs((p) => ({ ...p, domain: v }))
   const setStyle = (v) => setInputs((p) => ({ ...p, style: v }))
+  const setUseGlossary = (v) => setInputs((p) => ({ ...p, useGlossary: v }))
   const [result, setResult] = useState('')
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
@@ -128,11 +131,84 @@ export default function TranslationPage() {
   })
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyError, setHistoryError] = useState(null)
+  const [glossary, setGlossary] = useState([])
+  const [glossarySource, setGlossarySource] = useState('')
+  const [glossaryTarget, setGlossaryTarget] = useState('')
+  const [exporting, setExporting] = useState('')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
     loadHistory()
+    loadGlossary()
   }, [])
+  const loadGlossary = async () => {
+    try {
+      const res = await api.get('/api/translation/glossary')
+      setGlossary(res.data || [])
+    } catch {
+      /* 未登录或异常时静默 */
+    }
+  }
+  const addGlossary = async () => {
+    const source = glossarySource.trim()
+    const target = glossaryTarget.trim()
+    if (!source || !target) {
+      toast.error('请输入术语原文与指定译文')
+      return
+    }
+    try {
+      await api.post('/api/translation/glossary', { source_term: source, target_term: target })
+      setGlossarySource('')
+      setGlossaryTarget('')
+      loadGlossary()
+      toast.success('已添加术语')
+    } catch (e) {
+      toast.error(e.message)
+    }
+  }
+  const deleteGlossary = async (id, e) => {
+    e.stopPropagation()
+    try {
+      await api.delete(`/api/translation/glossary/${id}`)
+      setGlossary((g) => g.filter((x) => x.id !== id))
+      toast.success('已删除术语')
+    } catch {
+      /* 静默失败 */
+    }
+  }
+  const exportBilingual = async (fmt) => {
+    const source = batchMode
+      ? batchResults.map((r) => r.original).join('\n')
+      : fileContent || text
+    const translation = batchMode
+      ? batchResults.map((r) => r.translated).join('\n')
+      : result
+    if (!source.trim() || !translation.trim()) {
+      toast.error('没有可导出的翻译结果')
+      return
+    }
+    setExporting(fmt)
+    try {
+      const res = await api.post(
+        '/api/translation/export',
+        { source, translation, format: fmt },
+        { responseType: 'blob' }
+      )
+      const blobUrl = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = `双语对照_${new Date().toISOString().slice(0, 10)}.${fmt}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 3000)
+      toast.success(`已导出双语对照 ${fmt.toUpperCase()}`)
+    } catch (e) {
+      toast.error(e.message || '导出失败')
+    } finally {
+      setExporting('')
+    }
+  }
   const loadHistory = async () => {
     setHistoryLoading(true)
     setHistoryError(null)
@@ -165,6 +241,7 @@ export default function TranslationPage() {
         source_lang: sourceLang,
         target_lang: targetLang,
         text: `${buildSystemPrompt()}\n\n${finalText}`,
+        use_glossary: useGlossary,
       },
       {
         onUpdate: (t) => setTask(t),
@@ -284,6 +361,7 @@ export default function TranslationPage() {
             source_lang: sourceLang,
             target_lang: targetLang,
             text: `${buildSystemPrompt()}\n\n${validTexts[i]}`,
+            use_glossary: useGlossary,
           },
           {
             onUpdate: (t) => setTask({ ...t, batchIndex: i + 1, batchTotal: validTexts.length }),
@@ -456,6 +534,19 @@ export default function TranslationPage() {
                   </button>
                 ))}
               </div>
+            </div>
+            {/* 术语表开关 */}
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useGlossary}
+                  onChange={(e) => setUseGlossary(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-xs font-medium text-gray-600">应用我的术语表</span>
+              </label>
+              <span className="text-[10px] text-gray-400">最多50条 · 最高优先级</span>
             </div>
           </Card>
 
@@ -631,7 +722,27 @@ export default function TranslationPage() {
                 {batchMode ? '批量翻译结果' : '翻译结果'}
               </h3>
               {(result || batchResults.length > 0) && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={Download}
+                    loading={exporting === 'md'}
+                    onClick={() => exportBilingual('md')}
+                    title="双语对照导出 Markdown"
+                  >
+                    对照MD
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={FileText}
+                    loading={exporting === 'docx'}
+                    onClick={() => exportBilingual('docx')}
+                    title="双语对照导出 Word"
+                  >
+                    对照Word
+                  </Button>
                   <ExportButton
                     content={
                       result ||
@@ -676,29 +787,86 @@ export default function TranslationPage() {
             )}
           </Card>
 
-          {/* 常用术语表 */}
+          {/* 我的术语表（v15：用户自定义，翻译时强制应用） */}
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <BookMarked className="w-4 h-4 text-blue-500" /> 常用术语参考
+              <BookMarked className="w-4 h-4 text-blue-500" /> 我的术语表
+              <span className="text-[10px] font-normal text-gray-400 ml-auto">
+                {glossary.length}/50 条 · 强制应用
+              </span>
             </h3>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-              {[
-                { zh: '人工智能', en: 'Artificial Intelligence (AI)' },
-                { zh: '机器学习', en: 'Machine Learning' },
-                { zh: '深度学习', en: 'Deep Learning' },
-                { zh: '自然语言处理', en: 'Natural Language Processing (NLP)' },
-                { zh: '大数据', en: 'Big Data' },
-                { zh: '云计算', en: 'Cloud Computing' },
-                { zh: '区块链', en: 'Blockchain' },
-                { zh: '物联网', en: 'Internet of Things (IoT)' },
-              ].map((term, i) => (
-                <div key={i} className="flex items-center gap-1 py-1 border-b border-gray-100">
-                  <span className="text-gray-700 font-medium">{term.zh}</span>
-                  <span className="text-gray-400">→</span>
-                  <span className="text-blue-600">{term.en}</span>
-                </div>
-              ))}
+            {/* 添加表单 */}
+            <div className="flex gap-2 mb-3">
+              <input
+                value={glossarySource}
+                onChange={(e) => setGlossarySource(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addGlossary()}
+                placeholder="术语原文，如：大模型"
+                className="flex-1 min-w-0 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+              <input
+                value={glossaryTarget}
+                onChange={(e) => setGlossaryTarget(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addGlossary()}
+                placeholder="指定译文，如：LLM"
+                className="flex-1 min-w-0 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+              <Button variant="primary" size="sm" icon={Plus} onClick={addGlossary}>
+                添加
+              </Button>
             </div>
+            {glossary.length > 0 ? (
+              <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                {glossary.map((g) => (
+                  <div
+                    key={g.id}
+                    className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-xs text-gray-700 font-medium">{g.source_term}</span>
+                    <span className="text-gray-400 text-xs">→</span>
+                    <span className="text-xs text-blue-600 flex-1 truncate">{g.target_term}</span>
+                    <button
+                      onClick={(e) => deleteGlossary(g.id, e)}
+                      className="p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors"
+                      title="删除术语"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty
+                icon={BookMarked}
+                title="还没有自定义术语"
+                description="添加专属术语，翻译时将自动强制应用"
+                className="py-6"
+              />
+            )}
+            {/* 内置常用术语参考 */}
+            <details className="mt-3 pt-3 border-t border-gray-100">
+              <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600 select-none">
+                内置常用术语参考（8条）
+              </summary>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs mt-2">
+                {[
+                  { zh: '人工智能', en: 'Artificial Intelligence (AI)' },
+                  { zh: '机器学习', en: 'Machine Learning' },
+                  { zh: '深度学习', en: 'Deep Learning' },
+                  { zh: '自然语言处理', en: 'Natural Language Processing (NLP)' },
+                  { zh: '大数据', en: 'Big Data' },
+                  { zh: '云计算', en: 'Cloud Computing' },
+                  { zh: '区块链', en: 'Blockchain' },
+                  { zh: '物联网', en: 'Internet of Things (IoT)' },
+                ].map((term, i) => (
+                  <div key={i} className="flex items-center gap-1 py-1 border-b border-gray-100">
+                    <span className="text-gray-700 font-medium">{term.zh}</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="text-blue-600">{term.en}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
           </Card>
         </div>
       </div>

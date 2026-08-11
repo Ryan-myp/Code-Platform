@@ -20,6 +20,7 @@ import {
   Star,
   Tag,
   RefreshCw,
+  Globe,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
@@ -56,6 +57,17 @@ const LENGTHS = [
   { value: 'short', label: '短文案', desc: '100-200字' },
   { value: 'medium', label: '标准', desc: '300-500字' },
   { value: 'long', label: '长文', desc: '800-1500字' },
+]
+
+// v15：平台适配参数（公众号/小红书/抖音/知乎/微博/头条标题风格差异）
+const PLATFORMS = [
+  { value: '', label: '通用发布', icon: Globe, desc: '不限定平台' },
+  { value: 'wechat', label: '公众号', icon: BookOpen, desc: '标题钩子 · 小标题分段' },
+  { value: 'xiaohongshu', label: '小红书', icon: Sparkles, desc: 'emoji · 话题标签' },
+  { value: 'douyin', label: '抖音', icon: Play, desc: '3秒钩子 · 短句口播' },
+  { value: 'zhihu', label: '知乎', icon: TrendingUp, desc: '结论先行 · 专业论证' },
+  { value: 'weibo', label: '微博', icon: Megaphone, desc: '短平快 · 话题传播' },
+  { value: 'toutiao', label: '头条', icon: Newspaper, desc: '数字标题 · 扫读排版' },
 ]
 
 const RANDOM_PROMPTS = [
@@ -144,6 +156,30 @@ const TEMPLATES = [
     prompt:
       '写一套直播间带货话术，产品是护肤精华液，包含开场暖场、痛点引入、产品卖点、价格锚点、逼单话术、告别话术，节奏紧凑',
   },
+  {
+    name: '抖音爆款脚本',
+    icon: '🎵',
+    prompt:
+      '写一段 30 秒抖音带货脚本，产品是便携榨汁杯，要求：3秒钩子（反常识开场）、痛点引入、产品卖点、价格锚点、逼单、引导关注，短句为主',
+  },
+  {
+    name: '知乎高赞回答',
+    icon: '🧠',
+    prompt:
+      '写一篇知乎高赞回答，问题：普通人如何系统入门数据分析？要求结论先行、分点论证（含案例）、专业但易懂、结尾总结升华',
+  },
+  {
+    name: '公众号深度推文',
+    icon: '📰',
+    prompt:
+      '写一篇公众号深度推文，主题：2026 年内容创作者的生存法则，要求：标题3个备选（利益点+悬念）、小标题分段、数据支撑、金句结尾',
+  },
+  {
+    name: '微博热点借势',
+    icon: '🔥',
+    prompt:
+      '结合“暑期出游高峰”热点写一条微博借势文案，品牌是精品咖啡连锁，要求：带#话题#、短句快节奏、引发共鸣与转发、附互动问题',
+  },
 ]
 
 export default function CopywritingPage() {
@@ -156,13 +192,15 @@ export default function CopywritingPage() {
     title: '',
     tone: 'professional',
     length: 'medium',
+    platform: '',
   })
-  const { prompt, type, title, tone, length } = inputs
+  const { prompt, type, title, tone, length, platform } = inputs
   const setPrompt = (v) => setInputs((p) => ({ ...p, prompt: v ?? '' }))
   const setType = (v) => setInputs((p) => ({ ...p, type: v }))
   const setTitle = (v) => setInputs((p) => ({ ...p, title: v ?? '' }))
   const setTone = (v) => setInputs((p) => ({ ...p, tone: v }))
   const setLength = (v) => setInputs((p) => ({ ...p, length: v }))
+  const setPlatform = (v) => setInputs((p) => ({ ...p, platform: v }))
   const [result, setResult] = useState('')
   const [task, setTask] = useState(null)
   const [history, setHistory] = useState([])
@@ -209,7 +247,7 @@ export default function CopywritingPage() {
     const fullPrompt = `${finalPrompt}\n\n要求：语气风格为${TONES.find((t) => t.value === tone)?.label}，篇幅控制在${LENGTHS.find((l) => l.value === length)?.desc}。`
     await submitTask(
       '/api/copywriting/generate',
-      { type, title, prompt: fullPrompt },
+      { type, title, platform, prompt: fullPrompt },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
@@ -504,6 +542,38 @@ export default function CopywritingPage() {
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* 平台适配（v15） */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+                  <Globe className="w-3 h-3" /> 平台适配
+                  {platform && (
+                    <span className="text-pink-500 font-normal">
+                      · {PLATFORMS.find((p) => p.value === platform)?.desc}
+                    </span>
+                  )}
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {PLATFORMS.map((p) => {
+                    const Icon = p.icon
+                    return (
+                      <button
+                        key={p.value}
+                        onClick={() => setPlatform(p.value)}
+                        title={p.desc}
+                        className={`flex flex-col items-center gap-0.5 px-1 py-1.5 rounded-lg text-[10px] border transition-all ${
+                          platform === p.value
+                            ? 'bg-pink-50 border-pink-300 text-pink-700 font-medium'
+                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        {p.label}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 

@@ -67,6 +67,12 @@ VIDEO_ANALYZE_SYSTEM = """你是一位资深视频内容策略专家，拥有8�
 - recommendations：3-5条具体可执行的优化建议
 - tone判断：从 正式/轻松/教育/娱乐/促销/感人/震撼/幽默 中选择
 
+### 分段分析（segments）
+按「画面 / 音频 / 文本」三个轨道分段输出，每段包含：
+- analysis：该轨道的分析（100-200字，覆盖表现手法/完成度/对完播的影响）
+- key_points：3-5 条结构化要点
+- score：该轨道 0-100 评分（画面：构图/剪辑/节奏；音频：配乐/音效/人声；文本：台词/字幕/信息密度）
+
 输出严格JSON：
 {
   "title": "视频标题建议（含平台适配思路）",
@@ -80,7 +86,13 @@ VIDEO_ANALYZE_SYSTEM = """你是一位资深视频内容策略专家，拥有8�
   "target_audience": "目标观众群体（年龄/兴趣/需求）",
   "highlights": ["亮点1", "亮点2"],
   "subtitles_text": "模拟字幕文本（前30秒内容的口语化转写）",
-  "recommendations": ["具体可执行的优化建议1", "建议2"]
+  "recommendations": ["具体可执行的优化建议1", "建议2"],
+  "overall_score": 85,
+  "segments": {
+    "visual": {"analysis": "画面分析...", "key_points": ["要点1", "要点2"], "score": 88},
+    "audio": {"analysis": "音频分析...", "key_points": ["要点1"], "score": 76},
+    "text": {"analysis": "文本分析...", "key_points": ["要点1"], "score": 90}
+  }
 }
 
 只输出JSON，不要其他内容。"""
@@ -227,6 +239,147 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
     }
 
 
+# ── 分段报告（画面/音频/文本）结构化兜底 ──────────────────
+
+# 三段轨道中文标签
+SEGMENT_LABELS = {"visual": "画面", "audio": "音频", "text": "文本"}
+
+
+def _clamp_score(score) -> int | None:
+    """评分钳制到 0-100，非法/缺失返回 None。"""
+    if score is None:
+        return None
+    try:
+        v = int(score)
+    except (ValueError, TypeError):
+        return None
+    return max(0, min(100, v))
+
+
+def normalize_segments(result: dict) -> dict:
+    """分段报告结构化兜底（纯函数，可单测）。
+
+    LLM 输出可能缺失 segments，此时从现有字段派生三段结构，保证
+    analysis 落库后始终含 segments 与 overall_score，前端可直接渲染。
+    """
+    result = dict(result or {})
+    raw_segments = result.get("segments") if isinstance(result.get("segments"), dict) else {}
+    key_scenes = result.get("key_scenes") or []
+    subtitles = result.get("subtitles_text") or ""
+    summary = result.get("summary") or ""
+    detailed = result.get("detailed_summary") or ""
+    tone = result.get("tone") or ""
+
+    def _segment(key: str, fallback_analysis: str, fallback_points: list[str]) -> dict:
+        seg = raw_segments.get(key) if isinstance(raw_segments.get(key), dict) else {}
+        analysis = (seg.get("analysis") or fallback_analysis).strip()
+        points = seg.get("key_points") or fallback_points
+        if not isinstance(points, list):
+            points = []
+        points = [str(p).strip() for p in points if str(p).strip()]
+        return {
+            "analysis": analysis,
+            "key_points": points[:6],
+            "score": _clamp_score(seg.get("score")),
+        }
+
+    # 画面：优先用关键场景时间线派生要点
+    visual_points = [
+        f"[{s.get('timestamp') or '00:00'}] {s.get('description') or ''}".strip() for s in key_scenes
+    ] if key_scenes else []
+    visual_fallback = (
+        f"共识别 {len(key_scenes)} 个关键场景，涵盖开头钩子、主体推进与结尾收束。"
+        if key_scenes
+        else "未能提取画面轨道信息，建议补充视频描述后重新分析。"
+    )
+
+    # 音频：基调/语气信息即音频表现的一部分
+    audio_fallback = (
+        f"整体基调为「{tone}」。基于字幕文本推断人声表达与节奏特征，"
+        "完整音轨分析需结合实际音频轨道（配乐/音效/人声质量）。"
+        if tone
+        else "未能提取音频轨道信息，建议补充视频描述后重新分析。"
+    )
+
+    # 文本：摘要 + 字幕组合
+    text_parts = [p for p in (detailed, summary, subtitles) if p]
+    text_fallback = (
+        text_parts[0]
+        if text_parts
+        else "未能提取文本轨道信息，建议补充视频描述后重新分析。"
+    )
+    text_points = [f"字幕片段：{subtitles[:60]}…"] if subtitles else []
+
+    segments = {
+        "visual": _segment("visual", visual_fallback, visual_points),
+        "audio": _segment("audio", audio_fallback, []),
+        "text": _segment("text", text_fallback, text_points),
+    }
+
+    overall = _clamp_score(result.get("overall_score"))
+    if overall is None:
+        scores = [segments[k]["score"] for k in ("visual", "audio", "text")]
+        scored = [s for s in scores if s is not None]
+        overall = round(sum(scored) / len(scored)) if scored else None
+
+    result["segments"] = segments
+    result["overall_score"] = overall
+    return result
+
+
+def build_report_md(record: dict, analysis: dict) -> str:
+    """视频分析报告 → Markdown（纯函数，可单测；用于报告导出）。"""
+    analysis = analysis or {}
+    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
+    lines = [
+        "# 视频分析报告",
+        "",
+        f"- 文件名：{record.get('filename') or '-'}",
+        f"- 分析时间：{record.get('created_at') or '-'}",
+        "",
+    ]
+    if analysis.get("title"):
+        lines += [f"## 标题建议", "", analysis["title"], ""]
+    if analysis.get("summary"):
+        lines += ["## 内容摘要", "", analysis["summary"], ""]
+    if analysis.get("detailed_summary"):
+        lines += ["## 详细概述", "", analysis["detailed_summary"], ""]
+    if analysis.get("overall_score") is not None:
+        lines += ["## 综合评分", "", f"**{analysis['overall_score']} / 100**", ""]
+
+    # 分段报告：画面 / 音频 / 文本
+    if segments:
+        lines.append("## 分段分析")
+        for key, label in SEGMENT_LABELS.items():
+            seg = segments.get(key) or {}
+            lines += ["", f"### {label}"]
+            score = seg.get("score")
+            lines.append(f"评分：{score if score is not None else '—'} / 100")
+            lines += ["", seg.get("analysis") or "—", ""]
+            for p in seg.get("key_points") or []:
+                lines.append(f"- {p}")
+            lines.append("")
+
+    if analysis.get("key_scenes"):
+        lines += ["## 关键场景", ""]
+        for s in analysis["key_scenes"]:
+            lines.append(
+                f"- [{s.get('timestamp') or '00:00'}] {s.get('description') or ''}（{s.get('importance') or '中'}）"
+            )
+        lines.append("")
+    if analysis.get("highlights"):
+        lines += ["## 内容亮点", ""]
+        lines += [f"- {h}" for h in analysis["highlights"]]
+        lines.append("")
+    if analysis.get("recommendations"):
+        lines += ["## 优化建议", ""]
+        lines += [f"- {r}" for r in analysis["recommendations"]]
+        lines.append("")
+    lines.append("---")
+    lines.append("由小团智能平台 AI 视频分析生成")
+    return "\n".join(lines)
+
+
 # ── 异步任务：视频分析（进度/自动重试/并发控制）──
 
 
@@ -274,6 +427,9 @@ async def _video_analyze_worker(payload: dict, progress: Callable | None = None)
 
     _report(70, "提炼关键场景")
     log_usage("video_analyze", len(description), len(raw), 0)
+
+    # 分段报告结构化兜底：LLM 缺段时从现有字段派生，保证三段 schema 稳定
+    result = normalize_segments(result)
 
     _report(90, "保存分析结果")
     with get_db_context() as conn:
@@ -371,6 +527,29 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
         "status": row[6],
         "created_at": row[7],
     }
+
+
+@router.get("/records/{record_id}/report")
+async def get_report(record_id: str, current_user: dict = require_auth()):
+    """导出视频分析报告（Markdown），归属校验；未完成分析返回 404。"""
+    with get_db_context() as conn:
+        if not _can_access(conn, record_id, current_user):
+            raise HTTPException(404, "记录不存在")
+        row = conn.execute("SELECT * FROM video_records WHERE id=?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "记录不存在")
+        record = {
+            "id": row[0],
+            "filename": row[1],
+            "created_at": row[7],
+        }
+        analysis = json.loads(row[5]) if row[5] else None
+
+    if not analysis:
+        raise HTTPException(404, "该视频尚未完成分析")
+    content = build_report_md(record, analysis)
+    base = os.path.splitext(record["filename"] or "video")[0]
+    return {"filename": f"{base}-分析报告.md", "content": content}
 
 
 @router.delete("/records/{record_id}")

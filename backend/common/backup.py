@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from common.auth import require_auth
+from common.safe_guard import safe_api
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ def _db_path() -> str:
 def create_backup() -> dict:
     """在线快照数据库（SQLite backup API，服务不中断）。返回备份信息。"""
     _ensure_dir()
-    name = f"platform-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+    # 毫秒级文件名：同一秒内多次创建（如连续手动触发）不会互相覆盖
+    name = f"platform-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.db"
     dst = BACKUP_DIR / name
     src = sqlite3.connect(_db_path(), timeout=30)
     try:
@@ -150,6 +152,7 @@ def _require_admin(current_user: dict) -> None:
 
 
 @router.post("/backups")
+@safe_api
 async def admin_create_backup(current_user: dict = require_auth()):
     """手动创建数据库备份。"""
     _require_admin(current_user)
@@ -157,6 +160,7 @@ async def admin_create_backup(current_user: dict = require_auth()):
 
 
 @router.get("/backups")
+@safe_api
 async def admin_list_backups(current_user: dict = require_auth()):
     """备份列表。"""
     _require_admin(current_user)
@@ -165,6 +169,7 @@ async def admin_list_backups(current_user: dict = require_auth()):
 
 
 @router.post("/backups/{name}/restore")
+@safe_api
 async def admin_restore_backup(name: str, current_user: dict = require_auth()):
     """从快照恢复数据库（恢复前自动留安全网快照）。"""
     _require_admin(current_user)

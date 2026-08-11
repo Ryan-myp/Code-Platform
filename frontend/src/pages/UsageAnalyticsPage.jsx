@@ -46,6 +46,11 @@ export default function UsageAnalyticsPage() {
   const [moduleDist, setModuleDist] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  // v15：趋势区间 + 按模块/按用户筛选
+  const [days, setDays] = useState(7)
+  const [moduleFilter, setModuleFilter] = useState('')
+  const [userFilter, setUserFilter] = useState('')
+  const [userOptions, setUserOptions] = useState([])
 
   // 导出使用统计 CSV（带 token 的 fetch，触发浏览器下载）
   const exportCsv = async () => {
@@ -69,18 +74,38 @@ export default function UsageAnalyticsPage() {
   }
 
   useEffect(() => {
-    loadStats()
+    loadUsers()
   }, [])
+
+  // 筛选变化时重新加载（mount 时也会触发一次）
+  useEffect(() => {
+    loadStats()
+  }, [days, moduleFilter, userFilter])
+
+  const loadUsers = async () => {
+    try {
+      const res = await api.get('/api/usage-stats/users')
+      setUserOptions(res.data || [])
+    } catch {
+      // 用户列表失败不阻塞页面
+    }
+  }
 
   const loadStats = async () => {
     setLoading(true)
     setLoadError('')
     try {
-      const res = await api.get('/api/usage-stats')
+      const res = await api.get('/api/usage-stats', {
+        params: {
+          days,
+          module: moduleFilter || undefined,
+          user: userFilter || undefined,
+        },
+      })
       const data = res.data || {}
       setStats(data)
 
-      // 构建每日使用趋势（最近7天）
+      // 构建每日使用趋势（days 天区间）
       if (data.daily_breakdown) {
         setDailyUsage(
           data.daily_breakdown.map((d) => ({
@@ -91,7 +116,7 @@ export default function UsageAnalyticsPage() {
         )
       }
 
-      // 构建模块分布
+      // 构建模块分布（不受 module 筛选影响，展示全量占比）
       if (data.module_breakdown) {
         setModuleDist(data.module_breakdown.map((m) => ({ name: m.module, value: m.count })))
       }
@@ -120,6 +145,71 @@ export default function UsageAnalyticsPage() {
           </button>
         }
       />
+
+      {/* 筛选工具栏：区间 + 模块 + 用户 */}
+      <Card>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 font-medium">趋势区间</span>
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+              {[7, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDays(d)}
+                  className={`px-3 py-1.5 text-sm transition-colors ${
+                    days === d
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white text-gray-600 hover:bg-blue-50'
+                  }`}
+                >
+                  {d}天
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 font-medium">模块</span>
+            <select
+              value={moduleFilter}
+              onChange={(e) => setModuleFilter(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              <option value="">全部模块</option>
+              {moduleDist.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name}（{m.value} 次）
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 font-medium">用户</span>
+            <select
+              value={userFilter}
+              onChange={(e) => setUserFilter(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+            >
+              <option value="">全部用户</option>
+              {userOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.username}
+                </option>
+              ))}
+            </select>
+          </div>
+          {(moduleFilter || userFilter) && (
+            <button
+              onClick={() => {
+                setModuleFilter('')
+                setUserFilter('')
+              }}
+              className="text-sm text-blue-600 hover:text-blue-800"
+            >
+              清除筛选
+            </button>
+          )}
+        </div>
+      </Card>
 
       {loading ? (
         <SkeletonGrid count={8} />
@@ -179,7 +269,7 @@ export default function UsageAnalyticsPage() {
         {/* 趋势图 */}
         <Card>
           <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-blue-500" /> 7天使用趋势
+            <TrendingUp className="w-4 h-4 text-blue-500" /> {days}天使用趋势
           </h3>
           {dailyUsage.length > 0 && (
             <ResponsiveContainer width="100%" height={280}>

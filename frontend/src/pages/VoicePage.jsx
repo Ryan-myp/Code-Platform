@@ -91,6 +91,11 @@ const VOICES = [
     style: '英文男声',
     emoji: '🇬🇧',
   },
+  // ── AI 克隆音色（CosyVoice 本地引擎，需 voice_engine 服务运行） ──
+  { id: '中文女', name: '中文女声', gender: '女', style: 'AI 克隆音色 · 自然拟真', emoji: '🤖' },
+  { id: '中文男', name: '中文男声', gender: '男', style: 'AI 克隆音色 · 自然拟真', emoji: '🤖' },
+  { id: '中文童声', name: '中文童声', gender: '童', style: 'AI 克隆音色 · 活泼童真', emoji: '🤖' },
+  { id: '粤语女', name: '粤语女声', gender: '女', style: 'AI 克隆音色 · 粤语流利', emoji: '🤖' },
 ]
 
 // 场景化示例文案（点击场景卡片且文本为空时自动填充；随机文案从当前场景池抽取）

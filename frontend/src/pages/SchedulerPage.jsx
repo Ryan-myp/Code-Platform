@@ -1,13 +1,36 @@
 import React, { useState, useEffect } from 'react'
-import { Clock, Plus, Trash2, Play, Pause, Settings, Calendar, RefreshCw, Zap } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, Badge, ConfirmDialog, ErrorState, SkeletonList } from '../components/ui'
+import {
+  Clock,
+  Plus,
+  Trash2,
+  Play,
+  Pause,
+  Calendar,
+  RefreshCw,
+  Zap,
+  History,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+} from 'lucide-react'
+import {
+  Card,
+  Button,
+  Empty,
+  PageHeader,
+  Badge,
+  ConfirmDialog,
+  ErrorState,
+  SkeletonList,
+  Modal,
+} from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
 const JOB_TYPES = [
   { value: 'report', label: '定时报告', icon: Calendar },
-  { value: 'sync', label: '数据同步', icon: RefreshCw },
-  { value: 'reminder', label: '提醒通知', icon: Clock },
+  { value: 'notify', label: '提醒通知', icon: Clock },
+  { value: 'backup', label: '数据备份', icon: RefreshCw },
 ]
 
 const CRON_PRESETS = [
@@ -18,6 +41,14 @@ const CRON_PRESETS = [
   { label: '每小时', value: '0 * * * *' },
 ]
 
+// 最近执行状态徽标
+const STATUS_META = {
+  success: { label: '执行成功', color: 'green', icon: CheckCircle2 },
+  failed: { label: '执行失败', color: 'red', icon: XCircle },
+  running: { label: '执行中', color: 'amber', icon: Loader2 },
+  '': { label: '未运行', color: 'gray', icon: History },
+}
+
 export default function SchedulerPage() {
   const toast = useToast()
   const [jobs, setJobs] = useState([])
@@ -25,6 +56,12 @@ export default function SchedulerPage() {
   const [deleteId, setDeleteId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
+
+  // 执行历史抽屉
+  const [historyJob, setHistoryJob] = useState(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [runs, setRuns] = useState([])
 
   const [form, setForm] = useState({
     name: '',
@@ -87,11 +124,33 @@ export default function SchedulerPage() {
 
   const triggerJob = async (job) => {
     try {
-      await api.post(`/api/scheduler/${job.id}/trigger`)
-      toast.success(`已手动触发「${job.name}」`)
+      const res = await api.post(`/api/scheduler/${job.id}/trigger`)
+      const ok = res.data?.status === 'success'
+      const detail = ok ? res.data?.output : res.data?.error
+      const msg = `${res.data?.message || ''}${detail ? `：${detail}` : ''}`
+      if (ok) {
+        toast.success(msg, 6000)
+      } else {
+        toast.error(msg, 8000)
+      }
       loadJobs()
     } catch (e) {
-      toast.error(e.message)
+      toast.error(`触发失败：${e.message}`)
+    }
+  }
+
+  const openHistory = async (job) => {
+    setHistoryJob(job)
+    setHistoryLoading(true)
+    setHistoryError('')
+    setRuns([])
+    try {
+      const res = await api.get(`/api/scheduler/${job.id}/runs`)
+      setRuns(res.data || [])
+    } catch (e) {
+      setHistoryError(`历史加载失败：${e.message}`)
+    } finally {
+      setHistoryLoading(false)
     }
   }
 
@@ -121,7 +180,7 @@ export default function SchedulerPage() {
     <div className="space-y-6">
       <PageHeader
         title="定时任务"
-        description="创建定时报告、数据同步、提醒通知，自动化重复工作"
+        description="创建定时报告、提醒通知、数据备份，自动化重复工作"
         icon={Clock}
         iconColor="from-teal-500 to-cyan-600"
         actions={
@@ -203,7 +262,7 @@ export default function SchedulerPage() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-teal-500 outline-none"
               />
               <p className="text-xs text-gray-400 mt-1">
-                格式：分 时 日 月 周，例如 0 9 * * * 表示每天9:00
+                格式：分 时 日 月 周，例如 0 9 * * * 表示每天9:00（周：0/7=周日，1-6=周一至周六）
               </p>
             </div>
             <div className="flex gap-2 justify-end">
@@ -233,6 +292,8 @@ export default function SchedulerPage() {
         <div className="space-y-3">
           {jobs.map((job) => {
             const typeInfo = JOB_TYPES.find((t) => t.value === job.job_type) || JOB_TYPES[0]
+            const status = STATUS_META[job.last_status] || STATUS_META['']
+            const StatusIcon = status.icon
             return (
               <Card key={job.id} className="flex items-center gap-4">
                 <div
@@ -249,6 +310,13 @@ export default function SchedulerPage() {
                       {job.enabled ? '运行中' : '已暂停'}
                     </Badge>
                     <Badge color="blue">{typeInfo.label}</Badge>
+                    {/* v15：最近执行状态徽标 */}
+                    <Badge color={status.color}>
+                      <span className="flex items-center gap-1">
+                        <StatusIcon className="w-3 h-3" />
+                        {status.label}
+                      </span>
+                    </Badge>
                   </div>
                   {job.description && (
                     <p className="text-xs text-gray-500 mt-0.5">{job.description}</p>
@@ -258,9 +326,21 @@ export default function SchedulerPage() {
                     {job.last_run && (
                       <span>上次运行：{new Date(job.last_run).toLocaleString()}</span>
                     )}
+                    {job.next_run && (
+                      <span className="text-teal-600">
+                        下次运行：{new Date(job.next_run).toLocaleString()}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={History}
+                    title="执行历史"
+                    onClick={() => openHistory(job)}
+                  />
                   <Button
                     variant="ghost"
                     size="sm"
@@ -288,6 +368,72 @@ export default function SchedulerPage() {
           })}
         </div>
       )}
+
+      {/* 执行历史抽屉 */}
+      <Modal
+        open={!!historyJob}
+        onClose={() => setHistoryJob(null)}
+        title={historyJob ? `执行历史 · ${historyJob.name}` : ''}
+        size="lg"
+      >
+        {historyLoading ? (
+          <div className="flex items-center justify-center h-32">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-teal-500" />
+          </div>
+        ) : historyError ? (
+          <ErrorState message={historyError} onRetry={() => openHistory(historyJob)} />
+        ) : runs.length === 0 ? (
+          <Empty
+            icon={History}
+            title="暂无执行记录"
+            description="手动触发或等待调度执行后，这里会展示每次运行的完整日志"
+          />
+        ) : (
+          <div className="space-y-0">
+            {runs.map((run, idx) => {
+              const ok = run.status === 'success'
+              const isLast = idx === runs.length - 1
+              return (
+                <div key={run.id} className="flex gap-3 relative pb-5">
+                  {/* 时间线竖线 */}
+                  {!isLast && (
+                    <div className="absolute left-[9px] top-6 bottom-0 w-px bg-gray-200" />
+                  )}
+                  <div className="flex-shrink-0 mt-1">
+                    <span
+                      className={`w-[19px] h-[19px] rounded-full flex items-center justify-center ${
+                        ok ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-500'
+                      }`}
+                    >
+                      {ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge color={ok ? 'green' : 'red'}>{ok ? '成功' : '失败'}</Badge>
+                      <span className="text-xs text-gray-400">
+                        {run.started_at?.replace('T', ' ').slice(0, 19)} ~{' '}
+                        {run.finished_at?.replace('T', ' ').slice(0, 19)}
+                      </span>
+                    </div>
+                    {(run.output || run.error) && (
+                      <div
+                        className={`mt-2 p-3 rounded-lg text-xs font-mono whitespace-pre-wrap break-all ${
+                          ok
+                            ? 'bg-gray-50 text-gray-600 border border-gray-100'
+                            : 'bg-red-50 text-red-600 border border-red-100'
+                        }`}
+                      >
+                        {ok ? run.output : run.error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
 
       <ConfirmDialog
         open={!!deleteId}

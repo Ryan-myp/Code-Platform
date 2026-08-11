@@ -2,14 +2,18 @@
 """前端 API 调用路径 vs 后端路由全量对照（OpenAPI 为后端事实源）。
 用法: python3 scripts/fe_be_compare.py [backend_base_url]
 """
-import re, sys, os, json, urllib.request
+import json
+import os
+import re
+import sys
+import urllib.request
 
 BACKEND_URL = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:8888'
 SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend', 'src')
 
 # ---------- 1. 提取前端调用（源码扫描，静态路径 + 模板字符串） ----------
 fe_calls = set()
-for root, dirs, files in os.walk(SRC_ROOT):
+for root, _dirs, files in os.walk(SRC_ROOT):
     for fn in files:
         if not fn.endswith(('.jsx', '.js')):
             continue
@@ -96,7 +100,7 @@ def match_backend(fe_path):
 
 # 提取前端调用的方法（从源码里抓 api.get/post 与路径的关系）
 fe_method_map = {}
-for root, dirs, files in os.walk(SRC_ROOT):
+for root, _dirs, files in os.walk(SRC_ROOT):
     for fn in files:
         if not fn.endswith(('.jsx', '.js')):
             continue
@@ -129,7 +133,7 @@ for fe_path in sorted(fe_calls):
 
 print("=" * 70)
 print("完全缺失路由 (NO_ROUTE):")
-for kind, p, m, matched in issues:
+for kind, p, m, _matched in issues:
     if kind == 'NO_ROUTE':
         print(f"  ❌ {p}  [methods={m}]")
 print()

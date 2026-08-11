@@ -80,6 +80,10 @@ import { Card, Button, Badge, Modal } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 
+const MEDIA_BASE = api.defaults.baseURL
+// 相对 URL → 绝对 URL（首页直显图片/视频封面用）
+const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
+
 // 全场景能力地图：平台所有能力按场景分组，搜索直达（与侧边栏统一分类）
 const SCENE_GROUPS = [
   {
@@ -475,6 +479,100 @@ const ALL_CAPABILITIES = SCENE_GROUPS.flatMap((g) =>
   g.items.map((it) => ({ ...it, group: g.label, groupKey: g.key }))
 )
 
+// 特色创作工厂：平台主打卖点（首页置顶专区，标签为真实能力；hot=true 为重点主推，加“主打”徽标）
+const FEATURE_FACTORIES = [
+  {
+    label: '图片工厂',
+    desc: '文生图 · 图生图 · 虚拟试衣',
+    tags: ['10 种艺术风格', '负面词净化', '模板合成'],
+    path: '/image-factory',
+    icon: Image,
+    gradient: 'from-violet-500 to-fuchsia-600',
+    hot: true,
+  },
+  {
+    label: '视频工厂',
+    desc: '文生视频 · 图生视频',
+    tags: ['导演四要素', '自动封面', '1080P'],
+    path: '/video-factory',
+    icon: Film,
+    gradient: 'from-sky-500 to-blue-600',
+    hot: true,
+  },
+  {
+    label: '游戏工坊',
+    desc: '一句话生成小游戏',
+    tags: ['15 模板', '6 品类', '双版本'],
+    path: '/games',
+    icon: Gamepad2,
+    gradient: 'from-orange-500 to-red-500',
+  },
+  {
+    label: '语音工厂',
+    desc: '文字转配音',
+    tags: ['6 场景文案', '多音色'],
+    path: '/voice-dubbing',
+    icon: Mic2,
+    gradient: 'from-rose-500 to-pink-600',
+  },
+  {
+    label: '音乐工厂',
+    desc: 'AI 作词作曲',
+    tags: ['情绪联动', '6 大主题'],
+    path: '/music-factory',
+    icon: Music,
+    gradient: 'from-indigo-500 to-violet-600',
+  },
+  {
+    label: 'PPT 工厂',
+    desc: '一键生成 PPT',
+    tags: ['10 模板', '8 主题'],
+    path: '/ppt-factory',
+    icon: Presentation,
+    gradient: 'from-amber-500 to-orange-600',
+  },
+  {
+    label: 'Excel 助手',
+    desc: '分析 · 公式 · 清洗',
+    tags: ['6 大操作', '12 模板'],
+    path: '/excel',
+    icon: Table2,
+    gradient: 'from-emerald-500 to-green-600',
+  },
+  {
+    label: '表情包工坊',
+    desc: '文字生成表情包',
+    tags: ['AI 8 风格', '商用尺寸'],
+    path: '/meme',
+    icon: Sticker,
+    gradient: 'from-yellow-400 to-amber-500',
+  },
+  {
+    label: '思维导图',
+    desc: 'AI 结构化脑图',
+    tags: ['5 套配色', '深度可选'],
+    path: '/mindmap',
+    icon: Share2,
+    gradient: 'from-purple-500 to-indigo-600',
+  },
+  {
+    label: 'AI 数字人',
+    desc: '虚拟形象口播',
+    tags: ['场景联动', '多引擎'],
+    path: '/digital-human',
+    icon: UserCircle,
+    gradient: 'from-cyan-500 to-teal-600',
+  },
+  {
+    label: '文案工厂',
+    desc: '营销 · 自媒体 · SEO',
+    tags: ['8 类型', '12 模板'],
+    path: '/copywriting',
+    icon: PenTool,
+    gradient: 'from-pink-500 to-rose-600',
+  },
+]
+
 // 首页组件元数据（与后端 dashboard_widgets 的 widget_type 对应）
 const WIDGET_META = [
   {
@@ -601,6 +699,7 @@ export default function HomePage() {
   const [toolStats, setToolStats] = useState([])
   const [drafts, setDrafts] = useState([])
   const [showcase, setShowcase] = useState([]) // 真实用户成果案例墙
+  const [factoryWorks, setFactoryWorks] = useState([]) // 最新创作墙（图片/视频工厂真实作品）
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [capKw, setCapKw] = useState('')
@@ -627,6 +726,7 @@ export default function HomePage() {
         draftRes,
         widgetsRes,
         showcaseRes,
+        factoryRes,
       ] = await Promise.all([
         api.get('/api/home/stats'),
         api.get('/api/home/recent'),
@@ -637,16 +737,18 @@ export default function HomePage() {
         api.get('/api/drafts').catch(() => ({ data: [] })),
         api.get('/api/home/widgets').catch(() => ({ data: null })),
         api.get('/api/showcase').catch(() => ({ data: { items: [] } })),
+        api.get('/api/factory/latest').catch(() => ({ data: { items: [] } })),
       ])
       setStats(statsRes.data)
       setRecent(recentRes.data)
       setTasks(tasksRes.data?.tasks || [])
-      setNotifications(notifsRes.data)
+      setNotifications(notifsRes.data?.items || [])
       setFavorites(favRes.data || [])
       setToolStats(toolRes.data || [])
       setDrafts(draftRes.data || [])
       if (widgetsRes?.data) setWidgets(widgetsRes.data)
       setShowcase(showcaseRes?.data?.items || [])
+      setFactoryWorks(factoryRes?.data?.items || [])
       setLoadError('')
     } catch (e) {
       setLoadError(e?.message || '首页数据加载失败')
@@ -983,6 +1085,133 @@ export default function HomePage() {
           >
             <Sparkles className="w-3.5 h-3.5" /> 去创作第一个作品
           </button>
+        </div>
+      )}
+
+      {/* 特色创作工厂：平台主打卖点置顶专区 */}
+      <div className="bg-gradient-to-br from-brand-500/5 via-white to-fuchsia-500/5 rounded-2xl border border-brand-100 p-5 shadow-soft">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="relative flex h-8 w-8 items-center justify-center">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-30" />
+            <span className="relative inline-flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-fuchsia-600">
+              <Sparkles className="w-4 h-4 text-white" />
+            </span>
+          </span>
+          <div>
+            <h2 className="font-bold text-gray-900 leading-tight">特色创作工厂</h2>
+            <p className="text-[11px] text-gray-400">平台主打 · AI 创作全品类一站式生成</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+          {FEATURE_FACTORIES.map((f) => (
+            <button
+              key={f.label}
+              onClick={() => navigate(f.path)}
+              className={`group relative flex flex-col gap-1.5 p-3 rounded-xl bg-white border transition-all text-left overflow-hidden hover:shadow-md hover:-translate-y-0.5 ${
+                f.hot ? 'border-brand-300 ring-1 ring-brand-100' : 'border-gray-200 hover:border-brand-300'
+              }`}
+            >
+              {f.hot && (
+                <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 text-white text-[9px] font-bold shadow-sm">
+                  主打
+                </span>
+              )}
+              <span
+                className={`absolute top-0 right-0 w-16 h-16 rounded-bl-full bg-gradient-to-br ${f.gradient} opacity-10 group-hover:opacity-20 transition-opacity`}
+              />
+              <span
+                className={`w-8 h-8 rounded-lg bg-gradient-to-br ${f.gradient} flex items-center justify-center shadow-sm`}
+              >
+                <f.icon className="w-4 h-4 text-white" />
+              </span>
+              <span className="text-sm font-semibold text-gray-900">{f.label}</span>
+              <span className="text-[11px] text-gray-400 leading-snug">{f.desc}</span>
+              <span className="flex flex-wrap gap-1 mt-0.5">
+                {f.tags.map((t) => (
+                  <span
+                    key={t}
+                    className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-500 border border-gray-100 group-hover:bg-brand-50 group-hover:text-brand-600 group-hover:border-brand-100 transition-colors"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 最新创作墙：图片/视频工厂真实产出直显（封面图，点击直达同款创作） */}
+      {factoryWorks.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft overflow-hidden">
+          <div className="flex items-center justify-between px-5 pt-4 pb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-brand-500" />
+              <h2 className="font-semibold text-gray-900">最新创作</h2>
+              <span className="text-xs text-gray-400">
+                平台用户最新生成的图片与视频 · 点击直达同款创作
+              </span>
+            </div>
+            <button
+              onClick={() => navigate('/gallery')}
+              className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium"
+            >
+              全部作品
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="flex gap-3 px-5 pb-5 overflow-x-auto scrollbar-thin">
+            {factoryWorks.map((w) => (
+              <button
+                key={w.id}
+                onClick={() => navigate(w.route)}
+                className="group w-56 flex-shrink-0 text-left rounded-xl overflow-hidden border border-gray-200 hover:border-brand-300 hover:shadow-md transition-all"
+              >
+                <div className="relative aspect-video bg-gray-100">
+                  {w.type === 'image' ? (
+                    <img
+                      src={absUrl(w.media_url)}
+                      alt={w.prompt || '图片作品'}
+                      loading="lazy"
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                    />
+                  ) : w.thumbnail ? (
+                    <img
+                      src={absUrl(w.thumbnail)}
+                      alt={w.prompt || '视频作品'}
+                      loading="lazy"
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-blue-50">
+                      <Film className="w-8 h-8 text-gray-400" />
+                    </div>
+                  )}
+                  {w.type === 'video' && (
+                    <>
+                      <span className="absolute inset-0 flex items-center justify-center">
+                        <span className="w-9 h-9 rounded-full bg-white/90 flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
+                          <Play className="w-4 h-4 text-gray-900 ml-0.5 fill-gray-900" />
+                        </span>
+                      </span>
+                      {w.duration > 0 && (
+                        <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px]">
+                          {w.duration.toFixed(1)}s
+                        </span>
+                      )}
+                    </>
+                  )}
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-md bg-black/50 backdrop-blur text-white text-[10px] font-medium">
+                    {w.type === 'video' ? '🎬 视频' : '🖼️ 图片'}
+                  </span>
+                </div>
+                <div className="px-3 py-2">
+                  <p className="text-xs text-gray-700 truncate">{w.prompt || w.author}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{w.author}</p>
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

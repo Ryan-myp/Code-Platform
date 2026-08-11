@@ -52,6 +52,7 @@ def setup_test_db():
                 key_prefix TEXT NOT NULL,
                 label TEXT,
                 last_used TEXT,
+                expires_at TEXT,
                 created_at TEXT NOT NULL
             )"""
         )

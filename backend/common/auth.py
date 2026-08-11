@@ -954,7 +954,7 @@ def _auth_by_api_key(raw_key: str) -> dict[str, Any]:
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT k.user_id, k.id, u.username, u.role, u.active FROM api_keys k "
+            "SELECT k.user_id, k.id, k.expires_at, u.username, u.role, u.active FROM api_keys k "
             "JOIN users u ON u.id = k.user_id WHERE k.key_hash=?",
             (key_hash,),
         ).fetchone()
@@ -962,6 +962,13 @@ def _auth_by_api_key(raw_key: str) -> dict[str, Any]:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的 API Key")
         if not row["active"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已禁用")
+        # v15：密钥过期校验（expires_at 为空 = 永不过期）
+        expires_at = row["expires_at"]
+        if expires_at and expires_at <= datetime.now().isoformat():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"API Key 已于 {expires_at[:10]} 过期，请到 API 开放平台重新创建",
+            )
         conn.execute("UPDATE api_keys SET last_used=? WHERE id=?", (datetime.now().isoformat(), row["id"]))
         conn.commit()
         return {

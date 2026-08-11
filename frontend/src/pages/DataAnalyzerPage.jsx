@@ -13,6 +13,8 @@ import {
   Download,
   RefreshCw,
   Settings2,
+  AlertTriangle,
+  Lightbulb,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -504,6 +506,74 @@ export default function DataAnalyzerPage() {
                     ))}
                   </div>
                 )}
+
+                {/* 数据概览（v15：列/行/类型概览卡片） */}
+                {result.overview && (
+                  <div className="p-3 bg-gray-50 rounded-xl flex items-center gap-3 flex-wrap text-xs">
+                    <Database className="w-4 h-4 text-emerald-500" />
+                    <span className="text-gray-600 font-medium">
+                      {meta.filename || 'data.csv'}
+                    </span>
+                    <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-gray-600">
+                      {(result.overview.columns || []).length} 列
+                    </span>
+                    <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-gray-600">
+                      {result.overview.rows} 行
+                    </span>
+                    <div className="flex gap-1 ml-auto">
+                      {(result.overview.columns || []).slice(0, 10).map((c) => (
+                        <span key={c} className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full">
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 三段式结论（洞察/异常/建议） */}
+                {result.conclusion_sections &&
+                  (result.conclusion_sections.insights?.length ||
+                    result.conclusion_sections.anomalies?.length ||
+                    result.conclusion_sections.suggestions?.length) && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="p-4 rounded-xl bg-blue-50 border border-blue-100">
+                        <div className="text-sm font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5" /> 洞察
+                        </div>
+                        <ul className="space-y-1.5">
+                          {(result.conclusion_sections.insights || []).map((item, i) => (
+                            <li key={i} className="text-xs text-blue-900/80 leading-relaxed">
+                              • {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="p-4 rounded-xl bg-red-50 border border-red-100">
+                        <div className="text-sm font-semibold text-red-700 mb-2 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5" /> 异常
+                        </div>
+                        <ul className="space-y-1.5">
+                          {(result.conclusion_sections.anomalies || []).map((item, i) => (
+                            <li key={i} className="text-xs text-red-900/80 leading-relaxed">
+                              • {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="p-4 rounded-xl bg-amber-50 border border-amber-100">
+                        <div className="text-sm font-semibold text-amber-700 mb-2 flex items-center gap-1.5">
+                          <Lightbulb className="w-3.5 h-3.5" /> 建议
+                        </div>
+                        <ul className="space-y-1.5">
+                          {(result.conclusion_sections.suggestions || []).map((item, i) => (
+                            <li key={i} className="text-xs text-amber-900/80 leading-relaxed">
+                              • {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
 
                 {/* 结论 */}
                 {result.conclusion && (

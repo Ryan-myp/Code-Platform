@@ -392,21 +392,42 @@ async def delete_global_task(task_id: str, current_user: dict = require_auth()):
 
 
 @router.get("/api/notifications")
-async def list_notifications(unread_only: bool = False, limit: int = 50, current_user: dict = require_auth()):
-    """获取通知列表"""
+async def list_notifications(
+    unread_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = require_auth(),
+):
+    """获取通知列表（v15 分页：limit/offset + 总数）。
+
+    返回 {"items": [...], "total": n}，供前端分页与未读角标展示。
+    """
     conn = get_db()
     try:
-        query = "SELECT * FROM notifications WHERE user_id IN ('all', ?)"
+        base = "FROM notifications WHERE user_id IN ('all', ?)"
         params = [current_user["username"]]
         if unread_only:
-            query += " AND read=0"
-        query += " ORDER BY created_at DESC LIMIT ?"
-        params.append(limit)
+            base += " AND read=0"
+        total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * {base} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [limit, max(offset, 0)],
+        ).fetchall()
+        return {"items": [dict(r) for r in rows], "total": total, "limit": limit, "offset": max(offset, 0)}
+    finally:
+        conn.close()
 
-        notifications = []
-        for row in conn.execute(query, params).fetchall():
-            notifications.append(dict(row))
-        return notifications
+
+@router.get("/api/notifications/unread-count")
+async def unread_notification_count(current_user: dict = require_auth()):
+    """未读通知数（侧边栏/页面角标）。"""
+    conn = get_db()
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM notifications WHERE user_id IN ('all', ?) AND read=0",
+            (current_user["username"],),
+        ).fetchone()[0]
+        return {"count": count}
     finally:
         conn.close()
 

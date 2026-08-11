@@ -9,6 +9,12 @@ import {
   RefreshCw,
   Wand2,
   Trash2,
+  Scissors,
+  Music,
+  Subtitles,
+  Package,
+  BookOpen,
+  Layers,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -31,6 +37,13 @@ import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
+
+// 发布包平台规格预设（商业化 v14）：ffmpeg cover 模式转码不变形
+const PUBLISH_PLATFORMS = [
+  { id: 'douyin', name: '抖音', spec: '1080×1920 竖屏' },
+  { id: 'bilibili', name: 'B站', spec: '1920×1080 横屏' },
+  { id: 'weixin', name: '视频号', spec: '1080×1230 竖屏' },
+]
 
 const PRESET_CATEGORIES = [
   {
@@ -211,6 +224,31 @@ export default function VideoFactoryPage() {
   // 删除
   const [deleteTarget, setDeleteTarget] = useState(null)
 
+  // 发布包（商业化 v14）：按平台规格转码成片 + 抽帧封面 + 发布文案 + 质量报告
+  const [packVideo, setPackVideo] = useState(null)
+  const [packPlatform, setPackPlatform] = useState('douyin')
+  const [packTitle, setPackTitle] = useState('')
+  const [packDesc, setPackDesc] = useState('')
+  const [packing, setPacking] = useState(false)
+
+  // 视频后期工具（拼接 / 配乐 / 字幕 / 批量转码）
+  const [postMode, setPostMode] = useState(null) // 'concat' | 'music' | 'subtitle' | 'transcode' | null
+  const [postBusy, setPostBusy] = useState(false)
+  const [concatSel, setConcatSel] = useState([]) // 拼接/转码选中的文件名
+  const [postVideo, setPostVideo] = useState('') // 配乐/字幕目标视频
+  const [bgmUrl, setBgmUrl] = useState('')
+  const [bgVolume, setBgVolume] = useState(0.3)
+  const [srtContent, setSrtContent] = useState('')
+  const [postResult, setPostResult] = useState(null) // { mode, url, filename }
+  // v15：批量转码参数（宽高留空保持原分辨率）
+  const [transcodeWidth, setTranscodeWidth] = useState('')
+  const [transcodeHeight, setTranscodeHeight] = useState('')
+  const [transcodeCrf, setTranscodeCrf] = useState(23)
+  // v15：脚本文案模板库（口播/剧情/科普）
+  const [scriptTemplates, setScriptTemplates] = useState([])
+  const [scriptCategory, setScriptCategory] = useState('全部')
+  const [scriptTopic, setScriptTopic] = useState('')
+
   const fetchStats = useCallback(async () => {
     try {
       const res = await api.get('/api/video-factory/stats')
@@ -225,7 +263,12 @@ export default function VideoFactoryPage() {
     setError(null)
     try {
       const res = await api.get('/api/video-factory/list')
-      setVideos(res.data.videos || [])
+      const list = res.data.videos || []
+      setVideos(list)
+      // 旧视频封面由后端后台补抽帧：存在无封面项时稍后自动刷新一次
+      if (list.some((v) => !v.cover_url)) {
+        setTimeout(() => fetchVideos(), 12000)
+      }
     } catch (e) {
       setError(e)
     } finally {
@@ -237,10 +280,20 @@ export default function VideoFactoryPage() {
     fetchStats()
     fetchVideos()
     fetchCloudPrompts()
+    fetchScriptTemplates()
     return () => {
       stopPolling()
     }
   }, [fetchStats, fetchVideos, stopPolling])
+
+  const fetchScriptTemplates = async () => {
+    try {
+      const res = await api.get('/api/video-factory/prompts/scripts')
+      setScriptTemplates(res.data?.templates || [])
+    } catch {
+      /* 静默：后端无此接口时降级为无模板 */
+    }
+  }
 
   const fetchCloudPrompts = async () => {
     try {
@@ -334,12 +387,166 @@ export default function VideoFactoryPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = video.filename
+      a.download = (video.title ? `${video.title}.mp4` : video.filename)
       a.click()
       URL.revokeObjectURL(url)
       toast.success('已开始下载')
     } catch (e) {
       toast.error(`下载失败：${e.message}`)
+    }
+  }
+
+  // 视频发布包：按平台规格 cover 转码成片 + 抽帧封面 + 发布文案 + 质量报告
+  const downloadPublishPack = async () => {
+    if (!packVideo) return
+    setPacking(true)
+    try {
+      const fd = new FormData()
+      fd.append('filename', packVideo.filename)
+      fd.append('platform', packPlatform)
+      fd.append('video_title', packTitle.trim() || packVideo.title || 'AI 视频作品')
+      fd.append('video_desc', packDesc.trim())
+      const res = await api.post('/api/video-factory/publish-pack', fd, {
+        responseType: 'blob',
+        timeout: 600000,
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `video_publish_pack_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setPackVideo(null)
+      toast.success('视频发布包已生成：规格成片 + 封面 + 发布文案 + 质量报告')
+    } catch (e) {
+      toast.error(`发布包生成失败：${e.message}`)
+    } finally {
+      setPacking(false)
+    }
+  }
+
+  // ── 视频后期工具 ──
+  const toggleConcatSel = (filename) => {
+    setConcatSel((prev) =>
+      prev.includes(filename) ? prev.filter((f) => f !== filename) : [...prev, filename]
+    )
+  }
+
+  const openPost = (mode) => {
+    setPostMode(mode)
+    setPostResult(null)
+    if (mode === 'concat' || mode === 'transcode') {
+      setConcatSel([])
+    } else {
+      setPostVideo('')
+    }
+  }
+
+  // 拼接：多个视频按顺序合成一个（统一分辨率 + 自动补静音）
+  const handlePostConcat = async () => {
+    if (concatSel.length < 2) {
+      toast.error('请至少选择两个视频')
+      return
+    }
+    setPostBusy(true)
+    setPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('filenames', concatSel.join(','))
+      const res = await api.post('/api/video-factory/tools/concat', form, { timeout: 600000 })
+      setPostResult({ mode: 'concat', ...res.data })
+      toast.success('视频拼接完成')
+      fetchVideos()
+    } catch (e) {
+      toast.error(`拼接失败：${e.message}`)
+    } finally {
+      setPostBusy(false)
+    }
+  }
+
+  // 批量转码：统一 H.264 + 可选分辨率，逐项报告成功/失败
+  const handlePostTranscode = async () => {
+    if (concatSel.length === 0) {
+      toast.error('请至少选择一个视频')
+      return
+    }
+    setPostBusy(true)
+    setPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('filenames', concatSel.join(','))
+      if (transcodeWidth) form.append('width', transcodeWidth)
+      if (transcodeHeight) form.append('height', transcodeHeight)
+      form.append('crf', transcodeCrf || 23)
+      const res = await api.post('/api/video-factory/tools/transcode', form, { timeout: 600000 })
+      setPostResult({ mode: 'transcode', ...res.data })
+      if (res.data.ok > 0) {
+        toast.success(`转码完成：成功 ${res.data.ok} 个${res.data.failed ? `，失败 ${res.data.failed} 个` : ''}`)
+        fetchVideos()
+      } else {
+        toast.error('转码失败，请检查视频文件')
+      }
+    } catch (e) {
+      toast.error(`转码失败：${e.message}`)
+    } finally {
+      setPostBusy(false)
+    }
+  }
+
+  // 配乐：原声 + BGM 混音（BGM 支持 URL 或服务器本地路径）
+  const handlePostMusic = async () => {
+    if (!postVideo) {
+      toast.error('请选择目标视频')
+      return
+    }
+    if (!bgmUrl.trim()) {
+      toast.error('请输入 BGM 音乐地址')
+      return
+    }
+    setPostBusy(true)
+    setPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('video', postVideo)
+      form.append('music', bgmUrl.trim())
+      form.append('bg_volume', bgVolume)
+      const res = await api.post('/api/video-factory/tools/music', form, { timeout: 600000 })
+      setPostResult({ mode: 'music', ...res.data })
+      toast.success('配乐完成')
+      fetchVideos()
+    } catch (e) {
+      toast.error(`配乐失败：${e.message}`)
+    } finally {
+      setPostBusy(false)
+    }
+  }
+
+  // 字幕：SRT 文本烧录进画面（需 libass，已自动优先 imageio-ffmpeg）
+  const handlePostSubtitle = async () => {
+    if (!postVideo) {
+      toast.error('请选择目标视频')
+      return
+    }
+    if (!srtContent.trim()) {
+      toast.error('请输入字幕内容')
+      return
+    }
+    setPostBusy(true)
+    setPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('video', postVideo)
+      form.append('srt_content', srtContent)
+      const res = await api.post('/api/video-factory/tools/subtitle', form, { timeout: 600000 })
+      setPostResult({ mode: 'subtitle', ...res.data })
+      toast.success('字幕烧录完成')
+      fetchVideos()
+    } catch (e) {
+      toast.error(`字幕烧录失败：${e.message}`)
+    } finally {
+      setPostBusy(false)
     }
   }
 
@@ -474,6 +681,65 @@ export default function VideoFactoryPage() {
                   {p.slice(0, 46)}...
                 </button>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* v15 脚本文案模板库（口播/剧情/科普） */}
+        {scriptTemplates.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-blue-500" />
+              脚本文案模板（v15）
+              <span className="text-xs text-gray-400 font-normal">
+                点击填充到视频描述，支持 {'{主题}'} 替换
+              </span>
+            </label>
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="text"
+                value={scriptTopic}
+                onChange={(e) => setScriptTopic(e.target.value)}
+                placeholder="主题词（替换模板中的 {主题}，如：智能音箱）"
+                className="flex-1 min-w-0 px-3 py-1.5 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+              <div className="flex gap-1 shrink-0">
+                {['全部', '口播', '剧情', '科普'].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setScriptCategory(c)}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${
+                      scriptCategory === c ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {scriptTemplates
+                .filter((t) => scriptCategory === '全部' || t.category === scriptCategory)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      const topic = scriptTopic.trim()
+                      const fill = (s) => (topic ? s.replaceAll('{主题}', topic) : s)
+                      setPrompt([fill(t.title), ...t.structure.map(fill)].join('\n'))
+                    }}
+                    className="text-left p-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 shrink-0">
+                        {t.category}
+                      </span>
+                      <span className="text-xs font-medium text-gray-800 truncate">{t.name}</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 truncate">{t.title}</div>
+                    <div className="text-[11px] text-gray-400 mt-1 truncate">{t.desc}</div>
+                  </button>
+                ))}
             </div>
           </div>
         )}
@@ -717,6 +983,17 @@ export default function VideoFactoryPage() {
                     查看视频
                   </Button>
                 )}
+                {(lastResult.status === 'completed' || lastResult.status === 'failed') && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={RefreshCw}
+                    loading={creating}
+                    onClick={handleCreate}
+                  >
+                    换一版
+                  </Button>
+                )}
                 {lastResult.status !== 'completed' && lastResult.status !== 'failed' && (
                   <Button
                     variant="secondary"
@@ -739,6 +1016,51 @@ export default function VideoFactoryPage() {
         )}
       </div>
 
+      {/* 视频后期工具 */}
+      <div className="bg-white rounded-2xl border border-gray-200 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
+          <Wand2 className="w-5 h-5 text-blue-500" />
+          视频后期工具
+        </h2>
+        <p className="text-sm text-gray-500 mb-4">
+          基于 ffmpeg 的本地后期处理：多段拼接、背景音乐混音、字幕烧录、批量转码，处理结果自动存入视频库
+        </p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <button
+            onClick={() => openPost('concat')}
+            className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center"
+          >
+            <Scissors className="w-6 h-6 mx-auto text-blue-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">多视频拼接</div>
+            <div className="text-xs text-gray-500 mt-1">统一分辨率按顺序合并，自动补静音</div>
+          </button>
+          <button
+            onClick={() => openPost('music')}
+            className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center"
+          >
+            <Music className="w-6 h-6 mx-auto text-blue-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">背景音乐混音</div>
+            <div className="text-xs text-gray-500 mt-1">原声 + BGM 混合，可调背景音量</div>
+          </button>
+          <button
+            onClick={() => openPost('subtitle')}
+            className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center"
+          >
+            <Subtitles className="w-6 h-6 mx-auto text-blue-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">字幕烧录</div>
+            <div className="text-xs text-gray-500 mt-1">SRT 字幕文本直接烧进画面</div>
+          </button>
+          <button
+            onClick={() => openPost('transcode')}
+            className="p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all text-center"
+          >
+            <Layers className="w-6 h-6 mx-auto text-blue-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">批量转码</div>
+            <div className="text-xs text-gray-500 mt-1">统一 H.264 格式，可选分辨率（v15）</div>
+          </button>
+        </div>
+      </div>
+
       {/* 视频库 */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -756,10 +1078,23 @@ export default function VideoFactoryPage() {
             {videos.map((video) => (
               <div key={video.filename} className="group relative">
                 <div
-                  className="aspect-video bg-gray-100 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors"
+                  className="aspect-video bg-gray-100 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors overflow-hidden"
                   onClick={() => handlePlay(video)}
                 >
-                  <Video className="w-8 h-8 text-gray-400 group-hover:text-blue-500 transition-colors" />
+                  {video.cover_url ? (
+                    <img
+                      src={video.cover_url}
+                      alt={video.title || video.filename}
+                      className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                      loading="lazy"
+                    />
+                  ) : (
+                    /* 封面缺失兜底：渐变底 + 图标（后端抽帧失败会自动生成兜底封面，极少出现） */
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-100 to-blue-50">
+                      <Video className="w-8 h-8 text-gray-400 group-hover:text-blue-500 transition-colors" />
+                      <span className="mt-1.5 text-[10px] text-gray-400">封面生成中…</span>
+                    </div>
+                  )}
                 </div>
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 rounded-xl flex items-center justify-center gap-2 transition-all opacity-0 group-hover:opacity-100">
                   <button
@@ -776,10 +1111,22 @@ export default function VideoFactoryPage() {
                   >
                     <Download className="w-4 h-4 text-green-600" />
                   </button>
+                  <button
+                    onClick={() => {
+                      setPackVideo(video)
+                      setPackPlatform('douyin')
+                      setPackTitle(video.title || '')
+                      setPackDesc('')
+                    }}
+                    className="p-2 bg-white rounded-full hover:bg-cyan-50 transition-colors"
+                    title="发布包（平台规格成片 + 封面 + 文案）"
+                  >
+                    <Package className="w-4 h-4 text-cyan-600" />
+                  </button>
                   <span onClick={(e) => e.stopPropagation()}>
                     <ShareButton
-                      content={`# 视频作品：${video.filename}\n\n- 文件：${video.filename}\n- 大小：${formatBytes(video.size)}\n\n> 由小团智能平台 AI 视频工坊生成 · ${new Date().toLocaleString()}`}
-                      title={`视频作品：${video.filename}`}
+                      content={`# 视频作品：${video.title || video.filename}\n\n- 文件：${video.filename}\n- 大小：${formatBytes(video.size)}\n\n> 由小团智能平台 AI 视频工坊生成 · ${new Date().toLocaleString()}`}
+                      title={`视频作品：${video.title || video.filename}`}
                       contentType="video"
                       className="!p-2 !bg-white !rounded-full"
                     />
@@ -792,13 +1139,83 @@ export default function VideoFactoryPage() {
                     <Trash2 className="w-4 h-4 text-red-600" />
                   </button>
                 </div>
-                <div className="mt-2 text-xs text-gray-600 truncate">{video.filename}</div>
+                <div className="mt-2 text-xs text-gray-600 truncate">{video.title || video.filename}</div>
                 <div className="text-xs text-gray-400">{formatBytes(video.size)}</div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* 视频发布包 Modal：平台规格成片 + 封面 + 发布文案 + 质量报告 */}
+      <Modal
+        open={!!packVideo}
+        onClose={() => setPackVideo(null)}
+        title="视频发布包（平台规格成片）"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPackVideo(null)} disabled={packing}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              icon={Package}
+              loading={packing}
+              onClick={downloadPublishPack}
+              className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+            >
+              生成发布包
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-xs text-blue-700">
+            将自动转码为平台规格成片（cover 模式居中裁剪不变形，有音轨自动保留），抽帧生成封面，
+            并附发布文案（标题/描述/标签）、平台规格说明、上传指南、商用授权与质量自检报告。
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">目标平台</label>
+            <div className="grid grid-cols-3 gap-2">
+              {PUBLISH_PLATFORMS.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setPackPlatform(p.id)}
+                  className={`flex flex-col items-start gap-0.5 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                    packPlatform === p.id
+                      ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500/20'
+                      : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-sm font-medium text-gray-800">{p.name}</span>
+                  <span className="text-[11px] text-gray-400">{p.spec}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">视频标题</label>
+            <input
+              type="text"
+              value={packTitle}
+              onChange={(e) => setPackTitle(e.target.value)}
+              placeholder="如：夏日海岸的治愈瞬间"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">视频描述</label>
+            <textarea
+              value={packDesc}
+              onChange={(e) => setPackDesc(e.target.value)}
+              rows={3}
+              placeholder="如：AI 生成的治愈系风光短片，适合短视频平台发布"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* 使用指南 */}
       <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-4 border border-blue-100">
@@ -824,6 +1241,293 @@ export default function VideoFactoryPage() {
           当前 Agnes Video V2.0 免费使用，支持 480p/720p/1080p，最长 15 秒
         </div>
       </div>
+
+      {/* 视频后期工具 Modal */}
+      <Modal
+        open={!!postMode}
+        onClose={() => setPostMode(null)}
+        title={
+          postMode === 'concat'
+            ? '多视频拼接'
+            : postMode === 'music'
+              ? '背景音乐混音'
+              : postMode === 'subtitle'
+                ? '字幕烧录'
+                : '批量转码'
+        }
+        size="lg"
+      >
+        {postMode === 'concat' && (
+          <div>
+            <p className="text-sm text-gray-500 mb-3">
+              按勾选顺序拼接（已选 {concatSel.length} 个，至少 2 个）
+            </p>
+            {videos.length < 2 ? (
+              <Empty icon={Film} title="视频不足" description="请先生成至少两个视频" />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto mb-4">
+                {videos.map((v) => (
+                  <label
+                    key={v.filename}
+                    className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      concatSel.includes(v.filename)
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={concatSel.includes(v.filename)}
+                      onChange={() => toggleConcatSel(v.filename)}
+                      className="accent-blue-600"
+                    />
+                    <span className="text-xs text-gray-700 truncate flex-1">{v.title || v.filename}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <Button
+              variant="gradient"
+              icon={Scissors}
+              loading={postBusy}
+              disabled={concatSel.length < 2}
+              onClick={handlePostConcat}
+              className="w-full"
+            >
+              开始拼接
+            </Button>
+          </div>
+        )}
+
+        {postMode === 'music' && (
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">目标视频</label>
+              <select
+                value={postVideo}
+                onChange={(e) => setPostVideo(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              >
+                <option value="">请选择视频</option>
+                {videos.map((v) => (
+                  <option key={v.filename} value={v.filename}>
+                    {v.title || v.filename}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">BGM 地址</label>
+              <input
+                type="text"
+                value={bgmUrl}
+                onChange={(e) => setBgmUrl(e.target.value)}
+                placeholder="https://… 音乐 URL（也可填服务器本地路径）"
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                提示：可用音乐工厂生成的音乐地址（在音乐列表复制 URL）
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">
+                背景音量: {Math.round(bgVolume * 100)}%
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={bgVolume}
+                onChange={(e) => setBgVolume(parseFloat(e.target.value))}
+                className="w-full"
+              />
+            </div>
+            <Button
+              variant="gradient"
+              icon={Music}
+              loading={postBusy}
+              disabled={!postVideo || !bgmUrl.trim()}
+              onClick={handlePostMusic}
+              className="w-full"
+            >
+              开始配乐
+            </Button>
+          </div>
+        )}
+
+        {postMode === 'subtitle' && (
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">目标视频</label>
+              <select
+                value={postVideo}
+                onChange={(e) => setPostVideo(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              >
+                <option value="">请选择视频</option>
+                {videos.map((v) => (
+                  <option key={v.filename} value={v.filename}>
+                    {v.title || v.filename}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">SRT 字幕内容</label>
+              <textarea
+                rows={8}
+                value={srtContent}
+                onChange={(e) => setSrtContent(e.target.value)}
+                placeholder={`1\n00:00:00,000 --> 00:00:03,000\n第一句字幕\n\n2\n00:00:03,000 --> 00:00:06,000\n第二句字幕`}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none font-mono text-xs"
+              />
+            </div>
+            <Button
+              variant="gradient"
+              icon={Subtitles}
+              loading={postBusy}
+              disabled={!postVideo || !srtContent.trim()}
+              onClick={handlePostSubtitle}
+              className="w-full"
+            >
+              开始烧录
+            </Button>
+          </div>
+        )}
+
+        {postMode === 'transcode' && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              批量转码为 H.264 平台兼容格式（已选 {concatSel.length} 个，最多 10 个）
+            </p>
+            {videos.length === 0 ? (
+              <Empty icon={Film} title="视频不足" description="请先生成视频" />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto">
+                {videos.map((v) => (
+                  <label
+                    key={v.filename}
+                    className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${
+                      concatSel.includes(v.filename)
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={concatSel.includes(v.filename)}
+                      onChange={() => toggleConcatSel(v.filename)}
+                      className="accent-blue-600"
+                    />
+                    <span className="text-xs text-gray-700 truncate flex-1">{v.title || v.filename}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">输出宽度</label>
+                <input
+                  type="number"
+                  min="16"
+                  max="7680"
+                  value={transcodeWidth}
+                  onChange={(e) => setTranscodeWidth(e.target.value)}
+                  placeholder="原尺寸"
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">输出高度</label>
+                <input
+                  type="number"
+                  min="16"
+                  max="7680"
+                  value={transcodeHeight}
+                  onChange={(e) => setTranscodeHeight(e.target.value)}
+                  placeholder="原尺寸"
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">CRF 画质</label>
+                <input
+                  type="number"
+                  min="18"
+                  max="35"
+                  value={transcodeCrf}
+                  onChange={(e) => setTranscodeCrf(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400">
+              宽高需成对填写（留空保持原分辨率）；CRF 18~35，数值越小画质越高、文件越大
+            </p>
+            <Button
+              variant="gradient"
+              icon={Layers}
+              loading={postBusy}
+              disabled={concatSel.length === 0}
+              onClick={handlePostTranscode}
+              className="w-full"
+            >
+              开始批量转码
+            </Button>
+          </div>
+        )}
+
+        {/* 批量转码逐项结果 */}
+        {postResult?.mode === 'transcode' && (
+          <div className="mt-4 p-4 rounded-xl bg-green-50 border border-green-200">
+            <div className="font-medium text-gray-900 mb-2">
+              转码完成：成功 {postResult.ok} 个{postResult.failed ? ` / 失败 ${postResult.failed} 个` : ''}
+            </div>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {postResult.results.map((r) =>
+                r.status === 'ok' ? (
+                  <div key={r.filename} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-gray-600 truncate">
+                      {r.source} → {r.filename}
+                      {r.width ? `（${r.width}×${r.height}）` : ''}
+                    </span>
+                    <Button
+                      variant="success"
+                      size="sm"
+                      icon={Play}
+                      onClick={() => handlePlay({ url: absUrl(r.url), filename: r.filename })}
+                    >
+                      预览
+                    </Button>
+                  </div>
+                ) : (
+                  <div key={r.source} className="text-xs text-red-500 truncate" title={r.error}>
+                    {r.source}：{r.error}
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+        {postResult && postResult.mode !== 'transcode' && (
+          <div className="mt-4 p-4 rounded-xl bg-green-50 border border-green-200 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium text-gray-900">处理完成</div>
+              <div className="text-xs text-gray-500 truncate mt-0.5">{postResult.filename}</div>
+            </div>
+            <Button
+              variant="success"
+              size="sm"
+              icon={Play}
+              onClick={() => handlePlay({ url: absUrl(postResult.url), filename: postResult.filename })}
+            >
+              预览
+            </Button>
+          </div>
+        )}
+      </Modal>
 
       {/* 视频播放器 Modal */}
       <Modal

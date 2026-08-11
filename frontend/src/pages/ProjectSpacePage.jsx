@@ -711,20 +711,35 @@ function ArtifactCard({ art, type, meta, onView }) {
     return (
       <div
         onClick={onView}
-        className="group bg-gray-900 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200"
+        className="group bg-white rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-all border border-gray-200"
       >
-        <div className="aspect-video flex items-center justify-center relative">
-          <video
-            src={`${API_BASE}${art.media_url}`}
-            className="w-full h-full object-cover"
-            preload="metadata"
-            muted
-          />
-          <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/40">
-            <Play className="w-10 h-10 text-white fill-white" />
+        <div className="aspect-video flex items-center justify-center relative overflow-hidden bg-gray-100">
+          {/* 封面图优先（thumbnail），无封面时优雅兜底，避免黑色/灰色 video 占位 */}
+          {art.thumbnail ? (
+            <img
+              src={`${API_BASE}${art.thumbnail}`}
+              alt={art.id}
+              loading="lazy"
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200 text-gray-400">
+              <Film className="w-8 h-8 mb-1" />
+              <span className="text-[10px]">视频封面生成中…</span>
+            </div>
+          )}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/35 transition-colors">
+            <span className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center shadow-md group-hover:scale-110 transition-transform">
+              <Play className="w-4 h-4 text-gray-900 ml-0.5 fill-gray-900" />
+            </span>
           </div>
+          {art.duration > 0 && (
+            <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px]">
+              {art.duration.toFixed(1)}s
+            </span>
+          )}
         </div>
-        <div className="p-2 bg-white">
+        <div className="p-2">
           <p className="text-xs text-gray-500 truncate font-mono">{art.id?.slice(0, 16)}</p>
           {art.duration > 0 && <p className="text-xs text-gray-400">{art.duration.toFixed(1)}s</p>}
         </div>

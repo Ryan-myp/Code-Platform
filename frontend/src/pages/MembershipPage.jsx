@@ -16,6 +16,8 @@ import {
   Trophy,
   AlertTriangle,
   Ticket,
+  Copy,
+  Gift,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -70,6 +72,8 @@ export default function MembershipPage() {
   const [leaderboard, setLeaderboard] = useState(null)
   // v9.4：优惠码抵扣
   const [couponCode, setCouponCode] = useState('')
+  // v13.23：我的邀请（邀请码/链接/已邀请用户）
+  const [invite, setInvite] = useState(null)
 
   const membership = quota?.membership || 'free'
   const isVip = membership === 'vip'
@@ -77,16 +81,18 @@ export default function MembershipPage() {
   const loadAll = async () => {
     setLoading(true)
     try {
-      const [plansRes, ordersRes, qrRes, boardRes] = await Promise.all([
+      const [plansRes, ordersRes, qrRes, boardRes, inviteRes] = await Promise.all([
         api.get('/api/membership/plans'),
         api.get('/api/orders'),
         api.get('/api/membership/payment-qr'),
         api.get('/api/invite/leaderboard'),
+        api.get('/api/invite'),
       ])
       setPlans(plansRes.data)
       setOrders(ordersRes.data)
       setPaymentQr(qrRes.data?.url || '')
       setLeaderboard(boardRes.data)
+      setInvite(inviteRes.data)
     } catch (err) {
       toast.error(err.message || '加载会员信息失败')
     } finally {
@@ -334,6 +340,70 @@ export default function MembershipPage() {
               })}
             </div>
           )}
+
+          {/* 我的邀请（v13.23：对齐 /api/invite 邀请码/链接/已邀请用户） */}
+          <h2 className="font-semibold text-ink-900 mb-4 flex items-center gap-2 mt-10">
+            <Gift className="w-5 h-5 text-brand-600" /> 我的邀请
+            <span className="text-xs font-normal text-ink-400">
+              每邀请 1 位新用户，双方各得 +{invite?.reward_per_invite ?? 5} 次额度
+            </span>
+          </h2>
+          <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5 mb-8">
+            {!invite ? (
+              <p className="text-sm text-ink-400">加载中…</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-mono text-lg font-bold tracking-[0.3em] bg-ink-50 border border-ink-200 rounded-lg px-4 py-2.5 text-ink-800">
+                    {invite.invite_code}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      const link = `${window.location.origin}/login?invite=${invite.invite_code}`
+                      try {
+                        await navigator.clipboard.writeText(link)
+                        toast.success('邀请链接已复制，好友注册双方各得 5 次额度')
+                      } catch {
+                        toast.error('复制失败，请手动复制邀请码')
+                      }
+                    }}
+                    className="px-4 py-2.5 rounded-lg bg-brand-50 text-brand-600 hover:bg-brand-100 text-sm font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> 复制邀请链接
+                  </button>
+                </div>
+                <p className="text-xs text-ink-400 mt-2.5">
+                  好友在注册页填写邀请码或打开你的链接注册，双方各得{' '}
+                  <span className="font-semibold text-brand-600">+{invite.reward_per_invite} 次</span>{' '}
+                  一次性额度（不随每日重置）
+                </p>
+                <div className="mt-4 pt-4 border-t border-ink-100">
+                  <p className="text-sm font-medium text-ink-800 mb-2">
+                    已邀请 {invite.invited_count} 人
+                  </p>
+                  {invite.invited_users?.length > 0 ? (
+                    <div className="max-h-44 overflow-y-auto space-y-1.5 pr-1">
+                      {invite.invited_users.map((u) => (
+                        <div
+                          key={u.username}
+                          className="flex items-center justify-between px-3 py-2 rounded-lg bg-ink-50/60 text-sm"
+                        >
+                          <span className="font-medium text-ink-700">@{u.username}</span>
+                          <span className="text-xs text-ink-400">
+                            {u.created_at?.slice(0, 10)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-ink-400">
+                      还没有好友加入，复制链接邀请你的第一位好友吧
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
 
           {/* 邀请排行榜 */}
           <h2 className="font-semibold text-ink-900 mb-4 flex items-center gap-2 mt-10">

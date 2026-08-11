@@ -18,6 +18,7 @@ import {
   Layers,
   Wand2,
   Copy,
+  Package,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -144,9 +145,28 @@ export default function MemePage() {
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
+  // ── 商业化发布 v14：微信发布包（勾选成套打包）+ 成套生成（16 张统一风格/角色）──
+  const [packOpen, setPackOpen] = useState(false)
+  const [packTitle, setPackTitle] = useState('')
+  const [packDesc, setPackDesc] = useState('')
+  const [packing, setPacking] = useState(false)
+  const [setOpen, setSetOpen] = useState(false)
+  const [setText, setSetText] = useState('')
+  const [setCharacter, setSetCharacter] = useState('')
+  const [setBusy, setSetBusy] = useState(false)
+  // 风格预览图（v15：模板风格真实底图 + AI 风格示意卡，生成前预览画面质感方向）
+  const [previews, setPreviews] = useState([])
 
   useEffect(() => {
     loadList()
+  }, [])
+
+  // 加载风格预览图（失败静默，不阻塞主功能）
+  useEffect(() => {
+    api
+      .get('/api/meme/style-previews')
+      .then((res) => setPreviews(res.data || []))
+      .catch(() => {})
   }, [])
 
   // 进入页面恢复草稿（仅挂载时执行一次，setter 均为函数式更新）
@@ -337,6 +357,80 @@ export default function MemePage() {
     } catch (e) {
       toast.error(e.message)
     }
+  }
+
+  // 微信发布包：勾选表情 → 主图 240 / 缩略图 120 / 图标 50 / 横幅 750x400 + 指南 + 质量报告
+  const downloadPublishPack = async () => {
+    if (selected.size === 0) {
+      toast.error('请先勾选要打包的表情包')
+      return
+    }
+    setPacking(true)
+    try {
+      const fd = new FormData()
+      ;[...selected].forEach((id) => fd.append('ids', id))
+      fd.append('pack_title', packTitle.trim() || '我的表情包')
+      fd.append('pack_desc', packDesc.trim() || 'AI 生成趣味表情包')
+      const res = await api.post('/api/meme/publish-pack', fd, {
+        responseType: 'blob',
+        timeout: 120000,
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `wechat_meme_pack_${Date.now()}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setPackOpen(false)
+      const setCount = Math.ceil(selected.size / 16)
+      toast.success(
+        `微信发布包已生成：${selected.size} 张${setCount > 1 ? `（自动拆分为 ${setCount} 套）` : ''}（含规格成品/上传指南/质量报告）`,
+      )
+    } catch (e) {
+      toast.error(`发布包生成失败：${e.message}`)
+    } finally {
+      setPacking(false)
+    }
+  }
+
+  // 成套生成：一次输入最多 16 条文案，同风格 + 同角色设定统一生成（可提交微信开放平台审核）
+  const generateSet = async () => {
+    const lines = setText
+      .split(/\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    if (lines.length === 0) {
+      toast.error('请输入至少一条文案（每行：顶部文字|底部文字）')
+      return
+    }
+    if (lines.length > 16) {
+      toast.error('微信成套表情包最多 16 张')
+      return
+    }
+    setSetBusy(true)
+    const fd = new FormData()
+    lines.forEach((l) => fd.append('items', l))
+    fd.append('style', style)
+    fd.append('ai_style', aiStyle)
+    fd.append('character', setCharacter.trim())
+    fd.append('sync', 'false')
+    await submitTask('/api/meme/generate-set', fd, {
+      onUpdate: (t) => setGenTask(t),
+      onSuccess: () => {
+        toast.success(`成套生成完成：${lines.length} 张（风格/角色统一）`)
+        setSetBusy(false)
+        setSetOpen(false)
+        setSetText('')
+        setSetCharacter('')
+        loadList()
+      },
+      onError: (e) => {
+        setSetBusy(false)
+        toast.error(`成套生成失败：${e.message}`)
+      },
+    })
   }
 
   const downloadSelected = async () => {
@@ -606,22 +700,46 @@ export default function MemePage() {
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1.5">
-                        画面风格
+                        画面风格（点击预览图切换，示意卡为 AI 效果方向）
                       </label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {AI_STYLES.map((s) => (
-                          <button
-                            key={s.id}
-                            onClick={() => setAiStyle(s.id)}
-                            className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
-                              aiStyle === s.id
-                                ? 'bg-pink-50 border-pink-300 text-pink-700'
-                                : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-pink-50'
-                            }`}
-                          >
-                            {s.name}
-                          </button>
-                        ))}
+                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                        {AI_STYLES.map((s) => {
+                          const pv = previews.find((p) => p.id === `ai:${s.id}`)?.url
+                          return (
+                            <button
+                              key={s.id}
+                              onClick={() => setAiStyle(s.id)}
+                              title={`${s.name}：${s.desc}`}
+                              className={`group relative rounded-xl overflow-hidden border-2 transition-all ${
+                                aiStyle === s.id
+                                  ? 'border-pink-500 ring-2 ring-pink-500/30'
+                                  : 'border-transparent hover:border-pink-300'
+                              }`}
+                            >
+                              <div className="aspect-square w-full bg-gradient-to-br from-gray-100 to-gray-200">
+                                {pv ? (
+                                  <img
+                                    src={pv}
+                                    alt={s.name}
+                                    loading="lazy"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-[10px] text-gray-400">
+                                    {s.name}
+                                  </div>
+                                )}
+                              </div>
+                              <span
+                                className={`absolute bottom-0 inset-x-0 text-center text-[10px] py-0.5 ${
+                                  aiStyle === s.id ? 'bg-pink-600 text-white' : 'bg-black/50 text-white'
+                                }`}
+                              >
+                                {s.name}
+                              </span>
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
                   </div>
@@ -706,6 +824,21 @@ export default function MemePage() {
                   className="w-full justify-center"
                 >
                   批量生成模式（一次多张）
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={Layers}
+                  loading={setBusy}
+                  onClick={() => {
+                    setSetText('')
+                    setSetCharacter('')
+                    setSetOpen(true)
+                  }}
+                  className="w-full justify-center"
+                  title="一次输入最多 16 条文案，同风格+同角色统一生成，可直接提交微信表情开放平台"
+                >
+                  成套生成（16 张统一风格/角色）
                 </Button>
               </div>
             ) : (
@@ -848,6 +981,19 @@ export default function MemePage() {
                     >
                       批量下载 ZIP
                     </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      icon={Package}
+                      onClick={() => {
+                        setPackTitle('')
+                        setPackDesc('')
+                        setPackOpen(true)
+                      }}
+                      title="一键打包为微信表情开放平台可提交的成套物料"
+                    >
+                      微信发布包
+                    </Button>
                     <Button variant="danger" size="sm" icon={Trash2} onClick={removeSelected}>
                       批量删除
                     </Button>
@@ -952,6 +1098,152 @@ export default function MemePage() {
           </Card>
         </div>
       </div>
+
+      {/* ── 成套生成 Modal（商业化 v14：16 张成套，同风格+同角色）── */}
+      <Modal
+        open={setOpen}
+        onClose={() => setOpen(false)}
+        title="成套生成（微信表情开放平台成套）"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setOpen(false)} disabled={setBusy}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              icon={Layers}
+              loading={setBusy}
+              onClick={generateSet}
+              className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+            >
+              开始成套生成
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-700">
+            每行一条文案（格式：顶部文字|底部文字，可只填顶部），最多 16 张。全套自动保持同一风格
+            + 同一角色设定，可直接提交微信表情开放平台审核。生成前自动安全审核，违规文案会拦截并提示修改。
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              成套文案（{setText.split(/\n/).filter((l) => l.trim()).length}/16 条）
+            </label>
+            <textarea
+              value={setText}
+              onChange={(e) => setSetText(e.target.value)}
+              rows={8}
+              placeholder={
+                '举例：\n我太难了|生活终于对我下手了\n好的呢|微笑中透露着疲惫\n在？|出来聊五毛钱的天\n格局打开|这事就这么定了'
+              }
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                角色设定（AI 模式，全套保持一致）
+              </label>
+              <input
+                type="text"
+                value={setCharacter}
+                onChange={(e) => setSetCharacter(e.target.value)}
+                placeholder="如：一只圆滚滚的橘猫，穿黄色卫衣"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                风格（预览与成图一致）
+              </label>
+              <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
+                {(() => {
+                  const pvId = style === 'ai' ? `ai:${aiStyle}` : style
+                  const pv = previews.find((p) => p.id === pvId)?.url
+                  return pv ? (
+                    <img
+                      src={pv}
+                      alt="风格预览"
+                      className="w-14 h-14 rounded-lg object-cover border border-gray-200 shrink-0"
+                    />
+                  ) : null
+                })()}
+                <div className="text-sm text-gray-700">
+                  {STYLES.find((s) => s.id === style)?.name}
+                  {style === 'ai' && ` · ${AI_STYLES.find((s) => s.id === aiStyle)?.name}`}
+                  <div className="text-[11px] text-gray-400 mt-0.5">
+                    {style === 'ai' ? 'AI 效果示意，生成后为真实画面' : '与成图一致的底图预览'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── 微信发布包 Modal ── */}
+      <Modal
+        open={packOpen}
+        onClose={() => setPackOpen(false)}
+        title="微信表情发布包"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setPackOpen(false)} disabled={packing}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              icon={Package}
+              loading={packing}
+              onClick={downloadPublishPack}
+              className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700"
+            >
+              生成发布包（{selected.size} 张
+              {Math.ceil(selected.size / 16) > 1 ? ` / ${Math.ceil(selected.size / 16)} 套` : ''}）
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg bg-sky-50 border border-sky-100 px-3 py-2 text-xs text-sky-700">
+            将自动生成：主图 240×240 / 缩略图 120×120 / 聊天页图标 50×50 / 详情页横幅 750×400，
+            并附《表情说明》《上传指南》《平台规格说明》《商用授权》《质量自检报告》。微信审核需 16 张成套。
+          </div>
+          {selected.size > 16 && (
+            <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 text-xs text-violet-700">
+              已选 {selected.size} 张，将自动按 16 张/套拆分为{' '}
+              {Math.ceil(selected.size / 16)} 套打包，每套独立成目录，需分别提交微信审核。
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              表情包名称（投稿标题，≤30 字）
+            </label>
+            <input
+              type="text"
+              value={packTitle}
+              onChange={(e) => setPackTitle(e.target.value)}
+              placeholder="如：打工人日常"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1.5">
+              表情介绍（投稿说明，≤200 字）
+            </label>
+            <textarea
+              value={packDesc}
+              onChange={(e) => setPackDesc(e.target.value)}
+              rows={3}
+              placeholder="如：打工人专属表情，包含摸鱼、加班、周五等高频场景"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* ── 重命名 Modal ── */}
       <Modal

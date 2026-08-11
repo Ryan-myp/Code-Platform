@@ -25,6 +25,9 @@ import {
   Ticket,
   Plus,
   Video,
+  Lock,
+  Unlock,
+  KeyRound,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -1393,6 +1396,7 @@ function ContentManager() {
   )
 
   return (
+    <>
     <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
@@ -1507,6 +1511,229 @@ function ContentManager() {
                           </span>
                         )}
                       </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+      {/* v15：角色-权限矩阵（当前视角可视化 + 指定用户模拟） */}
+      <PermissionMatrix type={type} />
+    </>
+  )
+}
+
+/**
+ * 角色-权限矩阵（v15）
+ * - 以指定用户视角查看各资源可见状态（可用/锁定/不可见）与权限来源
+ * - 来源标注：role=管理员角色 / membership=会员等级 / config=后台配置 / default=默认公开 / hidden=下线·专属
+ * - 支持输入 user_id 模拟普通用户视角，排查会员权益问题
+ */
+const SOURCE_META = {
+  role: { label: '管理员角色', cls: 'bg-purple-50 text-purple-600' },
+  membership: { label: '会员等级', cls: 'bg-blue-50 text-blue-600' },
+  config: { label: '后台配置', cls: 'bg-amber-50 text-amber-600' },
+  default: { label: '默认公开', cls: 'bg-gray-100 text-gray-500' },
+  hidden: { label: '下线/专属', cls: 'bg-red-50 text-red-500' },
+}
+
+function PermissionMatrix({ type }) {
+  const toast = useToast()
+  const [matrix, setMatrix] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [simUser, setSimUser] = useState('') // 输入框：待查询用户
+  const [appliedUser, setAppliedUser] = useState('') // 已应用的模拟用户
+  const [search, setSearch] = useState('')
+
+  const load = async (t, uid) => {
+    setLoading(true)
+    try {
+      const res = await api.get('/api/admin/permissions/matrix', {
+        params: { type: t, user_id: uid || '' },
+      })
+      setMatrix(res.data || null)
+      setAppliedUser(uid || '')
+    } catch (err) {
+      toast.error(err.message || '加载权限矩阵失败')
+      setMatrix(null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load(type, appliedUser)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type])
+
+  const applySimUser = () => {
+    load(type, simUser.trim())
+  }
+
+  const resetView = () => {
+    setSimUser('')
+    load(type, '')
+  }
+
+  const keyword = search.trim().toLowerCase()
+  const items = (matrix?.items || []).filter(
+    (i) =>
+      !keyword ||
+      i.label?.toLowerCase().includes(keyword) ||
+      i.id.toLowerCase().includes(keyword) ||
+      (i.path || i.category || '').toLowerCase().includes(keyword)
+  )
+  const s = matrix?.summary || {}
+  const user = matrix?.user || {}
+
+  return (
+    <div className="bg-white rounded-2xl border border-ink-200/60 shadow-soft p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold text-ink-900 flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-brand-500" />
+            角色-权限矩阵
+          </h3>
+          <span className="text-xs font-normal text-ink-400">
+            当前视角：{user.role || '—'}
+            {user.membership ? ` / ${MEMBERSHIP_META[user.membership]?.label || user.membership}` : ''}
+            {appliedUser ? `（用户 ${appliedUser}）` : '（管理员）'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* 指定用户视角模拟 */}
+          <input
+            type="text"
+            value={simUser}
+            onChange={(e) => setSimUser(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && applySimUser()}
+            placeholder="输入 user_id 模拟用户视角"
+            className="px-3 py-2 text-sm border border-ink-200 rounded-xl focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all w-52"
+          />
+          <button
+            onClick={applySimUser}
+            className="px-3 py-2 text-sm rounded-xl bg-brand-500 text-white font-medium hover:opacity-90 transition-all"
+          >
+            查询
+          </button>
+          {appliedUser && (
+            <button
+              onClick={resetView}
+              className="px-3 py-2 text-sm rounded-xl bg-ink-50 text-ink-500 hover:bg-ink-100 transition-all"
+            >
+              恢复管理员视角
+            </button>
+          )}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 pr-3 py-2 text-sm border border-ink-200 rounded-xl focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 outline-none transition-all"
+              placeholder="搜索名称 / ID"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 矩阵汇总卡片 */}
+      {matrix && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          <div className="p-3 rounded-xl bg-ink-50">
+            <div className="text-[11px] text-ink-500">资源总数</div>
+            <div className="text-lg font-bold text-ink-900">{s.total || 0}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-emerald-50">
+            <div className="text-[11px] text-emerald-600">可用</div>
+            <div className="text-lg font-bold text-emerald-700">{s.visible || 0}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-amber-50">
+            <div className="text-[11px] text-amber-600">锁定（会员引导）</div>
+            <div className="text-lg font-bold text-amber-700">{s.locked || 0}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-red-50">
+            <div className="text-[11px] text-red-500">不可见</div>
+            <div className="text-lg font-bold text-red-600">{s.hidden || 0}</div>
+          </div>
+        </div>
+      )}
+
+      {/* 来源图例 */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {Object.entries(SOURCE_META).map(([key, m]) => (
+          <span key={key} className={`px-2.5 py-1 rounded-lg text-xs ${m.cls}`}>
+            {m.label}
+          </span>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16 text-ink-400">
+          <Loader2 className="w-6 h-6 animate-spin mr-2" />
+          计算权限矩阵…
+        </div>
+      ) : !matrix ? (
+        <p className="text-sm text-ink-400 text-center py-12">矩阵加载失败，请重试</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-ink-400 text-center py-12">暂无匹配资源</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-ink-400 border-b border-ink-100">
+                <th className="pb-2.5 pr-4 font-medium">名称</th>
+                <th className="pb-2.5 pr-4 font-medium">{type === 'tool' ? '分类' : '路径'}</th>
+                <th className="pb-2.5 pr-4 font-medium">配置可见范围</th>
+                <th className="pb-2.5 pr-4 font-medium">实际状态</th>
+                <th className="pb-2.5 font-medium">权限来源</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const conf = VISIBLE_TO_OPTIONS.find((o) => o.value === item.visible_to)
+                const src = SOURCE_META[item.source] || SOURCE_META.default
+                return (
+                  <tr
+                    key={item.id}
+                    className="border-b border-ink-50 hover:bg-ink-50/50 transition-colors"
+                  >
+                    <td className="py-3 pr-4">
+                      <p className="font-medium text-ink-800">{item.label}</p>
+                      <p className="text-xs text-ink-400">{item.id}</p>
+                    </td>
+                    <td className="py-3 pr-4 text-xs text-ink-500">{item.path || item.category || '—'}</td>
+                    <td className="py-3 pr-4 text-xs">
+                      {conf ? (
+                        <span className="px-2 py-0.5 rounded-full bg-ink-50 text-ink-600">
+                          {conf.label}
+                        </span>
+                      ) : (
+                        <span className="text-ink-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {item.visible && !item.locked ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-xs">
+                          <Unlock className="w-3 h-3" /> 可用
+                        </span>
+                      ) : item.locked ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 text-xs">
+                          <Lock className="w-3 h-3" /> 锁定 · 需 {item.requires}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-50 text-red-500 text-xs">
+                          <Lock className="w-3 h-3" /> 不可见
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${src.cls}`}>
+                        {src.label}
+                      </span>
                     </td>
                   </tr>
                 )

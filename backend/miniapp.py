@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.llm import call_llm_async, log_usage
+from content_safety import check_text, quality_report
+from publish_kit import license_text, pack_dir_name
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,98 @@ TEMPLATES = [
             "pages/category/category（分类页）",
         ],
     },
+    {
+        "id": "food",
+        "name": "外卖点餐",
+        "description": "菜品列表/购物车/下单结算，适合餐饮门店、外卖商家",
+        "icon": "🍜",
+        "color": "from-red-500 to-orange-600",
+        "structure": [
+            "pages/index/index（首页：分类+菜品列表）",
+            "pages/cart/cart（购物车与下单）",
+            "pages/order/list（我的订单）",
+            "pages/mine/mine（个人中心）",
+        ],
+    },
+    {
+        "id": "community",
+        "name": "社区论坛",
+        "description": "帖子列表/发布/详情评论，适合兴趣社群、校园论坛",
+        "icon": "💬",
+        "color": "from-teal-500 to-cyan-600",
+        "structure": [
+            "pages/index/index（首页：帖子列表+分类）",
+            "pages/post/detail（帖子详情+评论）",
+            "pages/post/publish（发布帖子）",
+            "pages/mine/mine（个人中心：我的帖子）",
+        ],
+    },
+    {
+        "id": "fitness",
+        "name": "健身打卡",
+        "description": "训练计划/打卡记录/数据统计，适合健身私教、自律打卡",
+        "icon": "💪",
+        "color": "from-lime-500 to-emerald-600",
+        "structure": [
+            "pages/index/index（首页：今日训练计划）",
+            "pages/train/detail（训练动作详情）",
+            "pages/checkin/checkin（打卡记录）",
+            "pages/stats/stats（数据统计）",
+            "pages/mine/mine（个人中心）",
+        ],
+    },
+    {
+        "id": "travel",
+        "name": "旅游攻略",
+        "description": "目的地/攻略详情/行程规划，适合旅游机构、个人博主",
+        "icon": "🧳",
+        "color": "from-sky-500 to-blue-600",
+        "structure": [
+            "pages/index/index（首页：目的地推荐）",
+            "pages/spot/detail（目的地详情）",
+            "pages/trip/plan（行程规划）",
+            "pages/mine/mine（个人中心）",
+        ],
+    },
+    {
+        "id": "survey",
+        "name": "问卷投票",
+        "description": "问卷列表/填写表单/结果统计，适合市场调研、意见收集、投票活动",
+        "icon": "📊",
+        "color": "from-cyan-500 to-blue-600",
+        "structure": [
+            "pages/index/index（首页：问卷列表）",
+            "pages/survey/detail（问卷详情与填写）",
+            "pages/survey/result（结果统计）",
+            "pages/mine/mine（个人中心：我的答卷）",
+        ],
+    },
+    {
+        "id": "event",
+        "name": "活动报名",
+        "description": "活动列表/详情报名/我的票券，适合沙龙、会议、演出、课程培训",
+        "icon": "🎪",
+        "color": "from-orange-500 to-red-600",
+        "structure": [
+            "pages/index/index（首页：活动列表）",
+            "pages/event/detail（活动详情与报名）",
+            "pages/event/ticket（我的票券）",
+            "pages/mine/mine（个人中心）",
+        ],
+    },
+    {
+        "id": "market",
+        "name": "二手闲置",
+        "description": "闲置列表/发布求购/宝贝详情，适合个人闲置交易、校园跳蚤市场",
+        "icon": "🔄",
+        "color": "from-yellow-500 to-amber-600",
+        "structure": [
+            "pages/index/index（首页：闲置列表+分类）",
+            "pages/goods/detail（宝贝详情）",
+            "pages/publish/publish（发布闲置）",
+            "pages/mine/mine（个人中心：我的发布）",
+        ],
+    },
 ]
 
 _GENERATE_SYSTEM = """你是资深微信小程序开发工程师，擅长编写视觉效果精美、用户体验优秀的小程序代码。
@@ -116,7 +210,17 @@ _GENERATE_SYSTEM = """你是资深微信小程序开发工程师，擅长编写�
 10. 输出必须精简！每个 .wxml 不超过 50 行、.wxss 不超过 70 行、.js 不超过 60 行，
     页面数量 3-5 个，全部文件总字符数必须控制在 30000 以内，严禁超长输出
 11. app.json 的 pages 必须注册全部生成的页面文件路径，不得遗漏任何页面
-12. 不要使用 tabBar 配置（避免图标资源缺失导致编译警告），导航用自定义按钮或页面内跳转"""
+12. 不要使用 tabBar 配置（避免图标资源缺失导致编译警告），导航用自定义按钮或页面内跳转
+13. 商用级交互要求（预览体验的关键，全部页面都要做到）：
+    - 数据加载：页面 onLoad 中模拟异步加载（setTimeout 300ms + wx.showLoading），完成后 setData 渲染，严禁空白页/未定义数据渲染
+    - 空状态：列表无数据时显示友好空状态视图（图标 + 提示文字 + 引导按钮）
+    - 交互反馈：按钮点击/提交/删除等关键操作必须有 wx.showToast 成功或失败提示；表单提交前做必填校验（未填时 toast 提示并聚焦对应输入框）
+    - 页面分享：所有页面 .js 实现 onShareAppMessage（返回 {title: 页面标题, path: 当前页面路径}）
+    - 列表页下拉刷新：页面 json 配置 enablePullDownRefresh: true 并实现 onPullDownRefresh（完成后 wx.stopPullDownRefresh）；列表数据量 ≥ 6 条时实现 onReachBottom 触底加载更多（mock 分页）
+14. 细节：
+    - 首页轮播/列表图片使用真实图片URL（https://images.unsplash.com/...），图片加载失败时显示渐变色占位背景
+    - 导航栏标题与页面内容一致；页面底部留安全间距（padding-bottom: env(safe-area-inset-bottom)）
+    - 卡片间距统一（16rpx）、圆角统一（16rpx-24rpx），主色 + 辅助色的配色方案贯穿全站"""
 
 
 class GenerateRequest(BaseModel):
@@ -263,6 +367,296 @@ def _ensure_qc_column(conn) -> None:
     if "qc" not in cols:
         conn.execute("ALTER TABLE miniapp_projects ADD COLUMN qc TEXT DEFAULT ''")
         conn.commit()
+
+
+# ─── 提审材料自动生成（v15）：app.json 字段核对 + 代码权限扫描 + 类目建议 ───
+# 服务类目建议（提审时按业务选择，类目与功能不符会被驳回）
+_CATEGORY_SUGGEST = {
+    "shop": "电商平台 / 商家自营（需营业执照；个人主体可选「商家自营-服饰箱包鞋」等细类）",
+    "booking": "生活服务（预约类目，如美业/家政/咨询）",
+    "showcase": "工具 / 企业展示",
+    "tool": "工具（效率）",
+    "news": "资讯（需互联网新闻信息服务资质，个人主体慎选）",
+    "food": "餐饮 / 外卖点餐",
+    "community": "社交-社区/论坛（需内容安全审核机制）",
+    "fitness": "体育 / 健身",
+    "travel": "旅游（旅行社业务需资质，个人建议选「旅游-旅游攻略/游记」）",
+    "survey": "工具-表单/调查",
+    "event": "活动/票务（演出票务需资质，沙龙/课程选「教育-在线视频课程」或「生活服务」）",
+    "market": "闲置交易（个人闲置物品交易，禁止商家入驻模式）",
+}
+
+# 隐私接口 → 提审声明要求（扫描代码命中后逐项核对 app.json）
+# level: 未声明时的核对级别（error=运行/审核硬伤，warn=后台配置类提示）
+_PRIVACY_API_RULES = [
+    {
+        "api": "wx.getLocation",
+        "name": "位置信息",
+        "desc": "获取用户位置",
+        "key": "permission",
+        "private": "getLocation",
+        "level": "error",
+    },
+    {
+        "api": "wx.chooseLocation",
+        "name": "选择位置",
+        "desc": "地图选点",
+        "key": "private",
+        "private": "chooseLocation",
+        "level": "error",
+    },
+    {
+        "api": "wx.chooseAddress",
+        "name": "收货地址",
+        "desc": "获取收货地址",
+        "key": "private",
+        "private": "chooseAddress",
+        "level": "error",
+    },
+    {
+        "api": "wx.chooseInvoiceTitle",
+        "name": "发票抬头",
+        "desc": "获取发票抬头",
+        "key": "private",
+        "private": "chooseInvoiceTitle",
+        "level": "error",
+    },
+    {
+        "api": "wx.chooseMedia",
+        "name": "相册/相机",
+        "desc": "选择图片/视频",
+        "key": "private",
+        "private": "chooseMedia",
+        "level": "error",
+    },
+    {
+        "api": "wx.chooseMessageFile",
+        "name": "聊天文件",
+        "desc": "选择微信聊天文件",
+        "key": "private",
+        "private": "chooseMessageFile",
+        "level": "error",
+    },
+    {
+        "api": "wx.getUserProfile",
+        "name": "用户信息",
+        "desc": "头像昵称（需在后台「设置-服务内容声明」配置用户信息用途）",
+        "key": "console",
+        "private": "",
+        "level": "warn",
+    },
+    {
+        "api": "wx.request",
+        "name": "网络请求",
+        "desc": "需在后台「开发-开发管理-服务器域名」配置 request 合法域名",
+        "key": "console",
+        "private": "",
+        "level": "warn",
+    },
+]
+
+
+# 页面路径最后一段 → 中文功能名（用于提审材料页面清单，未命中时用路径兜底）
+_PAGE_NAME_HINT = {
+    "index": "首页",
+    "mine": "个人中心",
+    "cart": "购物车",
+    "order": "订单列表",
+    "detail": "详情页",
+    "list": "列表页",
+    "form": "表单填写",
+    "publish": "发布页",
+    "stats": "数据统计",
+    "checkin": "打卡记录",
+    "result": "结果统计",
+    "ticket": "我的票券",
+}
+
+
+def _scan_used_apis(files: dict) -> list[dict]:
+    """扫描项目代码中使用到的隐私相关 wx.* API（按规则表顺序去重）。"""
+    used = []
+    for path, content in (files or {}).items():
+        if not path.endswith((".js", ".wxml")):
+            continue
+        for rule in _PRIVACY_API_RULES:
+            if rule["api"] in str(content) and rule not in used:
+                used.append(rule)
+    return used
+
+
+def _page_desc(files: dict, page: str) -> str:
+    """从页面 json 的 navigationBarTitleText 或路径推断页面功能说明。"""
+    try:
+        cfg = json.loads(files.get(f"{page}.json") or "{}")
+        title = (cfg.get("navigationBarTitleText") or "").strip()
+        if title:
+            return title
+    except Exception:
+        pass
+    last = page.rsplit("/", 1)[-1]
+    return _PAGE_NAME_HINT.get(last, last)
+
+
+def build_review_material(files: dict, name: str, template: str = "") -> dict:
+    """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。
+
+    纯函数（不碰 DB/网络），供端点与单测复用。
+    返回 {"ok": bool, "checks": [{item, ok, level, detail}], "material": md}。
+    """
+    files = files or {}
+    checks: list[dict] = []
+    app_cfg: dict = {}
+
+    # 1. app.json 可解析 + 页面注册交叉核对
+    raw_app = files.get("app.json")
+    if raw_app is None or not str(raw_app).strip():
+        checks.append({"item": "app.json 可解析", "ok": False, "level": "error", "detail": "app.json 缺失（小程序运行必需）"})
+    else:
+        try:
+            app_cfg = json.loads(raw_app)
+            checks.append({"item": "app.json 可解析", "ok": True, "level": "ok", "detail": "格式正确"})
+        except Exception as e:
+            checks.append({"item": "app.json 可解析", "ok": False, "level": "error", "detail": str(e)})
+    registered = set(app_cfg.get("pages") or [])
+    generated = {p.rsplit(".", 1)[0] for p in files if p.startswith("pages/")}
+    unregistered = sorted(generated - registered)
+    checks.append(
+        {
+            "item": "app.json 注册全部页面",
+            "ok": not unregistered,
+            "level": "error" if unregistered else "ok",
+            "detail": "OK" if not unregistered else f"未注册: {unregistered}",
+        }
+    )
+    missing_quartet = sorted(
+        {f"{rp}.{ext}" for rp in registered for ext in ("js", "wxml", "wxss", "json") if f"{rp}.{ext}" not in files}
+    )
+    checks.append(
+        {
+            "item": "注册页面四件套齐全",
+            "ok": not missing_quartet,
+            "level": "error" if missing_quartet else "ok",
+            "detail": "OK" if not missing_quartet else f"缺失: {missing_quartet}",
+        }
+    )
+
+    # 2. 导航栏标题（审核界面展示依赖）
+    title = ((app_cfg.get("window") or {}).get("navigationBarTitleText") or "").strip()
+    checks.append(
+        {
+            "item": "导航栏标题已设置",
+            "ok": bool(title),
+            "level": "warn" if not title else "ok",
+            "detail": f"「{title}」" if title else "window.navigationBarTitleText 缺失，审核截图展示异常",
+        }
+    )
+
+    # 3. tabBar 图标资源核对（图标缺失会导致编译警告/审核驳回）
+    tabbar = app_cfg.get("tabBar")
+    if isinstance(tabbar, dict) and tabbar.get("list"):
+        missing_icons = sorted(
+            {
+                p.lstrip("/")
+                for it in tabbar["list"]
+                for p in (it.get("iconPath"), it.get("selectedIconPath"))
+                if p and p.lstrip("/") not in files
+            }
+        )
+        checks.append(
+            {
+                "item": "tabBar 图标资源齐全",
+                "ok": not missing_icons,
+                "level": "warn" if missing_icons else "ok",
+                "detail": "OK" if not missing_icons else f"图标缺失: {missing_icons}",
+            }
+        )
+    else:
+        checks.append({"item": "tabBar 配置", "ok": True, "level": "ok", "detail": "未使用 tabBar（无需图标资源）"})
+
+    # 4. 权限声明扫描：代码用到的隐私 API 必须已在 app.json 声明
+    used_apis = _scan_used_apis(files)
+    permission = app_cfg.get("permission") or {}
+    private_declared = set(app_cfg.get("requiredPrivateInfos") or [])
+    for rule in used_apis:
+        if rule["key"] == "permission":
+            declared = bool((permission.get("scope.userLocation") or {}).get("desc")) and rule["private"] in private_declared
+            need = f"permission.scope.userLocation（desc） + requiredPrivateInfos: [\"{rule['private']}\"]"
+        elif rule["key"] == "private":
+            declared = rule["private"] in private_declared
+            need = f"requiredPrivateInfos: [\"{rule['private']}\"]"
+        else:  # console：后台配置类，代码无法核对，仅提示
+            declared = True
+            need = rule["desc"]
+        checks.append(
+            {
+                "item": f"权限声明：{rule['name']}（{rule['api']}）",
+                "ok": declared,
+                "level": rule["level"] if not declared else "ok",
+                "detail": "已声明" if declared else f"代码使用 wx.{rule['api'][3:]} 但未声明，需在 app.json 配置 {need}",
+            }
+        )
+
+    # 5. sitemap（搜索收录规则，缺失仅提示）
+    has_sitemap = "sitemap.json" in files
+    checks.append(
+        {
+            "item": "sitemap.json 存在",
+            "ok": has_sitemap,
+            "level": "warn" if not has_sitemap else "ok",
+            "detail": "存在（页面收录规则）" if has_sitemap else "缺失：建议保留 sitemap.json 以控制搜索收录范围",
+        }
+    )
+
+    failed = [c for c in checks if c["level"] == "error"]
+    warns = [c for c in checks if c["level"] == "warn"]
+    ok = not failed
+
+    # ── 提审材料 Markdown ──
+    tpl_name = next((t["name"] for t in TEMPLATES if t["id"] == template), template or "自定义")
+    category = _CATEGORY_SUGGEST.get(template, "按业务功能选择对应服务类目")
+    pages = sorted(registered)
+    lines = [
+        f"# 《{name}》微信小程序提审材料",
+        "",
+        "> 由小团智能平台自动生成（app.json 字段核对 + 代码权限扫描），请核对后补充资料提交审核。",
+        "",
+        "## 一、项目信息",
+        f"- 名称：{name}",
+        f"- 模板类型：{tpl_name}",
+        f"- 规模：{len(pages)} 个页面 / {len(files)} 个文件",
+        f"- 建议服务类目：{category}",
+        "",
+        "## 二、页面清单与功能说明",
+        "",
+        "| 页面路径 | 功能说明 |",
+        "| --- | --- |",
+    ]
+    lines += [f"| {p} | {_page_desc(files, p)} |" for p in pages]
+    lines += ["", "## 三、权限使用清单", ""]
+    if used_apis:
+        lines += [f"- {r['name']}（{r['api']}）：{r['desc']}" for r in used_apis]
+    else:
+        lines += ["- 未扫描到隐私接口调用（本项目默认不采集用户信息）"]
+    lines += [
+        "",
+        "## 四、提审前核对清单",
+        "",
+    ]
+    lines += [f"- [{'x' if c['ok'] else ' '}] {c['item']}：{c['detail']}" for c in checks]
+    lines += [
+        "",
+        "## 五、补充资料",
+        "- 隐私协议：涉及用户信息需在 mp.weixin.qq.com → 设置 → 服务内容声明 完善用途说明",
+        "- 截图：提交 1-5 张页面功能演示截图（审核必填）",
+        "- 测试账号：如涉及登录/付费功能，需提供可用的测试账号",
+        "- 名称与头像：名称不得含违禁词，头像需与功能相关",
+        "",
+        "## 六、自检结论",
+        f"- {'✅ 全部核对通过，可提交审核' if ok else f'❌ {len(failed)} 项不通过，请先修复后再提交（附 {len(warns)} 项提醒）'}",
+        "",
+    ]
+    return {"ok": ok, "checks": checks, "material": "\n".join(lines)}
 
 
 @router.get("/templates")
@@ -496,14 +890,53 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
     conn.close()
     if not row:
         raise HTTPException(404, "项目不存在")
+    row = dict(row)  # sqlite3.Row 无 .get，转 dict 供物料模板使用
     files = json.loads(row["files"] or "{}")
     if not files:
         raise HTTPException(400, "项目没有文件")
 
     buf = io.BytesIO()
+    root = pack_dir_name("miniapp_release")
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(files.keys()):
-            zf.writestr(path.lstrip("/"), files[path])
+            zf.writestr(f"{root}/{path.lstrip('/')}", files[path])
+        # 发布物料：介绍 + 审核清单 + 商用授权 + 质量自检报告（商业化发布 v14）
+        zf.writestr(
+            f"{root}/介绍.md",
+            f"# {row['name']}\n\n- 模板：{row.get('template', '自定义')}\n"
+            f"- 功能需求：{(row.get('requirement') or '')[:300]}\n\n"
+            "## 使用方式\n解压后目录即微信小程序项目，用微信开发者工具导入即可编译运行。",
+        )
+        zf.writestr(
+            f"{root}/审核清单.md",
+            "# 微信小程序提审清单\n\n"
+            "1. 登录 mp.weixin.qq.com → 注册小程序账号（个人主体即可）\n"
+            "2. 微信开发者工具导入本包目录 → 编译 → 上传代码\n"
+            "3. 填写：类目（按业务选择）、名称、简介、图标\n"
+            "4. 截图：需提供 1-5 张页面截图（功能演示）\n"
+            "5. 隐私协议：涉及用户信息需声明（本项目默认不采集）\n"
+            "6. 提交审核（1-7 个工作日），通过后发布上线",
+        )
+        zf.writestr(f"{root}/LICENSE.txt", license_text(f"小程序《{row['name']}》"))
+        try:
+            qc = json.loads(row.get("qc") or "null") if "qc" in row.keys() else None
+            failed = [c for c in (qc or {}).get("checks", []) if not c.get("ok")]
+            name_check = check_text(row["name"], "文案")
+            req_check = check_text(row.get("requirement") or "", "prompt")
+            zf.writestr(
+                f"{root}/质量自检报告.md",
+                quality_report(
+                    f"小程序《{row['name']}》",
+                    text_check=name_check if not name_check["ok"] else (req_check if not req_check["ok"] else None),
+                    image_quality=None,
+                    extra=[
+                        f"QC 门禁：{'全部通过 ✓' if (qc or {}).get('ok') else f'{len(failed)} 项未过'}",
+                        "代码规模：" + f"{len(files)} 个文件",
+                    ],
+                ),
+            )
+        except Exception:
+            pass
     data = buf.getvalue()
     # Content-Disposition：中文名走 RFC 5987 编码
     from urllib.parse import quote
@@ -519,6 +952,23 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
         media_type="application/zip",
         headers={"Content-Disposition": (f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}")},
     )
+
+
+@router.get("/{proj_id}/review-material")
+async def review_material(proj_id: str, current_user: dict = require_auth()):
+    """自动生成提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM miniapp_projects WHERE id=?", (proj_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "项目不存在")
+    row = dict(row)
+    files = json.loads(row["files"] or "{}")
+    if not files:
+        raise HTTPException(400, "项目没有文件")
+    result = build_review_material(files, row["name"], row.get("template") or "")
+    result["name"] = row["name"]
+    return result
 
 
 def get_db():

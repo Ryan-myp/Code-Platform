@@ -11,10 +11,51 @@
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+_TITLE_MAX = 30
+
+
+def derive_title(art_type: str, content: dict | str | None = None, metadata: dict | None = None) -> str:
+    """从产物登记信息派生展示标题（v13.26 统一命名体系）。
+
+    优先级：metadata.title → metadata.theme → content 的 prompt/topic/text →
+    lyrics 歌词首行 → 截断 30 字；无可用信息返回空串（由调用方兜底显示文件名）。
+    各工厂 list 接口用同一函数保证展示命名一致，避免用户看到随机时间戳 ID。
+    """
+    md = metadata or {}
+    for key in ("title", "theme"):
+        v = str(md.get(key) or "").strip()
+        if v:
+            return _truncate(v)
+    text = ""
+    if isinstance(content, dict):
+        for key in ("prompt", "topic", "text", "theme", "subject"):
+            v = content.get(key)
+            if v:
+                text = str(v)
+                break
+    elif isinstance(content, str):
+        text = content
+    elif content is not None:
+        text = str(content)
+    text = text.strip().replace("\r", " ")
+    if not text:
+        return ""
+    if art_type == "lyrics":
+        first = text.split("\n")[0].strip()
+        return _truncate(first) if first else ""
+    return _truncate(text)
+
+
+def _truncate(text: str) -> str:
+    """单行化 + 限长 30 字（省略号收尾）。"""
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:_TITLE_MAX] + ("…" if len(text) > _TITLE_MAX else "")
 
 
 def save_artifact(
@@ -26,10 +67,12 @@ def save_artifact(
     content: dict | str | None = None,
     metadata: dict | None = None,
     duration: float | None = None,
+    thumbnail: str = "",
 ) -> str:
     """登记一条成果到 artifacts 表，返回 artifact id。
 
     - type / media_url / metadata 由各工厂语义决定（image/video/audio/game/miniapp…）
+    - thumbnail 存封面/缩略图 URL（发布页素材库直接展示）
     - 失败静默（不影响主流程）
     """
     art_id = f"art_{uuid.uuid4().hex[:12]}"
@@ -39,8 +82,8 @@ def save_artifact(
         conn = get_db()
         conn.execute(
             """INSERT INTO artifacts
-               (id, project_id, requirement_id, type, content, version, author, created_at, active, media_url, duration, metadata)
-               VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?)""",
+               (id, project_id, requirement_id, type, content, version, author, created_at, active, media_url, duration, metadata, thumbnail)
+               VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1, ?, ?, ?, ?)""",
             (
                 art_id,
                 project_id or "",
@@ -52,6 +95,7 @@ def save_artifact(
                 media_url or "",
                 float(duration or 0),
                 json.dumps(metadata or {}, ensure_ascii=False),
+                thumbnail or "",
             ),
         )
         conn.commit()

@@ -8,6 +8,7 @@
 
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 
@@ -39,6 +40,26 @@ TYPE_META = {
     "audio": {"label": "音频", "icon": "🎵"},
     "doc": {"label": "文档", "icon": "📄"},
 }
+
+
+def _media_file_exists(media_url: str) -> bool:
+    """按 media_url 前缀定位后端目录，校验媒体文件是否真实存在（过滤历史孤儿记录）。
+
+    未匹配已知前缀的记录视为存在（避免误伤其他来源）；文件已删除的孤儿记录不出现在广场。
+    """
+    if not media_url:
+        return False
+    base = os.path.join(os.path.dirname(__file__))
+    for prefix, sub in (
+        ("/api/video-factory/videos/", "video_factory"),
+        ("/api/image-factory/images/", "image_factory"),
+        ("/api/meme-factory/images/", "meme_factory"),
+        ("/api/music-factory/", "music_factory"),
+        ("/api/voice-factory/", "voice_factory"),
+    ):
+        if media_url.startswith(prefix):
+            return os.path.exists(os.path.join(base, sub, media_url[len(prefix):]))
+    return True
 
 
 def _extract_prompt(content_raw: str) -> str:
@@ -74,12 +95,22 @@ def _decorate(row: dict, user_id: str) -> dict:
     finally:
         conn.close()
     meta = TYPE_META.get(row.get("type", ""), {})
+    # 视频封面：优先 artifacts.thumbnail；无则按 video_factory 规则推断封面 URL（缺封面后台会自动补生成）
+    thumbnail = row.get("thumbnail") or ""
+    if not thumbnail and row.get("type") == "video":
+        media_url = row.get("media_url") or ""
+        if "/video-factory/videos/" in media_url:
+            stem = media_url.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if stem:
+                thumbnail = f"/api/video-factory/covers/{stem}.jpg"
     return {
         "id": work_id,
         "type": row.get("type", ""),
         "type_label": meta.get("label", row.get("type", "")),
         "icon": meta.get("icon", "📄"),
         "media_url": row.get("media_url") or "",
+        "thumbnail": thumbnail,
+        "duration": float(row.get("duration") or 0),
         "prompt": _extract_prompt(row.get("content")),
         "author": SOURCE_LABEL.get(row.get("author", ""), row.get("author", "") or "平台用户"),
         "created_at": row.get("created_at", ""),
@@ -134,7 +165,9 @@ async def list_works(
             (*params, limit, offset),
         ).fetchall()
     conn.close()
-    return [_decorate(dict(r), user_id) for r in rows]
+    # 过滤媒体文件已删除的孤儿记录（避免破损封面/黑屏视频出现在广场）
+    valid = [dict(r) for r in rows if _media_file_exists(r["media_url"] or "")]
+    return [_decorate(row, user_id) for row in valid]
 
 
 @router.get("/works/{work_id}")
@@ -145,6 +178,9 @@ async def get_work(work_id: str, current_user: dict = require_auth()):
     row = conn.execute("SELECT * FROM artifacts WHERE id=? AND active=1", (work_id,)).fetchone()
     conn.close()
     if not row:
+        raise HTTPException(404, "作品不存在")
+    # 媒体文件已删除的孤儿记录视为不存在
+    if not _media_file_exists(row["media_url"] or ""):
         raise HTTPException(404, "作品不存在")
     return _decorate(dict(row), user_id)
 

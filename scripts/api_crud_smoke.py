@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """核心业务 POST/PUT 接口闭环验证：创建→查询→更新→删除。"""
 import json
-import uuid
-import urllib.request
 import urllib.error
+import urllib.request
+import uuid
 
 BASE = "http://127.0.0.1:8888"
 results = []

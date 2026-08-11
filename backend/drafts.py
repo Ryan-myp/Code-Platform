@@ -40,6 +40,15 @@ class DraftSaveRequest(BaseModel):
     content: dict = Field(default_factory=dict, description="表单字段 JSON")
 
 
+def _safe_load_content(raw: str) -> dict:
+    """解析草稿 content 字段：脏数据（非法 JSON / 非对象）返回空 dict，避免列表接口 500。"""
+    try:
+        obj = json.loads(raw or "{}")
+        return obj if isinstance(obj, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 @router.get("")
 async def list_drafts(current_user: dict = require_auth()):
     """全部草稿（按更新时间倒序），附工具可读信息。"""
@@ -53,7 +62,7 @@ async def list_drafts(current_user: dict = require_auth()):
     result = []
     for r in rows:
         d = dict(r)
-        d["content"] = json.loads(d.get("content") or "{}")
+        d["content"] = _safe_load_content(d.get("content"))
         meta = TOOL_META.get(d["tool_id"], {})
         d["tool_label"] = meta.get("label", d["tool_id"])
         d["tool_path"] = meta.get("path", "")
@@ -74,7 +83,7 @@ async def get_draft(tool_id: str, current_user: dict = require_auth()):
     if not row:
         return None  # 无草稿返回 200 + null，避免前端轮询产生 404 控制台噪音
     d = dict(row)
-    d["content"] = json.loads(d.get("content") or "{}")
+    d["content"] = _safe_load_content(d.get("content"))
     meta = TOOL_META.get(d["tool_id"], {})
     d["tool_label"] = meta.get("label", d["tool_id"])
     d["tool_path"] = meta.get("path", "")

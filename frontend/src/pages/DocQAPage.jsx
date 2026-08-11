@@ -35,6 +35,8 @@ export default function DocQAPage() {
   const [task, setTask] = useState(null)
   const [messages, setMessages] = useState([])
   const [records, setRecords] = useState([])
+  // v15：多文档联合问答（勾选≥2篇时跨文档检索）
+  const [selectedDocIds, setSelectedDocIds] = useState([])
   const { history, add, remove, clear } = useToolHistory('doc_qa_history_v1', 20)
 
   useEffect(() => {
@@ -66,6 +68,9 @@ export default function DocQAPage() {
       form.append('file', file)
       const res = await api.post('/api/doc-qa/upload', form)
       setDocInfo(res.data)
+      setSelectedDocIds((prev) =>
+        prev.includes(res.data.doc_id) ? prev : [...prev, res.data.doc_id]
+      )
       loadRecords()
       toast.success(res.data.message || '上传成功')
       // AI 欢迎语
@@ -82,9 +87,19 @@ export default function DocQAPage() {
     setUploading(false)
   }
 
+  // v15：勾选/取消文档（≥2 篇进入联合问答）
+  const toggleSelectDoc = (id) => {
+    setSelectedDocIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+  }
+
   const handleAsk = async (presetQuestion) => {
     const q = (presetQuestion || question).trim()
-    if (!q || !docInfo?.doc_id || task) return
+    // v15：≥2 篇勾选 → 联合问答；否则用当前激活文档
+    const docIds =
+      selectedDocIds.length >= 2 ? selectedDocIds : docInfo?.doc_id ? [docInfo.doc_id] : []
+    if (!q || docIds.length === 0 || task) return
     const userMsg = { role: 'user', content: q, time: new Date().toISOString() }
     setMessages((prev) => [...prev, userMsg])
     setQuestion('')
@@ -92,7 +107,7 @@ export default function DocQAPage() {
     const history = messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
     await submitTask(
       '/api/doc-qa/ask',
-      { doc_id: docInfo.doc_id, question: q, history },
+      { doc_id: docIds[0], doc_ids: docIds, question: q, history },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
@@ -104,15 +119,22 @@ export default function DocQAPage() {
                 content: data.answer,
                 time: new Date().toISOString(),
                 source: data.source,
+                citations: data.citations || [],
+                docIds: data.doc_ids || docIds,
               },
             ]
             // 专业基线：每轮问答落一次会话快照（可回溯可复用）
             add({
               title: q.slice(0, 24),
               docName: docInfo?.filename || '文档',
-              docId: docInfo?.doc_id,
+              docId: docIds[0],
               question: q,
-              messages: next.map((m) => ({ role: m.role, content: m.content, source: m.source })),
+              messages: next.map((m) => ({
+                role: m.role,
+                content: m.content,
+                source: m.source,
+                citations: m.citations,
+              })),
             })
             return next
           })
@@ -144,10 +166,15 @@ export default function DocQAPage() {
 
   // 专业基线：会话历史复用 / 导出 / 重试
   const handleReuse = (item) => {
-    if (item.docId && docInfo?.doc_id !== item.docId) {
-      toast.error('请先上传对应的文档再复用该会话')
+    if (!item.docId) {
+      toast.error('该会话缺少文档信息，无法恢复')
       return
     }
+    if (!records.some((r) => r.id === item.docId)) {
+      toast.error('原文档已被删除，请重新上传后再恢复会话')
+      return
+    }
+    setSelectedDocIds([item.docId])
     setMessages(
       item.messages?.map((m) => ({ ...m, time: new Date().toISOString() })) || []
     )
@@ -168,10 +195,12 @@ export default function DocQAPage() {
     const title = docInfo?.filename || '文档问答'
     return `# 文档问答记录：${title}\n\n`
       + messages
-          .map(
-            (m) =>
-              `### ${m.role === 'user' ? '🙋 提问' : '🤖 回答'}（${new Date(m.time).toLocaleString('zh-CN')}）\n\n${m.content}${m.source ? `\n\n> 来源：${m.source}` : ''}\n`
-          )
+          .map((m) => {
+            const citeBlock = m.citations?.length
+              ? `\n\n> 引用溯源：\n${m.citations.map((c, i) => `> [${i + 1}] ${c.doc_name}：${c.text}`).join('\n')}`
+              : ''
+            return `### ${m.role === 'user' ? '🙋 提问' : '🤖 回答'}（${new Date(m.time).toLocaleString('zh-CN')}）\n\n${m.content}${m.source ? `\n\n> 来源：${m.source}` : ''}${citeBlock}\n`
+          })
           .join('\n---\n\n')
   }
 
@@ -270,6 +299,11 @@ export default function DocQAPage() {
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-500" /> 已上传文档（{records.length}）
+              {selectedDocIds.length >= 2 && (
+                <span className="ml-auto text-[10px] text-indigo-600 font-normal">
+                  {selectedDocIds.length} 篇已选 · 联合问答
+                </span>
+              )}
             </h3>
             {records.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无文档</div>
@@ -278,8 +312,20 @@ export default function DocQAPage() {
                 {records.map((r) => (
                   <div
                     key={r.id}
-                    className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
+                    onClick={() => toggleSelectDoc(r.id)}
+                    className={`flex items-center gap-2 p-2 rounded-lg text-xs cursor-pointer transition-colors ${
+                      selectedDocIds.includes(r.id)
+                        ? 'bg-indigo-50 ring-1 ring-indigo-200'
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
                   >
+                    <input
+                      type="checkbox"
+                      checked={selectedDocIds.includes(r.id)}
+                      onChange={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0"
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-700 truncate">{r.filename}</div>
                       <div className="text-gray-400">
@@ -287,8 +333,11 @@ export default function DocQAPage() {
                       </div>
                     </div>
                     <button
-                      onClick={() => deleteRecord(r.id)}
-                      className="p-1 text-gray-300 hover:text-red-500"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteRecord(r.id)
+                      }}
+                      className="p-1 text-gray-300 hover:text-red-500 flex-shrink-0"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -317,9 +366,12 @@ export default function DocQAPage() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                 <MessageSquare className="w-4 h-4 text-indigo-500" /> 文档问答
-                {docInfo && (
-                  <span className="text-xs text-gray-400 font-normal">| {docInfo.filename}</span>
-                )}
+                <span className="text-xs text-gray-400 font-normal">
+                  |{' '}
+                  {selectedDocIds.length >= 2
+                    ? `${selectedDocIds.length} 篇文档联合问答`
+                    : docInfo?.filename}
+                </span>
               </h3>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-400">{messages.length} 条消息</span>
@@ -379,6 +431,29 @@ export default function DocQAPage() {
                         <p className="text-sm whitespace-pre-wrap">{m.content}</p>
                       ) : (
                         <MarkdownRenderer content={m.content} className="text-sm" />
+                      )}
+                      {/* v15：引用溯源（回答附原文片段定位） */}
+                      {m.citations?.length > 0 && (
+                        <details className="mt-2 bg-white/80 rounded-lg px-3 py-2">
+                          <summary className="text-[11px] text-indigo-600 cursor-pointer font-medium select-none">
+                            引用溯源（{m.citations.length} 处）
+                          </summary>
+                          <div className="space-y-1.5 mt-2">
+                            {m.citations.map((c, ci) => (
+                              <div
+                                key={ci}
+                                className="text-[11px] border-l-2 border-indigo-200 pl-2"
+                              >
+                                <span className="text-indigo-500 font-medium">
+                                  [{ci + 1}] {c.doc_name}
+                                </span>
+                                <p className="mt-0.5 text-gray-500 leading-relaxed line-clamp-3">
+                                  {c.text}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
                       )}
                       <div className="flex items-center justify-between mt-1">
                         <span

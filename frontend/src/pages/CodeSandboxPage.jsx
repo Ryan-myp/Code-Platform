@@ -1,5 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Play, Terminal, Trash2, Clock, Download, Copy, Code, Loader2, Zap } from 'lucide-react'
+import {
+  Play,
+  Terminal,
+  Trash2,
+  Clock,
+  Download,
+  Copy,
+  Code,
+  Loader2,
+  Zap,
+  ShieldCheck,
+  FileDown,
+} from 'lucide-react'
 
 const STORAGE_KEY = 'codesandbox_history_v1'
 const MAX_HISTORY = 20
@@ -8,6 +20,14 @@ import ShareButton from '../components/ShareButton'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+
+// v15：沙箱环境说明兜底（接口不可用时仍可展示）
+const DEFAULT_SANDBOX_INFO = {
+  allowed_imports: ['math', 'numpy', 'pandas', 'matplotlib', 'PIL', 'random', 'json', 'statistics', 'collections', 'itertools', 're'],
+  limits: { code_max_len: 20000, output_max_len: 307200, timeout_sec: 30, cpu_sec: 10, file_max_bytes: 2097152 },
+}
+const HIGHLIGHT_LIBS = ['numpy', 'pandas', 'matplotlib', 'PIL', 'math', 'statistics']
+const BLOCKED_HINT = ['os', 'subprocess', 'socket', 'open(', 'eval(', 'exec(', 'importlib', 'requests', 'shutil']
 
 const TEMPLATES = [
   {
@@ -102,6 +122,17 @@ export default function CodeSandboxPage() {
     }
   })
   const outputRef = useRef(null)
+  // v15：沙箱环境说明（白名单库/禁用操作/资源上限，后端单一来源）
+  const [sandboxInfo, setSandboxInfo] = useState(DEFAULT_SANDBOX_INFO)
+
+  useEffect(() => {
+    api
+      .get('/api/sandbox/info')
+      .then((res) => res.data && setSandboxInfo(res.data))
+      .catch(() => {
+        /* 接口失败用内置兜底，不影响主流程 */
+      })
+  }, [])
 
   // 运行历史持久化：刷新/重开页面不丢失
   useEffect(() => {
@@ -142,6 +173,26 @@ export default function CodeSandboxPage() {
     a.click()
     URL.revokeObjectURL(url)
     toast.success('代码已下载为 .py 文件')
+  }
+
+  // v15：结果导出（代码 + 运行输出 → md）
+  const exportResult = () => {
+    if (!output) {
+      toast.error('没有可导出的运行结果')
+      return
+    }
+    const fmt = (t) => t.replace(/\[IMAGE\][\s\S]*?\[\/IMAGE\]/g, '\n[图表已内嵌，请查看页面渲染]\n')
+    const md = `# Python 运行结果\n\n运行时间：${new Date().toLocaleString('zh-CN')}\n\n## 代码\n\n\`\`\`python\n${code.trim()}\n\`\`\`\n\n## 输出\n\n\`\`\`text\n${fmt(output)}\n\`\`\`\n`
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sandbox-result-${Date.now()}.md`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 3000)
+    toast.success('运行结果已导出')
   }
 
   const renderOutput = (text) => {
@@ -210,6 +261,51 @@ export default function CodeSandboxPage() {
                   {t.label}
                 </button>
               ))}
+            </div>
+          </Card>
+
+          {/* v15：沙箱环境说明（白名单/禁用/资源上限） */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-500" /> 沙箱环境说明
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs text-gray-500 mb-1.5">可用库（白名单）</div>
+                <div className="flex flex-wrap gap-1">
+                  {(sandboxInfo.allowed_imports || []).map((lib) => (
+                    <span
+                      key={lib}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                        HIGHLIGHT_LIBS.includes(lib)
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : 'bg-gray-50 border-gray-200 text-gray-500'
+                      }`}
+                    >
+                      {lib}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500 mb-1.5">禁止操作（静态扫描拦截）</div>
+                <div className="flex flex-wrap gap-1">
+                  {BLOCKED_HINT.map((t) => (
+                    <span
+                      key={t}
+                      className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-red-50 border border-red-100 text-red-500"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-2 border-t border-gray-100 grid grid-cols-2 gap-1.5 text-[11px] text-gray-500">
+                <div>⏱ 超时：{sandboxInfo.limits?.timeout_sec || 30}s</div>
+                <div>⚙️ CPU：{sandboxInfo.limits?.cpu_sec || 10}s</div>
+                <div>📄 代码上限：{((sandboxInfo.limits?.code_max_len || 20000) / 1024).toFixed(0)}KB</div>
+                <div>📊 输出上限：{((sandboxInfo.limits?.output_max_len || 307200) / 1024).toFixed(0)}KB</div>
+              </div>
             </div>
           </Card>
 
@@ -302,6 +398,15 @@ export default function CodeSandboxPage() {
               </h3>
               {output && (
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={FileDown}
+                    onClick={exportResult}
+                    title="导出代码与运行结果"
+                  >
+                    导出结果
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"

@@ -10,10 +10,18 @@ import usePersistentToolState from '../hooks/usePersistentToolState'
 export default function WebSearchPage() {
   const toast = useToast()
   const { submitTask } = useAsyncTask()
-  // 输入态持久化：刷新不丢搜索词
-  const [state, setState] = usePersistentToolState('web_search_input', { query: '' }, { version: 1 })
+  // 输入态持久化：刷新不丢搜索词/筛选条件
+  const [state, setState] = usePersistentToolState(
+    'web_search_input',
+    { query: '', timeRange: '', domainFilter: '' },
+    { version: 2 }
+  )
   const query = state.query
   const setQuery = (v) => setState((s) => ({ ...s, query: v }))
+  const timeRange = state.timeRange || ''
+  const setTimeRange = (v) => setState((s) => ({ ...s, timeRange: v }))
+  const domainFilter = state.domainFilter || ''
+  const setDomainFilter = (v) => setState((s) => ({ ...s, domainFilter: v }))
   const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -42,7 +50,7 @@ export default function WebSearchPage() {
     setError(null)
     await submitTask(
       '/api/search/web',
-      { query: q },
+      { query: q, time_range: timeRange, domain_filter: domainFilter },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
@@ -63,6 +71,12 @@ export default function WebSearchPage() {
   const buildSummaryMd = (res) => {
     if (!res) return ''
     const lines = [`# AI 搜索摘要：${query}`, '', res.summary || '', '']
+    const filters = []
+    if (res.time_range) filters.push(res.time_range === '24h' ? '近24小时' : res.time_range === '7d' ? '近7天' : '近30天')
+    if (res.domain_filter) filters.push(`来源域: ${res.domain_filter}`)
+    if (filters.length) {
+      lines.push(`> 筛选条件：${filters.join(' · ')}`, '')
+    }
     if (res.sources?.length) {
       lines.push('## 信息来源', '')
       res.sources.forEach((s, i) => lines.push(`${i + 1}. [${s.title}](${s.url})`))
@@ -161,6 +175,44 @@ export default function WebSearchPage() {
                 </button>
               ))}
             </div>
+
+            {/* v15：时间筛选 + 来源域过滤 */}
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-gray-400" />
+                <div className="flex rounded-lg bg-gray-100 p-0.5 text-xs">
+                  {[
+                    { v: '', l: '不限' },
+                    { v: '24h', l: '近24h' },
+                    { v: '7d', l: '近7天' },
+                    { v: '30d', l: '近30天' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.v || 'all'}
+                      onClick={() => setTimeRange(opt.v)}
+                      className={`px-2.5 py-1 rounded-md transition-colors ${
+                        timeRange === opt.v
+                          ? 'bg-white shadow-sm text-cyan-600 font-medium'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {opt.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-gray-400" />
+                <input
+                  type="text"
+                  value={domainFilter}
+                  onChange={(e) => setDomainFilter(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  placeholder="来源域过滤，如: wikipedia.org,github.com"
+                  className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500 outline-none"
+                />
+              </div>
+            </div>
           </Card>
 
           <Card>
@@ -223,6 +275,16 @@ export default function WebSearchPage() {
                     <Sparkles className="w-4 h-4 text-cyan-500" /> AI智能摘要
                   </h3>
                   <div className="flex items-center gap-2">
+                    {result.time_range && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-50 border border-cyan-100 text-cyan-600">
+                        {result.time_range === '24h' ? '近24h' : result.time_range === '7d' ? '近7天' : '近30天'}
+                      </span>
+                    )}
+                    {result.domain_filter && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 border border-blue-100 text-blue-600">
+                        仅 {result.domain_filter}
+                      </span>
+                    )}
                     <span className="text-xs text-gray-400">
                       {result.mode === 'web_search' ? '联网搜索' : 'AI知识库'}
                     </span>

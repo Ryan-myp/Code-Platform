@@ -34,6 +34,21 @@ import {
 
 const PLATFORMS = ['抖音', '小红书', 'B站', '微信公众号', '快手', '微博', '知乎', '视频号', '其他']
 
+// 监控频率设置
+const FREQUENCY_OPTIONS = [
+  { value: 'daily', label: '每日' },
+  { value: 'weekly', label: '每周' },
+  { value: 'monthly', label: '每月' },
+  { value: 'manual', label: '手动' },
+]
+
+const FREQUENCY_META = {
+  daily: { label: '每日监控', color: 'blue' },
+  weekly: { label: '每周监控', color: 'green' },
+  monthly: { label: '每月监控', color: 'amber' },
+  manual: { label: '手动监控', color: 'gray' },
+}
+
 const PLATFORM_COLORS = {
   抖音: 'bg-black text-white',
   小红书: 'bg-red-500 text-white',
@@ -62,6 +77,7 @@ export default function CompetitorMonitorPage() {
     account_id: '',
     description: '',
     profile_url: '',
+    monitor_frequency: 'weekly',
   })
 
   // 分析
@@ -105,10 +121,11 @@ export default function CompetitorMonitorPage() {
         account_id: form.account_id.trim(),
         description: form.description.trim(),
         profile_url: form.profile_url.trim(),
+        monitor_frequency: form.monitor_frequency,
       })
       toast.success('竞品已添加')
       setAddOpen(false)
-      setForm({ name: '', platform: '抖音', account_id: '', description: '', profile_url: '' })
+      setForm({ name: '', platform: '抖音', account_id: '', description: '', profile_url: '', monitor_frequency: 'weekly' })
       fetchAll()
     } catch (e) {
       toast.error(e.message)
@@ -174,6 +191,17 @@ export default function CompetitorMonitorPage() {
     if (!r?.analysis) return ''
     const a = r.analysis
     const lines = ['# 竞品分析报告', '', `生成于 ${formatDateTime(r.created_at)}`, '']
+    if (r.changes?.summary) {
+      lines.push('## 变化摘要（与上次对比）', '', `> ${r.changes.summary}`)
+      ;(r.changes.changed || []).forEach((c) => {
+        if (c.modified?.length) {
+          lines.push('', `- **${c.label}**：${c.modified[0].prev} → ${c.modified[0].curr}`)
+        }
+        ;(c.added || []).forEach((x) => lines.push(`- ➕ ${c.label}新增：${x}`))
+        ;(c.removed || []).forEach((x) => lines.push(`- ➖ ${c.label}移除：${x}`))
+      })
+      lines.push('')
+    }
     if (a.overview) lines.push('## 整体概览', '', a.overview, '')
     if (a.content_categories?.length) {
       lines.push('## 内容分类', '')
@@ -304,6 +332,9 @@ export default function CompetitorMonitorPage() {
                         {c.account_id || c.profile_url || c.description || '未填写账号'}
                       </p>
                     </div>
+                    <Badge color={(FREQUENCY_META[c.monitor_frequency] || FREQUENCY_META.weekly).color}>
+                      {FREQUENCY_META[c.monitor_frequency]?.label || '每周监控'}
+                    </Badge>
                     <span className="text-[11px] text-ink-300 hidden sm:block">
                       更新于 {formatDateTime(c.updated_at)}
                     </span>
@@ -442,6 +473,25 @@ export default function CompetitorMonitorPage() {
             />
           </div>
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">监控频率</label>
+            <div className="flex flex-wrap gap-1.5">
+              {FREQUENCY_OPTIONS.map((f) => (
+                <button
+                  key={f.value}
+                  onClick={() => setForm({ ...form, monitor_frequency: f.value })}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    form.monitor_frequency === f.value
+                      ? 'bg-brand-500 text-white shadow-soft'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1">设置监控节奏，便于定期对比竞品变化</p>
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">竞品描述</label>
             <textarea
               value={form.description}
@@ -489,6 +539,43 @@ export default function CompetitorMonitorPage() {
                 </span>
               </span>
             </div>
+
+            {/* 变化摘要（diff 高亮） */}
+            {report.changes && (
+              <div className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/40">
+                <h4 className="text-sm font-semibold text-ink-900 mb-2 flex items-center gap-1.5">
+                  <TrendingUp className="w-4 h-4 text-indigo-500" /> 变化摘要（与上次对比）
+                </h4>
+                <p className="text-xs text-ink-600 mb-2">{report.changes.summary}</p>
+                {(report.changes.changed || []).length > 0 && (
+                  <div className="space-y-2">
+                    {report.changes.changed.map((c, i) => (
+                      <div key={i} className="text-xs space-y-1">
+                        <p className="font-medium text-ink-700">{c.label}</p>
+                        {(c.modified || []).map((m, mi) => (
+                          <p key={mi} className="flex items-center gap-1.5">
+                            <span className="text-amber-600 font-medium">↻</span>
+                            <span className="text-ink-400 line-through">{m.prev}</span>
+                            <span className="text-ink-300">→</span>
+                            <span className="text-amber-700">{m.curr}</span>
+                          </p>
+                        ))}
+                        {(c.added || []).map((x, xi) => (
+                          <p key={`a${xi}`} className="flex items-center gap-1.5 text-emerald-700">
+                            <span className="font-bold">+</span> {x}
+                          </p>
+                        ))}
+                        {(c.removed || []).map((x, xi) => (
+                          <p key={`r${xi}`} className="flex items-center gap-1.5 text-red-500">
+                            <span className="font-bold">−</span> <span className="line-through">{x}</span>
+                          </p>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {report.analysis?.overview && (
               <div className="p-4 rounded-xl bg-gradient-to-r from-brand-50 to-indigo-50 border border-brand-100">

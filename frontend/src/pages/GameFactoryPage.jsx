@@ -28,6 +28,11 @@ import {
   BadgeCheck,
   X,
   Camera,
+  Package,
+  History,
+  RotateCcw,
+  GitCompare,
+  ArrowRight,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -181,6 +186,62 @@ const TEMPLATE_CATEGORIES = ['休闲', '益智', '策略', '回合制', '模拟'
 const VERSION_META = {
   web: { label: '网页版', icon: Globe, color: 'green', desc: '浏览器直接玩，可在线试玩' },
   wx: { label: '微信小游戏版', icon: Smartphone, color: 'blue', desc: '开发者工具导入运行' },
+}
+
+// v15：两版本逐文件变更行数对比（前后缀对齐近似 diff，仅展示用）
+function lineDiffStats(a, b) {
+  const A = String(a || '').split('\n')
+  const B = String(b || '').split('\n')
+  let i = 0
+  while (i < A.length && i < B.length && A[i] === B[i]) i++
+  let j = 0
+  while (j < A.length - i && j < B.length - i && A[A.length - 1 - j] === B[B.length - 1 - j]) j++
+  return { added: B.length - i - j, removed: A.length - i - j }
+}
+
+/* eslint-disable react/prop-types -- 页内纯展示组件，与全站 props 校验风格一致 */
+function VersionDiffTable({ fromFiles, toFiles }) {
+  const flat = (files) => {
+    const out = {}
+    Object.entries(files || {}).forEach(([ver, paths]) => {
+      Object.entries(paths || {}).forEach(([p, content]) => {
+        out[`${ver}/${p}`] = String(content)
+      })
+    })
+    return out
+  }
+  const from = flat(fromFiles)
+  const to = flat(toFiles)
+  const paths = [...new Set([...Object.keys(from), ...Object.keys(to)])].sort()
+  const rows = paths
+    .map((p) => ({ p, ...lineDiffStats(from[p], to[p]) }))
+    .filter((r) => r.added > 0 || r.removed > 0 || !from[r.p] || !to[r.p])
+  if (rows.length === 0) {
+    return <div className="text-xs text-gray-400 py-2">两个版本内容完全一致，无变更</div>
+  }
+  return (
+    <div className="rounded-lg border border-gray-100 overflow-hidden">
+      <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 bg-gray-50 text-[10px] font-medium text-gray-400 border-b border-gray-100">
+        <span>文件</span>
+        <span className="w-9 text-right">新增</span>
+        <span className="w-9 text-right">删除</span>
+      </div>
+      {rows.map((r) => (
+        <div
+          key={r.p}
+          className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 text-[11px] font-mono border-b border-gray-50 last:border-0"
+        >
+          <span className="text-gray-600 truncate">
+            {r.p}
+            {!from[r.p] && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">新增文件</span>}
+            {!to[r.p] && <span className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-red-50 text-red-500">已删除</span>}
+          </span>
+          <span className={`w-9 text-right ${r.added > 0 ? 'text-emerald-600' : 'text-gray-300'}`}>+{r.added}</span>
+          <span className={`w-9 text-right ${r.removed > 0 ? 'text-red-500' : 'text-gray-300'}`}>-{r.removed}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function fileIcon(path) {
@@ -384,6 +445,88 @@ export default function GameFactoryPage() {
     }
   }
 
+  // v15：迭代历史对比（版本时间线 + 逐版变更统计 + 回滚）
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyData, setHistoryData] = useState(null) // {name, history: [{version, created_at, requirement, stats}]}
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [compareFrom, setCompareFrom] = useState(null)
+  const [compareTo, setCompareTo] = useState(null)
+  const [historyFiles, setHistoryFiles] = useState({}) // version -> {files}
+  const [historyViewVer, setHistoryViewVer] = useState(null) // 正在查看的历史版本
+  const [historyViewFiles, setHistoryViewFiles] = useState(null)
+  const [historyViewLoading, setHistoryViewLoading] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+
+  // 加载迭代历史时间线
+  const openHistory = async () => {
+    if (!viewing) return
+    setShowHistory(true)
+    setHistoryLoading(true)
+    setHistoryData(null)
+    try {
+      const res = await api.get(`/api/games/${viewing.id}/history`)
+      setHistoryData(res.data)
+      const h = res.data?.history || []
+      if (h.length >= 2) {
+        setCompareFrom(h[h.length - 2].version)
+        setCompareTo(h[h.length - 1].version)
+      } else {
+        setCompareFrom(null)
+        setCompareTo(null)
+      }
+    } catch (e) {
+      toast.error(`加载迭代历史失败：${e.message}`)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  // 加载某历史版本的完整文件（查看/对比用，带缓存）
+  const viewHistoryVersion = async (version) => {
+    if (!viewing) return
+    setHistoryViewVer(version)
+    setHistoryViewLoading(true)
+    if (historyFiles[version]) {
+      setHistoryViewFiles(historyFiles[version])
+      setHistoryViewLoading(false)
+      return
+    }
+    try {
+      const res = await api.get(`/api/games/${viewing.id}/history/${version}`)
+      setHistoryFiles((prev) => ({ ...prev, [version]: res.data.files }))
+      setHistoryViewFiles(res.data.files)
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setHistoryViewLoading(false)
+    }
+  }
+
+  // 回滚到历史版本（当前版本自动快照）
+  const restoreVersion = async (version) => {
+    if (!window.confirm(`确定回滚到 v${version} 吗？当前版本会自动保存为快照，可再次回滚。`)) return
+    setRestoring(true)
+    try {
+      const res = await api.post(`/api/games/${viewing.id}/restore`, { version })
+      setViewing({
+        id: viewing.id,
+        name: viewing.name,
+        files: res.data.files,
+        versions: res.data.versions,
+      })
+      const firstVer = res.data.versions[0] || 'web'
+      setVersion(firstVer)
+      setSelectedFile(Object.keys(res.data.files[firstVer] || {})[0] || '')
+      setShowHistory(false)
+      loadProjects()
+      toast.success(res.data.message)
+    } catch (e) {
+      toast.error(`回滚失败：${e.message}`)
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   const evolveGame = async () => {
     if (!viewing || !evolveReq.trim()) {
       toast.error('请输入迭代需求')
@@ -430,6 +573,28 @@ export default function GameFactoryPage() {
       toast.success('ZIP 包已下载（含 web/ 网页版 + wx/ 微信小游戏版）')
     } catch (e) {
       toast.error(`下载失败：${e.message}`)
+    }
+  }
+
+  // 发布包：网页成品 + 微信小游戏包 + 封面 + 上线清单 + 质量报告（商业化 v14）
+  const downloadPublishPack = async () => {
+    if (!viewing) return
+    try {
+      const res = await api.get(`/api/games/${viewing.id}/publish-pack`, {
+        responseType: 'blob',
+        timeout: 120000,
+      })
+      const url = URL.createObjectURL(res.data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${viewing.name}_发布包.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      toast.success('发布包已下载（成品 + 封面 + README + 上线清单 + 质量报告）')
+    } catch (e) {
+      toast.error(`发布包下载失败：${e.message}`)
     }
   }
 
@@ -859,6 +1024,14 @@ export default function GameFactoryPage() {
             <Button variant="secondary" icon={Download} onClick={downloadZip}>
               下载 ZIP
             </Button>
+            <Button
+              variant="primary"
+              icon={Package}
+              onClick={downloadPublishPack}
+              title="成品 + 封面 + 上线清单 + 质量报告，一键可交付"
+            >
+              发布包
+            </Button>
             <Button variant="primary" icon={Gamepad2} onClick={() => setViewing(null)}>
               完成
             </Button>
@@ -982,7 +1155,7 @@ export default function GameFactoryPage() {
             <Wand2 className="w-4 h-4 text-violet-600" /> AI 迭代优化
           </h4>
           <p className="text-xs text-gray-500 mb-2">
-            基于当前代码继续改：加功能、调难度、换风格、修 Bug，双版本同步更新
+            基于当前代码继续改：加功能、调难度、换风格、修 Bug，双版本同步更新；每次迭代自动保存版本快照，可随时对比回滚
           </p>
           <div className="flex gap-2">
             <input
@@ -1000,6 +1173,15 @@ export default function GameFactoryPage() {
             >
               {evolving ? '迭代任务执行中（后台）…' : '开始迭代'}
             </Button>
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <button
+              onClick={openHistory}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-600 hover:text-violet-700"
+            >
+              <History className="w-3.5 h-3.5" />
+              迭代历史与版本对比（v15）
+            </button>
           </div>
           {evolving && genTask && (
             <div className="mt-2 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
@@ -1055,6 +1237,175 @@ export default function GameFactoryPage() {
             className="w-full h-[60vh] bg-white"
           />
         </div>
+      </Modal>
+
+      {/* ── 迭代历史对比 Modal（v15） ── */}
+      <Modal
+        open={showHistory}
+        onClose={() => setShowHistory(false)}
+        title={historyData ? `迭代历史：${historyData.name}` : '迭代历史'}
+        size="2xl"
+      >
+        {historyLoading ? (
+          <div className="py-10 flex flex-col items-center gap-3">
+            <Loader2 className="w-6 h-6 animate-spin text-violet-500" />
+            <span className="text-sm text-gray-500">正在加载版本历史…</span>
+          </div>
+        ) : !historyData || historyData.history.length === 0 ? (
+          <Empty
+            icon={History}
+            title="暂无版本快照"
+            description="每次执行 AI 迭代时会自动保存当前版本，之后即可在此对比与回滚"
+          />
+        ) : (
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* 版本时间线 */}
+            <div className="lg:w-72 flex-shrink-0 space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+              {historyData.history.map((h) => {
+                const isLatest = h.version === historyData.history[historyData.history.length - 1].version
+                return (
+                  <div
+                    key={h.version}
+                    className={`p-3 rounded-xl border transition-all ${
+                      historyViewVer === h.version
+                        ? 'border-violet-400 bg-violet-50'
+                        : 'border-gray-200 bg-white hover:border-violet-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => viewHistoryVersion(h.version)}
+                        className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"
+                      >
+                        <GitCompare className="w-4 h-4 text-violet-500" />
+                        v{h.version}
+                        {isLatest && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-600">
+                            最新
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => restoreVersion(h.version)}
+                        disabled={restoring || isLatest}
+                        title={isLatest ? '当前版本' : '回滚到此版本'}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          isLatest
+                            ? 'text-gray-300 cursor-not-allowed'
+                            : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50'
+                        }`}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-0.5">
+                      {(h.created_at || '').replace('T', ' ').slice(0, 19)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 truncate" title={h.requirement}>
+                      {h.requirement || '初始版本'}
+                    </div>
+                    {Object.keys(h.stats || {}).length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {Object.entries(h.stats).map(([p, s]) => (
+                          <div key={p} className="flex items-center gap-1.5 text-[10px] font-mono">
+                            <span className="text-gray-500 truncate flex-1">{p}</span>
+                            {s.added > 0 && <span className="text-emerald-600">+{s.added}</span>}
+                            {s.removed > 0 && <span className="text-red-500">-{s.removed}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* 版本对比与文件查看 */}
+            <div className="flex-1 min-w-0 space-y-4">
+              {/* 两版对比 */}
+              <div className="rounded-xl border border-gray-200 p-3">
+                <div className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+                  <GitCompare className="w-4 h-4 text-violet-500" />
+                  版本对比（变更行数）
+                </div>
+                <div className="flex items-center gap-2 mb-3">
+                  <select
+                    value={compareFrom ?? ''}
+                    onChange={(e) => setCompareFrom(Number(e.target.value))}
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none bg-white"
+                  >
+                    <option value="">选择起始版本</option>
+                    {historyData.history.map((h) => (
+                      <option key={h.version} value={h.version}>
+                        v{h.version}
+                      </option>
+                    ))}
+                  </select>
+                  <ArrowRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  <select
+                    value={compareTo ?? ''}
+                    onChange={(e) => setCompareTo(Number(e.target.value))}
+                    className="flex-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none bg-white"
+                  >
+                    <option value="">选择目标版本</option>
+                    {historyData.history.map((h) => (
+                      <option key={h.version} value={h.version}>
+                        v{h.version}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {compareFrom && compareTo && compareFrom !== compareTo && historyFiles[compareFrom] && historyFiles[compareTo] ? (
+                  <VersionDiffTable fromFiles={historyFiles[compareFrom]} toFiles={historyFiles[compareTo]} />
+                ) : compareFrom && compareTo && compareFrom !== compareTo ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    请先点击左侧版本加载文件…
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 py-3">
+                    选择两个不同版本后展示逐文件变更行数；对比前先点击左侧版本卡片加载文件
+                  </div>
+                )}
+              </div>
+
+              {/* 历史版本文件查看 */}
+              <div className="rounded-xl border border-gray-200 p-3">
+                <div className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+                  <FileCode2 className="w-4 h-4 text-violet-500" />
+                  {historyViewVer ? `v${historyViewVer} 文件内容` : '历史版本文件'}
+                  <span className="text-xs text-gray-400 font-normal">（点击左侧版本查看）</span>
+                </div>
+                {historyViewLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500 py-3">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    加载中…
+                  </div>
+                ) : historyViewFiles ? (
+                  <div className="space-y-2">
+                    {Object.entries(historyViewFiles).map(([ver, paths]) => (
+                      <div key={ver}>
+                        <div className="text-[11px] font-medium text-gray-400 mb-1">{ver}/</div>
+                        {Object.entries(paths).map(([p, content]) => (
+                          <div
+                            key={p}
+                            className="mb-1.5 rounded-lg bg-gray-900 text-gray-100 text-[11px] p-2.5 max-h-40 overflow-auto font-mono whitespace-pre"
+                          >
+                            <div className="text-gray-400 mb-1">{p}</div>
+                            {String(content).slice(0, 800)}
+                            {String(content).length > 800 ? '…' : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 py-3">选择左侧版本查看该版本的完整代码</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* ── 部署指引 Modal ── */}

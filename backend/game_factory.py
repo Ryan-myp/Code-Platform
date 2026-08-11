@@ -26,6 +26,8 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.llm import call_llm_async, log_usage
+from content_safety import check_text, quality_report
+from publish_kit import build_publish_zip, license_text, pack_dir_name, publish_registry
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -240,6 +242,115 @@ TEMPLATES = [
             "通关后显示得分、正确率与最高纪录（本地存储 Top 5），支持重玩；"
             "题库内置在代码中（数组常量），可循环随机出题不重复（用完洗牌重抽）；"
             "支持点击/触屏选择选项；界面活泼配色，有答题音效（对/错）。"
+        ),
+    },
+    {
+        "id": "runner",
+        "name": "无尽跑酷",
+        "icon": "🏃",
+        "color": "from-indigo-500 to-blue-600",
+        "category": "休闲",
+        "description": "无尽跑酷：跳跃/下滑躲避障碍，速度渐快，吃金币得分",
+        "play": (
+            "无尽跑酷玩法：角色在横向卷轴场景中自动向前奔跑，玩家控制跳跃（点击/上滑）与下滑（下滑键/下滑手势）躲避障碍物；"
+            "至少 3 种障碍（矮栏/高栏/空中障碍），速度随得分逐渐加快；"
+            "拾取金币加分，金币有飘字反馈；撞到障碍游戏结束；"
+            "场景有滚动背景层（远景/近景视差），角色有奔跑/跳跃动画帧；"
+            "支持键盘空格/上键（网页版）与触屏点击/上滑（微信版）；显示得分、金币数与历史最高分（本地存储）。"
+        ),
+    },
+    {
+        "id": "whack",
+        "name": "打地鼠",
+        "icon": "🔨",
+        "color": "from-amber-500 to-yellow-600",
+        "category": "休闲",
+        "description": "限时敲击：地鼠冒头即敲，敲中得分，别误敲炸弹",
+        "play": (
+            "打地鼠玩法：3×3 地洞网格，地鼠随机从洞中冒头（每次 1-3 只），玩家点击敲击得分；"
+            "地鼠冒头停留 0.8-1.5 秒后缩回；偶发冒炸弹，敲中炸弹扣分；"
+            "60 秒限时，倒计时结束显示本局得分与最高分；"
+            "地鼠有探出/缩回动画与敲击命中反馈（星星飘字）；"
+            "支持点击/触屏敲击；显示得分、剩余时间与历史最高分（本地存储）。"
+        ),
+    },
+    {
+        "id": "pong",
+        "name": "乒乓对决",
+        "icon": "🏓",
+        "color": "from-sky-500 to-cyan-600",
+        "category": "休闲",
+        "description": "经典乒乓：挡板反弹小球，率先得 11 分获胜，可双人对战",
+        "play": (
+            "乒乓对决玩法：竖屏上下分区，玩家挡板在下、AI 挡板在上，小球在中间反弹运动；"
+            "玩家左右移动挡板接球，球落到底线对手得分；先得 11 分获胜（分差需 ≥2）；"
+            "AI 挡板追踪球的水平位置（带移动速度上限与随机误差，难度适中）；"
+            "小球碰到挡板时角度随击中位置变化，速度随回合数轻微加快；"
+            "得分时有提示文字与音效，中场休息 1 秒；"
+            "支持键盘左右键（网页版）与触屏拖动（微信版）；显示双方得分与历史最高分。"
+        ),
+    },
+    {
+        "id": "sudoku",
+        "name": "数独",
+        "icon": "🧮",
+        "color": "from-blue-500 to-indigo-600",
+        "category": "益智",
+        "description": "经典数独：九宫格推理填数，三档难度，即时校验",
+        "play": (
+            "数独玩法：9×9 棋盘（3×3 宫），初始预置部分数字（简单 36 格/中等 30 格/困难 24 格，内置题库数组至少 3 题或按难度生成）；"
+            "点击格子选中（高亮同行同列同宫），再点数字面板（1-9）填入；填错红字提示、可擦除；"
+            "辅助功能：选中格同数字高亮、剩余数字计数、计时器与错误次数统计；"
+            "全部填对即胜利，显示用时与历史最佳（本地存储 Top 5）；"
+            "支持点击/触屏操作；棋盘数字与候选区清晰可读，配色护眼。"
+        ),
+    },
+    {
+        "id": "rhythm",
+        "name": "节奏音游",
+        "icon": "🎵",
+        "color": "from-fuchsia-500 to-pink-600",
+        "category": "音游",
+        "description": "节奏打击：音符随音乐下落，精准敲击得分，连击 Combo 加成",
+        "play": (
+            "节奏音游玩法：音符沿判定线从上方下落（至少 3 个轨道），玩家在音符到达判定线时点击对应轨道敲击；"
+            "判定分 Perfect/Great/Good/Miss 四档（时间窗口与分数不同，Perfect 最高），连续 Perfect 累计 Combo 并额外加分；"
+            "至少内置 1 首可播放曲目（WebAudio 程序化合成旋律，含节拍驱动），谱面为代码内数组（音符时间/轨道）；"
+            "生命值系统：Miss 扣生命，生命归零失败；曲终结算分数、最大 Combo、评级（S/A/B/C）；"
+            "界面为 Canvas 绘制：背景星空动效随节拍脉冲、音符下落的拖尾效果、Perfect/Great 判定飘字；"
+            "支持键盘按键（网页版可自定义键位映射）与触屏点击轨道（微信版）；显示分数、Combo 与最高纪录（本地存储）。"
+        ),
+    },
+    {
+        "id": "escape",
+        "name": "密室逃脱",
+        "icon": "🔐",
+        "color": "from-stone-500 to-neutral-700",
+        "category": "解谜",
+        "description": "解谜逃脱：线索收集与道具组合，破解谜题逃离密室",
+        "play": (
+            "密室逃脱玩法：一个封闭房间场景（至少 6 个可交互点：柜子/保险箱/画框/书架/地毯/门），玩家点击探索收集线索与道具；"
+            "至少 4 个关联谜题：数字密码锁（线索藏在画框数字/书页页码）、图案旋转对位、颜色组合、道具组合使用（如钥匙+柜子）；"
+            "道具栏：点击道具可查看/使用/组合，组合结果提示；解错有轻提示但不扣分（以解谜流畅为优先）；"
+            "全部谜题解开后门解锁，显示通关用时与步数，本地存储最佳纪录 Top 5；"
+            "场景为 Canvas 绘制：房间手绘风透视场景、交互点高亮呼吸光圈、道具放大查看弹层、谜题面板独立绘制；"
+            "支持点击/触屏操作；每解开一个谜题有提示音与飘字反馈，提供「提示」按钮（消耗提示次数，最多 3 次）。"
+        ),
+    },
+    {
+        "id": "platformer",
+        "name": "平台跳跃",
+        "icon": "🦘",
+        "color": "from-lime-500 to-green-600",
+        "category": "休闲",
+        "description": "横版跳跃：闯关收集金币，躲避陷阱，抵达终点旗杆过关",
+        "play": (
+            "平台跳跃玩法：横向卷轴关卡（至少 3 关，每关不同地形主题：草地/洞穴/雪地），角色左右移动 + 跳跃（可二段跳）；"
+            "关卡元素：平台/移动平台/尖刺陷阱/金币/终点旗杆；踩到尖刺或坠落深渊掉 1 条命（初始 3 条），命尽游戏结束；"
+            "收集金币过关时结算（每关 5-10 枚，集齐有额外奖励）；抵达旗杆进入下一关，通关后显示总分与用时；"
+            "卷轴镜头跟随角色（保留回头空间），有视差背景层与粒子效果（跳跃尘土/金币闪光）；"
+            "物理：重力/跳跃高度/移动速度手感调优，移动平台来回匀速运动（角色站上平台随动）；"
+            "支持键盘左右/空格（网页版）与触屏虚拟按键（微信版：左/右/跳跃三键）；显示关卡、生命、金币与最高分（本地存储）。"
         ),
     },
     {
@@ -693,6 +804,14 @@ def _ensure_cover_column(conn) -> None:
         conn.commit()
 
 
+def _ensure_history_column(conn) -> None:
+    """game_projects 表确保 version_history 列存在（v15 迭代历史快照）。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()}
+    if "version_history" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN version_history TEXT DEFAULT '[]'")
+        conn.commit()
+
+
 def _ensure_qc_column(conn) -> None:
     """幂等补列：game_projects.qc 存商用质量门禁报告（JSON）。"""
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
@@ -734,6 +853,110 @@ async def save_cover(proj_id: str, req: CoverRequest, current_user: dict = requi
     conn.commit()
     conn.close()
     return {"success": True, "cover": cover_url}
+
+
+class AiCoverRequest(BaseModel):
+    prompt: str = Field("", max_length=500, description="自定义封面提示词（留空自动按游戏生成）")
+
+
+def _fallback_game_cover(name: str, tpl_name: str) -> bytes:
+    """文生图失败时的 PIL 兜底封面：渐变底 + 游戏名 + 玩法说明。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    w, h = 1024, 1024
+    schemes = [((99, 102, 241), (139, 92, 246)), ((16, 185, 129), (14, 165, 233))]
+    top, bottom = schemes[sum(ord(c) for c in name) % len(schemes)]
+    img = Image.new("RGB", (w, h), top)
+    px = img.load()
+    for y in range(h):
+        t = y / h
+        r = int(top[0] + (bottom[0] - top[0]) * t)
+        g = int(top[1] + (bottom[1] - top[1]) * t)
+        b = int(top[2] + (bottom[2] - top[2]) * t)
+        for x in range(w):
+            px[x, y] = (r, g, b)
+    draw = ImageDraw.Draw(img)
+    for k in range(3):
+        draw.ellipse(
+            [w * (0.58 + k * 0.12), h * 0.14, w * (0.98 + k * 0.12), h * 0.62],
+            outline=(255, 255, 255, 44 - k * 12),
+            width=2,
+        )
+    font = None
+    for fp in ("/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"):
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, 64)
+                break
+            except Exception:
+                continue
+    if font is None:
+        font = ImageFont.load_default()
+    title = (name or "AI 小游戏")[:12]
+    bbox = draw.textbbox((0, 0), title, font=font)
+    draw.text(((w - (bbox[2] - bbox[0])) / 2, h // 2 - 90), title, fill=(255, 255, 255, 240), font=font)
+    sub = f"{tpl_name} · 双版本小游戏"
+    draw.text(((w - (bbox[2] - bbox[0])) / 2, h // 2 + 20), sub, fill=(255, 255, 255, 170), font=font)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+@router.post("/{proj_id}/ai-cover")
+async def generate_ai_cover(proj_id: str, req: AiCoverRequest, current_user: dict = require_auth()):
+    """AI 生成游戏封面：按游戏名/模板自动生成提示词 → 文生图保存为封面；失败自动降级 PIL 兜底。"""
+    import requests as _requests
+
+    conn = get_db()
+    row = conn.execute("SELECT name, template FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "游戏项目不存在")
+    tpl = next((t for t in TEMPLATES if t["id"] == row["template"]), None)
+    tpl_name = tpl["name"] if tpl else "小游戏"
+    prompt = req.prompt.strip() or (
+        f"Mobile game cover art, cartoon style, vibrant gradient background, "
+        f"game theme: {row['name']}, {tpl_name} gameplay scene, "
+        "colorful illustration, game poster composition, no text, no watermark"
+    )
+    raw = None
+    try:
+        from common.config import AGNES_API_BASE, AGNES_API_KEY
+
+        if not AGNES_API_KEY:
+            raise RuntimeError("AGNES_API_KEY 未配置")
+        resp = await asyncio.to_thread(
+            _requests.post,
+            f"{AGNES_API_BASE}/images/generations",
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "agnes-image-2.1-flash", "prompt": prompt, "size": "1024x1024", "n": 1},
+            timeout=120,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"文生图失败: {resp.text[:200]}")
+        img_url = resp.json().get("data", [{}])[0].get("url")
+        if not img_url:
+            raise RuntimeError("文生图未返回图片 URL")
+        img_resp = await asyncio.to_thread(_requests.get, img_url, timeout=60)
+        if img_resp.status_code != 200:
+            raise RuntimeError("封面图片下载失败")
+        raw = img_resp.content
+    except Exception as e:
+        logger.warning("AI 封面生成失败，使用兜底封面: %s", str(e)[:200])
+        raw = _fallback_game_cover(row["name"], tpl_name)
+    os.makedirs(COVER_DIR, exist_ok=True)
+    fname = f"{proj_id}.jpg"
+    with open(os.path.join(COVER_DIR, fname), "wb") as f:
+        f.write(raw)
+    cover_url = f"/api/games/{proj_id}/cover-image"
+    conn = get_db()
+    conn.execute(
+        "UPDATE game_projects SET cover=?, updated_at=? WHERE id=?",
+        (cover_url, datetime.now().isoformat(), proj_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "cover": cover_url, "prompt": prompt}
 
 
 @router.get("/{proj_id}/cover-image")
@@ -839,6 +1062,7 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
     proj_id = payload.get("proj_id", "")
     req = EvolveRequest(**payload.get("params", payload))
     conn = get_db()
+    _ensure_history_column(conn)
     row = conn.execute("SELECT * FROM game_projects WHERE id=?", (proj_id,)).fetchone()
     if not row:
         conn.close()
@@ -914,12 +1138,26 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
             "chars": len(result),
         }
     )
+    # v15：迭代前保存当前版本快照（用于历史对比与回滚）
+    try:
+        history = json.loads(row["version_history"] or "[]")
+    except Exception:
+        history = []
+    history.append(
+        {
+            "version": len(history) + 1,
+            "created_at": datetime.now().isoformat(),
+            "requirement": f"迭代前快照：{req.requirement[:60]}",
+            "files": files,
+        }
+    )
     conn.execute(
-        """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, updated_at=?
+        """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, version_history=?, updated_at=?
            WHERE id=?""",
         (
             json.dumps(new_files, ensure_ascii=False),
             json.dumps(log[-20:], ensure_ascii=False),
+            json.dumps(history[-20:], ensure_ascii=False),
             datetime.now().isoformat(),
             proj_id,
         ),
@@ -974,6 +1212,7 @@ async def evolve_game(
 @router.get("/{proj_id}")
 async def get_project(proj_id: str, current_user: dict = require_auth()):
     conn = get_db()
+    _ensure_history_column(conn)
     row = conn.execute("SELECT * FROM game_projects WHERE id=?", (proj_id,)).fetchone()
     conn.close()
     if not row:
@@ -1033,6 +1272,256 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
         media_type="application/zip",
         headers={"Content-Disposition": (f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}")},
     )
+
+
+@router.get("/{proj_id}/publish-pack")
+async def game_publish_pack(proj_id: str, current_user: dict = require_auth()):
+    """游戏发布包：网页成品 + 微信小游戏包 + 封面 + 上线清单 + 质量报告，一键交付可发布。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "游戏项目不存在")
+    row = dict(row)  # sqlite3.Row 无 .get，转 dict 供发布物料模板使用
+    files = json.loads(row["files"] or "{}")
+    if not files:
+        raise HTTPException(400, "项目没有文件")
+
+    root = pack_dir_name("game_release")
+    entries: dict = {}
+    for version in ("web", "wx"):
+        if version not in files:
+            continue
+        for path in sorted(files[version].keys()):
+            entries[f"{root}/{version}/{path.lstrip('/')}"] = files[version][path]
+    # 封面（AI 封面或用户上传，存在则附带）
+    cover_src = None
+    for ext in ("png", "jpg"):
+        p = os.path.join(COVER_DIR, f"{proj_id}.{ext}")
+        if os.path.exists(p):
+            cover_src = p
+            break
+    if cover_src:
+        entries[f"{root}/封面.{cover_src.rsplit('.', 1)[-1]}"] = cover_src  # key=zip 路径, value=磁盘路径
+
+    entries[f"{root}/README.md"] = (
+        f"# 《{row['name']}》AI 小游戏\n\n- 模板：{row.get('template', '自定义')}\n"
+        f"- 说明：{row.get('requirement', '')[:200]}\n\n"
+        "## 目录\n"
+        "- `web/`：网页版，index.html 双击即玩，也可部署到 GitHub Pages/云托管等任意静态站点\n"
+        "- `wx/`：微信小游戏原生项目，用微信开发者工具导入即可编译\n"
+        "- `封面`：游戏封面图（平台审核与商店展示用）\n\n"
+        "## 发布方式\n"
+        "1. 网页版：静态托管（GitHub Pages / 腾讯云 / 自有服务器），分享链接即可传播；\n"
+        "2. 微信小游戏：mp.weixin.qq.com 注册小游戏账号 → 开发者工具上传 → 提交审核 → 发布。"
+    )
+    guide = await deploy_guide(current_user=current_user)
+    entries[f"{root}/上线清单.md"] = (
+        "# 上线清单（发布前逐项核对）\n\n## 部署步骤\n"
+        + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(guide.get("steps", [])))
+        + f"\n\n## 备注\n{guide.get('note', '')}\n\n"
+        "## 提交审核物料\n"
+        "- 游戏名称、简介（取自项目名，可在公众平台修改）\n"
+        "- 封面图（本包已附带，建议 ≥800×800）\n"
+        "- 截图：试玩页面截图 1-5 张（微信审核必填，需含主要玩法画面）\n"
+        "- 类目：选择「游戏」类目，个人主体支持大部分休闲游戏\n"
+        "- 隐私声明：如涉及用户信息需在后台填写（本项目默认不采集）"
+    )
+    entries[f"{root}/LICENSE.txt"] = license_text(f"小游戏《{row['name']}》")
+
+    # 生产级内容保障：质量自检报告（QC 门禁 + 名称/需求安全审核）
+    try:
+        qc = json.loads(row.get("qc") or "null")
+        name_check = check_text(row["name"], "文案")
+        req_check = check_text(row.get("requirement") or "", "prompt") if row.get("requirement") else None
+        failed = [c for c in (qc or {}).get("checks", []) if not c.get("ok")]
+        extra = [
+            f"QC 门禁：{'全部通过 ✓' if (qc or {}).get('ok') else f'{len(failed)} 项未过（{', '.join(c['item'] for c in failed[:3])}）'}",
+            "双版本：web（网页版）+ wx（微信小游戏）",
+        ]
+        entries[f"{root}/质量自检报告.md"] = quality_report(
+            f"小游戏《{row['name']}》",
+            text_check=name_check if name_check and not name_check["ok"] else (req_check if req_check and not req_check["ok"] else None),
+            image_quality=None,
+            extra=extra,
+        )
+    except Exception as e:
+        logger.debug(f"游戏质量自检报告生成失败: {e}")
+
+    buf = build_publish_zip(entries, "game_release")
+    publish = publish_registry.publish("game_platform", {"proj": proj_id, "name": row["name"]})
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="game_release_{int(time.time())}.zip"',
+            "X-Publish-Result": f"published={str(publish.get('published')).lower()}",
+        },
+    )
+
+
+# ── 迭代历史对比（v15）：版本快照 + 逐版变更统计 + 回滚 ──
+def diff_file_stats(old_text: str, new_text: str) -> dict:
+    """逐行 diff 统计：返回 {added, removed} 行数（纯函数，供历史对比视图使用）。"""
+    import difflib
+
+    old_lines = (old_text or "").splitlines()
+    new_lines = (new_text or "").splitlines()
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+    added = removed = 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "insert":
+            added += j2 - j1
+        elif tag == "delete":
+            removed += i2 - i1
+        elif tag == "replace":
+            removed += i2 - i1
+            added += j2 - j1
+    return {"added": added, "removed": removed}
+
+
+def _flatten_files(files: dict) -> dict:
+    """嵌套 {版本: {路径: 内容}} → 扁平 {版本/路径: 内容}（纯函数）。"""
+    flat: dict = {}
+    for ver, paths in (files or {}).items():
+        if isinstance(paths, dict):
+            for p, content in paths.items():
+                flat[f"{ver}/{p.lstrip('/')}"] = content
+    return flat
+
+
+def build_version_stats(prev_files: dict, files: dict) -> dict:
+    """对比两个版本逐文件的行数变更统计（纯函数）。"""
+    prev_flat = _flatten_files(prev_files)
+    cur_flat = _flatten_files(files)
+    stats = {}
+    for p in sorted(set(prev_flat) | set(cur_flat)):
+        old_t = prev_flat.get(p, "")
+        new_t = cur_flat.get(p, "")
+        if old_t != new_t:
+            stats[p] = diff_file_stats(old_t, new_t)
+    return stats
+
+
+class RestoreRequest(BaseModel):
+    version: int = Field(..., description="要恢复的历史版本号")
+
+
+@router.get("/{proj_id}/history")
+async def project_history(proj_id: str, current_user: dict = require_auth()):
+    """迭代历史：版本时间线 + 逐版变更行数统计（相对上一版）。"""
+    conn = get_db()
+    _ensure_history_column(conn)
+    row = conn.execute(
+        "SELECT name, iterations, version_history FROM game_projects WHERE id=?", (proj_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "游戏项目不存在")
+    try:
+        history = json.loads(row["version_history"] or "[]")
+    except Exception:
+        history = []
+    out = []
+    for i, item in enumerate(history):
+        stats = {}
+        if i > 0:
+            stats = build_version_stats(history[i - 1].get("files") or {}, item.get("files") or {})
+        out.append(
+            {
+                "version": item.get("version"),
+                "created_at": item.get("created_at", ""),
+                "requirement": item.get("requirement", ""),
+                "stats": stats,
+            }
+        )
+    return {"name": row["name"], "iterations": row["iterations"], "history": out}
+
+
+@router.get("/{proj_id}/history/{version}")
+async def project_history_version(proj_id: str, version: int, current_user: dict = require_auth()):
+    """查看指定历史版本的完整文件内容。"""
+    conn = get_db()
+    _ensure_history_column(conn)
+    row = conn.execute("SELECT version_history FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "游戏项目不存在")
+    try:
+        history = json.loads(row["version_history"] or "[]")
+    except Exception:
+        history = []
+    item = next((h for h in history if h.get("version") == version), None)
+    if not item:
+        raise HTTPException(404, f"版本 v{version} 不存在")
+    return {
+        "version": item["version"],
+        "created_at": item.get("created_at", ""),
+        "requirement": item.get("requirement", ""),
+        "files": item.get("files") or {},
+    }
+
+
+@router.post("/{proj_id}/restore")
+async def restore_project(proj_id: str, req: RestoreRequest, current_user: dict = require_auth()):
+    """回滚到指定历史版本：当前版本先快照入历史，再恢复目标版本文件。"""
+    conn = get_db()
+    _ensure_history_column(conn)
+    row = conn.execute(
+        "SELECT files, iterations, iteration_log, version_history FROM game_projects WHERE id=?", (proj_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "游戏项目不存在")
+    try:
+        history = json.loads(row["version_history"] or "[]")
+    except Exception:
+        history = []
+    target = next((h for h in history if h.get("version") == req.version), None)
+    if not target:
+        conn.close()
+        raise HTTPException(404, f"版本 v{req.version} 不存在")
+    current_files = json.loads(row["files"] or "{}")
+    if current_files:
+        history.append(
+            {
+                "version": len(history) + 1,
+                "created_at": datetime.now().isoformat(),
+                "requirement": f"回滚前快照（回滚到 v{req.version}）",
+                "files": current_files,
+            }
+        )
+    try:
+        log = json.loads(row["iteration_log"] or "[]")
+    except Exception:
+        log = []
+    log.append(
+        {
+            "requirement": f"回滚到 v{req.version}",
+            "created_at": datetime.now().isoformat(),
+            "chars": 0,
+        }
+    )
+    conn.execute(
+        "UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, version_history=?, updated_at=? WHERE id=?",
+        (
+            json.dumps(target["files"], ensure_ascii=False),
+            json.dumps(log[-20:], ensure_ascii=False),
+            json.dumps(history[-20:], ensure_ascii=False),
+            datetime.now().isoformat(),
+            proj_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {
+        "id": proj_id,
+        "version": req.version,
+        "versions": list(target["files"].keys()),
+        "files": target["files"],
+        "iterations": len(log),
+        "message": f"已回滚到 v{req.version}",
+    }
 
 
 def get_db():

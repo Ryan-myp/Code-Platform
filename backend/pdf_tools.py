@@ -48,6 +48,7 @@ CONTRACT_SYSTEM = """你是一位拥有15年+经验的资深法务顾问，精�
 
 ## 输出要求
 - risks至少列出3条，每条必须引用原文具体表述
+- **每条风险必须标注 party（责任倾向）**：该条款对哪一方不利/保护哪一方（甲方/乙方/双方/不明确），用于责任条款定位
 - key_terms覆盖合同核心条款（金额/期限/交付标准/验收条件/违约责任/知识产权）
 - signature_advice给出明确的签署建议和前置条件
 
@@ -56,7 +57,7 @@ CONTRACT_SYSTEM = """你是一位拥有15年+经验的资深法务顾问，精�
   "summary": "合同总体评价（含合同类型判断和整体公平性评估）",
   "risk_level": "high|medium|low",
   "risks": [
-    {"clause": "条款名称", "content": "原文摘录", "risk": "high|medium|low", "issue": "具体风险说明（引用法理或行业惯例）", "suggestion": "具体修改建议（含替代条款示例）"}
+    {"clause": "条款名称", "content": "原文摘录", "risk": "high|medium|low", "party": "甲方|乙方|双方|不明确", "issue": "具体风险说明（引用法理或行业惯例）", "suggestion": "具体修改建议（含替代条款示例）"}
   ],
   "key_terms": [
     {"term": "关键条款名", "summary": "内容概要", "attention": "签署时需注意的核心要点"}
@@ -104,6 +105,46 @@ RESUME_SYSTEM = """你是一位拥有10年+招聘经验的资深HR总监兼职�
 只输出JSON，不要其他内容。"""
 
 # ── 数据库 ──────────────────────────────────────────────────
+
+
+# 风险级别权重（用于排序与汇总）
+RISK_ORDER = {"high": 0, "medium": 1, "low": 2}
+PARTY_VALUES = ("甲方", "乙方", "双方")
+
+
+def _normalize_contract_result(result: dict) -> dict:
+    """收敛AI合同审查输出（v15）：
+
+    - risk 枚举归一（非法值保守取 medium）
+    - 每条风险补齐 party 责任标注（甲方/乙方/双方，缺省标「未标注」）
+    - risks 按高→中→低排序，附 level_count 分级统计
+    """
+    result = dict(result or {})
+    if result.get("risk_level") not in ("high", "medium", "low"):
+        result["risk_level"] = "medium"
+    cleaned = []
+    for r in (result.get("risks") or []):
+        if not isinstance(r, dict):
+            continue
+        risk = r.get("risk")
+        if risk not in ("high", "medium", "low"):
+            risk = "medium"
+        party = r.get("party")
+        cleaned.append(
+            {
+                "clause": str(r.get("clause", "未命名条款"))[:60],
+                "content": str(r.get("content", ""))[:300],
+                "risk": risk,
+                "party": party if party in PARTY_VALUES else "未标注",
+                "issue": str(r.get("issue", "")),
+                "suggestion": str(r.get("suggestion", "")),
+            }
+        )
+    cleaned.sort(key=lambda x: RISK_ORDER.get(x["risk"], 1))
+    result["risks"] = cleaned
+    result["risk_count"] = len(cleaned)
+    result["level_count"] = {lvl: sum(1 for r in cleaned if r["risk"] == lvl) for lvl in ("high", "medium", "low")}
+    return result
 
 
 def _ensure_tables(conn) -> None:
@@ -307,7 +348,7 @@ def contract_review(req: ContractReviewRequest, current_user: dict = require_aut
         if raw.startswith("```"):
             lines = raw.split("\n")
             raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        result = json.loads(raw)
+        result = _normalize_contract_result(json.loads(raw))
     except json.JSONDecodeError as e:
         raise HTTPException(500, "AI审查结果格式异常") from e
     except Exception as e:
@@ -387,6 +428,97 @@ def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_aut
     log_usage("resume_optimize", len(req.text), len(raw), elapsed)
 
     return {"job_id": job_id, **result}
+
+
+@router.post("/compress")
+async def compress_pdf(
+    file: UploadFile = File(...),
+    quality: int = Form(5, description="压缩强度 1-10（越大质量越高，越小体积越小）"),
+    current_user: dict = require_auth(),
+):
+    """压缩PDF（v15）：去除冗余对象 + 可选图片降采样重编码，返回压缩比。"""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "仅支持PDF文件")
+    quality = max(1, min(quality, 10))
+
+    content = await file.read()
+    orig_size = len(content)
+    if orig_size == 0:
+        raise HTTPException(400, "文件为空")
+    src_path = os.path.join(PDF_DIR, f"compress_src_{uuid.uuid4().hex[:8]}_{file.filename}")
+    with open(src_path, "wb") as wf:
+        wf.write(content)
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(500, "需要安装 PyMuPDF 以支持PDF压缩")
+
+    out_name = f"compressed_{uuid.uuid4().hex[:8]}.pdf"
+    out_path = os.path.join(PDF_DIR, out_name)
+    try:
+        doc = fitz.open(src_path)
+        # 低质量档位对超大图片降采样重编码（JPEG 重编码），高质量档位仅做结构压缩
+        if quality < 8:
+            jpg_q = 30 + quality * 6  # 30~72
+            for page in doc:
+                for img in page.get_images(full=True):
+                    xref = img[0]
+                    try:
+                        pix = fitz.Pixmap(doc, xref)
+                        if pix.n > 4:  # CMYK/灰度 → RGB 以便 JPEG 编码
+                            pix = fitz.Pixmap(fitz.csRGB, pix)
+                        threshold = 1000 if quality <= 3 else 1600
+                        if pix.width > threshold:
+                            pix = pix.shrink(2)
+                        page.replace_image(xref, pix.tobytes("jpeg", jpg_quality=jpg_q))
+                        pix = None
+                    except Exception:  # noqa: BLE001 单张图片压缩失败不影响整体
+                        continue
+        doc.save(out_path, garbage=4, deflate=True)
+        doc.close()
+    except Exception as e:
+        logger.exception("pdf compress failed")
+        raise HTTPException(500, f"压缩失败：{e}") from e
+    finally:
+        try:
+            os.unlink(src_path)
+        except OSError:
+            pass
+
+    new_size = os.path.getsize(out_path)
+    ratio = round((1 - new_size / orig_size) * 100, 1) if orig_size else 0.0
+
+    # 保存记录
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_tables(conn)
+    conn.execute(
+        """INSERT INTO pdf_jobs (id, user_id, job_type, original_filename, result_filename, result_data, status, created_at)
+           VALUES (?,?,?,?,?,?,?,?) """,
+        (
+            f"compress_{uuid.uuid4().hex[:10]}",
+            user,
+            "compress",
+            file.filename,
+            out_name,
+            json.dumps({"original_size": orig_size, "compressed_size": new_size, "ratio": ratio}, ensure_ascii=False),
+            "done",
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "filename": out_name,
+        "download_url": f"/api/pdf/download/{out_name}",
+        "original_size": orig_size,
+        "compressed_size": new_size,
+        "ratio": ratio,
+        "message": f"压缩完成：{orig_size / 1024:.1f} KB → {new_size / 1024:.1f} KB（减小 {ratio}%）",
+    }
 
 
 @router.get("/jobs")

@@ -14,7 +14,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -727,3 +727,325 @@ async def series_stats(series_id: str, current_user: dict = require_auth()):
         "total_comments": total_comments,
         "items": sorted(result_items, key=lambda x: x.get("views", 0), reverse=True),
     }
+
+
+# ══════════════════════════════════════════════════════════════
+# v15 增强：内容日历（排期 + 已发布记录聚合月历视图）
+# ══════════════════════════════════════════════════════════════
+
+
+def _parse_iso_date(value: str) -> str:
+    """ISO 时间字符串 → 'YYYY-MM-DD'，非法输入返回空串。"""
+    if not value:
+        return ""
+    s = str(value)[:10]
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        return s
+    return ""
+
+
+def _month_bounds(month: str):
+    """解析 'YYYY-MM' → (year, month, first_date, day_count, first_weekday)。
+
+    非法/缺省月份回退到当前月；周一为一周起点（weekday=0）。
+    """
+    try:
+        year, mon = (int(p) for p in month.split("-"))
+        if len(month) != 7 or not (1 <= mon <= 12):
+            raise ValueError
+        first = date(year, mon, 1)
+    except (ValueError, AttributeError):
+        now = datetime.now()
+        year, mon, first = now.year, now.month, date(now.year, now.month, 1)
+    if mon == 12:
+        next_first = date(year + 1, 1, 1)
+    else:
+        next_first = date(year, mon + 1, 1)
+    return year, mon, first, (next_first - first).days, first.weekday()
+
+
+def _as_list(value) -> list:
+    """topics 字段兼容：DB 存 JSON 字符串，纯函数测试时可直接传 list。"""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return []
+    return []
+
+
+def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> dict:
+    """排期 + 已发布记录 → 月历聚合视图（纯函数，可单测）。
+
+    schedules 需含 scheduled_at；records 需含 created_at（ISO 字符串）。
+    返回：{month, first_weekday, day_count, summary, days: {date: {...}}}
+    days 内每项含 schedules / records 列表与 total，超出月份的记录被忽略。
+    """
+    year, mon, _, day_count, first_weekday = _month_bounds(month)
+    month_str = f"{year:04d}-{mon:02d}"
+    days: dict[str, dict] = {}
+    summary = {"scheduled": 0, "published": 0}
+
+    def _slot(day_str: str) -> dict:
+        if day_str not in days:
+            days[day_str] = {
+                "date": day_str,
+                "day": int(day_str[8:10]),
+                "schedules": [],
+                "records": [],
+                "total": 0,
+            }
+        return days[day_str]
+
+    for s in schedules or []:
+        ds = _parse_iso_date(s.get("scheduled_at"))
+        if not ds or not ds.startswith(month_str):
+            continue
+        slot = _slot(ds)
+        slot["schedules"].append(
+            {
+                "id": s.get("id", ""),
+                "kind": "schedule",
+                "title": s.get("title") or "(未命名排期)",
+                "platform": s.get("platform") or "",
+                "content_type": s.get("content_type") or "",
+                "status": s.get("status") or "pending",
+                "time": str(s.get("scheduled_at") or "")[11:16],
+                "topics": _as_list(s.get("topics")),
+            }
+        )
+        slot["total"] += 1
+        summary["scheduled"] += 1
+
+    for r in records or []:
+        ds = _parse_iso_date(r.get("created_at"))
+        if not ds or not ds.startswith(month_str):
+            continue
+        slot = _slot(ds)
+        slot["records"].append(
+            {
+                "id": r.get("id", ""),
+                "kind": "record",
+                "title": r.get("title") or "(未命名发布)",
+                "platform": r.get("platform") or "",
+                "content_type": r.get("content_type") or "",
+                "status": r.get("status") or "",
+                "time": str(r.get("created_at") or "")[11:16],
+                "views": int(r.get("views") or 0),
+                "likes": int(r.get("likes") or 0),
+                "comments": int(r.get("comments") or 0),
+            }
+        )
+        slot["total"] += 1
+        summary["published"] += 1
+
+    return {
+        "month": month_str,
+        "first_weekday": first_weekday,
+        "day_count": day_count,
+        "days": days,
+        "summary": summary,
+    }
+
+
+@router.get("/calendar")
+async def content_calendar(month: str = "", current_user: dict = require_auth()):
+    """内容日历：当月排期（publish_schedules）+ 已发布记录（publish_records）按天聚合。"""
+    month = month or datetime.now().strftime("%Y-%m")
+    conn = get_db()
+    # publish_metrics 表由 best-time 惰性创建，此处幂等确保 LEFT JOIN 可用
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS publish_metrics (
+            id TEXT PRIMARY KEY, record_id TEXT NOT NULL, platform TEXT DEFAULT '',
+            views INTEGER DEFAULT 0, likes INTEGER DEFAULT 0, comments INTEGER DEFAULT 0,
+            shares INTEGER DEFAULT 0, followers_gained INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'manual', fetched_at TEXT DEFAULT '', created_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.commit()
+    sched_rows = conn.execute(
+        "SELECT * FROM publish_schedules WHERE substr(scheduled_at,1,7)=? ORDER BY scheduled_at",
+        (month,),
+    ).fetchall()
+    record_rows = conn.execute(
+        """SELECT r.*, COALESCE(m.views,0) AS views, COALESCE(m.likes,0) AS likes,
+                  COALESCE(m.comments,0) AS comments
+           FROM publish_records r LEFT JOIN publish_metrics m ON r.id=m.record_id
+           WHERE substr(r.created_at,1,7)=? ORDER BY r.created_at""",
+        (month,),
+    ).fetchall()
+    conn.close()
+    return build_calendar(month, [dict(r) for r in sched_rows], [dict(r) for r in record_rows])
+
+
+# ══════════════════════════════════════════════════════════════
+# v15 增强：主题库（选题方向沉淀 + 标签筛选）
+# ══════════════════════════════════════════════════════════════
+
+TOPIC_CATEGORIES = ["干货", "热点", "案例拆解", "教程", "观点", "清单", "其他"]
+
+
+class TopicRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100, description="主题名称")
+    description: str = Field("", max_length=1000, description="主题说明/选题思路")
+    category: str = Field("", max_length=30, description="选题方向：干货/热点/案例拆解…")
+    tags: list[str] = Field(default_factory=list, max_length=20, description="标签列表（用于筛选）")
+    goal: str = Field("", max_length=300, description="内容目标（受众/转化目的）")
+    priority: int = Field(0, ge=0, le=3, description="优先级 0-3")
+    status: str = Field("active", pattern="^(active|archived)$")
+
+
+class TopicUpdateRequest(TopicRequest):
+    """编辑主题：字段要求与创建一致。"""
+
+
+def _ensure_topic_tables(conn) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS content_topics (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            tags TEXT DEFAULT '[]',
+            goal TEXT DEFAULT '',
+            priority INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'active',
+            created_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.commit()
+
+
+def filter_topics(topics: list[dict], tag: str = "", category: str = "", keyword: str = "") -> list[dict]:
+    """主题筛选（纯函数，可单测）：tag 命中 tags 成员（不区分大小写）、category 精确、keyword 模糊。"""
+    kw = (keyword or "").strip().lower()
+    tag_l = (tag or "").strip().lower()
+    out = []
+    for t in topics or []:
+        if category and (t.get("category") or "") != category:
+            continue
+        if tag_l:
+            tags = [str(x).lower() for x in (t.get("tags") or [])]
+            if tag_l not in tags:
+                continue
+        if kw:
+            hay = f"{t.get('name') or ''} {t.get('description') or ''}".lower()
+            if kw not in hay:
+                continue
+        out.append(t)
+    return out
+
+
+def aggregate_tags(topics: list[dict]) -> list[dict]:
+    """聚合全部主题标签及使用次数，按次数降序（用于筛选 chips）。"""
+    counter: dict[str, int] = {}
+    for t in topics or []:
+        for tg in t.get("tags") or []:
+            if tg is None:
+                continue
+            tg = str(tg).strip()
+            if tg:
+                counter[tg] = counter.get(tg, 0) + 1
+    return [{"tag": k, "count": v} for k, v in sorted(counter.items(), key=lambda x: (-x[1], x[0].lower()))]
+
+
+@router.post("/topics")
+async def create_topic(req: TopicRequest, current_user: dict = require_auth()):
+    """创建主题：入库并返回 id。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    tid = f"ct_{uuid.uuid4().hex[:10]}"
+    now = datetime.now().isoformat()
+    clean_tags = [t.strip() for t in req.tags if t and t.strip()]
+    conn = get_db()
+    _ensure_topic_tables(conn)
+    conn.execute(
+        """INSERT INTO content_topics (id, user_id, name, description, category, tags, goal, priority, status, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (
+            tid,
+            user,
+            req.name.strip(),
+            req.description.strip(),
+            req.category.strip(),
+            json.dumps(clean_tags, ensure_ascii=False),
+            req.goal.strip(),
+            req.priority,
+            req.status,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": tid, "name": req.name, "tags": clean_tags, "message": "主题已创建"}
+
+
+@router.get("/topics")
+async def list_topics(tag: str = "", category: str = "", keyword: str = "", current_user: dict = require_auth()):
+    """主题库列表：支持标签 / 分类 / 关键词筛选，附标签聚合。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_topic_tables(conn)
+    rows = conn.execute(
+        "SELECT * FROM content_topics WHERE user_id=? ORDER BY priority DESC, created_at DESC LIMIT 200",
+        (user,),
+    ).fetchall()
+    conn.close()
+    topics = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["tags"] = json.loads(d.get("tags") or "[]")
+        except (ValueError, TypeError):
+            d["tags"] = []
+        topics.append(d)
+    filtered = filter_topics(topics, tag=tag, category=category, keyword=keyword)
+    return {
+        "total": len(topics),
+        "filtered": len(filtered),
+        "items": filtered,
+        "tags": aggregate_tags(topics),
+        "categories": TOPIC_CATEGORIES,
+    }
+
+
+@router.put("/topics/{topic_id}")
+async def update_topic(topic_id: str, req: TopicRequest, current_user: dict = require_auth()):
+    """编辑主题：全量更新。"""
+    conn = get_db()
+    _ensure_topic_tables(conn)
+    row = conn.execute("SELECT id FROM content_topics WHERE id=?", (topic_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "主题不存在")
+    clean_tags = [t.strip() for t in req.tags if t and t.strip()]
+    conn.execute(
+        """UPDATE content_topics SET name=?, description=?, category=?, tags=?, goal=?, priority=?, status=?
+           WHERE id=?""",
+        (
+            req.name.strip(),
+            req.description.strip(),
+            req.category.strip(),
+            json.dumps(clean_tags, ensure_ascii=False),
+            req.goal.strip(),
+            req.priority,
+            req.status,
+            topic_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "id": topic_id}
+
+
+@router.delete("/topics/{topic_id}")
+async def delete_topic(topic_id: str, current_user: dict = require_auth()):
+    """删除主题。"""
+    conn = get_db()
+    _ensure_topic_tables(conn)
+    conn.execute("DELETE FROM content_topics WHERE id=?", (topic_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True}
