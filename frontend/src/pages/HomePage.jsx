@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import useRecentTools, { formatRecentTime } from '../hooks/useRecentTools'
 import {
   Bot,
   Layers,
@@ -693,6 +694,8 @@ export default function HomePage() {
   const toast = useToast()
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState(null)
+  // v16 最近使用：用户访问过的工具一键直达（localStorage 追踪）
+  const { recent: recentTools, clear: clearRecentTools } = useRecentTools()
   const [tasks, setTasks] = useState([])
   const [notifications, setNotifications] = useState([])
   const [favorites, setFavorites] = useState([])
@@ -999,6 +1002,41 @@ export default function HomePage() {
           ))}
         </div>
       </div>
+
+      {/* v16 最近使用快捷区：按用户真实使用轨迹一键直达（去重置顶、相对时间、可清空） */}
+      {recentTools.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft px-5 py-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <HistoryIcon className="w-4 h-4 text-brand-500" />
+              <h2 className="font-semibold text-gray-900">最近使用</h2>
+              <span className="text-xs text-gray-400">你的常用工具，一键直达</span>
+            </div>
+            <button
+              onClick={clearRecentTools}
+              className="text-xs text-gray-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              清空记录
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {recentTools.map((it) => (
+              <button
+                key={it.path}
+                onClick={() => navigate(it.path)}
+                className="group flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 hover:bg-brand-50 hover:border-brand-200 hover:shadow-sm transition-all"
+              >
+                <span className="text-base">{it.icon}</span>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-brand-700">
+                  {it.label}
+                </span>
+                <span className="text-xs text-gray-400">{formatRecentTime(it.ts)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 真实成果案例墙：用户主动分享的成果（点击跳分享页，形成传播闭环）
           无真实分享时展示系统精选示例成果（is_demo，点击直达工具页） */}

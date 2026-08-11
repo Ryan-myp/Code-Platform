@@ -16,6 +16,7 @@ import FloatingAssistant from './components/FloatingAssistant'
 import MobileBottomNav from './components/MobileBottomNav'
 import BackToTop from './components/BackToTop'
 import AccessGuard from './components/AccessGuard'
+import { trackVisit } from './hooks/useRecentTools'
 import { ToastProvider, useToast } from './lib/toast'
 
 // 页面级懒加载：首屏仅加载当前页面，其余按需分块（首包从 ~1.8MB 降至 ~300KB）
@@ -114,6 +115,15 @@ function ProtectedRoute({ children, isAuthenticated }) {
   return children
 }
 
+// v16 路由访问追踪：记录「最近使用」工具（供首页快捷区一键直达）
+function RouteTracker() {
+  const location = useLocation()
+  useEffect(() => {
+    trackVisit(location.pathname)
+  }, [location.pathname])
+  return null
+}
+
 // 分享页 SEO 落地：后端 /share/{code} 返回的 HTML 通过 meta refresh + JS 跳转到 /?share={code}，
 // 此处解析 query 并跳转到 SPA 分享页（useLayoutEffect 避免闪现登录/主页）
 function ShareRedirect() {
@@ -192,6 +202,7 @@ export default function App() {
   return (
     <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <ShareRedirect />
+      <RouteTracker />
       <ToastProvider>
         <QuotaExhaustedNotifier />
         <CommandPalette isOpen={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
