@@ -510,6 +510,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
     )
 
     from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL
+    from common.llm import api_error_detail
 
     if not AGNES_API_KEY:
         logger.warning("未配置 AGNES_API_KEY，无法生成数字人写真")
@@ -552,7 +553,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
             return None
         except Exception as e:
             # 竖版尺寸不被 API 支持时降级重试方形；网络类错误直接失败
-            logger.warning(f"生成数字人写真 {avatar_id} 失败（{size}）: {e}")
+            logger.warning(f"生成数字人写真 {avatar_id} 失败（{size}）: {api_error_detail(e)}")
             continue
     return None
 

@@ -96,6 +96,32 @@ def _readable_error(exc: Exception) -> str:
     return str(exc) or f"{type(exc).__name__}（连接异常），请稍后重试"
 
 
+def api_error_detail(exc: Exception) -> str:
+    """提取外部 API 调用异常的供应商错误详情（兼容 requests/httpx），替代无信息量的 "400 Client Error"。
+
+    识别 OpenAI 兼容错误结构 {error: {message, code}}；内容策略违规（content_policy_violation）
+    额外附加中文提示，帮助用户/调用方理解失败原因。
+    """
+    resp = getattr(exc, "response", None)
+    if resp is None:
+        return _readable_error(exc)
+    detail, code = "", ""
+    try:
+        data = resp.json()
+        err = data.get("error") or {}
+        detail = str(err.get("message") or data.get("message") or "")
+        code = str(err.get("code") or "")
+    except Exception:
+        detail = str(getattr(resp, "text", "") or "")
+    body = detail or code or _readable_error(exc)
+    msg = f"HTTP {resp.status_code}: {body[:300]}"
+    if code and code not in body:
+        msg += f"（{code}）"
+    if code == "content_policy_violation" or "content policy" in detail.lower():
+        msg += "；提示词可能包含平台受限内容，请调整个别描述词后重试"
+    return msg
+
+
 # ══════════════════════════════════════════════════════════════
 # 同步版（向后兼容：签名不变，新增可选参数）
 # ══════════════════════════════════════════════════════════════

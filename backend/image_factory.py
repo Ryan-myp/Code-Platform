@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from common.llm import api_error_detail
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -468,8 +469,8 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
             else:
                 results.append({"error": f"生成失败：{data}", "prompt": prompt})
         except Exception as e:
-            logger.error(f"文生图失败：{e}")
-            results.append({"error": f"生成失败：{str(e)}", "prompt": prompt})
+            logger.error(f"文生图失败：{api_error_detail(e)}")
+            results.append({"error": f"生成失败：{api_error_detail(e)}", "prompt": prompt})
 
     _report(100, "生成完成")
     return {"results": results, "total": len(results), "prompt": prompt, "project_id": project_id}
@@ -588,8 +589,8 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"图生图失败：{e}")
-        raise HTTPException(500, f"生成失败：{str(e)}") from e
+        logger.error(f"图生图失败：{api_error_detail(e)}")
+        raise HTTPException(500, f"生成失败：{api_error_detail(e)}") from e
 
 
 @router.post("/generate/image-to-image")

@@ -470,7 +470,10 @@ def _ai_bg(prompt: str) -> Image.Image:
         timeout=180,
     )
     if resp.status_code != 200:
-        raise HTTPException(500, f"文生图失败: {resp.status_code} {resp.text[:300]}")
+        exc = requests.HTTPError(f"HTTP {resp.status_code} error", response=resp)
+        from common.llm import api_error_detail
+
+        raise HTTPException(500, f"文生图失败: {api_error_detail(exc)}")
     data = resp.json()
     if not data.get("data"):
         raise HTTPException(500, f"文生图失败: {data}")
