@@ -187,6 +187,41 @@ def _execute_job(job) -> tuple:
 
             out = run_backup()
             return True, f"备份完成：{out if isinstance(out, str) else 'ok'}"
+        if job_type == "stock_report":
+            # v21：每日定时股票分析报告（config: {symbol, period, analysis_type}）
+            import asyncio
+
+            cfg = json.loads(job.get("config") or "{}")
+            symbol = (cfg.get("symbol") or "").strip()
+            if not symbol:
+                return False, "未配置股票代码（config.symbol）"
+            period = str(cfg.get("period") or "3mo")
+            analysis_type = str(cfg.get("analysis_type") or "comprehensive")
+
+            from stock_tools import run_stock_analysis
+            from notify_api import send_webhook_message
+
+            out = asyncio.run(run_stock_analysis(symbol, period, analysis_type))
+            report = str(out.get("result") or "")
+            if not report.strip():
+                return False, "AI 未返回分析内容"
+
+            # 报告入库（stock_reports 表，用户前台可查历史）
+            uid = str(job.get("user_id", ""))
+            conn = get_db()
+            try:
+                conn.execute(
+                    "INSERT INTO stock_reports (user_id, symbol, period, report, created_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (uid, out.get("symbol") or symbol, period, report, datetime.now().isoformat()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Webhook 推送（飞书/企业微信等；未配置则静默跳过）
+            pushed = asyncio.run(send_webhook_message(uid, f"每日股票分析：{symbol}", report[:2000]))
+            return True, f"报告已生成{'(并推送 Webhook)' if pushed else ''}（{len(report)} 字）"
         # 默认 report：生成调度运行统计摘要
         conn = get_db()
         try:

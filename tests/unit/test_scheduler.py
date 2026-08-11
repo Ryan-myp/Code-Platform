@@ -142,7 +142,6 @@ class TestExecuteJob:
         ok, out = _execute_job({"job_type": "report", "name": "每日报告", "user_id": 1})
         assert ok
         assert "调度自检报告" in out and "1 个任务" in out
-
     def test_notify_job_writes_inbox(self, setup_test_db):
         from common.db import get_db
         from scheduler import _execute_job
@@ -181,6 +180,73 @@ class TestExecuteJob:
 
         ok, out = _execute_job({"job_type": "sync", "name": "x", "user_id": 1})
         assert ok and "调度自检报告" in out
+
+
+class TestStockReportJob:
+    """v21：每日定时股票分析报告（生成 + 入库 + Webhook 推送）。"""
+
+    def test_missing_symbol_rejected(self, setup_test_db):
+        from scheduler import _execute_job
+
+        ok, out = _execute_job({"job_type": "stock_report", "config": "{}", "user_id": 1})
+        assert not ok
+        assert "未配置股票代码" in out
+
+    def test_generate_store_and_push(self, setup_test_db, monkeypatch):
+        import json
+
+        import notify_api
+        import stock_tools
+        from common.db import get_db
+        from scheduler import _execute_job
+
+        async def fake_analyze(symbol, period="3mo", analysis_type="comprehensive"):
+            return {"ok": True, "symbol": symbol, "name": "Apple", "result": "# 每日报告\n\n市场分析内容"}
+
+        async def fake_push(user_id, title, content):
+            return True
+
+        monkeypatch.setattr(stock_tools, "run_stock_analysis", fake_analyze)
+        monkeypatch.setattr(notify_api, "send_webhook_message", fake_push)
+
+        job = {
+            "job_type": "stock_report",
+            "name": "每日股票分析：AAPL",
+            "user_id": "u1",
+            "config": json.dumps({"symbol": "AAPL", "period": "3mo", "analysis_type": "comprehensive"}),
+        }
+        ok, out = _execute_job(job)
+        assert ok
+        assert "报告已生成" in out and "并推送 Webhook" in out
+
+        conn = get_db()
+        row = conn.execute("SELECT * FROM stock_reports WHERE user_id='u1'").fetchone()
+        conn.close()
+        assert row is not None
+        assert row["symbol"] == "AAPL"
+        assert row["period"] == "3mo"
+        assert "每日报告" in row["report"]
+
+    def test_empty_llm_result_fails(self, setup_test_db, monkeypatch):
+        import json
+
+        import stock_tools
+        from scheduler import _execute_job
+
+        async def fake_analyze(symbol, period="3mo", analysis_type="comprehensive"):
+            return {"ok": True, "symbol": symbol, "result": ""}
+
+        monkeypatch.setattr(stock_tools, "run_stock_analysis", fake_analyze)
+
+        job = {
+            "job_type": "stock_report",
+            "name": "x",
+            "user_id": "u1",
+            "config": json.dumps({"symbol": "AAPL"}),
+        }
+        ok, out = _execute_job(job)
+        assert not ok
+        assert "AI 未返回分析内容" in out
 
 
 class TestTriggerJob:

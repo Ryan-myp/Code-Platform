@@ -5,6 +5,7 @@
 - list_notifications：分页（limit/offset/total）、unread_only 过滤
 - unread-count：未读角标数
 - mark_read / read-all：已读状态与 read_at 断言
+- v21：send_webhook_message 未配置静默 / 失败静默 / 成功推送
 """
 
 import asyncio
@@ -117,3 +118,60 @@ class TestMarkRead:
         asyncio.run(mark_all_notifications_read(current_user={"username": "admin"}))
         result = asyncio.run(unread_notification_count(current_user={"username": "admin"}))
         assert result["count"] == 0
+
+
+class TestSendWebhookMessage:
+    """v21：Webhook 推送（定时股票报告通道）——未配置/失败静默，成功返回 True。"""
+
+    def _enable_webhook(self, user="u1", url="https://example.com/hook"):
+        from common.db import get_db
+        from notify_api import _ensure_table
+
+        _ensure_table()  # 模块可能已在旧库上建表，对测试库幂等补建
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO notify_config (user_id, webhook_enabled, webhook_url, webhook_secret) VALUES (?,1,?,'')",
+            (user, url),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_unconfigured_returns_false(self, setup_test_db):
+        from notify_api import send_webhook_message
+
+        assert asyncio.run(send_webhook_message("nobody", "t", "c")) is False
+
+    def test_failure_swallowed(self, setup_test_db, monkeypatch):
+        import httpx
+
+        from notify_api import send_webhook_message
+
+        self._enable_webhook()
+
+        async def fake_post(self, url, json=None, headers=None):
+            raise httpx.ConnectError("conn refused", request=None)
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+        assert asyncio.run(send_webhook_message("u1", "t", "c")) is False
+
+    def test_successful_push(self, setup_test_db, monkeypatch):
+        import httpx
+
+        from notify_api import send_webhook_message
+
+        self._enable_webhook()
+        sent = {}
+
+        class _Resp:
+            status_code = 200
+
+        async def fake_post(self, url, json=None, headers=None):
+            sent["url"] = url
+            sent["json"] = json
+            return _Resp()
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+        assert asyncio.run(send_webhook_message("u1", "标题", "内容")) is True
+        assert sent["url"] == "https://example.com/hook"
+        assert sent["json"]["event"] == "report"
+        assert sent["json"]["title"] == "标题"

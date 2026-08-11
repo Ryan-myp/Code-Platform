@@ -396,6 +396,12 @@ _SCHEMA_STATEMENTS = [
         analysis_type TEXT DEFAULT 'comprehensive', period TEXT DEFAULT '3mo',
         result TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""",
+    # 定时股票分析报告（v21：scheduler stock_report 任务产出）
+    """CREATE TABLE IF NOT EXISTS stock_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL,
+        symbol TEXT NOT NULL, period TEXT DEFAULT '3mo',
+        report TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""",
     # 模拟交易账户
     """CREATE TABLE IF NOT EXISTS trading_accounts (
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL,

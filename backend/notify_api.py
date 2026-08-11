@@ -213,6 +213,40 @@ def test_email(current_user: dict = Depends(require_auth)):
         raise HTTPException(500, f"发送失败：{str(e)}") from e
 
 
+async def send_webhook_message(user_id, title: str, content: str) -> bool:
+    """v21：向用户配置的 Webhook 推送消息（飞书/企业微信群机器人/自建服务均适用）。
+
+    未启用/未配置/发送失败一律静默返回 False（不抛异常，供定时任务调用）。
+    """
+    try:
+        conn = get_db()
+        try:
+            cfg = conn.execute(
+                "SELECT * FROM notify_config WHERE user_id=? AND webhook_enabled=1",
+                (str(user_id),),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not cfg or not cfg["webhook_url"]:
+            return False
+
+        payload = {
+            "event": "report",
+            "timestamp": datetime.now().isoformat(),
+            "title": str(title)[:200],
+            "content": str(content)[:5000],
+        }
+        headers = {"Content-Type": "application/json"}
+        if cfg["webhook_secret"]:
+            headers["X-Webhook-Secret"] = cfg["webhook_secret"]
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(cfg["webhook_url"], json=payload, headers=headers)
+        return 200 <= resp.status_code < 300
+    except Exception as e:  # 静默失败，不阻塞主链路
+        logger.warning("webhook 推送失败 (user=%s): %s", user_id, str(e)[:120])
+        return False
+
+
 @router.post("/test-webhook")
 async def test_webhook(current_user: dict = Depends(require_auth)):
     """发送测试 Webhook。"""
@@ -234,7 +268,7 @@ async def test_webhook(current_user: dict = Depends(require_auth)):
         "message": "小团智能平台 Webhook 测试通知",
     }
     headers = {"Content-Type": "application/json"}
-    if cfg.get("webhook_secret"):
+    if cfg["webhook_secret"]:
         headers["X-Webhook-Secret"] = cfg["webhook_secret"]
 
     try:

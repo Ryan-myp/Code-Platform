@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Button, Badge, Empty } from '../components/ui'
+import Modal from '../components/ui/Modal'
 import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import MarkdownRenderer from '../components/MarkdownRenderer'
+import KLineChart from '../components/KLineChart'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 import {
   Search,
@@ -11,7 +13,6 @@ import {
   TrendingDown,
   DollarSign,
   BarChart3,
-  LineChart,
   Activity,
   PieChart,
   Play,
@@ -24,20 +25,12 @@ import {
   Download,
   ShieldAlert,
   AlertTriangle,
+  CalendarClock,
+  FileText,
+  Trash2,
+  Clock,
+  Webhook,
 } from 'lucide-react'
-import {
-  LineChart as RechartsLine,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Area,
-  AreaChart,
-  BarChart,
-  Bar,
-} from 'recharts'
 
 export default function StockAnalysisPage() {
   // 输入态持久化：刷新/关闭不丢股票代码与周期
@@ -58,11 +51,79 @@ export default function StockAnalysisPage() {
   const [tradeAction, setTradeAction] = useState('buy')
   const [tradeQty, setTradeQty] = useState('')
   const [showTrade, setShowTrade] = useState(false)
+  // v21：定时报告 + 历史报告
+  const [reports, setReports] = useState(null)
+  const [viewReport, setViewReport] = useState(null)
+  const [schedSymbol, setSchedSymbol] = useState('')
+  const [schedPeriod, setSchedPeriod] = useState('3mo')
+  const [schedFreq, setSchedFreq] = useState('0 9 * * *')
+  const [creatingSchedule, setCreatingSchedule] = useState(false)
   const toast = useToast()
 
   useEffect(() => {
     loadPortfolio()
+    loadReports()
   }, [])
+
+  // v21：历史报告加载
+  const loadReports = async () => {
+    try {
+      const res = await api.get('/api/stock/reports?limit=20')
+      setReports(res.data?.items || [])
+    } catch {
+      setReports([])
+    }
+  }
+
+  // v21：创建定时股票分析任务
+  const handleCreateSchedule = async () => {
+    const sym = (schedSymbol || stockData?.symbol || '').trim().toUpperCase()
+    if (!sym) {
+      toast.warning('请输入股票代码')
+      return
+    }
+    setCreatingSchedule(true)
+    try {
+      await api.post('/api/scheduler', {
+        name: `每日股票分析：${sym}`,
+        description: '定时抓取行情并生成专业分析报告，通过 Webhook 推送',
+        job_type: 'stock_report',
+        cron_expression: schedFreq,
+        config: { symbol: sym, period: schedPeriod, analysis_type: 'comprehensive' },
+      })
+      toast.success(`已创建定时任务：${sym}（${FREQ_OPTIONS.find((f) => f.cron === schedFreq)?.label}）`)
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '创建定时任务失败')
+    } finally {
+      setCreatingSchedule(false)
+    }
+  }
+
+  // v21：删除历史报告
+  const handleDeleteReport = async (r) => {
+    if (!confirm(`确定删除 ${r.symbol} 的报告吗？`)) return
+    try {
+      await api.delete(`/api/stock/reports/${r.id}`)
+      toast.success('报告已删除')
+      loadReports()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || '删除失败')
+    }
+  }
+
+  // v21：定时任务频率预设
+  const FREQ_OPTIONS = [
+    { label: '每天 9:00 盘前', cron: '0 9 * * *' },
+    { label: '每天 17:00 盘后', cron: '0 17 * * *' },
+    { label: '每周一 9:00', cron: '0 9 * * 1' },
+  ]
+  const PERIOD_OPTIONS = [
+    { value: '1mo', label: '1个月' },
+    { value: '3mo', label: '3个月' },
+    { value: '6mo', label: '6个月' },
+    { value: '1y', label: '1年' },
+    { value: '2y', label: '2年' },
+  ]
 
   const loadPortfolio = async () => {
     try {
@@ -221,10 +282,11 @@ export default function StockAnalysisPage() {
   const chartData =
     stockData?.data_points?.map((d) => ({
       date: d.date,
-      price: d.close,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
       volume: d.volume,
-      ma5: d.ma5,
-      ma20: d.ma20,
     })) || []
 
   return (
@@ -555,49 +617,10 @@ export default function StockAnalysisPage() {
               </Card>
             )}
 
-            {/* 图表 */}
+            {/* 图表：专业 K 线（蜡烛图 + 成交量 + MA5/20/60） */}
             <Card className="mb-6">
-              <h3 className="font-medium text-gray-900 mb-4">价格走势</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} domain={['auto', 'auto']} />
-                    <Tooltip />
-                    <Area
-                      type="monotone"
-                      dataKey="price"
-                      stroke="#3b82f6"
-                      fillOpacity={1}
-                      fill="url(#colorPrice)"
-                      name="价格"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="ma5"
-                      stroke="#3b82f6"
-                      strokeWidth={1}
-                      dot={false}
-                      name="MA5"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="ma20"
-                      stroke="#a855f7"
-                      strokeWidth={1}
-                      dot={false}
-                      name="MA20"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              <h3 className="font-medium text-gray-900 mb-4">价格走势（K 线）</h3>
+              <KLineChart data={chartData} height={420} />
             </Card>
 
             {/* AI 分析结果 */}
@@ -703,6 +726,114 @@ export default function StockAnalysisPage() {
           </Card>
         </div>
 
+       {/* v21：定时分析报告 + 历史报告 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* 定时分析报告 */}
+          <Card>
+            <h3 className="font-medium text-gray-900 mb-1 flex items-center gap-2">
+              <CalendarClock className="w-4 h-4 text-brand-500" />
+              定时分析报告
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              每天定时抓取行情并生成专业分析报告，配置 Webhook 后自动推送（飞书 / 企业微信 / 自建服务）
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">股票代码</label>
+                <input
+                  type="text"
+                  value={schedSymbol}
+                  onChange={(e) => setSchedSymbol(e.target.value.toUpperCase())}
+                  placeholder={stockData?.symbol || '如 AAPL, 0700.HK'}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">分析周期</label>
+                  <select
+                    value={schedPeriod}
+                    onChange={(e) => setSchedPeriod(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg"
+                  >
+                    {PERIOD_OPTIONS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">推送频率</label>
+                  <select
+                    value={schedFreq}
+                    onChange={(e) => setSchedFreq(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg"
+                  >
+                    {FREQ_OPTIONS.map((f) => (
+                      <option key={f.cron} value={f.cron}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <Button onClick={handleCreateSchedule} loading={creatingSchedule} className="w-full">
+                <Clock className="w-4 h-4 mr-1" />
+                创建定时任务
+              </Button>
+              <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg text-xs text-blue-800">
+                <Webhook className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>
+                  报告生成后将通过 Webhook 自动推送。前往
+                  <a href="/#/settings" className="underline font-medium">设置 - 通知</a>
+                  配置飞书 / 企业微信机器人即可在手机上接收每日报告。
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          {/* 历史报告 */}
+          <Card>
+            <h3 className="font-medium text-gray-900 mb-4 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-brand-500" />
+              历史报告
+            </h3>
+            {reports === null ? (
+              <Empty description="加载中..." />
+            ) : reports.length === 0 ? (
+              <Empty description="暂无定时报告，左侧创建定时任务后自动生成" />
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                {reports.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{r.symbol}</span>
+                        <Badge variant="info">{PERIOD_OPTIONS.find((p) => p.value === r.period)?.label || r.period}</Badge>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5">
+                        {r.created_at ? new Date(r.created_at).toLocaleString() : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button variant="ghost" size="sm" icon={FileText} onClick={() => setViewReport(r)}>
+                        查看
+                      </Button>
+                      <Button variant="ghost" size="sm" icon={Trash2} onClick={() => handleDeleteReport(r)}>
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
         {/* 免责声明 */}
         <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-xs text-yellow-800">
@@ -711,6 +842,23 @@ export default function StockAnalysisPage() {
           </p>
         </div>
       </div>
+
+      {/* v21：历史报告查看弹窗 */}
+      <Modal open={!!viewReport} onClose={() => setViewReport(null)} title={viewReport ? `报告：${viewReport.symbol}` : ''} size="lg">
+        {viewReport && (
+          <div>
+            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-gray-100">
+              <Badge variant="info">
+                {PERIOD_OPTIONS.find((p) => p.value === viewReport.period)?.label || viewReport.period}
+              </Badge>
+              <span className="text-xs text-gray-500">
+                {viewReport.created_at ? new Date(viewReport.created_at).toLocaleString() : ''}
+              </span>
+            </div>
+            <MarkdownRenderer content={viewReport.report || ''} />
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
