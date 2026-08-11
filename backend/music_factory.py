@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -1754,7 +1755,11 @@ async def delete_item(filename: str):
 
 
 async def _music_sing_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """生成虚拟人声 TTS（同步/异步任务共用执行体，异步时回报进度）。"""
+    """生成虚拟人声 TTS（同步/异步任务共用执行体，异步时回报进度）。
+
+    双通道：优先 agnes /audio/speech（线上 TTS），失败自动回退 edge-tts 本地合成
+    （与音乐合成同款子进程链路），不依赖第三方通道是否开通。
+    """
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
@@ -1772,51 +1777,65 @@ async def _music_sing_worker(payload: dict, progress: Callable | None = None) ->
     if not (lyrics or "").strip():
         raise HTTPException(400, "请输入歌词文本")
 
-    voice_mapping = {
-        "female": "zh-CN-XiaoxiaoNeural",
-        "male": "zh-CN-YunxiNeural",
-        "child": "zh-CN-XiaomoNeural",
-    }
-    tts_voice = voice_mapping.get(voice, "zh-CN-XiaoxiaoNeural")
+    tts_voice = _VOICE_EDGE.get(voice, _VOICE_EDGE["female"])
+    text = (lyrics or "")[:500]
 
     _report(20, "AI 正在合成人声…")
+    # 通道一：agnes /audio/speech（线上 TTS，未开通/失败时自动降级）
+    audio_data: bytes | None = None
     try:
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/audio/speech",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "tts-1", "input": lyrics[:500], "voice": tts_voice, "speed": 1.0},
+            json={"model": "tts-1", "input": text, "voice": tts_voice, "speed": 1.0},
             timeout=60,
         )
-
         if response.status_code == 200:
-            filename = f"{generate_music_id()}.mp3"
-            save_music(response.content, filename)
-            duration = len(lyrics) / 15
-            art_id = _save_artifact(
-                filename,
-                project_id,
-                "audio",
-                lyrics[:500],
-                duration,
-                {"voice": voice, "style": style, "tts_voice": tts_voice},
-            )
-            _report(100, "人声已生成")
-            return {
-                "audio_id": filename,
-                "artifact_id": art_id,
-                "url": f"/api/music-factory/audios/{filename}",
-                "voice": voice,
-                "style": style,
-                "duration": duration,
-                "project_id": project_id,
-            }
-        raise HTTPException(502, "虚拟人声功能需要 TTS API 支持（当前服务商暂未开通）")
-    except HTTPException:
-        raise
+            audio_data = response.content
+        else:
+            logger.warning(f"agnes TTS 不可用（HTTP {response.status_code}），回退 edge-tts 本地合成")
     except Exception as e:
-        logger.error(f"生成人声异常: {e}")
-        raise HTTPException(500, f"生成人声失败: {str(e)}") from e
+        logger.warning(f"agnes TTS 调用异常，回退 edge-tts 本地合成: {api_error_detail(e)}")
+
+    # 通道二：edge-tts 本地合成（与音乐合成同款子进程链路）
+    if not audio_data:
+        tmpdir = tempfile.mkdtemp(prefix="music_sing_")
+        try:
+            tmp_path = os.path.join(tmpdir, "tts.mp3")
+            ok = await asyncio.to_thread(_tts_segment, text, tts_voice, tmp_path)
+            if ok:
+                with open(tmp_path, "rb") as f:
+                    audio_data = f.read()
+        except Exception as e:
+            logger.error(f"edge-tts 人声合成失败: {e}")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    if not audio_data:
+        raise HTTPException(502, "人声合成失败：线上 TTS 与本地 edge-tts 通道均不可用，请稍后重试")
+
+    filename = f"{generate_music_id()}.mp3"
+    save_music(audio_data, filename)
+    duration = len(lyrics) / 15
+    art_id = _save_artifact(
+        filename,
+        project_id,
+        "audio",
+        lyrics[:500],
+        duration,
+        {"voice": voice, "style": style, "tts_voice": tts_voice},
+    )
+    _report(100, "人声已生成")
+    return {
+        "audio_id": filename,
+        "artifact_id": art_id,
+        "url": f"/api/music-factory/audios/{filename}",
+        "voice": voice,
+        "style": style,
+        "duration": duration,
+        "project_id": project_id,
+    }
 
 
 @router.post("/tts/sing")

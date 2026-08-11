@@ -55,7 +55,9 @@ export default function ShortDramaPage() {
   const [avatarId, setAvatarId] = useState('business-female')
   const [dhEngine, setDhEngine] = useState('2d')
   const [scenesJson, setScenesJson] = useState('')
-  const [showJson, setShowJson] = useState(false)
+  // v16 自定义分镜表格化：免写 JSON，逐镜编排画面/台词/旁白/时长
+  const [customScenes, setCustomScenes] = useState([])
+  const [showCustom, setShowCustom] = useState(false)
   const [scriptData, setScriptData] = useState(null) // v13.29 AI 剧本工作台：{title, scenes[]}
   const [scripting, setScripting] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -103,8 +105,9 @@ export default function ShortDramaPage() {
   }, [])
 
   const generate = async () => {
-    if (!theme.trim() && !scenesJson.trim() && !scriptData) {
-      toast.error('请输入短剧主题，或填写自定义分镜 JSON')
+    const hasCustom = customScenes.some((s) => (s.shot || '').trim() || (s.dialogue || '').trim())
+    if (!theme.trim() && !scenesJson.trim() && !scriptData && !hasCustom) {
+      toast.error('请输入短剧主题，或填写自定义分镜')
       return
     }
     setGenerating(true)
@@ -125,6 +128,18 @@ export default function ShortDramaPage() {
       if ((scriptData.characters || []).length) {
         form.append('characters_json', JSON.stringify(scriptData.characters))
       }
+    } else if (hasCustom) {
+      // v16 表格分镜优先于手写 JSON：过滤空镜，秒数收敛到 2-45
+      const scenes = customScenes
+        .filter((s) => (s.shot || '').trim() || (s.dialogue || '').trim())
+        .map((s, i) => ({
+          id: i + 1,
+          shot: (s.shot || '').trim(),
+          narrator: (s.narrator || '').trim(),
+          dialogue: (s.dialogue || '').trim(),
+          sec: Math.min(45, Math.max(2, parseInt(s.sec, 10) || 15)),
+        }))
+      form.append('scenes_json', JSON.stringify(scenes))
     } else if (scenesJson.trim()) {
       form.append('scenes_json', scenesJson.trim())
     }
@@ -201,6 +216,19 @@ export default function ShortDramaPage() {
       ...prev,
       scenes: prev.scenes.filter((_, idx) => idx !== i).map((s, idx) => ({ ...s, id: idx + 1 })),
     }))
+  }
+
+  // v16 自定义分镜表格：增删改单镜（画面/台词/旁白/秒数）
+  const updateCustomScene = (i, key, val) => {
+    setCustomScenes((prev) => prev.map((s, idx) => (idx === i ? { ...s, [key]: val } : s)))
+  }
+
+  const addCustomScene = () => {
+    setCustomScenes((prev) => [...prev, { shot: '', narrator: '', dialogue: '', sec: 15 }])
+  }
+
+  const removeCustomScene = (i) => {
+    setCustomScenes((prev) => prev.filter((_, idx) => idx !== i))
   }
 
   // v13.30 角色表编辑（角色一致性：每个角色形象全剧锁定）
@@ -739,30 +767,85 @@ export default function ShortDramaPage() {
             </div>
           )}
 
-          {/* ── 自定义分镜 ── */}
+          {/* ── 自定义分镜（v16 表格化：逐镜编排画面/台词，免写 JSON） ── */}
           <div className="rounded-xl border border-gray-200">
             <button
-              onClick={() => setShowJson(!showJson)}
+              onClick={() => setShowCustom(!showCustom)}
               className="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-xl"
             >
               <span className="flex items-center gap-2">
                 <Subtitles className="w-4 h-4 text-gray-400" />
-                自定义分镜 JSON（可选，留空由 AI 编剧）
+                自定义分镜（可选，手动编排每镜画面/台词，留空由 AI 编剧）
               </span>
-              {showJson ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+              {showCustom ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
             </button>
-            {showJson && (
+            {showCustom && (
               <div className="px-4 pb-4 space-y-2">
-                <textarea
-                  value={scenesJson}
-                  onChange={(e) => setScenesJson(e.target.value)}
-                  rows={6}
-                  placeholder={SCENES_EXAMPLE}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"
-                />
-                <p className="text-[11px] text-gray-400">
-                  字段：shot（画面）/ narrator（旁白）/ dialogue（台词）/ sec（秒数，2-45）
-                </p>
+                {customScenes.length === 0 && (
+                  <p className="text-[11px] text-gray-400">逐镜填写画面描述与台词，点「开始创作」后按此剧本生成</p>
+                )}
+                {customScenes.map((s, i) => (
+                  <div key={i} className="rounded-lg border border-gray-100 bg-gray-50/40 p-2 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-gray-400">第 {i + 1} 镜</span>
+                      <button onClick={() => removeCustomScene(i)} title="删除此镜" className="text-gray-300 hover:text-red-500">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <input
+                      value={s.shot || ''}
+                      onChange={(e) => updateCustomScene(i, 'shot', e.target.value)}
+                      placeholder="画面描述（如：雨夜小巷，主角撑伞快步走过）"
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={s.dialogue || ''}
+                        onChange={(e) => updateCustomScene(i, 'dialogue', e.target.value)}
+                        placeholder="台词（如：我终于找到了这里）"
+                        className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                      <input
+                        value={s.narrator || ''}
+                        onChange={(e) => updateCustomScene(i, 'narrator', e.target.value)}
+                        placeholder="旁白（可留空）"
+                        className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400">时长</span>
+                      <input
+                        type="number"
+                        min={2}
+                        max={45}
+                        value={s.sec ?? 15}
+                        onChange={(e) => updateCustomScene(i, 'sec', parseInt(e.target.value, 10) || 15)}
+                        className="w-20 rounded-lg border border-gray-200 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                      <span className="text-[11px] text-gray-400">秒（2-45）</span>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  onClick={addCustomScene}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs text-gray-600 hover:border-violet-300"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  加一镜
+                </button>
+                <details className="rounded-lg border border-dashed border-gray-200">
+                  <summary className="cursor-pointer px-3 py-2 text-[11px] text-gray-400 hover:text-gray-600">高级：粘贴分镜 JSON</summary>
+                  <div className="px-3 pb-3 space-y-1">
+                    <textarea
+                      value={scenesJson}
+                      onChange={(e) => setScenesJson(e.target.value)}
+                      rows={5}
+                      placeholder={SCENES_EXAMPLE}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    />
+                    <p className="text-[11px] text-gray-400">字段：shot（画面）/ narrator（旁白）/ dialogue（台词）/ sec（秒数，2-45）</p>
+                  </div>
+                </details>
               </div>
             )}
           </div>
