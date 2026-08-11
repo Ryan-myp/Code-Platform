@@ -25,7 +25,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import SlidePreviewer from '../components/SlidePreviewer'
+import SlidePreviewer, { extractSlidesFromResult } from '../components/SlidePreviewer'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
@@ -275,15 +275,7 @@ export default function PPTFactoryPage() {
         onSuccess: (data) => {
           setResult(data.result)
           setPptxUrl(data.pptx || '')
-          try {
-            const jsonMatch = data.result.match(/\{[\s\S]*\}/)
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0])
-              if (parsed.slides) setSlides(parsed.slides)
-            }
-          } catch {
-            /* not valid JSON */
-          }
+          setSlides(extractSlidesFromResult(data.result))
           setTask(null)
           loadHistory()
           toast.success('PPT 生成完成')
@@ -375,13 +367,16 @@ export default function PPTFactoryPage() {
     setOutline(item.outline || '')
     setResult(item.result)
     setPptxUrl(item.file_path || '')
+    // v18-A 兜底：旧历史 slides 列可能为空（'[]'），从 result 提取 JSON 解析
+    let parsedSlides = []
     try {
-      const slidesRaw = item.slides || '[]'
-      const parsed = typeof slidesRaw === 'string' ? JSON.parse(slidesRaw) : slidesRaw
-      setSlides(Array.isArray(parsed) ? parsed : [])
+      const parsed = typeof item.slides === 'string' ? JSON.parse(item.slides) : item.slides
+      if (Array.isArray(parsed)) parsedSlides = parsed
     } catch {
-      setSlides([])
+      /* 空 slides 字段 */
     }
+    if (parsedSlides.length === 0) parsedSlides = extractSlidesFromResult(item.result)
+    setSlides(parsedSlides)
   }
 
   const themeColorMap = {

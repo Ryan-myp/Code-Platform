@@ -107,6 +107,28 @@ export function chartKind(suggestion = '') {
   return 'bar'
 }
 
+/**
+ * 从 LLM 原始 result 提取 slides 数组（可单测）。
+ * 兼容：直接对象 / JSON 字符串 / ```json 代码块包裹；损坏或缺失时返回 fallback。
+ * 用于生成完成与历史记录回看（旧历史 slides 列可能为空，需从 result 兜底）。
+ */
+export function extractSlidesFromResult(result, fallback = []) {
+  if (!result) return fallback
+  if (typeof result === 'object' && Array.isArray(result.slides)) return result.slides
+  if (typeof result === 'string') {
+    try {
+      const m = result.match(/\{[\s\S]*\}/)
+      if (m) {
+        const parsed = JSON.parse(m[0])
+        if (Array.isArray(parsed.slides)) return parsed.slides
+      }
+    } catch {
+      /* result 非法 JSON（旧记录 LLM 输出未转义引号），保持原文展示 */
+    }
+  }
+  return fallback
+}
+
 /* ---------- SVG 示意图表（标注“示意数据”，引导下载 PPTX 查看正式版） ---------- */
 
 function BarChartSvg({ accent }) {

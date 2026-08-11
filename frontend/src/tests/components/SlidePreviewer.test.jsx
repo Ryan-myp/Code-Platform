@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import SlidePreviewer, { parseSlides, chartKind, SLIDE_THEMES } from '../../components/SlidePreviewer'
+import SlidePreviewer, { parseSlides, chartKind, extractSlidesFromResult, SLIDE_THEMES } from '../../components/SlidePreviewer'
 
 const NEW_SLIDE = {
   type: 'content',
@@ -16,6 +16,32 @@ const NEW_SLIDE = {
   notes: '强调增长',
   duration_seconds: 60,
 }
+
+describe('extractSlidesFromResult', () => {
+  it('直接对象：返回 slides 数组', () => {
+    expect(extractSlidesFromResult({ slides: [NEW_SLIDE] })).toEqual([NEW_SLIDE])
+  })
+
+  it('JSON 字符串（```json 代码块包裹）：提取 slides', () => {
+    const raw = '\n\n```json\n' + JSON.stringify({ meta: {}, slides: [NEW_SLIDE] }) + '\n```\n'
+    const slides = extractSlidesFromResult(raw)
+    expect(slides.length).toBe(1)
+    expect(slides[0].title).toBe('核心结论')
+  })
+
+  it('损坏 JSON（未转义引号）：回退 fallback', () => {
+    const raw = '{"notes": "强调"诊断"原则"}'
+    expect(extractSlidesFromResult(raw)).toEqual([])
+    expect(extractSlidesFromResult(raw, [{ title: 'x' }])).toEqual([{ title: 'x' }])
+  })
+
+  it('空值/非 slides 结构：回退 fallback', () => {
+    expect(extractSlidesFromResult('')).toEqual([])
+    expect(extractSlidesFromResult(null)).toEqual([])
+    expect(extractSlidesFromResult('纯文本内容')).toEqual([])
+    expect(extractSlidesFromResult('{"meta": {}}')).toEqual([])
+  })
+})
 
 describe('parseSlides', () => {
   it('非数组返回 fallback', () => {
