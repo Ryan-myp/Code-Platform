@@ -1,9 +1,10 @@
 /**
- * v21 股票分析页单测：定时分析报告面板 / 历史报告列表 / K 线主图挂载。
+ * v21/v22 股票分析页单测：定时分析报告面板 / 历史报告列表 / K 线主图挂载 /
+ * 关键词智能补全（候选列表自由选择）/ 热门股票一键直达。
  * api 整体 mock，不触发真实后端；KLineChart 依赖 canvas，此页断言其标题与挂载点。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 const apiMock = vi.hoisted(() => ({
   get: vi.fn(),
@@ -30,11 +31,36 @@ import StockAnalysisPage from '../../pages/StockAnalysisPage'
 
 const PORTFOLIO = { total_value: 1000000, cash: 500000, positions: [] }
 
+const STOCK = {
+  symbol: 'AAPL',
+  name: 'Apple',
+  current_price: 150,
+  previous_close: 148,
+  exchange: 'NASDAQ',
+  open: 149,
+  day_high: 152,
+  day_low: 148.5,
+  volume: 3000000,
+  market_cap: 2500000000000,
+  pe_ratio: 28.5,
+  '52w_high': 200,
+  '52w_low': 120,
+  indicators: { rsi: 55, macd: 1.2, ma5: 148, ma20: 145, ma60: 140 },
+  risk_metrics: { risk_level: '低', volatility_pct: 20, warnings: [] },
+  data_points: [
+    { date: '2026-01-01', open: 100, high: 110, low: 95, close: 105, volume: 1000 },
+    { date: '2026-01-02', open: 105, high: 112, low: 102, close: 108, volume: 1500 },
+  ],
+}
+
 describe('StockAnalysisPage v21', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     klInitMock.mockImplementation(() => klChartMock)
     apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
+        return Promise.resolve({ data: { items: [] } })
+      }
       if (String(url).includes('/api/stock/reports')) {
         return Promise.resolve({ data: { items: [] } })
       }
@@ -64,7 +90,7 @@ describe('StockAnalysisPage v21', () => {
 
   it('创建定时任务：提交 stock_report 配置', async () => {
     render(<StockAnalysisPage />)
-    fireEvent.change(screen.getByPlaceholderText('如 AAPL, 0700.HK'), { target: { value: 'AAPL' } })
+    fireEvent.change(screen.getByPlaceholderText('搜索或输入代码，如 AAPL、0700.HK'), { target: { value: 'AAPL' } })
     fireEvent.click(screen.getByText('创建定时任务'))
     await waitFor(() => expect(apiMock.post).toHaveBeenCalledTimes(1))
     const [url, payload] = apiMock.post.mock.calls[0]
@@ -112,27 +138,32 @@ describe('StockAnalysisPage v21', () => {
 
   it('查询股票后渲染 K 线图卡片', async () => {
     apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
+        return Promise.resolve({ data: { items: [] } })
+      }
       if (String(url).includes('/api/stock/')) {
+        return Promise.resolve({ data: STOCK })
+      }
+      return Promise.resolve({ data: PORTFOLIO })
+    })
+    render(<StockAnalysisPage />)
+    fireEvent.change(screen.getByPlaceholderText(/搜索股票名称\/代码/), { target: { value: 'AAPL' } })
+    fireEvent.click(screen.getByText('查询'))
+    await waitFor(() => expect(screen.getByText('价格走势（K 线）')).toBeInTheDocument())
+    // MA5 图例（技术指标卡也有 MA5 文本，用数量断言）
+    expect(screen.getAllByText('MA5').length).toBeGreaterThan(0)
+    expect(screen.getByText(/红涨绿跌/)).toBeInTheDocument()
+  })
+
+  // ── v22：关键词智能补全 + 多结果自由选择 ──
+  it('关键词输入 → 防抖搜索 → 展示候选列表（多结果可自由选择）', async () => {
+    apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
         return Promise.resolve({
           data: {
-            symbol: 'AAPL',
-            name: 'Apple',
-            current_price: 150,
-            previous_close: 148,
-            exchange: 'NASDAQ',
-            open: 149,
-            day_high: 152,
-            day_low: 148.5,
-            volume: 3000000,
-            market_cap: 2500000000000,
-            pe_ratio: 28.5,
-            '52w_high': 200,
-            '52w_low': 120,
-            indicators: { rsi: 55, macd: 1.2, ma5: 148, ma20: 145, ma60: 140 },
-            risk_metrics: { risk_level: '低', volatility_pct: 20, warnings: [] },
-            data_points: [
-              { date: '2026-01-01', open: 100, high: 110, low: 95, close: 105, volume: 1000 },
-              { date: '2026-01-02', open: 105, high: 112, low: 102, close: 108, volume: 1500 },
+            items: [
+              { symbol: '0700.HK', name: 'Tencent Holdings', exchange: 'HKEX', type: 'Equity' },
+              { symbol: 'TCEHY', name: 'Tencent ADR', exchange: 'PNK', type: 'Equity' },
             ],
           },
         })
@@ -140,11 +171,59 @@ describe('StockAnalysisPage v21', () => {
       return Promise.resolve({ data: PORTFOLIO })
     })
     render(<StockAnalysisPage />)
-    fireEvent.change(screen.getByPlaceholderText(/输入股票代码/), { target: { value: 'AAPL' } })
-    fireEvent.click(screen.getByText('查询'))
+    fireEvent.change(screen.getByPlaceholderText(/搜索股票名称\/代码/), { target: { value: 'ten' } })
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/stock/search?q=ten&limit=8'))
+    expect(await screen.findByText('Tencent Holdings')).toBeInTheDocument()
+    const list = within(screen.getByTestId('symbol-suggestions'))
+    expect(list.getByText('0700.HK')).toBeInTheDocument()
+    expect(list.getByText('HKEX')).toBeInTheDocument()
+  })
+
+  it('点击候选 → 选中并立即查询该股票', async () => {
+    apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
+        return Promise.resolve({
+          data: { items: [{ symbol: '0700.HK', name: 'Tencent Holdings', exchange: 'HKEX', type: 'Equity' }] },
+        })
+      }
+      if (String(url).includes('/api/stock/')) {
+        return Promise.resolve({ data: STOCK })
+      }
+      return Promise.resolve({ data: PORTFOLIO })
+    })
+    render(<StockAnalysisPage />)
+    fireEvent.change(screen.getByPlaceholderText(/搜索股票名称\/代码/), { target: { value: 'tencent' } })
+    fireEvent.mouseDown(await screen.findByText('Tencent Holdings'))
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/stock/0700.HK?period=3mo'))
     await waitFor(() => expect(screen.getByText('价格走势（K 线）')).toBeInTheDocument())
-    // MA5 图例（技术指标卡也有 MA5 文本，用数量断言）
-    expect(screen.getAllByText('MA5').length).toBeGreaterThan(0)
-    expect(screen.getByText(/红涨绿跌/)).toBeInTheDocument()
+  })
+
+  it('无候选时提示尝试完整代码', async () => {
+    apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
+        return Promise.resolve({ data: { items: [] } })
+      }
+      return Promise.resolve({ data: PORTFOLIO })
+    })
+    render(<StockAnalysisPage />)
+    fireEvent.change(screen.getByPlaceholderText(/搜索股票名称\/代码/), { target: { value: 'xyzabc' } })
+    expect(await screen.findByText('未找到匹配，请尝试完整代码（如 0700.HK）')).toBeInTheDocument()
+  })
+
+  it('热门股票一键直达查询', async () => {
+    apiMock.get.mockImplementation((url) => {
+      if (String(url).includes('/api/stock/search')) {
+        return Promise.resolve({ data: { items: [] } })
+      }
+      if (String(url).includes('/api/stock/')) {
+        return Promise.resolve({ data: STOCK })
+      }
+      return Promise.resolve({ data: PORTFOLIO })
+    })
+    render(<StockAnalysisPage />)
+    expect(screen.getByText('热门：')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('苹果'))
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith('/api/stock/AAPL?period=3mo'))
+    await waitFor(() => expect(screen.getByText('价格走势（K 线）')).toBeInTheDocument())
   })
 })

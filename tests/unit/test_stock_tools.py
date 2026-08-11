@@ -400,3 +400,117 @@ class TestStockReports:
         with pytest.raises(HTTPException) as ei:
             asyncio.run(delete_stock_report(rid, current_user=other))
         assert ei.value.status_code == 404
+
+
+class FakeSearch:
+    """模拟 yf.Search 结果对象。"""
+
+    def __init__(self, quotes):
+        self.quotes = quotes
+
+
+def _q(symbol, name, exchange="NMS", qtype="EQUITY", disp="Equity"):
+    return {"symbol": symbol, "shortname": name, "longname": name, "exchange": exchange, "quoteType": qtype, "typeDisp": disp}
+
+
+class TestStockSearch:
+    """v22：关键词搜索股票候选（yf.Search 主查 + 本地热门表兜底）。"""
+
+    def test_yf_search_multi_results(self, monkeypatch):
+        """英文关键词：yf.Search 返回多个候选，AAPL 靠前且字段完整。"""
+        import stock_tools
+
+        monkeypatch.setattr(
+            stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch(
+                [_q("AAPL", "Apple Inc."), _q("APLE", "Apple Hospitality REIT"), _q("AAPL01.BK", "Apple DR")]
+            )
+        )
+        items = stock_tools.search_stocks("apple")
+        assert len(items) == 3
+        assert items[0]["symbol"] == "AAPL"
+        assert items[0]["name"] == "Apple Inc."
+        assert items[0]["exchange"] == "NMS"
+        assert items[0]["type"] == "Equity"
+
+    def test_yf_search_filter_noise(self, monkeypatch):
+        """过滤期货/加密等非股票类型，只保留 EQUITY/ETF/INDEX。"""
+        import stock_tools
+
+        monkeypatch.setattr(
+            stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch(
+                [_q("AAPL", "Apple Inc."), _q("GC=F", "Gold Futures", qtype="FUTURE"), _q("BTC-USD", "Bitcoin", qtype="CRYPTOCURRENCY")]
+            )
+        )
+        items = stock_tools.search_stocks("apple")
+        assert [i["symbol"] for i in items] == ["AAPL"]
+
+    def test_chinese_fallback_local(self, monkeypatch):
+        """中文关键词（yf 无结果/异常）：本地热门表兜底命中 0700.HK。"""
+        import stock_tools
+
+        monkeypatch.setattr(stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch([]))
+        items = stock_tools.search_stocks("腾讯")
+        assert items and items[0]["symbol"] == "0700.HK"
+        assert items[0]["name"] == "Tencent Holdings"
+
+    def test_local_match_when_upstream_raises(self, monkeypatch):
+        """上游抛异常：静默降级本地表，不阻塞主链路。"""
+        import stock_tools
+
+        def boom(q, max_results=8):
+            raise RuntimeError("upstream down")
+
+        monkeypatch.setattr(stock_tools.yf, "Search", boom)
+        items = stock_tools.search_stocks("茅台")
+        assert items and items[0]["symbol"] == "600519.SS"
+
+    def test_local_symbol_partial(self, monkeypatch):
+        """部分代码匹配本地表（0700 / 600519）。"""
+        import stock_tools
+
+        monkeypatch.setattr(stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch([]))
+        assert stock_tools.search_stocks("0700")[0]["symbol"] == "0700.HK"
+        assert stock_tools.search_stocks("600519")[0]["symbol"] == "600519.SS"
+
+    def test_hot_priority_over_upstream(self, monkeypatch):
+        """本地命中（含 yf 结果中）靠前展示，其余 yf 结果保持原序。"""
+        import stock_tools
+
+        monkeypatch.setattr(
+            stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch(
+                [_q("9999.HK", "Other"), _q("0700.HK", "Tencent Holdings", exchange="HKEX")]
+            )
+        )
+        items = stock_tools.search_stocks("0700")
+        assert items[0]["symbol"] == "0700.HK"
+        assert items[1]["symbol"] == "9999.HK"
+
+    def test_endpoint_validation(self):
+        """端点参数校验：空关键词/超长关键词 → 400。"""
+        import stock_tools
+
+        with pytest.raises(HTTPException) as ei:
+            asyncio.run(stock_tools.search_stock(q="  ", current_user=USER))
+        assert ei.value.status_code == 400
+        with pytest.raises(HTTPException) as ei2:
+            asyncio.run(stock_tools.search_stock(q="x" * 51, current_user=USER))
+        assert ei2.value.status_code == 400
+
+    def test_endpoint_returns_items(self, monkeypatch):
+        """端点返回 {ok, query, items}，候选可自由选择。"""
+        import stock_tools
+
+        monkeypatch.setattr(
+            stock_tools.yf, "Search", lambda q, max_results=8: FakeSearch([_q("AAPL", "Apple Inc.")])
+        )
+        res = asyncio.run(stock_tools.search_stock(q="apple", limit=5, current_user=USER))
+        assert res["ok"] is True
+        assert res["query"] == "apple"
+        assert res["items"][0]["symbol"] == "AAPL"
+
+    def test_search_route_before_symbol_route(self):
+        """路由顺序：/api/stock/search 必须先于 /api/stock/{symbol} 注册，防止被吞。"""
+        import stock_tools
+
+        paths = [r.path for r in stock_tools.router.routes]
+        assert paths.index("/api/stock/search") < paths.index("/api/stock/{symbol}")

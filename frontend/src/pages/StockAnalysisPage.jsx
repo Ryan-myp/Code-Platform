@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Card, Button, Badge, Empty } from '../components/ui'
 import Modal from '../components/ui/Modal'
 import ShareButton from '../components/ShareButton'
@@ -30,7 +30,139 @@ import {
   Trash2,
   Clock,
   Webhook,
+  Loader2,
 } from 'lucide-react'
+
+// v22：热门股票快捷入口（一键直达查询）
+const HOT_STOCKS = [
+  { symbol: 'AAPL', label: '苹果' },
+  { symbol: 'NVDA', label: '英伟达' },
+  { symbol: 'MSFT', label: '微软' },
+  { symbol: 'TSLA', label: '特斯拉' },
+  { symbol: '0700.HK', label: '腾讯' },
+  { symbol: '9988.HK', label: '阿里' },
+  { symbol: '3690.HK', label: '美团' },
+  { symbol: '600519.SS', label: '茅台' },
+  { symbol: '300750.SZ', label: '宁德时代' },
+  { symbol: '601318.SS', label: '中国平安' },
+]
+
+// v22：股票代码智能补全（关键词搜索 → 候选列表 → 自由选择）
+export function SymbolAutocomplete({
+  value,
+  onChange,
+  onSelect,
+  onEnter,
+  placeholder = '搜索股票名称/代码，如 AAPL、苹果、腾讯…',
+  compact = false,
+}) {
+  const [suggestions, setSuggestions] = useState([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const timerRef = useRef(null)
+  const reqIdRef = useRef(0)
+
+  // 300ms 防抖自动补全：≥2 字符触发关键词搜索
+  useEffect(() => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    const q = value.trim()
+    if (q.length < 2) {
+      setSuggestions([])
+      setShowSuggestions(false)
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    timerRef.current = setTimeout(async () => {
+      const reqId = ++reqIdRef.current
+      try {
+        const res = await api.get(`/api/stock/search?q=${encodeURIComponent(q)}&limit=8`)
+        if (reqId !== reqIdRef.current) return
+        setSuggestions(res.data?.items || [])
+        setShowSuggestions(true)
+      } catch {
+        if (reqId !== reqIdRef.current) return
+        setSuggestions([])
+        setShowSuggestions(false)
+      } finally {
+        if (reqId === reqIdRef.current) setSearching(false)
+      }
+    }, 300)
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [value])
+
+  const pick = (item) => {
+    setSuggestions([])
+    setShowSuggestions(false)
+    onChange(item.symbol.toUpperCase())
+    onSelect?.(item.symbol)
+  }
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search
+          className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 ${compact ? 'w-4 h-4' : ''}`}
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              if (suggestions.length > 0) {
+                pick(suggestions[0])
+              } else {
+                onEnter?.()
+              }
+            }
+          }}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+          placeholder={placeholder}
+          className={
+            compact
+              ? 'w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500'
+              : 'w-full pl-10 pr-4 py-3 text-lg border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500'
+          }
+        />
+        {searching && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 animate-spin" />
+        )}
+      </div>
+      {showSuggestions && suggestions.length > 0 && (
+        <ul
+          className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 overflow-y-auto"
+          data-testid="symbol-suggestions"
+        >
+          {suggestions.map((item) => (
+            <li key={item.symbol}>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  pick(item)
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-brand-50 flex items-center gap-2"
+              >
+                <span className="font-semibold text-sm">{item.symbol}</span>
+                <span className="flex-1 truncate text-sm text-gray-600">{item.name}</span>
+                <Badge variant="info">{item.exchange}</Badge>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {showSuggestions && suggestions.length === 0 && !searching && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm text-gray-500">
+          未找到匹配，请尝试完整代码（如 0700.HK）
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function StockAnalysisPage() {
   // 输入态持久化：刷新/关闭不丢股票代码与周期
@@ -139,9 +271,17 @@ export default function StockAnalysisPage() {
       toast.warning('请输入股票代码')
       return
     }
+    await handleSearchFor(symbol)
+  }
+
+  // v22：指定代码查询（热门快捷 / 补全候选选择复用）
+  const handleSearchFor = async (sym) => {
+    const s = String(sym || '').trim().toUpperCase()
+    if (!s) return
+    setSymbol(s)
     setLoading(true)
     try {
-      const res = await api.get(`/api/stock/${symbol.toUpperCase()}?period=${period}`)
+      const res = await api.get(`/api/stock/${s}?period=${period}`)
       setStockData(res.data)
       setAnalysis('')
     } catch (err) {
@@ -316,21 +456,33 @@ export default function StockAnalysisPage() {
         {/* 搜索栏 */}
         <Card className="mb-6">
           <div className="flex items-center gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="text"
+            <div className="flex-1">
+              <SymbolAutocomplete
                 value={symbol}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                placeholder="输入股票代码，如 AAPL, MSFT, TSLA..."
-                className="w-full pl-10 pr-4 py-3 text-lg border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                onChange={setSymbol}
+                onSelect={handleSearchFor}
+                onEnter={handleSearch}
               />
             </div>
             <Button onClick={handleSearch} loading={loading}>
               查询
             </Button>
           </div>
+          {/* v22：热门股票一键直达（未查询时展示） */}
+          {!stockData && (
+            <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-gray-100">
+              <span className="text-xs text-gray-400">热门：</span>
+              {HOT_STOCKS.map((h) => (
+                <button
+                  key={h.symbol}
+                  onClick={() => handleSearchFor(h.symbol)}
+                  className="px-2.5 py-1 text-xs rounded-full border border-gray-200 text-gray-600 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                >
+                  {h.label} <span className="text-gray-400">{h.symbol}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </Card>
 
         {stockData && (
@@ -740,12 +892,11 @@ export default function StockAnalysisPage() {
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">股票代码</label>
-                <input
-                  type="text"
+                <SymbolAutocomplete
                   value={schedSymbol}
-                  onChange={(e) => setSchedSymbol(e.target.value.toUpperCase())}
-                  placeholder={stockData?.symbol || '如 AAPL, 0700.HK'}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  onChange={setSchedSymbol}
+                  compact
+                  placeholder={stockData?.symbol || '搜索或输入代码，如 AAPL、0700.HK'}
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">

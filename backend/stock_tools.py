@@ -594,8 +594,97 @@ def compute_five_dim_signals(data: dict | None) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════
+# 热门股票表（v22：搜索兜底 + 前端一键直达）
+# ══════════════════════════════════════════════════════════════
+
+_HOT_STOCKS = [
+    # 美股
+    {"symbol": "AAPL", "name": "Apple Inc.", "cn_name": "苹果", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "MSFT", "name": "Microsoft", "cn_name": "微软", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "GOOGL", "name": "Alphabet", "cn_name": "谷歌", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "AMZN", "name": "Amazon", "cn_name": "亚马逊", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "NVDA", "name": "NVIDIA", "cn_name": "英伟达", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "META", "name": "Meta Platforms", "cn_name": "Meta", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "TSLA", "name": "Tesla", "cn_name": "特斯拉", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "NFLX", "name": "Netflix", "cn_name": "奈飞", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "AMD", "name": "Advanced Micro Devices", "cn_name": "超威半导体", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "BABA", "name": "Alibaba Group", "cn_name": "阿里巴巴", "exchange": "NYSE", "type": "Equity"},
+    {"symbol": "PDD", "name": "Pinduoduo", "cn_name": "拼多多", "exchange": "NASDAQ", "type": "Equity"},
+    {"symbol": "JPM", "name": "JPMorgan Chase", "cn_name": "摩根大通", "exchange": "NYSE", "type": "Equity"},
+    # A股
+    {"symbol": "600519.SS", "name": "Kweichow Moutai", "cn_name": "贵州茅台", "exchange": "SSE", "type": "Equity"},
+    {"symbol": "000858.SZ", "name": "Wuliangye", "cn_name": "五粮液", "exchange": "SZSE", "type": "Equity"},
+    {"symbol": "601318.SS", "name": "Ping An Insurance", "cn_name": "中国平安", "exchange": "SSE", "type": "Equity"},
+    {"symbol": "600036.SS", "name": "China Merchants Bank", "cn_name": "招商银行", "exchange": "SSE", "type": "Equity"},
+    {"symbol": "300750.SZ", "name": "CATL", "cn_name": "宁德时代", "exchange": "SZSE", "type": "Equity"},
+    {"symbol": "002594.SZ", "name": "BYD", "cn_name": "比亚迪", "exchange": "SZSE", "type": "Equity"},
+    {"symbol": "601899.SS", "name": "Zijin Mining", "cn_name": "紫金矿业", "exchange": "SSE", "type": "Equity"},
+    {"symbol": "600900.SS", "name": "China Yangtze Power", "cn_name": "长江电力", "exchange": "SSE", "type": "Equity"},
+    # 港股
+    {"symbol": "0700.HK", "name": "Tencent Holdings", "cn_name": "腾讯控股", "exchange": "HKEX", "type": "Equity"},
+    {"symbol": "9988.HK", "name": "Alibaba Group", "cn_name": "阿里巴巴", "exchange": "HKEX", "type": "Equity"},
+    {"symbol": "3690.HK", "name": "Meituan", "cn_name": "美团", "exchange": "HKEX", "type": "Equity"},
+    {"symbol": "1810.HK", "name": "Xiaomi", "cn_name": "小米集团", "exchange": "HKEX", "type": "Equity"},
+    {"symbol": "9618.HK", "name": "JD.com", "cn_name": "京东集团", "exchange": "HKEX", "type": "Equity"},
+    {"symbol": "0992.HK", "name": "Lenovo Group", "cn_name": "联想集团", "exchange": "HKEX", "type": "Equity"},
+]
+
+
+def search_stocks(q: str, limit: int = 8) -> list[dict]:
+    """v22：关键词搜索股票候选。
+
+    yf.Search 主查（中英文关键词均支持），异常/无结果时静默降级为本地热门表匹配，
+    保证中文搜索（如「腾讯」）与热门股票始终可命中。
+    返回字段：{symbol, name, exchange, type}
+    """
+    q = q.strip()
+    if not q:
+        return []
+    results: list[dict] = []
+    try:
+        search = yf.Search(q, max_results=max(limit, 8))
+        for quote in search.quotes or []:
+            qtype = str(quote.get("quoteType") or "").upper()
+            if qtype and qtype not in ("EQUITY", "ETF", "INDEX"):
+                continue
+            results.append(
+                {
+                    "symbol": quote.get("symbol", ""),
+                    "name": quote.get("shortname") or quote.get("longname") or "",
+                    "exchange": quote.get("exchange", ""),
+                    "type": quote.get("typeDisp") or qtype.title() or "Equity",
+                }
+            )
+            if len(results) >= limit:
+                break
+    except Exception:
+        results = []
+    # 本地热门表兜底（中英文名称/代码模糊匹配），补足上游缺失
+    ql = q.lower()
+    hot = [h for h in _HOT_STOCKS if ql in h["symbol"].lower() or ql in h["name"].lower() or ql in h["cn_name"].lower()]
+    seen = {r["symbol"] for r in results}
+    merged = results + [h for h in hot if h["symbol"] not in seen]
+    # 本地命中靠前展示（如「腾讯」→ 0700.HK），上游其余结果保持原序
+    hot_symbols = {h["symbol"] for h in hot}
+    ordered = [r for r in merged if r["symbol"] in hot_symbols] + [r for r in merged if r["symbol"] not in hot_symbols]
+    return ordered[:limit]
+
+
+# ══════════════════════════════════════════════════════════════
 # API 端点
 # ══════════════════════════════════════════════════════════════
+
+
+@router.get("/api/stock/search")
+async def search_stock(q: str = "", limit: int = 8, current_user: dict = require_auth()):
+    """v22：关键词搜索股票候选（支持中英文，多结果自由选择）"""
+    q = q.strip()
+    if not q:
+        raise HTTPException(400, "请输入搜索关键词")
+    if len(q) > 50:
+        raise HTTPException(400, "关键词过长（最多 50 字符）")
+    items = search_stocks(q, min(max(limit, 1), 20))
+    return {"ok": True, "query": q, "items": items}
 
 
 @router.get("/api/stock/{symbol}")
