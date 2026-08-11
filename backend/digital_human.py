@@ -509,7 +509,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
         "style, shallow depth of field, 8k uhd, hyper-realistic detail"
     )
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY
+    from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL
 
     if not AGNES_API_KEY:
         logger.warning("未配置 AGNES_API_KEY，无法生成数字人写真")
@@ -523,7 +523,7 @@ def _generate_portrait(avatar_id: str) -> str | None:
             url = f"{AGNES_API_BASE}/images/generations"
             headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
             payload = {
-                "model": "agnes-image-2.1-flash",
+                "model": IMAGE_MODEL,
                 "prompt": prompt,
                 "size": size,
                 "n": 1,

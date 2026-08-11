@@ -612,9 +612,12 @@ class WorkflowExecutor:
 
     # ── Image 节点：调 Agnes /images/generations ─────────────
     async def execute_image_node(self, config: dict, previous_results: dict) -> dict:
+        # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+        from common.config import IMAGE_MODEL
+
         prompt = _substitute(config.get("prompt", ""), previous_results)
         size = config.get("size", "1024x1024")
-        model = config.get("model", "agnes-image-2.1-flash")
+        model = config.get("model") or IMAGE_MODEL
         if not prompt:
             return {"status": "error", "message": "prompt 为空"}
 
@@ -647,6 +650,9 @@ class WorkflowExecutor:
 
     # ── Video 节点：创建视频生成任务 ─────────────────────────
     async def execute_video_node(self, config: dict, previous_results: dict) -> dict:
+        # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+        from common.config import VIDEO_MODEL
+
         prompt = _substitute(config.get("prompt", ""), previous_results)
         duration = int(config.get("duration", 5))
         width = int(config.get("width", 1152))
@@ -666,7 +672,7 @@ class WorkflowExecutor:
                 f"{api_base}/videos",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "agnes-video-v2.0",
+                    "model": config.get("model") or VIDEO_MODEL,
                     "prompt": prompt,
                     "width": width,
                     "height": height,

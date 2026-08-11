@@ -350,6 +350,8 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         import io
         import requests
         from PIL import Image
+        # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+        from common.config import IMAGE_MODEL
 
         prompt = (
             "竖屏短剧电影分镜插画，写实电影感，竖构图，画面只有场景与人物，画面中无任何文字。"
@@ -357,7 +359,7 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
             + shot
         )
         body = {
-            "model": "agnes-image-2.1-flash",
+            "model": IMAGE_MODEL,
             "prompt": prompt,
             "size": "1K",
             "ratio": "9:16",

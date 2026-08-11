@@ -40,6 +40,11 @@ AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
 # 统一默认 base（消除旧代码 .cn / .com 漂移），仍可被 config 表覆盖
 AGNES_API_BASE = os.environ.get("AGNES_API_BASE", "https://apihub.agnes-ai.com/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "agnes-2.5-flash")
+# 图片生成模型（image_factory / meme_factory / digital_human 文生图共用，
+# 可被 config 表 image_model 覆盖；改 gpt-image 等供应商模型时同步配好 API 通道）
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "agnes-image-2.1-flash")
+# 视频生成模型（video_factory，可被 config 表 video_model 覆盖）
+VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "agnes-video-v2.0")
 
 # ── 视频生成备用通道（预留）：阿里云百炼 wan2.2 文生视频 ─────────
 # 配置 DASHSCOPE_API_KEY 后 video_factory 自动启用 dashscope 通道（agnes 失败时 failover）
@@ -121,7 +126,7 @@ def normalize_model_base(base: str) -> str:
 
 def load_config() -> dict:
     """从 config 表加载配置，覆盖模块级全局变量。返回当前配置 dict。"""
-    global AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME
+    global AGNES_API_KEY, AGNES_API_BASE, MODEL_NAME, IMAGE_MODEL, VIDEO_MODEL
     try:
         # 独立连接：避免关闭线程复用池连接，影响 async 端点中后续 get_db 的使用
         from common.db import get_db_context
@@ -137,12 +142,18 @@ def load_config() -> dict:
                 AGNES_API_BASE = normalize_api_base(v)
             elif k == "model_name":
                 MODEL_NAME = v.strip()
+            elif k == "image_model":
+                IMAGE_MODEL = v.strip()
+            elif k == "video_model":
+                VIDEO_MODEL = v.strip()
     except Exception as e:
         logger.warning(f"load_config failed (使用环境变量默认值): {e}")
     return {
         "agnes_api_key": AGNES_API_KEY,
         "agnes_api_base": AGNES_API_BASE,
         "model_name": MODEL_NAME,
+        "image_model": IMAGE_MODEL,
+        "video_model": VIDEO_MODEL,
     }
 
 

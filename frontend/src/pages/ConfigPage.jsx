@@ -17,6 +17,8 @@ import {
   Mail,
   Webhook,
   Send,
+  Image as ImageIcon,
+  Video as VideoIcon,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -33,6 +35,9 @@ export default function ConfigPage() {
   const [apiKey, setApiKey] = useState('')
   const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL)
   const [modelName, setModelName] = useState(DEFAULT_MODEL)
+  // 图片 / 视频生成模型（独立于文本模型，可快速切换供应商模型；留空 = 不修改）
+  const [imageModel, setImageModel] = useState('')
+  const [videoModel, setVideoModel] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -118,6 +123,8 @@ export default function ConfigPage() {
       setConfig(data)
       setApiUrl(data.api_url || data.agnes_api_base || DEFAULT_API_URL)
       setModelName(data.model_name || DEFAULT_MODEL)
+      setImageModel(data.image_model || '')
+      setVideoModel(data.video_model || '')
       setModels(Array.isArray(data.models) ? data.models : [])
       // 已配置则展示掩码占位，留空表示不修改
       setApiKey(data.api_key || data.agnes_api_key || '')
@@ -151,11 +158,13 @@ export default function ConfigPage() {
     }
     setSaving(true)
     try {
-      // 掩码占位表示不修改 API Key
+      // 掩码占位表示不修改 API Key；图片/视频模型留空表示不修改
       const payload = {
         api_url: apiUrl.trim(),
         model_name: modelName.trim(),
         api_key: isKeyMasked ? '' : apiKey.trim(),
+        image_model: imageModel.trim(),
+        video_model: videoModel.trim(),
       }
       await api.post('/api/config/save', payload)
       toast.success('配置保存成功')
@@ -183,6 +192,8 @@ export default function ConfigPage() {
         api_url: apiUrl.trim(),
         model_name: modelName.trim(),
         api_key: isKeyMasked ? '' : apiKey.trim(),
+        image_model: imageModel.trim(),
+        video_model: videoModel.trim(),
       })
       await api.get('/api/config')
       toast.success('连接测试通过：后端服务正常，配置已生效')
@@ -465,6 +476,42 @@ export default function ConfigPage() {
             </p>
           </div>
 
+          {/* 图片 / 视频生成模型（独立于文本模型，可快速切换供应商模型） */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <ImageIcon className="w-4 h-4 inline mr-1" />
+                图片生成模型
+              </label>
+              <input
+                type="text"
+                value={imageModel}
+                onChange={(e) => setImageModel(e.target.value)}
+                placeholder="如 agnes-image-2.1-flash / gpt-image-1"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                文生图 / 图生图 / 表情包 / 数字人写真共用的生成模型；留空 = 不修改
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <VideoIcon className="w-4 h-4 inline mr-1" />
+                视频生成模型
+              </label>
+              <input
+                type="text"
+                value={videoModel}
+                onChange={(e) => setVideoModel(e.target.value)}
+                placeholder="如 agnes-video-v2.0"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:border-transparent outline-none transition-all font-mono text-sm focus:ring-blue-500/20 focus:border-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                文生视频 / 图生视频使用的生成模型；留空 = 不修改
+              </p>
+            </div>
+          </div>
+
           {/* 当前状态 */}
           <div className="bg-gray-50 rounded-xl p-4">
             <h4 className="text-sm font-medium text-gray-700 mb-3">当前状态</h4>
@@ -486,6 +533,18 @@ export default function ConfigPage() {
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">默认模型:</span>
                 <span className="text-gray-700">{config?.model_name || '未配置'}</span>
+              </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-gray-500 flex-shrink-0">图片模型:</span>
+                <span className="font-mono text-xs text-gray-700 truncate">
+                  {config?.image_model || '未配置'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-gray-500 flex-shrink-0">视频模型:</span>
+                <span className="font-mono text-xs text-gray-700 truncate">
+                  {config?.video_model || '未配置'}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">版本:</span>

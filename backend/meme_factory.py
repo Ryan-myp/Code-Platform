@@ -453,13 +453,16 @@ async def get_style_preview(filename: str):
 
 def _ai_bg(prompt: str) -> Image.Image:
     """文生图生成表情包背景，失败抛异常。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+    from common.config import IMAGE_MODEL
+
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY，AI 模式不可用（可先使用经典模板模式）")
     resp = requests.post(
         f"{AGNES_API_BASE}/images/generations",
         headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
         json={
-            "model": "agnes-image-2.1-flash",
+            "model": IMAGE_MODEL,
             "prompt": prompt,
             "size": "1024x1024",
             "n": 1,

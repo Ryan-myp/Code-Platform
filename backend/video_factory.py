@@ -402,22 +402,28 @@ def _save_artifact(
 
 @router.get("/stats")
 async def get_stats():
+    """视频工厂统计：总数 + 通道就绪状态。"""
+    from common.config import VIDEO_MODEL
+
     video_count = len(list(VIDEO_DIR.glob("*.mp4"))) if VIDEO_DIR.exists() else 0
     return {
         "total_videos": video_count,
         "api_configured": bool(_available_channels()),
         "channels": _available_channels(),
-        "model": "agnes-video-v2.0",
+        "model": VIDEO_MODEL,
         "price": "免费",
     }
 
 
 def _parse_video_params(payload: dict) -> dict:
     """解析视频生成参数：校验 prompt，按 8n+1 规则计算帧数（最大 441 帧）。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+    from common.config import VIDEO_MODEL
+
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "请输入画面描述")
-    model = payload.get("model") or "agnes-video-v2.0"
+    model = payload.get("model") or VIDEO_MODEL
     width = int(payload.get("width") or 1152)
     height = int(payload.get("height") or 768)
     duration = int(payload.get("duration") or 5)
@@ -682,7 +688,7 @@ async def enhance_prompt(
 @router.post("/generate")
 async def create_video_task(
     prompt: str = Form(...),
-    model: str = Form("agnes-video-v2.0"),
+    model: str = Form(None, description="模型名，留空使用配置的视频模型（VIDEO_MODEL）"),
     width: int = Form(1152),
     height: int = Form(768),
     duration: int = Form(5),

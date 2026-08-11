@@ -876,6 +876,8 @@ async def delete_artifact(art_id: str):
 
 @router.get("/api/config")
 async def get_config():
+    from common.config import IMAGE_MODEL, VIDEO_MODEL
+
     conn = get_db()
     rows = conn.execute("SELECT * FROM config").fetchall()
     conn.close()
@@ -887,6 +889,9 @@ async def get_config():
     cfg.setdefault("api_url", cfg.get("agnes_api_base", ""))
     cfg.setdefault("api_key", cfg.get("agnes_api_key", ""))
     cfg.setdefault("model_name", cfg.get("model_name", "agnes-2.5-flash"))
+    # 图片 / 视频生成模型（config 表未配置时回退 env / 内置默认）
+    cfg.setdefault("image_model", IMAGE_MODEL)
+    cfg.setdefault("video_model", VIDEO_MODEL)
     # 模型列表（config 表未配置时返回内置默认）；api_key 脱敏
     models = _get_models()
     for m in models:
@@ -1020,6 +1025,10 @@ async def save_config(req: dict):
         updates.append(("agnes_api_base", req["api_url"].strip()))
     if req.get("model_name"):
         updates.append(("model_name", req["model_name"].strip()))
+    if req.get("image_model"):
+        updates.append(("image_model", req["image_model"].strip()))
+    if req.get("video_model"):
+        updates.append(("video_model", req["video_model"].strip()))
     for k, v in updates:
         conn.execute("INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=?", (k, v, v))
     conn.commit()

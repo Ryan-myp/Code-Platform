@@ -401,6 +401,9 @@ def normalize_size(size: str | None) -> str:
 
 async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文生图（同步/异步任务共用执行体，异步时回报进度）。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效（与 AGNES_API_KEY 模块级绑定不同）
+    from common.config import IMAGE_MODEL
+
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
@@ -413,7 +416,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
 
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or DEFAULT_IMAGE_SIZE
-    model = payload.get("model") or "agnes-image-2.1-flash"
+    model = payload.get("model") or IMAGE_MODEL
     batch_size, n = normalize_batch_params(payload.get("batch_size"), payload.get("n"))
     project_id = payload.get("project_id") or ""
     negative = payload.get("negative") or ""
@@ -476,7 +479,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
 async def text_to_image(
     prompt: str = Form(...),
     size: str = Form("1024x1024"),
-    model: str = Form("agnes-image-2.1-flash"),
+    model: str = Form(None, description="模型名，留空使用配置的图片模型（IMAGE_MODEL）"),
     batch_size: int = Form(1),
     n: int = Form(1),
     project_id: str = Form(""),
@@ -524,6 +527,9 @@ async def text_to_image(
 # ── 图生图 API ────────────────────────────────────────────────
 async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """图生图（同步/异步任务共用执行体，异步时回报进度）。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+    from common.config import IMAGE_MODEL
+
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
@@ -537,7 +543,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or "1024x1024"
     strength = float(payload.get("strength") or 0.35)
-    model = payload.get("model") or "agnes-image-2.1-flash"
+    model = payload.get("model") or IMAGE_MODEL
     project_id = payload.get("project_id") or ""
     negative = payload.get("negative") or ""
     image_content = _read_file_field(payload, "image")
@@ -592,7 +598,7 @@ async def image_to_image(
     image: UploadFile = File(...),
     size: str = Form("1024x1024"),
     strength: float = Form(0.35),
-    model: str = Form("agnes-image-2.1-flash"),
+    model: str = Form(None, description="模型名，留空使用配置的图片模型（IMAGE_MODEL）"),
     project_id: str = Form(""),
     negative: str = Form("", description="负面提示词（不想要的元素）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
@@ -1134,6 +1140,8 @@ async def person_segmentation(
 # ── 虚拟试衣 API ──────────────────────────────────────────────
 async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """虚拟试衣（同步/异步任务共用执行体，异步时回报进度）。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+    from common.config import IMAGE_MODEL
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -1264,7 +1272,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             f"{AGNES_API_BASE}/images/generations",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "agnes-image-2.1-flash",
+                "model": IMAGE_MODEL,
                 "messages": [{"role": "user", "content": messages_content}],
                 "size": "1024x1024",
                 "n": 1,
@@ -1364,6 +1372,9 @@ async def replace_background(
     ai_background: str = Form("", description="AI 背景描述（非空时调用文生图生成真实场景背景，失败回退场景渐变）"),
 ):
     """背景替换 - rembg 语义分割人物 + 新背景合成（场景渐变 / 纯色 / AI 生成）。"""
+    # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+    from common.config import IMAGE_MODEL
+
     try:
         content = await image.read()
         img = Image.open(BytesIO(content))
@@ -1379,7 +1390,7 @@ async def replace_background(
                     f"{AGNES_API_BASE}/images/generations",
                     headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
                     json={
-                        "model": "agnes-image-2.1-flash",
+                        "model": IMAGE_MODEL,
                         "prompt": f"{ai_background.strip()}, wide background, no people, no text, soft lighting",
                         "size": f"{w}x{h}",
                         "n": 1,

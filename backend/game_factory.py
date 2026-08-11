@@ -921,7 +921,8 @@ async def generate_ai_cover(proj_id: str, req: AiCoverRequest, current_user: dic
     )
     raw = None
     try:
-        from common.config import AGNES_API_BASE, AGNES_API_KEY
+        # 函数内取最新配置：config 表运行中修改后无需重启即时生效
+        from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL
 
         if not AGNES_API_KEY:
             raise RuntimeError("AGNES_API_KEY 未配置")
@@ -929,7 +930,7 @@ async def generate_ai_cover(proj_id: str, req: AiCoverRequest, current_user: dic
             _requests.post,
             f"{AGNES_API_BASE}/images/generations",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "agnes-image-2.1-flash", "prompt": prompt, "size": "1024x1024", "n": 1},
+            json={"model": IMAGE_MODEL, "prompt": prompt, "size": "1024x1024", "n": 1},
             timeout=120,
         )
         if resp.status_code != 200:

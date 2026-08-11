@@ -56,7 +56,7 @@ const NODE_TYPES = {
     label: '图片生成',
     icon: ImageIcon,
     color: 'pink',
-    config: { prompt: '', size: '1024x1024', model: 'agnes-image-2.1-flash' },
+    config: { prompt: '', size: '1024x1024', model: '' }, // model 留空 = 使用系统配置的图片模型
   },
   video: {
     label: '视频生成',
