@@ -954,7 +954,7 @@ export default function AdminPage() {
             </div>
             {shareStats && (
               <>
-                <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                   <div className="bg-ink-50 rounded-xl px-4 py-3">
                     <p className="text-xs text-ink-400">总访问</p>
                     <p className="text-xl font-bold text-ink-900 mt-0.5">
@@ -1212,7 +1212,7 @@ export default function AdminPage() {
                       <UserCog className="w-4 h-4 text-ink-400" />
                       用户角色
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {Object.entries(ROLE_META).map(([key, m]) => {
                         const isMe = String(editingUser.id) === String(me.id)
                         return (
@@ -1244,7 +1244,7 @@ export default function AdminPage() {
                     <label className="block text-sm font-medium text-ink-700 mb-1.5">
                       会员等级
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {Object.entries(MEMBERSHIP_META).map(([key, m]) => (
                         <button
                           key={key}

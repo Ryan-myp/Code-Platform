@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Star,
   Trash2,
@@ -41,6 +41,9 @@ const TYPE_META = {
   },
 }
 
+// v17 分页：每页条数（与后端 limit/offset 对齐）
+const PAGE_SIZE = 20
+
 export default function FavoritesPage() {
   const toast = useToast()
   const navigate = useNavigate()
@@ -49,21 +52,45 @@ export default function FavoritesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [deleting, setDeleting] = useState(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const offsetRef = useRef(0)
 
-  const fetchFavorites = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await api.get('/api/favorites', { params: favType ? { fav_type: favType } : {} })
-      setFavorites(res.data || [])
-      setError(null)
-    } catch (e) {
-      setError(e.message || '加载失败')
-    } finally {
-      setLoading(false)
-    }
-  }, [favType])
+  // v17 分页加载：reset=true 清空重载（切换筛选时），append=false 为首页
+  const fetchFavorites = useCallback(
+    async (append = false) => {
+      if (append) {
+        setLoadingMore(true)
+      } else {
+        setLoading(true)
+      }
+      try {
+        const res = await api.get('/api/favorites', {
+          params: {
+            fav_type: favType || undefined,
+            limit: PAGE_SIZE,
+            offset: offsetRef.current,
+          },
+        })
+        const items = res.data || []
+        setFavorites((prev) => (append ? [...prev, ...items] : items))
+        offsetRef.current += items.length
+        setHasMore(items.length === PAGE_SIZE)
+        setError(null)
+      } catch (e) {
+        setError(e.message || '加载失败')
+      } finally {
+        setLoading(false)
+        setLoadingMore(false)
+      }
+    },
+    [favType]
+  )
 
   useEffect(() => {
+    offsetRef.current = 0
+    setHasMore(false)
+    setFavorites([])
     fetchFavorites()
   }, [fetchFavorites])
 
@@ -72,7 +99,7 @@ export default function FavoritesPage() {
       await api.delete(`/api/favorites/${deleting}`)
       toast.success('已取消收藏')
       setDeleting(null)
-      fetchFavorites()
+      fetchFavorites(false)
     } catch (e) {
       toast.error(e.message)
     }
@@ -92,7 +119,7 @@ export default function FavoritesPage() {
         title="收藏中心"
         description="一键收藏常用工具 / 记录 / 模板 / 作品，随时直达"
         actions={
-          <Button variant="outline" icon={Star} onClick={fetchFavorites}>
+          <Button variant="outline" icon={Star} onClick={() => fetchFavorites(false)}>
             刷新
           </Button>
         }
@@ -122,7 +149,7 @@ export default function FavoritesPage() {
       {loading ? (
         <PageLoading />
       ) : error ? (
-        <ErrorState message={error} onRetry={fetchFavorites} />
+        <ErrorState message={error} onRetry={() => fetchFavorites(false)} />
       ) : favorites.length === 0 ? (
         <Card>
           <Empty
@@ -202,6 +229,20 @@ export default function FavoritesPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* v17 分页：已加载 offset 条，更多则显示加载按钮 */}
+      {!loading && !error && hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="ghost"
+            loading={loadingMore}
+            icon={Star}
+            onClick={() => fetchFavorites(true)}
+          >
+            加载更多（已显示 {offsetRef.current} 条）
+          </Button>
         </div>
       )}
 

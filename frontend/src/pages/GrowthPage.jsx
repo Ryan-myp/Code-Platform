@@ -681,7 +681,7 @@ export default function GrowthPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">目标平台</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {PLATFORMS.map((p) => (
                     <button
                       key={p.value}
@@ -1497,7 +1497,7 @@ export default function GrowthPage() {
                 <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4 text-emerald-500" /> 系列效果
                 </h3>
-                <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
                   {[
                     { label: '总阅读', value: seriesStats.total_views, icon: Eye },
                     { label: '总点赞', value: seriesStats.total_likes, icon: ThumbsUp },

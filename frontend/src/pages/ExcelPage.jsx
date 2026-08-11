@@ -332,7 +332,7 @@ export default function ExcelPage() {
         <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-amber-500" /> 快速模板
         </h3>
-        <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
           {QUICK_TEMPLATES.map((tpl, i) => (
             <button
               key={i}

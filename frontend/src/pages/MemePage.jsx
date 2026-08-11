@@ -702,7 +702,7 @@ export default function MemePage() {
                       <label className="block text-xs font-medium text-gray-500 mb-1.5">
                         画面风格（点击预览图切换，示意卡为 AI 效果方向）
                       </label>
-                      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 sm:grid-cols-8 gap-1.5">
                         {AI_STYLES.map((s) => {
                           const pv = previews.find((p) => p.id === `ai:${s.id}`)?.url
                           return (

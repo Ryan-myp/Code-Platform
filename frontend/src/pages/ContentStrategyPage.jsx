@@ -769,7 +769,7 @@ function SeriesTab() {
       <Modal open={statsOpen} onClose={() => setStatsOpen(false)} title="系列效果汇总" size="lg">
         {stats ? (
           <div className="space-y-5">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {[
                 { label: '总篇数', value: stats.item_count || 0 },
                 { label: '总阅读', value: stats.total_views || 0 },
@@ -1344,7 +1344,7 @@ function TopicsTab() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">优先级</label>
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {PRIORITY_META.map((p) => (
                 <button
                   key={p.value}

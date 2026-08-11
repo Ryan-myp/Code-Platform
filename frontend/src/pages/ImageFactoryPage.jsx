@@ -901,7 +901,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">艺术风格</label>
-                <div className="grid grid-cols-5 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 sm:grid-cols-5 gap-1.5">
                   {ART_STYLES.map((s) => (
                     <button
                       key={s.id}
@@ -939,7 +939,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">图片尺寸</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {SIZES.map((s) => (
                     <button
                       key={s.value}
@@ -1143,7 +1143,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {SIZES.slice(0, 6).map((s) => (
                     <button
                       key={s.value}
@@ -1283,7 +1283,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {SIZES.map((s) => (
                     <button
                       key={s.value}
@@ -1835,7 +1835,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">背景场景</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {TRYON_BACKGROUNDS.map((bg) => (
                     <button
                       key={bg.id}

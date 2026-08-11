@@ -460,7 +460,7 @@ export default function PPTFactoryPage() {
               {/* 类型 */}
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1.5">演示类型</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {PPT_TYPES.map((t) => {
                     const Icon = t.icon
                     return (

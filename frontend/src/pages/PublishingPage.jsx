@@ -763,7 +763,7 @@ export default function PublishingPage() {
                 <Send className="w-4 h-4 text-blue-500" /> 发布设置
               </h3>
               {/* 内容类型 */}
-              <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
                 {CONTENT_TYPES.map((c) => (
                   <button
                     key={c.value}
@@ -2099,7 +2099,7 @@ export default function PublishingPage() {
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">平台</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {PLATFORMS.map((p) => (
                       <button
                         key={p.value}
@@ -2211,7 +2211,7 @@ export default function PublishingPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1.5">内容类型</label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                 {CONTENT_TYPES.map((c) => (
                   <button
                     key={c.value}
@@ -2353,7 +2353,7 @@ export default function PublishingPage() {
               素材（{schedAssets.length}，点击图片/视频选择）
             </label>
             {assets.media?.length ? (
-              <div className="grid grid-cols-4 md:grid-cols-6 gap-2 max-h-36 overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-36 overflow-y-auto pr-1">
                 {assets.media.map((m) => {
                   const url = m.url || m.media_url
                   const sel = schedAssets.some((s) => s.url === url)

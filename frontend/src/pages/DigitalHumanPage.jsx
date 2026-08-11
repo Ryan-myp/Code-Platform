@@ -1423,7 +1423,7 @@ export default function DigitalHumanPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-emerald-500" /> 背景模板
             </h3>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {(backgrounds.length > 0
                 ? backgrounds
                 : [
@@ -1747,7 +1747,7 @@ export default function DigitalHumanPage() {
               <label className="text-xs text-gray-500 mb-1 block">
                 情绪：{emotionLabel(emotion)}
               </label>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                 {EMOTION_OPTIONS.map((e) => (
                   <button
                     key={e.id}
@@ -1798,7 +1798,7 @@ export default function DigitalHumanPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Smile className="w-4 h-4 text-yellow-500" /> 表情控制
             </h3>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {Object.entries(EXPRESSION_NAMES).map(([key, name]) => (
                 <button
                   key={key}
@@ -1990,7 +1990,7 @@ export default function DigitalHumanPage() {
               </div>
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">帧率</label>
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                   {[12, 15, 24, 30].map((f) => (
                     <button
                       key={f}
@@ -2646,7 +2646,7 @@ ${batchTexts
                   刷新
                 </Button>
               </div>
-              <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
                 {portraitList
                   .filter((p) => p.exists)
                   .map((p) => (

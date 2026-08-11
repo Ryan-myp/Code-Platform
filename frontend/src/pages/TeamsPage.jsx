@@ -392,7 +392,7 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">协作模式</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {Object.entries(MODE_META).map(([key, meta]) => (
               <button
                 key={key}

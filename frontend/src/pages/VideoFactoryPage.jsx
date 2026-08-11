@@ -1177,7 +1177,7 @@ export default function VideoFactoryPage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1.5">目标平台</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {PUBLISH_PLATFORMS.map((p) => (
                 <button
                   key={p.id}
@@ -1425,7 +1425,7 @@ export default function VideoFactoryPage() {
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">输出宽度</label>
                 <input

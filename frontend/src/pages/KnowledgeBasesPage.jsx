@@ -512,7 +512,7 @@ function KBFormModal({ open, onClose, onSubmit, editing, defaults, loading }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1.5">文档类型</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {DOC_SUBTYPES.map((st) => (
               <button
                 key={st.value}

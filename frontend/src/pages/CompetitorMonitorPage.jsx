@@ -645,7 +645,7 @@ export default function CompetitorMonitorPage() {
                   <h4 className="text-sm font-semibold text-ink-900 mb-2 flex items-center gap-1.5">
                     <Activity className="w-4 h-4 text-emerald-500" /> 互动分析
                   </h4>
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
                     <div>
                       <ThumbsUp className="w-4 h-4 text-brand-500 mx-auto mb-1" />
                       <p className="text-sm font-semibold">

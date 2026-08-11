@@ -717,7 +717,7 @@ export default function GameFactoryPage() {
                       {cat === '自定义' && '✨'}
                       {cat}
                     </p>
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                       {catTpls.map((t) => (
                         <button
                           key={t.id}
