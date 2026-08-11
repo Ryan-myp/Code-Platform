@@ -33,7 +33,16 @@ const CATEGORY_TABS = [
   { key: 'voice', label: '配音场景', icon: Mic2 },
 ]
 
-const C2C_CATEGORIES = ['game', 'miniapp', 'meme', 'voice', 'other']
+const C2C_CATEGORIES = [
+  { key: 'game', label: '小游戏' },
+  { key: 'miniapp', label: '小程序' },
+  { key: 'meme', label: '表情包' },
+  { key: 'voice', label: '配音' },
+  { key: 'other', label: '其他' },
+]
+
+// 分类 key → 中文名（用户可见文案，未知回退原值）
+const c2cCategoryLabel = (key) => C2C_CATEGORIES.find((c) => c.key === key)?.label || key
 
 export default function TemplateMarketPage() {
   const navigate = useNavigate()
@@ -205,7 +214,7 @@ export default function TemplateMarketPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-600 text-[10px] font-medium border border-orange-100">
-            {t.category}
+            {c2cCategoryLabel(t.category)}
           </span>
           <span
             className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.price > 0 ? 'bg-amber-50 text-amber-600 border border-amber-100' : 'bg-green-50 text-green-600 border border-green-100'}`}
@@ -219,9 +228,7 @@ export default function TemplateMarketPage() {
         {t.description || '暂无描述'}
       </p>
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-        <span className="text-[10px] text-gray-400">
-          已售 {t.sales || 0} · {t.user_id}
-        </span>
+        <span className="text-[10px] text-gray-400">已售 {t.sales || 0} 次</span>
         <button
           onClick={() => handleBuy(t)}
           disabled={buyingId === t.id}
@@ -394,11 +401,11 @@ export default function TemplateMarketPage() {
             <div className="flex gap-1.5 flex-wrap">
               {C2C_CATEGORIES.map((c) => (
                 <button
-                  key={c}
-                  onClick={() => setUploadForm((p) => ({ ...p, category: c }))}
-                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${uploadForm.category === c ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500'}`}
+                  key={c.key}
+                  onClick={() => setUploadForm((p) => ({ ...p, category: c.key }))}
+                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${uploadForm.category === c.key ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500'}`}
                 >
-                  {c}
+                  {c.label}
                 </button>
               ))}
             </div>
@@ -418,6 +425,15 @@ export default function TemplateMarketPage() {
                 .map(renderC2cCard)}
             </div>
           )}
+          {c2c.length > 0 &&
+            c2c.filter((t) => !uploadForm.category || t.category === uploadForm.category)
+              .length === 0 && (
+              <Empty
+                icon={Store}
+                title="该分类暂无模板"
+                description="试试其他分类，或点击右上角「上传模板」分享你的模板"
+              />
+            )}
         </div>
       ) : marketTab === 'mine' ? (
         <div className="space-y-4">
@@ -591,8 +607,8 @@ export default function TemplateMarketPage() {
                 className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-amber-500/20 outline-none text-sm bg-white"
               >
                 {C2C_CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
+                  <option key={c.key} value={c.key}>
+                    {c.label}
                   </option>
                 ))}
               </select>

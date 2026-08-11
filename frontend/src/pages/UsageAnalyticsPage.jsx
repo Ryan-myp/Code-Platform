@@ -39,6 +39,48 @@ const COLORS = [
   '#f97316',
 ]
 
+// 模块代码 → 中文名映射（用量分析按用户可见文案展示，未知模块回退原代码）
+const MODULE_LABELS = {
+  agent_run: '智能体执行',
+  agent_run_stream: '智能体流式对话',
+  assistant_chat: '助手对话',
+  batch_process: '批量处理',
+  batch_translate: '批量翻译',
+  code_review: '代码审查',
+  competitor_analysis: '竞品分析',
+  contract_review: '合同审查',
+  conversation_stream: '对话流式生成',
+  data_analyzer: '数据分析',
+  data_forecast: '数据预测',
+  digital_human: '数字人',
+  digital_human_script: '数字人脚本',
+  doc_qa: '文档问答',
+  game_generate: '小游戏生成',
+  growth_batch: '批量增长内容',
+  mindmap_generate: '思维导图',
+  miniapp_generate: '小程序生成',
+  openai_gateway: '开放API调用',
+  openai_gateway_stream: '开放API流式',
+  prd_code: '代码生成',
+  prd_generate: '方案文档生成',
+  prd_review: '方案评审',
+  prd_td: '技术设计',
+  prd_test: '测试用例生成',
+  publish_guide: '发布指南',
+  resume_optimize: '简历优化',
+  seo_analyze: 'SEO分析',
+  video_analyze: '视频解析',
+  voice_chat: '语音对话',
+  voice_generate: '语音合成',
+  voice_respond: '语音回复',
+  voice_tts: '配音合成',
+  web_search: '联网搜索',
+  web_search_noresults: '搜索无结果',
+  wf_agent_node: '工作流节点',
+}
+
+const moduleLabel = (key) => MODULE_LABELS[key] || key
+
 export default function UsageAnalyticsPage() {
   const toast = useToast()
   const [stats, setStats] = useState(null)
@@ -87,7 +129,8 @@ export default function UsageAnalyticsPage() {
       const res = await api.get('/api/usage-stats/users')
       setUserOptions(res.data || [])
     } catch {
-      // 用户列表失败不阻塞页面
+      // 用户列表失败不阻塞页面，但需提示降级原因（避免用户误以为筛选功能缺失）
+      toast.warning('用户列表暂不可用，当前仅能查看全部用户数据')
     }
   }
 
@@ -118,7 +161,9 @@ export default function UsageAnalyticsPage() {
 
       // 构建模块分布（不受 module 筛选影响，展示全量占比）
       if (data.module_breakdown) {
-        setModuleDist(data.module_breakdown.map((m) => ({ name: m.module, value: m.count })))
+        setModuleDist(
+          data.module_breakdown.map((m) => ({ key: m.module, name: moduleLabel(m.module), value: m.count }))
+        )
       }
     } catch (e) {
       // 后端不可用时展示错误而非编造数据（真实统计才能支撑商业决策）
@@ -176,7 +221,7 @@ export default function UsageAnalyticsPage() {
             >
               <option value="">全部模块</option>
               {moduleDist.map((m) => (
-                <option key={m.name} value={m.name}>
+                <option key={m.key} value={m.key}>
                   {m.name}（{m.value} 次）
                 </option>
               ))}
@@ -222,7 +267,7 @@ export default function UsageAnalyticsPage() {
         {[
           {
             label: '累计调用',
-            value: stats?.total_calls?.toLocaleString() || '-',
+            value: stats?.total_calls?.toLocaleString() ?? '-',
             icon: Zap,
             color: 'from-blue-500 to-indigo-600',
             bg: 'bg-blue-50',
@@ -230,7 +275,7 @@ export default function UsageAnalyticsPage() {
           },
           {
             label: '累计Token',
-            value: stats?.total_tokens?.toLocaleString() || '-',
+            value: stats?.total_tokens?.toLocaleString() ?? '-',
             icon: Layers,
             color: 'from-emerald-500 to-teal-600',
             bg: 'bg-emerald-50',
@@ -238,7 +283,7 @@ export default function UsageAnalyticsPage() {
           },
           {
             label: '今日调用',
-            value: stats?.today_calls || '-',
+            value: stats?.today_calls ?? '-',
             icon: Activity,
             color: 'from-amber-500 to-orange-600',
             bg: 'bg-amber-50',
@@ -246,7 +291,7 @@ export default function UsageAnalyticsPage() {
           },
           {
             label: '今日Token',
-            value: stats?.today_tokens?.toLocaleString() || '-',
+            value: stats?.today_tokens?.toLocaleString() ?? '-',
             icon: Target,
             color: 'from-purple-500 to-violet-600',
             bg: 'bg-purple-50',
@@ -296,6 +341,14 @@ export default function UsageAnalyticsPage() {
               </LineChart>
             </ResponsiveContainer>
           )}
+          {dailyUsage.length > 0 && dailyUsage.length < days && (
+            <p className="mt-3 text-xs text-gray-400">
+              当前仅有 {dailyUsage.length} 天使用记录，{days} 天区间内其余日期暂无数据
+            </p>
+          )}
+          {dailyUsage.length === 0 && (
+            <p className="py-10 text-sm text-gray-400 text-center">所选区间暂无使用记录</p>
+          )}
         </Card>
 
         {/* 模块分布 */}
@@ -323,6 +376,9 @@ export default function UsageAnalyticsPage() {
                 <Tooltip />
               </RePieChart>
             </ResponsiveContainer>
+          )}
+          {moduleDist.length === 0 && (
+            <p className="py-10 text-sm text-gray-400 text-center">暂无模块用量数据</p>
           )}
         </Card>
       </div>

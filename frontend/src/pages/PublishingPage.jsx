@@ -162,6 +162,7 @@ export default function PublishingPage() {
   // ── 记录 / 账号 ──
   const [records, setRecords] = useState([])
   const [accounts, setAccounts] = useState([])
+  const [accountsLoaded, setAccountsLoaded] = useState(false)
   const [accForm, setAccForm] = useState({
     platform: 'wechat',
     name: '',
@@ -298,6 +299,7 @@ export default function PublishingPage() {
   useEffect(() => {
     loadAssets()
     loadStats()
+    loadAccounts() // 顶部「已配置账号」统计依赖账号数据，mount 即加载（避免切 Tab 才刷新的时序差异）
   }, [])
 
   const loadAssets = async () => {
@@ -326,6 +328,9 @@ export default function PublishingPage() {
       setAccounts(res.data || [])
     } catch {
       /* 静默失败，不阻塞 UI */
+    } finally {
+      // 无论成败都标记加载完成：顶部统计避免一直显示占位 "-"
+      setAccountsLoaded(true)
     }
   }
 
@@ -716,7 +721,7 @@ export default function PublishingPage() {
           },
           {
             label: '已配置账号',
-            value: accounts.filter((a) => a.configured).length,
+            value: accountsLoaded ? accounts.filter((a) => a.configured).length : '-',
             icon: Settings2,
             color: 'from-amber-500 to-orange-600',
           },

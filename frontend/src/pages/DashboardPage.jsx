@@ -178,6 +178,8 @@ export default function DashboardPage() {
   const [dashForm, setDashForm] = useState({ title: '', description: '' })
   const [savingDash, setSavingDash] = useState(false)
   const [deletingDash, setDeletingDash] = useState(null)
+  // 数据概览 Tab 的「平台使用趋势」真实图表（复用 usage-stats 的 daily_breakdown）
+  const [trendChart, setTrendChart] = useState(null)
 
   useEffect(() => {
     loadStats()
@@ -195,6 +197,24 @@ export default function DashboardPage() {
       setError(e)
     } finally {
       setLoading(false)
+    }
+    // 趋势图独立加载：失败时保持占位提示（不阻塞数据概览）
+    try {
+      const res = await api.get('/api/usage-stats', { params: { days: 30 } })
+      const days = res.data?.daily_breakdown || []
+      if (days.length > 0) {
+        setTrendChart({
+          title: '',
+          chartType: 'line',
+          xAxis: [{ data: days.map((d) => d.date) }],
+          series: [
+            { name: '调用次数', data: days.map((d) => d.count) },
+            { name: '消耗Token', data: days.map((d) => d.tokens) },
+          ],
+        })
+      }
+    } catch {
+      /* 趋势数据不可用时保持占位，不阻塞页面 */
     }
   }
 
@@ -446,10 +466,15 @@ export default function DashboardPage() {
             <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <BarChart3 className="w-5 h-5 text-blue-500" /> 平台使用趋势
             </h2>
-            <div className="text-center py-12 text-gray-400">
-              <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>切换到&quot;智能查询&quot;tab，用自然语言探索数据趋势</p>
-            </div>
+            {trendChart ? (
+              <ChartRenderer {...trendChart} />
+            ) : (
+              <div className="text-center py-12 text-gray-400">
+                <Activity className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p>暂无趋势数据</p>
+                <p className="text-xs mt-1">产生使用记录后这里将展示调用与 Token 趋势</p>
+              </div>
+            )}
           </Card>
         </>
       )}

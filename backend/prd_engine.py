@@ -1134,6 +1134,11 @@ async def usage_stats(
 async def usage_stats_users(current_user: dict = Depends(require_auth)):
     """用量分析可选用户列表：usage_logs 中有埋点 user_id 的去重（附用户名）。"""
     conn = get_db()
+    # 幂等补列：老库无 user_id 列（v15 按用户筛选），写入侧 log_usage 也会补，这里查询前兜底
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(usage_logs)").fetchall()]
+    if "user_id" not in cols:
+        conn.execute("ALTER TABLE usage_logs ADD COLUMN user_id TEXT DEFAULT ''")
+        conn.commit()
     rows = conn.execute(
         "SELECT DISTINCT user_id FROM usage_logs WHERE user_id != '' ORDER BY user_id"
     ).fetchall()

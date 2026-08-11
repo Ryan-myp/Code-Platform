@@ -38,7 +38,7 @@ import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
 import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
-import { formatRelativeTime, copyToClipboard } from '../lib/format'
+import { formatRelativeTime, copyToClipboard, getStatusMeta } from '../lib/format'
 import { Button, Empty, PageHeader, Modal } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 
@@ -1686,7 +1686,7 @@ export default function AIWorkspacePage() {
                   <option value="">-- 选择关联需求（可选） --</option>
                   {requirements.map((r) => (
                     <option key={r.id} value={r.id}>
-                      [{r.status}] {r.name}
+                      [{getStatusMeta(r.status).text}] {r.name}
                     </option>
                   ))}
                 </select>
@@ -1697,7 +1697,8 @@ export default function AIWorkspacePage() {
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             {selectedReq && (
               <div className="p-2 bg-indigo-50 rounded-lg border border-indigo-100 text-xs text-indigo-700">
-                已关联: <strong>{selectedReq.name}</strong>（状态: {selectedReq.status}）
+                已关联: <strong>{selectedReq.name}</strong>（状态:{' '}
+                {getStatusMeta(selectedReq.status).text}）
               </div>
             )}
             {renderLeftPanel()}

@@ -762,11 +762,30 @@ export default function GrowthPage() {
               </div>
 
               {variants.length === 0 ? (
-                <Empty
-                  icon={Wand2}
-                  title="暂无变体"
-                  description="在左侧输入主题，AI 将为你生成多组内容变体"
-                />
+                varFilter ? (
+                  <Empty
+                    icon={Wand2}
+                    title="当前平台暂无变体"
+                    description={
+                      <>
+                        试试其他平台，或
+                        <button
+                          onClick={() => setVarFilter('')}
+                          className="text-violet-600 hover:text-violet-800 font-medium mx-1"
+                        >
+                          清除筛选
+                        </button>
+                        查看全部内容
+                      </>
+                    }
+                  />
+                ) : (
+                  <Empty
+                    icon={Wand2}
+                    title="暂无变体"
+                    description="在左侧输入主题，AI 将为你生成多组内容变体"
+                  />
+                )
               ) : (
                 <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
                   {variants.map((v) => (
@@ -2076,6 +2095,7 @@ export default function GrowthPage() {
             <input
               type="datetime-local"
               value={schedStart}
+              min={new Date().toISOString().slice(0, 16)}
               onChange={(e) => setSchedStart(e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
             />
