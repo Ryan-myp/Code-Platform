@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
+import { useI18n, LanguageSwitcher } from '../i18n/index.jsx'
 
 // 会员等级元信息
 const MEMBERSHIP_META = {
@@ -46,6 +47,7 @@ const MEMBERSHIP_META = {
 
 export default function ProfilePage({ user, onUserUpdate }) {
   const toast = useToast()
+  const { t } = useI18n()
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -171,14 +173,17 @@ export default function ProfilePage({ user, onUserUpdate }) {
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-page-in">
       {/* 页头 */}
-      <div className="flex items-center gap-3">
-        <Link to="/home" className="p-2 hover:bg-ink-100 rounded-lg transition-colors text-ink-500">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-bold text-ink-900">个人中心</h1>
-          <p className="text-sm text-ink-500">管理个人资料、账号安全与会员额度</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link to="/home" className="p-2 hover:bg-ink-100 rounded-lg transition-colors text-ink-500">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-xl font-bold text-ink-900">个人中心</h1>
+            <p className="text-sm text-ink-500">管理个人资料、账号安全与会员额度</p>
+          </div>
         </div>
+        <LanguageSwitcher />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

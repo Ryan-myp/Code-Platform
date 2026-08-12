@@ -262,7 +262,10 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, portal, onL
     return DEFAULT_NAV_ITEMS.map(m => ({
       ...m,
       items: m.items.concat(
-        user?.role === 'admin' ? [{ path: '/admin', label: '管理后台', icon: Shield }] : []
+        user?.role === 'admin' ? [
+          { path: '/admin', label: '管理后台', icon: Shield },
+          { path: '/audit-log', label: '审计日志', icon: Activity },
+        ] : []
       ),
     }))
   }, [portal, user])

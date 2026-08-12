@@ -72,6 +72,7 @@ from common.config import ALLOWED_ORIGINS, is_production, validate_security_conf
 from common.db import get_db, init_schema  # noqa: E402
 from common.db_async import is_pg_enabled, get_async_db, close_async_db  # noqa: E402
 from common.llm import call_llm_async, log_usage, stream_llm_async  # noqa: E402
+from common.audit import ensure_audit_table  # noqa: E402
 from common.models import (  # noqa: E402
     AgentCreateRequest,
     AgentUpdateRequest,
@@ -142,6 +143,8 @@ from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
 from short_drama import router as drama_router  # noqa: E402
 from stripe_api import router as stripe_router  # noqa: E402
+from oauth_api import router as oauth_router, ensure_social_bindings_table  # noqa: E402
+from team_api import router as team_router, ensure_team_tables  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from task_queue import router as task_queue_router  # noqa: E402
@@ -214,6 +217,12 @@ async def lifespan(app: FastAPI):
             logger.warning(f"PostgreSQL 预热失败（回退 SQLite）: {e}")
     seed_if_empty()
     skills_store.migrate_legacy()
+    # v17.2 审计日志表初始化
+    ensure_audit_table()
+    # v17.2 社交账号绑定表初始化
+    ensure_social_bindings_table()
+    # v17.2 团队空间表初始化
+    ensure_team_tables()
     # v12.0 数据可靠性：每日自动备份（按日期去重）
     ensure_daily_backup()
     # 发布排期后台自动执行（每 60s 扫描到期 pending 排期）
@@ -1465,6 +1474,56 @@ async def invite_rewards(limit: int = 50, current_user: dict = require_auth()):
     """奖励流水列表。"""
     from common.auth import get_invite_rewards
     return get_invite_rewards(current_user.get("user_id"), limit)
+
+
+# ── 审计日志（v17.2）───────────────────────────────────────────
+@app.get("/api/audit/logs")
+async def get_audit_log_entries(
+    user_id: str = "",
+    action: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    limit: int = 100,
+    current_user: dict = require_auth(),
+):
+    """获取审计日志（仅管理员可访问）。"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "权限不足")
+    from common.audit import get_audit_logs
+    return get_audit_logs(user_id, action, start_date, end_date, limit)
+
+
+@app.get("/api/audit/stats")
+async def get_audit_stats(current_user: dict = require_auth()):
+    """获取审计统计（仅管理员可访问）。"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "权限不足")
+    from common.db import get_db
+    conn = get_db()
+    try:
+        # 今日操作数
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_count = conn.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE created_at LIKE ?", (f"{today}%",)
+        ).fetchone()[0]
+        
+        # 操作类型分布
+        action_stats = conn.execute(
+            "SELECT action, COUNT(*) as cnt FROM audit_logs GROUP BY action ORDER BY cnt DESC LIMIT 10"
+        ).fetchall()
+        
+        # 失败操作数
+        fail_count = conn.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE success = 0"
+        ).fetchone()[0]
+        
+        return {
+            "today_count": today_count,
+            "fail_count": fail_count,
+            "action_stats": [dict(r) for r in action_stats],
+        }
+    finally:
+        conn.close()
 
 
 # ── 内容权限（v9.3：页面可见性 / 灰度发布） ─────────────────
@@ -3544,6 +3603,8 @@ app.include_router(scheduler_router)
 app.include_router(openai_gateway_router)
 app.include_router(dh_gateway_router)
 app.include_router(backup_router)
+app.include_router(oauth_router)
+app.include_router(team_router)
 app.include_router(notify_api_router)
 
 # v9.0: Platform API

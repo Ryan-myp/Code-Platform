@@ -142,13 +142,18 @@ def login_user(username: str, password: str) -> dict:
     """登录，返回 {access_token, token_type, user}。失败抛 HTTPException。"""
     token = authenticate_user(username, password)
     if not token:
+        from common.audit import log_audit
+        log_audit(user_id=username, action="login", success=False, error="用户名或密码错误")
         raise HTTPException(401, "用户名或密码错误")
     from common.db import get_db
+    from common.audit import log_audit
 
     conn = get_db()
     try:
         row = conn.execute("SELECT id, username, role FROM users WHERE username=?", (username,)).fetchone()
         conn.close()
+        uid = row["id"] if row else username
+        log_audit(user_id=uid, action="login", success=True)
         return {
             "access_token": token,
             "token_type": "bearer",
@@ -209,6 +214,8 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
         conn.close()
     # v17.0：新注册用户自动授予 7 天 Pro 试用
     grant_free_trial(uid)
+    from common.audit import log_audit
+    log_audit(user_id=uid, action="register", target_id=username, success=True)
     return login_user(username, password)
 
 

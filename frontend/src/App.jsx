@@ -19,6 +19,7 @@ import AccessGuard from './components/AccessGuard'
 import { trackVisit } from './hooks/useRecentTools'
 import { pageTitleFor } from './lib/pageTitle'
 import { ToastProvider, useToast } from './lib/toast'
+import { useI18n, LanguageSwitcher } from './i18n/index.jsx'
 
 // 页面级懒加载：首屏仅加载当前页面，其余按需分块（首包从 ~1.8MB 降至 ~300KB）
 const ConfigPage = lazy(() => import('./pages/ConfigPage'))
@@ -94,6 +95,7 @@ const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
 const UsageDetailPage = lazy(() => import('./pages/UsageDetailPage'))
 const InviteHistoryPage = lazy(() => import('./pages/InviteHistoryPage'))
 const CreatorCenterPage = lazy(() => import('./pages/CreatorCenterPage'))
+const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
 // 全量修复 v1：内容策略 / 竞品监控 / 收藏中心
 const ContentStrategyPage = lazy(() => import('./pages/ContentStrategyPage'))
@@ -162,6 +164,7 @@ function QuotaExhaustedNotifier() {
 }
 
 export default function App() {
+  const { t, lang } = useI18n()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // 同步初始化认证态（避免首帧未登录被 ProtectedRoute 踢到 /login 再跳回 /home）
   const [user, setUser] = useState(() => {
@@ -623,6 +626,14 @@ export default function App() {
                               element={
                                 <AccessGuard path="/creator-center">
                                   <CreatorCenterPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/audit-log"
+                              element={
+                                <AccessGuard path="/audit-log">
+                                  <AuditLogPage />
                                 </AccessGuard>
                               }
                             />
