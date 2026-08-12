@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""定时任务引擎（v10.1）。
+"""定时任务引擎（v10.1 + v18 企业级优化）。
 
 - 管理 cron 式定时任务
 - 支持：定时报告生成、数据同步、提醒通知
 - SQLite scheduler_jobs 表持久化
+- v18: 通知文件驱动的企业级优化流程
 """
 
 import json
@@ -11,6 +12,7 @@ import logging
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -20,6 +22,13 @@ from common.db import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scheduler", tags=["定时任务"])
+
+# 项目根目录
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+# 通知文件目录（v18）
+NOTIFY_DIR = PROJECT_DIR / "backend" / "listener" / "notifications"
+NOTIFY_DIR.mkdir(parents=True, exist_ok=True)
 
 # 全局调度线程状态
 _scheduler_running = False
@@ -271,13 +280,32 @@ def _run_job(job) -> None:
     ok, out = _run_with_retry(lambda: _execute_job(job))
     _record_run(job["id"], "success" if ok else "failed", output=out if ok else "", error="" if ok else out)
     logger.info("[Scheduler] 任务 %s 执行%s: %s", job.get("name"), "成功" if ok else "失败", out)
+    
+    # v18: 企业级优化任务执行后自动生成报告并提交
+    if job.get("job_type") == "enterprise_optimizer" and ok:
+        try:
+            import subprocess as _sp
+            # 1. 生成优化报告（已运行，这里只是确认）
+            # 2. Git提交报告
+            report_dir = Path(__file__).parent / ".optimizer_reports"
+            if report_dir.exists():
+                _sp.run(["git", "add", str(report_dir)], cwd=str(PROJECT_DIR), capture_output=True)
+                # 3. Git推送
+                r = _sp.run(["git", "commit", "-m", f"docs: 自动优化报告 {datetime.now().strftime('%Y-%m-%d %H:%M')}", "--allow-empty"], 
+                           cwd=str(PROJECT_DIR), capture_output=True, text=True)
+                if r.returncode == 0:
+                    _sp.run(["git", "push", "origin", "main"], cwd=str(PROJECT_DIR), capture_output=True, timeout=30)
+                    logger.info("[Scheduler] 优化报告已自动提交推送")
+        except Exception as e:
+            logger.warning(f"[Scheduler] 自动提交失败: {e}")
 
 
 def _run_scheduler_loop():
-    """后台调度循环：每 30 秒检查一次到期任务（next_run <= now 则执行并重算 next_run）。"""
+    """后台调度循环：每 10 秒检查一次到期任务和通知文件（v18）。"""
     global _scheduler_running
     while _scheduler_running:
         try:
+            # 1. 检查数据库中的定时任务
             conn = get_db()
             try:
                 jobs = conn.execute("SELECT * FROM scheduler_jobs WHERE enabled=1").fetchall()
@@ -301,6 +329,7 @@ def _run_scheduler_loop():
                 except (ValueError, TypeError):
                     due = False
                 if due:
+                    logger.info(f"[Scheduler] Cron触发任务: {job.get('name')}")
                     _run_job(dict(job))
                     next_time = _parse_cron(job["cron_expression"])
                     conn = get_db()
@@ -309,10 +338,76 @@ def _run_scheduler_loop():
                         conn.commit()
                     finally:
                         conn.close()
+            
+            # 2. 检查通知文件（v18 企业级优化）
+            _check_notification_files()
+            
         except Exception as e:
             logger.error(f"[Scheduler] 调度循环异常: {e}")
 
-        time.sleep(30)
+        time.sleep(10)  # v18: 每10秒检查一次
+
+
+def _check_notification_files():
+    """检查通知文件并自动执行（v18 企业级优化）。"""
+    import json as _json
+    from pathlib import Path as _Path
+    
+    try:
+        if not NOTIFY_DIR.exists():
+            return
+        
+        # 查找未处理的通知文件
+        for f in list(NOTIFY_DIR.glob("*.json")):
+            try:
+                content = _json.loads(f.read_text())
+                job_type = content.get("job_type")
+                
+                # 只处理企业级优化通知
+                if job_type == "enterprise_optimizer":
+                    logger.info(f"[Scheduler] 发现通知文件: {f.name}，自动执行优化")
+                    # 执行优化
+                    from enterprise_optimizer import run_enterprise_optimizer
+                    report_path = run_enterprise_optimizer()
+                    
+                    # 标记为已处理（重命名为.done）
+                    done_file = f.with_suffix(".done")
+                    try:
+                        f.rename(done_file)
+                    except Exception:
+                        # 如果重命名失败，创建标记文件
+                        (f.parent / f"{f.stem}_done").touch()
+                        f.unlink(missing_ok=True)
+                    
+                    logger.info(f"[Scheduler] 通知文件驱动优化完成: {report_path}")
+                    
+            except Exception as e:
+                logger.warning(f"[Scheduler] 处理通知文件失败 {f.name}: {e}")
+    except Exception as e:
+        logger.error(f"[Scheduler] 检查通知文件异常: {e}")
+
+
+def create_notification(job_type: str, **kwargs):
+    """创建通知文件（v18）。"""
+    import json as _json
+    from datetime import datetime as _dt
+    
+    notify_data = {
+        "job_type": job_type,
+        "created_at": _dt.now().isoformat(),
+        **kwargs
+    }
+    
+    filename = f"notify_{_dt.now().strftime('%Y%m%d_%H%M%S')}_{hash(str(notify_data)) % 10000:04d}.json"
+    filepath = NOTIFY_DIR / filename
+    
+    try:
+        filepath.write_text(_json.dumps(notify_data, ensure_ascii=False, indent=2))
+        logger.info(f"[Scheduler] 创建通知文件: {filepath.name}")
+        return str(filepath)
+    except Exception as e:
+        logger.error(f"[Scheduler] 创建通知文件失败: {e}")
+        return None
 
 
 def start_scheduler():
