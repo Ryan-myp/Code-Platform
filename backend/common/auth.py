@@ -200,6 +200,8 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
         conn.commit()
     finally:
         conn.close()
+    # v17.0：新注册用户自动授予 7 天 Pro 试用
+    grant_free_trial(uid)
     return login_user(username, password)
 
 
@@ -300,6 +302,8 @@ def get_user_profile(user_id: str) -> dict:
         "role": row["role"],
         "membership": membership,
         "membership_expires": row.get("membership_expires"),
+        "trial_expires": row.get("trial_expires"),
+        "invite_code": row.get("invite_code") or "",
         "daily_quota": daily_quota,
         "bonus_quota": bonus,
         "used_today": used_today,
@@ -743,7 +747,7 @@ def expire_stale_orders() -> int:
         conn.close()
 
 
-def create_order(user_id: str, plan: str, coupon_code: str = "") -> dict:
+def create_order(user_id: str, plan: str, coupon_code: str = "", stripe_session_id: str = "") -> dict:
     """创建会员订单；同一用户仅允许 1 个待处理订单。可选优惠码抵扣。"""
     if plan not in MEMBERSHIP_PLANS:
         raise HTTPException(400, "无效的会员套餐")
@@ -763,9 +767,9 @@ def create_order(user_id: str, plan: str, coupon_code: str = "") -> dict:
         original = plan_info["price"]
         amount = coupon_discount(original, coupon)
         conn.execute(
-            """INSERT INTO orders (id, user_id, plan, amount, original_amount, coupon_code, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
-            (order_id, user_id, plan, amount, original, coupon["code"] if coupon else "", datetime.now().isoformat()),
+            """INSERT INTO orders (id, user_id, plan, amount, original_amount, coupon_code, stripe_session_id, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            (order_id, user_id, plan, amount, original, coupon["code"] if coupon else "", stripe_session_id, datetime.now().isoformat()),
         )
         if coupon:
             conn.execute("UPDATE coupons SET used_count=used_count+1 WHERE id=?", (coupon["id"],))
@@ -979,6 +983,192 @@ def _auth_by_api_key(raw_key: str) -> dict[str, Any]:
             "auth_mode": "api_key",
             "api_key_id": row["id"],
         }
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# v17.0 密码重置 / 免费试用 / 用量明细 / 账单历史
+# ══════════════════════════════════════════════════════════════
+
+_FREE_TRIAL_DAYS = 7  # 注册即送 7 天 Pro 试用
+
+
+def send_password_reset_token(username: str) -> dict:
+    """为指定用户名生成一次性重置令牌（存库，有效期 30 分钟）。
+
+    返回 {sent: True/False, reason: ...} —— 为兼容起见，
+    无论用户是否存在均返回 sent=True（防枚举攻击）。
+    """
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        user = conn.execute("SELECT id FROM users WHERE username=? AND active=1", (username,)).fetchone()
+        if not user:
+            return {"sent": True}  # 安全：不暴露用户是否存在
+        token = secrets.token_urlsafe(32)
+        expires = (datetime.now() + timedelta(minutes=30)).isoformat()
+        conn.execute(
+            "UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
+            (token, expires, user["id"]),
+        )
+        conn.commit()
+        logger.info("password reset token generated for user %s", username)
+        return {"sent": True, "token": token}  # 生产环境应发送邮件，此处返回 token 供管理端使用
+    except Exception as e:
+        logger.error("password reset token generation failed: %s", e)
+        return {"sent": False, "reason": str(e)}
+    finally:
+        conn.close()
+
+
+def reset_password(token: str, new_password: str) -> dict:
+    """用一次性令牌重置密码。"""
+    if len(new_password) < 6:
+        return {"success": False, "reason": "新密码至少 6 位"}
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, reset_token, reset_token_expires FROM users WHERE reset_token=?",
+            (token,),
+        ).fetchone()
+        if not row:
+            return {"success": False, "reason": "无效的重置令牌"}
+        if not row["reset_token_expires"] or row["reset_token_expires"] <= datetime.now().isoformat():
+            return {"success": False, "reason": "重置令牌已过期，请重新获取"}
+        conn.execute(
+            "UPDATE users SET password_hash=?, reset_token='', reset_token_expires=NULL WHERE id=?",
+            (hash_password(new_password), row["id"]),
+        )
+        conn.commit()
+        logger.info("password reset successful for user %s", row["id"])
+        return {"success": True}
+    except Exception as e:
+        logger.error("password reset failed: %s", e)
+        return {"success": False, "reason": str(e)}
+    finally:
+        conn.close()
+
+
+def grant_free_trial(user_id: str) -> bool:
+    """为新注册用户授予 7 天 Pro 试用（幂等：已在试用期内不重复发放）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT membership, trial_expires FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+        if not row:
+            return False
+        m = row["membership"] or "free"
+        trial_exp = row.get("trial_expires")
+        # 已在试用期内或已是付费用户则跳过
+        if m in ("pro", "vip") or (trial_exp and trial_exp > datetime.now().isoformat()):
+            return False
+        expires = (datetime.now() + timedelta(days=_FREE_TRIAL_DAYS)).isoformat()
+        conn.execute(
+            "UPDATE users SET membership='pro', membership_expires=?, trial_expires=? WHERE id=?",
+            (expires, expires, user_id),
+        )
+        conn.commit()
+        logger.info("free trial granted to user %s, expires %s", user_id, expires[:10])
+        return True
+    except Exception as e:
+        logger.error("grant_free_trial failed: %s", e)
+        return False
+    finally:
+        conn.close()
+
+
+def get_usage_detail(user_id: str, days: int = 30) -> list[dict]:
+    """按功能分组统计近 N 天的用量明细。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = conn.execute(
+            """SELECT feature, model, COUNT(*) as cnt,
+                       SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as ok,
+                       SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) as err
+                FROM usage_logs
+                WHERE user_id=? AND timestamp>=?
+                GROUP BY feature, model
+                ORDER BY cnt DESC""",
+            (user_id, cutoff),
+        ).fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "feature": r["feature"] or r["model"] or "unknown",
+                "model": r["model"] or "",
+                "count": r["cnt"],
+                "success": r["ok"],
+                "error": r["err"],
+            })
+        return result
+    except Exception as e:
+        logger.error("get_usage_detail failed: %s", e)
+        return []
+    finally:
+        conn.close()
+
+
+def get_usage_daily_timeline(user_id: str, days: int = 30) -> list[dict]:
+    """每日用量趋势（用于折线图）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = conn.execute(
+            """SELECT DATE(timestamp) as day, COUNT(*) as cnt,
+                      SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as ok
+               FROM usage_logs
+               WHERE user_id=? AND timestamp>=?
+               GROUP BY DATE(timestamp)
+               ORDER BY day ASC""",
+            (user_id, cutoff),
+        ).fetchall()
+        return [{"date": r["day"], "count": r["cnt"], "success": r["ok"]} for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_billing_history(user_id: str) -> list[dict]:
+    """用户账单历史（订单 +  Stripe session 信息）。"""
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT id, plan, amount, status, voucher, remark, created_at, reviewed_at
+               FROM orders WHERE user_id=?
+               ORDER BY created_at DESC LIMIT 20""",
+            (user_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "order_id": r["id"],
+                "plan": r["plan"],
+                "amount": r["amount"],
+                "status": r["status"],
+                "voucher": r["voucher"] or "",
+                "remark": r["remark"] or "",
+                "created_at": r["created_at"],
+                "reviewed_at": r["reviewed_at"] or "",
+            })
+        return result
+    except Exception as e:
+        logger.error("get_billing_history failed: %s", e)
+        return []
     finally:
         conn.close()
 

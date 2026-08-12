@@ -241,6 +241,15 @@ export default function LoginPage({ onLogin }) {
               <Zap className="w-3.5 h-3.5" />
               一键填入演示账号
             </button>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => navigate('/forgot-password')}
+                className="text-xs text-purple-500 hover:text-purple-700 underline underline-offset-2"
+              >
+                忘记密码？
+              </button>
+            </div>
           </div>
         )}
         {mode === 'register' && (

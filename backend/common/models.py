@@ -43,6 +43,7 @@ class RegisterRequest(BaseModel):
 class OrderCreateRequest(BaseModel):
     plan: str = Field(..., description="会员套餐：pro / vip")
     coupon_code: str = Field("", description="优惠码（可选）")
+    stripe_session_id: str = Field("", description="Stripe 支付会话 ID（可选，用于自动关联）")
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -52,6 +53,15 @@ class ProfileUpdateRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     old_password: str = Field(..., description="原密码")
+    new_password: str = Field(..., min_length=6, max_length=64, description="新密码")
+
+
+class ForgotPasswordRequest(BaseModel):
+    username: str = Field(..., description="用户名")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="重置令牌")
     new_password: str = Field(..., min_length=6, max_length=64, description="新密码")
 
 

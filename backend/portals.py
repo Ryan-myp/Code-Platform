@@ -39,7 +39,7 @@ _PORTAL_PAGE_MAP: dict[str, list[str]] = {
         # 协作 & 工具
         "chat", "help",
         # 系统
-        "api-platform", "usage-analytics", "scheduler", "config",
+        "api-platform", "usage-analytics", "usage-detail", "usage-detail", "scheduler", "config",
     ],
     "media": [
         # 首页 & 任务

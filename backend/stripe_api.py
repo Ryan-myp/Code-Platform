@@ -222,4 +222,41 @@ async def get_stripe_prices():
     }
 
 
+# ══════════════════════════════════════════════════════════════
+# 订阅管理
+# ══════════════════════════════════════════════════════════════
+
+
+@router.get("/api/stripe/customer-portal")
+async def get_customer_portal(current_user: dict = require_auth()):
+    """获取用户 Stripe 客户门户 URL（用于自助管理订阅/取消）。"""
+    import stripe
+
+    try:
+        _ensure_stripe()
+        user_id = current_user.get("user_id")
+        # 查找该用户已有的 Stripe customer ID
+        customers = stripe.Customer.list(email=None, limit=1, expand=["data.subscriptions"])
+        # 通过订单关联查找 customer_id
+        from common.db import get_db
+        conn = get_db()
+        try:
+            order = conn.execute(
+                "SELECT stripe_session_id FROM orders WHERE user_id=? AND status IN ('paid','approved') ORDER BY created_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+            if order and order["stripe_session_id"]:
+                session = stripe.checkout.Session.retrieve(order["stripe_session_id"])
+                customer_id = session.customer
+            else:
+                return {"portal_url": None, "message": "暂无订阅记录"}
+        finally:
+            conn.close()
+        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url="http://localhost:5173/membership")
+        return {"portal_url": portal.url}
+    except Exception as e:
+        logger.warning("customer portal creation failed: %s", e)
+        return {"portal_url": None, "message": str(e)}
+
+
 __all__ = ["router"]

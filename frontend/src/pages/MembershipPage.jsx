@@ -74,6 +74,10 @@ export default function MembershipPage() {
   const [couponCode, setCouponCode] = useState('')
   // v13.23：我的邀请（邀请码/链接/已邀请用户）
   const [invite, setInvite] = useState(null)
+  // v17.0：Stripe 订阅管理
+  const [stripePrices, setStripePrices] = useState(null)
+  const [stripePortalUrl, setStripePortalUrl] = useState(null)
+  const [stripeLoading, setStripeLoading] = useState(false)
 
   const membership = quota?.membership || 'free'
   const isVip = membership === 'vip'
@@ -81,18 +85,20 @@ export default function MembershipPage() {
   const loadAll = async () => {
     setLoading(true)
     try {
-      const [plansRes, ordersRes, qrRes, boardRes, inviteRes] = await Promise.all([
+      const [plansRes, ordersRes, qrRes, boardRes, inviteRes, stripeRes] = await Promise.all([
         api.get('/api/membership/plans'),
         api.get('/api/orders'),
         api.get('/api/membership/payment-qr'),
         api.get('/api/invite/leaderboard'),
         api.get('/api/invite'),
+        api.get('/api/stripe/prices'),
       ])
       setPlans(plansRes.data)
       setOrders(ordersRes.data)
       setPaymentQr(qrRes.data?.url || '')
       setLeaderboard(boardRes.data)
       setInvite(inviteRes.data)
+      setStripePrices(stripeRes.data)
     } catch (err) {
       toast.error(err.message || '加载会员信息失败')
     } finally {
@@ -143,6 +149,38 @@ export default function MembershipPage() {
       toast.error(err.response?.data?.detail || err.message || '提交失败')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // v17.0：Stripe 自助订阅
+  const handleStripeCheckout = async (plan) => {
+    setStripeLoading(true)
+    try {
+      const res = await api.post('/api/stripe/checkout', { plan })
+      if (res.data.checkout_url) {
+        window.open(res.data.checkout_url, '_blank')
+        toast.success('正在跳转至 Stripe 安全支付页面…')
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Stripe 支付暂不可用，请联系管理员')
+    } finally {
+      setStripeLoading(false)
+    }
+  }
+
+  const handleOpenPortal = async () => {
+    setStripeLoading(true)
+    try {
+      const res = await api.get('/api/stripe/customer-portal')
+      if (res.data.portal_url) {
+        window.open(res.data.portal_url, '_blank')
+      } else {
+        toast.info(res.data.message || '暂无订阅记录，请先订阅')
+      }
+    } catch (err) {
+      toast.error('订阅管理暂不可用')
+    } finally {
+      setStripeLoading(false)
     }
   }
 
@@ -219,6 +257,57 @@ export default function MembershipPage() {
           </div>
         </div>
       </div>
+
+      {/* v17.0：Stripe 自助订阅入口 */}
+      {stripePrices?.configured && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50/60 p-5 mb-8">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h3 className="font-semibold text-blue-900 flex items-center gap-2">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                  <line x1="1" y1="10" x2="23" y2="10"/>
+                </svg>
+                Stripe 自助订阅（推荐）
+              </h3>
+              <p className="text-sm text-blue-700 mt-1">自动开通，无需上传凭证；随时在线取消或更换套餐</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => handleStripeCheckout('pro')}
+                disabled={stripeLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {stripeLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                订阅 Pro ¥{stripePrices.pro.amount / 100}/月
+              </button>
+              <button
+                onClick={() => handleStripeCheckout('vip')}
+                disabled={stripeLoading}
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 flex items-center gap-1.5"
+              >
+                {stripeLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                订阅 VIP ¥{stripePrices.vip.amount / 100}/月
+              </button>
+              {(membership === 'pro' || membership === 'vip') && (
+                <button
+                  onClick={handleOpenPortal}
+                  disabled={stripeLoading}
+                  className="px-4 py-2 bg-white border border-blue-300 text-blue-700 hover:bg-blue-50 text-sm font-medium rounded-xl transition-all disabled:opacity-60"
+                >
+                  管理订阅
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 text-xs text-blue-500 flex items-center gap-1">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            支付由 Stripe 提供，支持信用卡/支付宝/微信；订阅可随时在会员中心管理页面取消
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-20 text-ink-400">

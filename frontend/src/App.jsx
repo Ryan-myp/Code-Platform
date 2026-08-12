@@ -37,6 +37,7 @@ const WorkflowEditorPage = lazy(() => import('./pages/WorkflowEditorPage'))
 const ReqBoardPage = lazy(() => import('./pages/ReqBoardPage'))
 const AIWorkspacePage = lazy(() => import('./pages/AIWorkspacePage'))
 const LoginPage = lazy(() => import('./pages/LoginPage'))
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'))
 const AgentExecutePage = lazy(() => import('./pages/AgentExecutePage'))
 const ImageFactoryPage = lazy(() => import('./pages/ImageFactoryPage'))
 const MusicFactoryPage = lazy(() => import('./pages/MusicFactoryPage'))
@@ -90,6 +91,7 @@ const ApiDocsPage = lazy(() => import('./pages/ApiDocsPage'))
 const CodeSandboxPage = lazy(() => import('./pages/CodeSandboxPage'))
 const DataAnalyzerPage = lazy(() => import('./pages/DataAnalyzerPage'))
 const UsageAnalyticsPage = lazy(() => import('./pages/UsageAnalyticsPage'))
+const UsageDetailPage = lazy(() => import('./pages/UsageDetailPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
 // 全量修复 v1：内容策略 / 竞品监控 / 收藏中心
 const ContentStrategyPage = lazy(() => import('./pages/ContentStrategyPage'))
@@ -237,6 +239,16 @@ export default function App() {
               element={
                 !isAuthenticated ? (
                   <LoginPage onLogin={handleLogin} />
+                ) : (
+                  <Navigate to="/home" replace />
+                )
+              }
+            />
+            <Route
+              path="/forgot-password"
+              element={
+                !isAuthenticated ? (
+                  <ForgotPasswordPage />
                 ) : (
                   <Navigate to="/home" replace />
                 )
@@ -585,6 +597,14 @@ export default function App() {
                               element={
                                 <AccessGuard path="/usage-analytics">
                                   <UsageAnalyticsPage />
+                                </AccessGuard>
+                              }
+                            />
+                            <Route
+                              path="/usage-detail"
+                              element={
+                                <AccessGuard path="/usage-detail">
+                                  <UsageDetailPage />
                                 </AccessGuard>
                               }
                             />

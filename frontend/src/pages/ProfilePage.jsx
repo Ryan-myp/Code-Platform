@@ -215,6 +215,14 @@ export default function ProfilePage({ user, onUserUpdate }) {
                 会员至 {profile.membership_expires?.slice(0, 10)}
               </p>
             )}
+            {profile?.trial_expires && profile?.trial_expires > new Date().toISOString().slice(0, 10) && (
+              <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Pro 试用至 {profile.trial_expires.slice(0, 10)}（剩余 {Math.ceil((new Date(profile.trial_expires) - Date.now()) / 86400000)} 天）
+              </p>
+            )}
           </div>
 
           {/* 额度卡片 */}

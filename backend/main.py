@@ -54,11 +54,17 @@ from common.auth import (  # noqa: E402
     _auth_by_api_key,
     get_share,
     get_user_profile,
+    grant_free_trial,
     login_user,
     register_user,
     require_auth,
+    reset_password,
+    send_password_reset_token,
     submit_voucher,
     update_user_profile,
+    get_usage_detail,
+    get_usage_daily_timeline,
+    get_billing_history,
 )
 from common.backup import ensure_daily_backup  # noqa: E402
 from common.backup import router as backup_router  # noqa: E402
@@ -71,6 +77,7 @@ from common.models import (  # noqa: E402
     AgentUpdateRequest,
     AssistantChatRequest,
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     KnowledgeBaseCreateRequest,
     KnowledgeBaseUpdateRequest,
     LoginRequest,
@@ -79,6 +86,7 @@ from common.models import (  # noqa: E402
     OrderCreateRequest,
     ProfileUpdateRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     SandboxProjectCreateRequest,
     SandboxPullImageRequest,
     SandboxRedisCommandRequest,
@@ -849,6 +857,47 @@ async def quota(current_user: dict = require_auth()):
     return get_quota_info(current_user.get("user_id"))
 
 
+# ── v17.0 密码重置 / 试用 / 用量明细 / 账单 ───────────────────────
+
+
+@app.post("/api/auth/forgot-password")
+@limiter.limit(_rl("3 per minute"))
+async def forgot_password(request: Request, req: ForgotPasswordRequest):
+    """生成密码重置令牌（30 分钟有效）。"""
+    result = send_password_reset_token(req.username)
+    if result.get("sent"):
+        # 生产环境应发送邮件；开发环境返回 token 便于测试
+        return {"sent": True, "message": "重置令牌已生成，请查收邮件（开发模式：查看日志）"}
+    raise HTTPException(400, result.get("reason", "操作失败"))
+
+
+@app.post("/api/auth/reset-password")
+async def reset_pwd(req: ResetPasswordRequest):
+    """用令牌重置密码。"""
+    result = reset_password(req.token, req.new_password)
+    if result.get("success"):
+        return {"message": "密码已重置，请使用新密码登录"}
+    raise HTTPException(400, result.get("reason", "重置失败"))
+
+
+@app.get("/api/auth/usage/detail")
+async def usage_detail(current_user: dict = require_auth()):
+    """近 30 天按功能分组的用量明细。"""
+    return {"items": get_usage_detail(current_user.get("user_id"), days=30)}
+
+
+@app.get("/api/auth/usage/timeline")
+async def usage_timeline(current_user: dict = require_auth()):
+    """每日用量趋势（用于折线图）。"""
+    return {"data": get_usage_daily_timeline(current_user.get("user_id"), days=30)}
+
+
+@app.get("/api/auth/billing")
+async def billing_history(current_user: dict = require_auth()):
+    """用户账单历史（订单 + Stripe 会话）。"""
+    return {"orders": get_billing_history(current_user.get("user_id"))}
+
+
 # ── 结果分享（商业版：引流传播） ─────────────────────────────
 # 首页案例墙预置示例成果：平台暂无真实分享时展示（is_demo 标记，前端点击直达工具页）
 _DEMO_SHOWCASE = [
@@ -1248,7 +1297,7 @@ async def membership_plans():
 @app.post("/api/orders")
 async def create_order_api(req: OrderCreateRequest, current_user: dict = require_auth()):
     """创建会员订单（同一时间仅 1 个待处理订单，可选优惠码抵扣）。"""
-    return create_order(current_user.get("user_id"), req.plan, req.coupon_code)
+    return create_order(current_user.get("user_id"), req.plan, req.coupon_code, req.stripe_session_id)
 
 
 @app.get("/api/orders")

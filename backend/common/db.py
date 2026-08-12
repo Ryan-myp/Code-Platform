@@ -265,7 +265,8 @@ _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, task_type TEXT,
         input_length INTEGER, output_length INTEGER, response_time REAL, success INTEGER,
-        error TEXT DEFAULT '', api_key TEXT DEFAULT '', user_id TEXT DEFAULT ''
+        error TEXT DEFAULT '', api_key TEXT DEFAULT '', user_id TEXT DEFAULT '',
+        feature TEXT DEFAULT '', model TEXT DEFAULT ''
     )""",
     """CREATE TABLE IF NOT EXISTS prompt_versions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL, version INTEGER NOT NULL,
@@ -618,6 +619,7 @@ def migrate() -> None:
         # v9.4 商业版：订单优惠券 / 分享转化来源
         _add_column_if_missing(conn, "orders", "coupon_code", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "orders", "original_amount", "REAL DEFAULT 0")
+        _add_column_if_missing(conn, "orders", "stripe_session_id", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "users", "share_from", "TEXT DEFAULT ''")
         # v11.x 分享裂变：访问奖励（去重键 / 已发奖标记 / 已发额度）
         _add_column_if_missing(conn, "shares", "rewarded", "INTEGER DEFAULT 0")
@@ -629,6 +631,13 @@ def migrate() -> None:
         _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
         # v16.0 门户系统：用户门户类型（rdm=研发管理 / media=自媒体创作 / general=通用）
         _add_column_if_missing(conn, "users", "portal_type", "TEXT DEFAULT 'general'")
+        # v17.0 密码重置 + 试用机制
+        _add_column_if_missing(conn, "users", "reset_token", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "users", "reset_token_expires", "TEXT")
+        _add_column_if_missing(conn, "users", "trial_expires", "TEXT")
+        # v17.0 usage_logs 增强：按功能/模型/来源拆分记录
+        _add_column_if_missing(conn, "usage_logs", "feature", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "usage_logs", "model", "TEXT DEFAULT ''")
         # v16.0 门户定义表
         conn.execute("""CREATE TABLE IF NOT EXISTS portals (
             id TEXT PRIMARY KEY,

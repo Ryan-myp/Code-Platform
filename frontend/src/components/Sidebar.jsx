@@ -202,6 +202,7 @@ const DEFAULT_NAV_ITEMS = [
       { path: '/dashboard', label: '数据看板', icon: BarChart3 },
       { path: '/ab-testing', label: 'AB 测试', icon: FlaskConical },
       { path: '/usage-analytics', label: '用量分析', icon: Activity },
+      { path: '/usage-detail', label: '用量明细', icon: Clock },
     ],
   },
   {
