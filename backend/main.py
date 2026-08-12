@@ -3743,7 +3743,9 @@ app.include_router(stock_tools_router)
 
 # v9.1: 管理后台 API
 app.include_router(admin_api_router)
-
+# 企业级优化器集成
+from optimizer_integration import init_optimizer_system
+init_optimizer_system()
 
 # ══════════════════════════════════════════════════════════════
 # 门户系统 API（v16.0）
@@ -3778,3 +3780,14 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8888)
+
+# ══════════════════════════════════════════════════════════════
+# 企业级优化器系统（v18.0）
+# ══════════════════════════════════════════════════════════════
+from optimizer_integration import (
+    router as optimizer_router,
+    init_optimizer_system,
+)
+
+init_optimizer_system()
+app.include_router(optimizer_router)
