@@ -555,10 +555,15 @@ async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
 
 
 async def _poll_video_result(video_id: str, report: Callable, channel: str = "agnes") -> dict:
-    """轮询外部渲染结果：间隔 5s，最长约 15 分钟（按通道分派；超时由任务框架标记失败可重试）。"""
+    """轮询外部渲染结果：间隔 5s，最长约 15 分钟（按通道分派；超时由任务框架标记失败可重试）。
+
+    v17.7：轮询中的瞬时网络错误（SSL 抖动/连接超时）静默重试最多 3 次再放弃，
+    避免任务已提交云端渲染、仅查询接口抖动导致整个通道被误判失败。
+    """
     if channel == "dashscope":
         return await _dashscope_poll_result(video_id, report)
     report(20, "视频任务已创建，等待云端渲染…")
+    consecutive_err = 0
     for _ in range(180):
         await asyncio.sleep(5)
         try:
@@ -573,6 +578,7 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
                 raise HTTPException(500, "获取视频结果失败，请稍后重试")
             d = resp.json()
             status = d.get("status", "unknown")
+            consecutive_err = 0
             if status == "completed":
                 return d
             if status == "failed":
@@ -582,8 +588,12 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"获取视频结果异常: {e}")
-            raise HTTPException(500, "操作失败，请稍后重试") from e
+            consecutive_err += 1
+            if consecutive_err >= 3:
+                logger.error(f"获取视频结果连续失败 {consecutive_err} 次: {e}")
+                raise HTTPException(500, "操作失败，请稍后重试") from e
+            logger.warning(f"获取视频结果瞬时异常（{consecutive_err}/3），继续轮询: {e}")
+            continue
     raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
@@ -653,15 +663,25 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
 
     errors: list[str] = []
     for idx, channel in enumerate(channels):
-        try:
-            video_id = await _create_video_task(api_payload, _report, channel)
-            d = await _poll_video_result(video_id, _report, channel)
-            return await _video_finish(video_id, d, project_id, _report, channel, api_payload["prompt"])
-        except HTTPException as e:
-            errors.append(f"{channel}: {e.detail}")
-            logger.warning(f"视频通道 {channel} 失败，尝试备用通道: {e.detail}")
-            if idx < len(channels) - 1:
-                _report(10, f"通道 {channel} 不可用（{str(e.detail)[:40]}），尝试备用通道…")
+        # 单通道重试（临时网络抖动/超时可自愈）：每通道最多 2 次尝试
+        for attempt in (1, 2):
+            try:
+                video_id = await _create_video_task(api_payload, _report, channel)
+                d = await _poll_video_result(video_id, _report, channel)
+                return await _video_finish(video_id, d, project_id, _report, channel, api_payload["prompt"])
+            except HTTPException as e:
+                err_detail = str(e.detail or "")
+                errors.append(f"{channel}#{attempt}: {err_detail}")
+                logger.warning(f"视频通道 {channel} 第{attempt}次失败: {err_detail}")
+                # 仅网络类错误值得重试（超时/连接/5xx）；业务 4xx 不重试
+                retryable = any(k in err_detail for k in ("超时", "Timeout", "连接", "Connect", "5", "SSL", "网络")) or "操作失败" in err_detail
+                if attempt == 1 and retryable and len(channels) == 1:
+                    _report(10, f"通道 {channel} 网络波动，正在重试…")
+                    await asyncio.sleep(5)
+                    continue
+                break
+        if idx < len(channels) - 1:
+            _report(10, f"通道 {channel} 不可用，尝试备用通道…")
     raise HTTPException(500, "所有视频通道均失败，请稍后重试")
 
 
