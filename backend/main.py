@@ -145,6 +145,7 @@ from short_drama import router as drama_router  # noqa: E402
 from stripe_api import router as stripe_router  # noqa: E402
 from oauth_api import router as oauth_router, ensure_social_bindings_table  # noqa: E402
 from team_api import router as team_router, ensure_team_tables  # noqa: E402
+from feedback_api import router as feedback_router, ensure_feedback_table  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from task_queue import router as task_queue_router  # noqa: E402
@@ -223,6 +224,8 @@ async def lifespan(app: FastAPI):
     ensure_social_bindings_table()
     # v17.2 团队空间表初始化
     ensure_team_tables()
+    # v17.3 用户反馈表初始化
+    ensure_feedback_table()
     # v12.0 数据可靠性：每日自动备份（按日期去重）
     ensure_daily_backup()
     # 发布排期后台自动执行（每 60s 扫描到期 pending 排期）
@@ -3605,6 +3608,7 @@ app.include_router(dh_gateway_router)
 app.include_router(backup_router)
 app.include_router(oauth_router)
 app.include_router(team_router)
+app.include_router(feedback_router)
 app.include_router(notify_api_router)
 
 # v9.0: Platform API

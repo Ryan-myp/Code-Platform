@@ -96,6 +96,10 @@ const UsageDetailPage = lazy(() => import('./pages/UsageDetailPage'))
 const InviteHistoryPage = lazy(() => import('./pages/InviteHistoryPage'))
 const CreatorCenterPage = lazy(() => import('./pages/CreatorCenterPage'))
 const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
+const SearchPage = lazy(() => import('./pages/SearchPage'))
+const FeedbackPage = lazy(() => import('./pages/FeedbackPage'))
+const ShortcutsPage = lazy(() => import('./pages/ShortcutsPage'))
+const DownloadsPage = lazy(() => import('./pages/DownloadsPage'))
 const SchedulerPage = lazy(() => import('./pages/SchedulerPage'))
 // 全量修复 v1：内容策略 / 竞品监控 / 收藏中心
 const ContentStrategyPage = lazy(() => import('./pages/ContentStrategyPage'))
@@ -636,6 +640,22 @@ export default function App() {
                                   <AuditLogPage />
                                 </AccessGuard>
                               }
+                            />
+                            <Route
+                              path="/search"
+                              element={<SearchPage />}
+                            />
+                            <Route
+                              path="/feedback"
+                              element={<FeedbackPage />}
+                            />
+                            <Route
+                              path="/shortcuts"
+                              element={<ShortcutsPage />}
+                            />
+                            <Route
+                              path="/downloads"
+                              element={<DownloadsPage />}
                             />
                             <Route
                               path="/scheduler"

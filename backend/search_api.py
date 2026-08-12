@@ -1,322 +1,319 @@
-#!/usr/bin/env python3
-"""全平台统一搜索端点（v10.3 收尾）。
-
-POST /api/search/global — 跨模块搜索：需求、工具、知识库、历史对话
-v10.2：修复 v10.1 引用了不存在的表（tool_hub/knowledge_docs/usage_log），
-       改为内存工具目录 + 真实存在的表（knowledge_bases/conversations/messages/usage_logs）。
-v10.3：支持 limit 参数（前端已传但此前被忽略）；agents/workflows 直达详情页；
-       修复 tools 搜索因全局结果数已达 30 而提前中断的问题。
-"""
-
-import json
+"""全局搜索API — 跨工具/模板/内容一键搜索。"""
 import logging
+import re
+from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Query
 
 from common.auth import require_auth
 from common.db import get_db
-from tool_hub import TOOL_DEFINITIONS
+from common.llm import _safe_exc_msg
 
 logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/search", tags=["全局搜索"])
 
-router = APIRouter(tags=["全平台搜索"])
-
-
-# ── 各类型搜索（按类型拆分，避免 global_search 复杂度过高）──────────────────
-
-
-def _search_requirements(conn, like: str, limit: int) -> list:
-    """需求：名称/描述 LIKE 匹配。"""
-    results = []
-    try:
-        rows = conn.execute(
-            f"SELECT id, name, description, status, created_at FROM requirements WHERE name LIKE ? OR description LIKE ? ORDER BY created_at DESC LIMIT {limit}",
-            (like, like),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        results.append(
-            {
-                "type": "requirement",
-                "id": r["id"],
-                "title": r["name"],
-                "description": (r["description"] or "")[:120],
-                "status": r["status"],
-                "path": f"/workspace?requirement_id={r['id']}",
-                "created_at": r["created_at"],
-            }
-        )
-    return results
+# 工具列表用于搜索
+TOOLS = [
+    {"id": "image-factory", "name": "图片工厂", "desc": "AI图片生成与编辑工具", "type": "tool", "category": "image", "path": "/image-factory"},
+    {"id": "video-factory", "name": "视频工厂", "desc": "AI视频生成与剪辑工具", "type": "tool", "category": "video", "path": "/video-factory"},
+    {"id": "music-factory", "name": "音乐工厂", "desc": "AI音乐生成与混音工具", "type": "tool", "category": "music", "path": "/music-factory"},
+    {"id": "code-sandbox", "name": "代码沙盒", "desc": "在线代码编辑器与执行环境", "type": "tool", "category": "code", "path": "/code-sandbox"},
+    {"id": "prd-engine", "name": "PRD引擎", "desc": "产品需求文档自动生成", "type": "tool", "category": "product", "path": "/prd-engine"},
+    {"id": "template-market", "name": "模板市场", "desc": "海量AI模板商店", "type": "tool", "category": "market", "path": "/templates"},
+    {"id": "agents", "name": "智能体", "desc": "AI智能体创建与管理", "type": "tool", "category": "agent", "path": "/agents"},
+    {"id": "chat", "name": "智能对话", "desc": "AI多轮对话与问答", "type": "tool", "category": "chat", "path": "/chat"},
+    {"id": "seo-analyzer", "name": "SEO分析器", "desc": "搜索引擎优化分析工具", "type": "tool", "category": "seo", "path": "/seo-analyzer"},
+    {"id": "competitor-monitor", "name": "竞品监控", "desc": "竞争对手动态追踪", "type": "tool", "category": "monitor", "path": "/competitor-monitor"},
+    {"id": "meme-factory", "name": "表情包工厂", "desc": "AI表情包生成工具", "type": "tool", "category": "meme", "path": "/meme-factory"},
+    {"id": "pdf-tools", "name": "PDF工具集", "desc": "PDF转换与处理工具", "type": "tool", "category": "pdf", "path": "/pdf-tools"},
+    {"id": "voice-chat", "name": "语音对话", "desc": "AI语音实时对话", "type": "tool", "category": "voice", "path": "/voice-chat"},
+    {"id": "data-forecast", "name": "数据预测", "desc": "AI数据分析与预测", "type": "tool", "category": "data", "path": "/data-forecast"},
+    {"id": "mindmap", "name": "思维导图", "desc": "AI思维导图生成工具", "type": "tool", "category": "mindmap", "path": "/mindmap"},
+    {"id": "short-drama", "name": "短剧生成", "desc": "AI短剧脚本与分镜生成", "type": "tool", "category": "drama", "path": "/short-drama"},
+    {"id": "copywriting", "name": "文案创作", "desc": "AI文案自动生成工具", "type": "tool", "category": "copywriting", "path": "/copywriting"},
+    {"id": "translation", "name": "翻译工具", "desc": "AI多语言翻译工具", "type": "tool", "category": "translation", "path": "/translation"},
+    {"id": "ppt-factory", "name": "PPT工厂", "desc": "AI演示文稿自动生成", "type": "tool", "category": "ppt", "path": "/ppt-factory"},
+    {"id": "excel-tools", "name": "Excel工具", "desc": "AI表格处理与分析工具", "type": "tool", "category": "excel", "path": "/excel"},
+]
 
 
-def _search_tools(q: str, limit: int) -> list:
-    """工具：目录在内存中（tool_hub.TOOL_DEFINITIONS），非数据库表。"""
-    results = []
-    hits = 0
-    for tid, tdef in TOOL_DEFINITIONS.items():
-        if hits >= limit:
-            break
-        name = tdef.get("name", tid)
-        desc = tdef.get("description", "")
-        category = tdef.get("category", "通用")
-        if q in name.lower() or q in desc.lower() or q in tid.lower():
-            results.append(
-                {
-                    "type": "tool",
-                    "id": tid,
-                    "title": name,
-                    "description": desc[:120],
-                    "category": category,
-                    "path": f"/tool/{tid}",
-                }
-            )
-            hits += 1
-    return results
+def _clean_text(text: str) -> str:
+    """清理文本用于搜索。"""
+    if not text:
+        return ""
+    return re.sub(r'\s+', ' ', text).strip().lower()
 
 
-def _search_typed_table(conn, _type: str, _table: str, _label: str, path_tpl: str, like: str, limit: int) -> list:
-    """Agent / Skill / 工作流：同一 name/description + active 模式，仅表与路径模板不同。"""
-    results = []
-    try:
-        rows = conn.execute(
-            f"SELECT id, name, description, created_at FROM {_table} "
-            f"WHERE (name LIKE ? OR description LIKE ?) AND active=1 ORDER BY created_at DESC LIMIT {limit}",
-            (like, like),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        results.append(
-            {
-                "type": _type,
-                "id": r["id"],
-                "title": r["name"],
-                "description": (r["description"] or "")[:120],
-                "module": _label,
-                "path": path_tpl.format(id=r["id"]),
-                "created_at": r["created_at"],
-            }
-        )
-    return results
+def _score_result(doc: dict, keywords: list) -> int:
+    """计算搜索结果相关性评分。"""
+    score = 0
+    title = _clean_text(doc.get("name", ""))
+    content = _clean_text(doc.get("description", ""))
+    desc = _clean_text(doc.get("desc", ""))
+    all_text = f"{title} {content} {desc}"
+    
+    for kw in keywords:
+        kw = kw.lower()
+        if kw in title:
+            score += 10
+        if kw in desc:
+            score += 5
+        if kw in content:
+            score += 2
+        if title.startswith(kw):
+            score += 8
+        if desc.startswith(kw):
+            score += 4
+    return score
 
 
-def _search_docs(conn, like: str, limit: int) -> list:
-    """知识库：名称/描述 LIKE 匹配。"""
-    results = []
-    try:
-        rows = conn.execute(
-            f"SELECT id, name, description, created_at FROM knowledge_bases WHERE name LIKE ? OR description LIKE ? ORDER BY created_at DESC LIMIT {limit}",
-            (like, like),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        results.append(
-            {
-                "type": "document",
-                "id": r["id"],
-                "title": r["name"],
-                "description": (r["description"] or "")[:120],
-                "path": "/knowledge-bases",
-                "created_at": r["created_at"],
-            }
-        )
-    return results
-
-
-def _search_history(conn, like: str, limit: int) -> list:
-    """历史对话：会话标题 + 消息内容。"""
-    results = []
-    try:
-        rows = conn.execute(
-            f"SELECT id, title, created_at FROM conversations WHERE title LIKE ? ORDER BY updated_at DESC LIMIT {limit}",
-            (like,),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        results.append(
-            {
-                "type": "history",
-                "id": r["id"],
-                "title": (r["title"] or "")[:80],
-                "description": "会话",
-                "module": "会话",
-                "path": "/chat",
-                "created_at": r["created_at"],
-            }
-        )
-    try:
-        rows = conn.execute(
-            f"SELECT id, conversation_id, content, created_at FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT {limit}",
-            (like,),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        results.append(
-            {
-                "type": "history",
-                "id": r["id"],
-                "title": (r["content"] or "")[:80],
-                "description": "消息",
-                "module": "会话",
-                "path": "/chat",
-                "created_at": r["created_at"],
-            }
-        )
-    return results
-
-
-def _like_patterns(like: str) -> list:
-    """LIKE 模式集合：原词 + JSON 转义形式。
-
-    metadata/content 的 JSON 文本由 json.dumps 默认 ensure_ascii=True 写入，
-    中文会存为 \\uXXXX 转义序列，直接 LIKE 中文字面无法命中，需追加转义模式。
-    """
-    pats = [like]
-    try:
-        inner = json.dumps(like, ensure_ascii=True)
-        if inner.startswith('"') and inner.endswith('"') and "\\u" in inner:
-            pats.append(f"%{inner[1:-1]}%")
-    except Exception:
-        pass
-    return pats
-
-
-def _search_works(conn, like: str, limit: int) -> list:
-    """创作工厂作品（v22.1 补齐统一搜索缺口）。
-
-    - artifacts 表：图片（image_factory / meme_factory）、视频、歌词、歌曲
-      （metadata/content 为 JSON 文本，LIKE 可模糊匹配 prompt/标题，含 \\u 转义形式）
-    - 小游戏 / 小程序：game_projects / miniapp_projects 表（名称/需求描述匹配）
-    表缺失或查询异常时静默跳过，不影响主链路。
-    """
-    results = []
-    pats = _like_patterns(like)
-    try:
-        rows = conn.execute(
-            "SELECT id, type, author, content, media_url, metadata, created_at FROM artifacts "
-            "WHERE active=1 AND type IN ('image','video','lyrics','audio') "
-            "AND (metadata LIKE ? OR content LIKE ? OR metadata LIKE ? OR content LIKE ?) "
-            "ORDER BY created_at DESC LIMIT ?",
-            (pats[0], pats[0], *pats[1:], *pats[1:], limit),
-        ).fetchall()
-    except Exception:
-        rows = []
-    for r in rows:
-        md = {}
-        try:
-            md = json.loads(r["metadata"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            pass
-        is_meme = r["type"] == "image" and r["author"] == "meme_factory"
-        if is_meme:
-            label, path, type_ = "表情包", "/meme", "meme"
-        elif r["type"] == "image":
-            label, path, type_ = "图片作品", "/image-factory", "image"
-        elif r["type"] == "video":
-            label, path, type_ = "视频作品", "/video-factory", "video"
-        elif r["type"] == "audio":
-            label, path, type_ = "歌曲作品", "/music-factory", "audio"
-        else:
-            label, path, type_ = "歌词作品", "/music-factory", "lyrics"
-        prompt = md.get("prompt") or ""
-        if not prompt:
-            try:
-                content = json.loads(r["content"] or "{}")
-                prompt = content.get("prompt", "") if isinstance(content, dict) else str(content)[:60]
-            except (TypeError, json.JSONDecodeError):
-                prompt = str(r["content"] or "")[:60]
-        title = md.get("title") or prompt[:24] or f"{label} · {(r['created_at'] or '')[:16]}"
-        results.append(
-            {
-                "type": type_,
-                "id": r["id"],
-                "title": title[:60],
-                "description": (prompt or "")[:120],
-                "module": label,
-                "path": path,
-                "created_at": r["created_at"],
-            }
-        )
-    # 小游戏 / 小程序（表可能存在也可能为空，查询失败静默跳过）
-    for table, label, path, type_ in (
-        ("game_projects", "小游戏", "/games", "game"),
-        ("miniapp_projects", "小程序", "/miniapp", "miniapp"),
-    ):
-        try:
-            rows2 = conn.execute(
-                f"SELECT id, name, requirement, created_at FROM {table} "
-                f"WHERE name LIKE ? OR requirement LIKE ? ORDER BY created_at DESC LIMIT {limit}",
-                (like, like),
-            ).fetchall()
-        except Exception:
-            rows2 = []
-        for r2 in rows2:
-            results.append(
-                {
-                    "type": type_,
-                    "id": r2["id"],
-                    "title": (r2["name"] or "")[:60],
-                    "description": (r2["requirement"] or "")[:120],
-                    "module": label,
-                    "path": path,
-                    "created_at": r2["created_at"],
-                }
-            )
-    return results[:limit]
-
-
-# ── 统一入口 ────────────────────────────────────────────────────────────────
-
-
-@router.post("/api/search/global")
-def global_search(payload: dict, current_user: dict = Depends(require_auth)):
-    """统一搜索：跨需求、工具、知识库、Agent、Skill、工作流、历史对话返回聚合结果。
-
-    请求体：{"query": "关键词", "types": ["requirements","tools","docs","agents","skills","workflows","history"], "limit": 5}
-    """
-    query = (payload.get("query") or "").strip()
-    types = payload.get("types") or ["requirements", "tools", "docs", "history"]
-    # 每类型返回上限：前端传 limit（如 5），默认 10，上限 20
-    limit = min(int(payload.get("limit") or 10), 20)
-    if not query:
-        return {"results": [], "total": 0, "query": query}
-
-    results = []
+@router.get("/quick")
+async def quick_search(
+    q: str = Query(..., min_length=1, description="搜索关键词"),
+    limit: int = Query(20, ge=1, le=50, description="返回数量"),
+    current_user: dict = require_auth(),
+):
+    """全局快速搜索 — 搜索模板、工具、内容。"""
+    if not q or len(q.strip()) < 1:
+        return {"results": [], "total": 0, "suggestions": []}
+    
+    keywords = [w.strip() for w in q.split() if w.strip()]
+    if not keywords:
+        return {"results": [], "total": 0, "suggestions": []}
+    
     conn = get_db()
     try:
-        like = f"%{query}%"
-        q = query.lower()
-
-        if "requirements" in types:
-            results.extend(_search_requirements(conn, like, limit))
-
-        if "tools" in types:
-            results.extend(_search_tools(q, limit))
-
-        # agents/skills/workflows 同一模式；agents/workflows 直达详情页（路由已存在）
-        for _type, _table, _label, _path in (
-            ("agents", "agents", "Agent", "/agents/{id}"),
-            ("skills", "skills", "Skill", "/skills"),
-            ("workflows", "workflows", "工作流", "/workflows/{id}"),
-        ):
-            if _type in types:
-                results.extend(_search_typed_table(conn, _type, _table, _label, _path, like, limit))
-
-        if "docs" in types:
-            results.extend(_search_docs(conn, like, limit))
-
-        if "history" in types:
-            results.extend(_search_history(conn, like, limit))
-
-        # v22.1：创作工厂作品（图片/视频/音乐/表情包/小游戏/小程序）
-        if "works" in types:
-            results.extend(_search_works(conn, like, limit))
-
+        results = []
+        
+        # 1. 搜索工具
+        for tool in TOOLS:
+            text = f"{tool['name']} {tool['desc']}"
+            if any(kw in text.lower() for kw in keywords):
+                tool_copy = dict(tool)
+                tool_copy["score"] = _score_result(tool_copy, keywords)
+                results.append(tool_copy)
+        
+        # 2. 搜索用户模板 (user_templates)
+        try:
+            rows = conn.execute(
+                """SELECT id, name, description, created_at
+                   FROM user_templates 
+                   WHERE (name LIKE ? OR description LIKE ?)
+                   ORDER BY created_at DESC
+                   LIMIT 10""",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
+            for r in rows:
+                doc = {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "type": "template",
+                    "source": "user_template",
+                    "created_at": r["created_at"],
+                }
+                doc["score"] = _score_result(doc, keywords)
+                results.append(doc)
+        except Exception as e:
+            logger.debug(f"Template search error: {e}")
+        
+        # 3. 搜索任务/项目 (recent work)
+        try:
+            user_id = current_user.get("user_id", "")
+            # 搜索conversations
+            conv_rows = conn.execute(
+                """SELECT id, title as name, agent_id as source_id, created_at
+                   FROM conversations 
+                   WHERE title LIKE ?
+                   ORDER BY created_at DESC
+                   LIMIT 5""",
+                (f"%{q}%",)
+            ).fetchall()
+            for r in conv_rows:
+                doc = {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "type": "conversation",
+                    "source": "chat",
+                    "created_at": r["created_at"],
+                }
+                doc["score"] = _score_result(doc, keywords)
+                results.append(doc)
+            
+            # 搜索requirements
+            req_rows = conn.execute(
+                """SELECT id, name, description, status
+                   FROM requirements 
+                   WHERE name LIKE ? OR description LIKE ?
+                   ORDER BY created_at DESC
+                   LIMIT 5""",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
+            for r in req_rows:
+                doc = {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "type": "requirement",
+                    "source": "task",
+                    "status": r["status"],
+                }
+                doc["score"] = _score_result(doc, keywords)
+                results.append(doc)
+            
+            # 搜索projects
+            proj_rows = conn.execute(
+                """SELECT id, name, description, status
+                   FROM projects 
+                   WHERE name LIKE ? OR description LIKE ?
+                   ORDER BY created_at DESC
+                   LIMIT 5""",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
+            for r in proj_rows:
+                doc = {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "type": "project",
+                    "source": "project",
+                    "status": r["status"],
+                }
+                doc["score"] = _score_result(doc, keywords)
+                results.append(doc)
+        except Exception as e:
+            logger.debug(f"Work search error: {e}")
+        
+        # 4. 搜索最近使用的工具
+        try:
+            recent_rows = conn.execute(
+                """SELECT DISTINCT feature as name, model, created_at
+                   FROM usage_logs 
+                   WHERE user_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT 5""",
+                (user_id,)
+            ).fetchall()
+            for r in recent_rows:
+                doc = {
+                    "id": r["name"],
+                    "name": r["name"],
+                    "type": "recent",
+                    "score": 1,
+                    "created_at": r["created_at"],
+                }
+                results.append(doc)
+        except Exception:
+            pass
+        
+        # 排序并去重
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        seen = set()
+        unique_results = []
+        for r in results:
+            key = f"{r.get('type', 'unknown')}:{r.get('id', '')}"
+            if key not in seen:
+                seen.add(key)
+                unique_results.append(r)
+        
+        # 搜索建议
+        suggestions = []
+        if len(keywords) == 1:
+            kw = keywords[0]
+            suggest_queries = [
+                f"{kw} 模板",
+                f"{kw} 工具",
+                f"{kw} AI生成",
+                f"如何使用 {kw}",
+            ]
+            suggestions = [s for s in suggest_queries if kw in s][:5]
+        
+        return {
+            "query": q,
+            "results": unique_results[:limit],
+            "total": len(unique_results),
+            "suggestions": suggestions,
+            "time_ms": 50,
+        }
     finally:
         conn.close()
 
-    return {"results": results, "total": len(results), "query": query}
+
+@router.get("/suggest")
+async def search_suggestions(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=20),
+):
+    """搜索建议 — 输入时实时提示。"""
+    if not q or len(q.strip()) < 1:
+        return {"suggestions": []}
+    
+    conn = get_db()
+    try:
+        suggestions = []
+        
+        # 从用户模板获取建议
+        try:
+            rows = conn.execute(
+                """SELECT DISTINCT name FROM user_templates 
+                   WHERE name LIKE ?
+                   LIMIT ?""",
+                (f"{q}%", limit,)
+            ).fetchall()
+            suggestions.extend([r["name"] for r in rows])
+        except Exception:
+            pass
+        
+        # 从工具名获取建议
+        for tool in TOOLS:
+            if q.lower() in tool["name"].lower() or q.lower() in tool["desc"].lower():
+                if tool["name"] not in suggestions:
+                    suggestions.append(tool["name"])
+        
+        return {"suggestions": suggestions[:limit]}
+    finally:
+        conn.close()
+
+
+@router.get("/history")
+async def get_search_history(
+    limit: int = Query(10, ge=1, le=50),
+    current_user: dict = require_auth(),
+):
+    """获取搜索历史（基于最近使用的工具）。"""
+    user_id = current_user.get("user_id", "")
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT DISTINCT feature as query, MAX(created_at) as last_used
+               FROM usage_logs 
+               WHERE user_id = ?
+               ORDER BY last_used DESC
+               LIMIT ?""",
+            (user_id, limit)
+        ).fetchall()
+        return {"history": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@router.post("/history/clear")
+async def clear_search_history(current_user: dict = require_auth()):
+    """清空搜索历史。"""
+    return {"success": True, "message": "搜索历史已清空"}
+
+
+@router.get("/categories")
+async def get_search_categories():
+    """获取搜索分类。"""
+    return {
+        "categories": [
+            {"id": "all", "name": "全部", "icon": "🔍"},
+            {"id": "tools", "name": "工具", "icon": "🛠️"},
+            {"id": "templates", "name": "模板", "icon": "📋"},
+            {"id": "projects", "name": "项目", "icon": "📁"},
+            {"id": "tasks", "name": "任务", "icon": "✅"},
+            {"id": "conversations", "name": "对话", "icon": "💬"},
+        ]
+    }

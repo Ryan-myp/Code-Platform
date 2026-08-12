@@ -454,6 +454,34 @@ export default function DashboardPage() {
                   >
                     <card.icon className="w-6 h-6 text-white" />
                   </div>
+      {/* 快捷搜索 */}
+      <div className="bg-gradient-to-r from-purple-600 to-violet-600 rounded-2xl p-6 text-white">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-bold">全局搜索</h3>
+            <p className="text-purple-200 text-sm mt-1">快速找到工具、模板、项目</p>
+          </div>
+          <a href="/search" className="px-5 py-2.5 bg-white/20 hover:bg-white/30 rounded-xl font-medium transition-colors flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            立即搜索
+          </a>
+        </div>
+      </div>
+      {/* 快捷入口 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { name: '用户反馈', path: '/feedback', icon: '💬', color: 'from-blue-500 to-cyan-500', desc: '提交建议与反馈' },
+          { name: '快捷键', path: '/shortcuts', icon: '⌨️', color: 'from-emerald-500 to-teal-500', desc: '掌握高效操作' },
+          { name: '下载管理', path: '/downloads', icon: '📥', color: 'from-amber-500 to-orange-500', desc: '查看下载记录' },
+          { name: '审计日志', path: '/audit-log', icon: '🔍', color: 'from-purple-500 to-violet-500', desc: '管理员操作记录' },
+        ].map(item => (
+          <a key={item.name} href={item.path} className={`bg-gradient-to-br ${item.color} rounded-2xl p-4 text-white hover:shadow-lg transition-all hover:-translate-y-0.5`}>
+            <span className="text-2xl">{item.icon}</span>
+            <p className="font-medium mt-2">{item.name}</p>
+            <p className="text-xs opacity-80 mt-0.5">{item.desc}</p>
+          </a>
+        ))}
+      </div>
                   <div>
                     <div className="text-2xl font-bold text-gray-900">{card.value}</div>
                     <div className="text-sm text-gray-500">{card.label}</div>

@@ -83,7 +83,6 @@ import ModelSwitcher from './ModelSwitcher'
 // icon 名称 → lucide-react 组件映射
 const ICONS = {
   Home, Code2, Bot, Layers, Sparkles, Settings, Database, Wrench, Server,
-  ListTodo, FileText, FolderKanban, Puzzle, MessageSquare, Brain, ChevronDown,
   ChevronRight, Menu, X, Play, ImageIcon, Film, Music, Wand2, LogOut, Users,
   Zap, CheckCircle2, Bell, Share2, Shield, GitBranch, PenTool, Languages,
   BarChart3, FlaskConical, Presentation, Table2, TrendingUp, HelpCircle,
@@ -205,6 +204,8 @@ const DEFAULT_NAV_ITEMS = [
       { path: '/usage-detail', label: '用量明细', icon: Clock },
       { path: '/invite-history', label: '邀请历史', icon: Users },
       { path: '/creator-center', label: '创作者中心', icon: Star },
+      { path: '/search', label: '全局搜索', icon: Search, pageId: 'search' },
+      { path: '/downloads', label: '下载管理', icon: Download, pageId: 'downloads' },
     ],
   },
   {
@@ -214,6 +215,8 @@ const DEFAULT_NAV_ITEMS = [
     color: 'from-violet-500 to-purple-600',
     items: [
       { path: '/chat', label: '智能协作', icon: MessageSquare, pageId: 'chat' },
+      { path: '/feedback', label: '用户反馈', icon: Send },
+      { path: '/shortcuts', label: '快捷键', icon: Keyboard },
       { path: '/help', label: '使用帮助', icon: HelpCircle },
       { path: '/evolution', label: '平台自进化', icon: Brain },
     ],
