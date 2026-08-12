@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from common.auth import require_auth
 from common.db import get_db, get_db_context
 from common.llm import call_llm, log_usage
+from common.media_check import is_valid_audio as _valid_audio, is_valid_video as _valid_video
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -2893,7 +2894,7 @@ def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0, emotion: st
             row = conn.execute(
                 "SELECT audio_url FROM digital_human_tts_cache WHERE cache_key=?", (cache_key,)
             ).fetchone()
-        if row and os.path.exists(path) and os.path.getsize(path) >= 512:
+        if row and os.path.exists(path) and _valid_audio(path):
             with get_db_context() as conn:
                 conn.execute(
                     "UPDATE digital_human_tts_cache SET hits=hits+1, last_hit=? WHERE cache_key=?",
@@ -2908,6 +2909,13 @@ def _tts_cached(text: str, voice: str, speed: float, pitch: int = 0, emotion: st
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(audio_bytes)
+        # 写入后再完整校验（ffprobe 可解析），防假数据落盘
+        if not _valid_audio(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            raise RuntimeError("TTS 生成的音频无效（无法解析）")
         now = datetime.now().isoformat()
         with get_db_context() as conn:
             _ensure_tables(conn)
@@ -3226,6 +3234,13 @@ def _generate_one(  # noqa: C901
                         raise render_err
                 finally:
                     _RENDER_SLOT.release()
+                # 视频有效性校验：防止渲染引擎产出 0KB/损坏文件被误标记成功
+                if not os.path.exists(video_path) or not _valid_video(video_path):
+                    try:
+                        os.remove(video_path)
+                    except OSError:
+                        pass
+                    raise RuntimeError("视频渲染结果无效（文件缺失或损坏）")
                 video_url = f"/uploads/videos/{video_filename}"
                 _report(85, "视频渲染完成，正在保存记录…")
             status = "done"

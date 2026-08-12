@@ -763,6 +763,15 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
         )
         if r.returncode != 0 or not out_mp3.exists() or out_mp3.stat().st_size < 1024:
             raise RuntimeError("最终混音失败: " + r.stderr.decode(errors="replace")[-200:])
+        # 写入后 ffprobe 校验：防止本地合成链路产出假数据
+        from common.media_check import is_valid_audio
+
+        if not is_valid_audio(str(out_mp3)):
+            try:
+                out_mp3.unlink()
+            except OSError:
+                pass
+            raise RuntimeError("最终混音结果无法解析（音频无效）")
 
         _report(85, "生成封面…")
         stem = filename.rsplit(".", 1)[0]

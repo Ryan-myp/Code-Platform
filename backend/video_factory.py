@@ -175,12 +175,22 @@ SCRIPT_TEMPLATES = [
 
 
 def save_video(data: bytes, filename: str) -> str:
-    """保存视频文件；空内容或小于 1KB 视为生成失败，抛异常拒绝落盘（防 0KB 废文件污染列表）。"""
+    """保存视频文件；空内容/过小/假数据拒绝落盘（防废文件污染列表）。"""
     if not data or len(data) < 1024:
         logger.warning("视频内容异常（%d bytes），拒绝保存 %s", len(data or b""), filename)
         raise HTTPException(502, "视频生成异常，请稍后重试")
     filepath = VIDEO_DIR / filename
     filepath.write_bytes(data)
+    # 写入后 ffprobe 校验：防止云端返回假数据（可写但无法解析）被误存
+    from common.media_check import is_valid_video
+
+    if not is_valid_video(str(filepath)):
+        try:
+            filepath.unlink()
+        except OSError:
+            pass
+        logger.warning("视频内容无法解析，已删除 %s", filename)
+        raise HTTPException(502, "视频生成异常，请稍后重试")
     return filename
 
 
