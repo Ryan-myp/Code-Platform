@@ -395,20 +395,20 @@ export default function DigitalHumanPage() {
     }
   }
 
-  // ★ 提交 AI 视频生成任务（可灵大模型：文生视频/图生视频/口型同步）
+  // ★ 提交 AI 视频生成任务（可灵大模型/AGNES：文生视频/图生视频/口型同步/照片活化）
   const submitAiVideo = async () => {
     if (!aiVideoForm.prompt.trim()) {
       toast.error('请输入视频内容描述')
       return
     }
     if (!aiGatewayCfg?.configured) {
-      toast.error('AI 视频网关未配置（需 DASHSCOPE_API_KEY），请联系平台管理员')
-      return
+      // AGNES key 已配置时也可用（照片活化+自动配音混合方案）
+      if (aiVideoForm.mode === 'lipsync' && !aiVideoForm.imageUrl) {
+        toast.error('混合数字人需上传参考照片（选择图生视频/口型同步并填照片路径）')
+        return
+      }
     }
-    if (aiVideoForm.mode === 'lipsync' && !aiVideoForm.audioUrl) {
-      toast.error('口型同步模式需填写配音音频地址（先在有声数字人生成后复制音频链接）')
-      return
-    }
+    // 口型同步：无音频时后端自动用文案 TTS 配音（混合方案）
     setAiSubmitting(true)
     try {
       const res = await api.post('/api/ai-video/generate', aiVideoForm)
@@ -3044,16 +3044,17 @@ ${batchTexts
         </div>
       </Modal>
 
-      {/* AI 视频 Modal（可灵大模型生成：文生视频/图生视频/口型同步） */}
+      {/* AI 视频 Modal（可灵大模型/AGNES：文生视频/图生视频/照片活化+配音） */}
       <Modal
         open={showAiVideoModal}
         onClose={() => setShowAiVideoModal(false)}
-        title="AI 视频生成（可灵大模型）"
+        title="AI 数字人视频（大模型）"
         size="md"
       >
         <p className="text-xs text-gray-400 mb-3">
           大模型直接生成视频：镜头/光影/场景效果顶级。
-          <b className="text-gray-600">口型同步模式</b>需先复制数字人配音音频链接（在下方生成记录/预览处点击「复制音频」）
+          <b className="text-gray-600">混合数字人</b>：照片活化 + 文案自动配音，无需额外音频。
+          口型同步精确模式需配音音频链接（下方生成记录点「复制音频」）。
           {aiGatewayCfg?.pricing && (
             <span className="text-violet-500 font-medium">
               价格：{aiGatewayCfg.pricing.text2video_720p} 元/条（720p）·{' '}
@@ -3066,7 +3067,7 @@ ${batchTexts
             {[
               { id: 'text2video', label: '文生视频' },
               { id: 'image2video', label: '图生视频' },
-              { id: 'lipsync', label: '口型同步' },
+              { id: 'lipsync', label: '照片数字人' },
             ].map((m) => (
               <button
                 key={m.id}
@@ -3086,18 +3087,18 @@ ${batchTexts
             onChange={(e) => setAiVideoForm((p) => ({ ...p, prompt: e.target.value }))}
             placeholder={
               aiVideoForm.mode === 'lipsync'
-                ? '口播内容描述，如：一位职场女性介绍新产品，语速适中'
+                ? '数字人口播文案，如：大家好，欢迎来到小团智能平台…（将自动合成配音）'
                 : '视频内容描述，如：一只小猫在月光下奔跑，电影感，特写镜头'
             }
             rows={3}
             maxLength={1000}
             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none resize-none"
           />
-          {aiVideoForm.mode === 'image2video' && (
+          {aiVideoForm.mode !== 'text2video' && (
             <input
               value={aiVideoForm.imageUrl}
               onChange={(e) => setAiVideoForm((p) => ({ ...p, imageUrl: e.target.value }))}
-              placeholder="参考图地址（平台 /uploads 路径或 http(s) URL）"
+              placeholder="参考照片地址（平台 /uploads 路径或 http(s) URL）"
               className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
             />
           )}
@@ -3106,14 +3107,14 @@ ${batchTexts
               <input
                 value={aiVideoForm.audioUrl}
                 onChange={(e) => setAiVideoForm((p) => ({ ...p, audioUrl: e.target.value }))}
-                placeholder="配音音频地址（平台 /uploads 路径）"
+                placeholder="配音音频地址（可选，留空=用上方文案自动TTS配音）"
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
               />
               <button
                 onClick={copyAudioUrl}
                 className="text-[10px] text-violet-500 hover:text-violet-700 underline"
               >
-                复制当前配音音频链接
+                复制当前配音音频链接（精确口型模式用）
               </button>
             </div>
           )}
