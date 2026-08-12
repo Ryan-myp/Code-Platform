@@ -65,7 +65,7 @@ export default function ShortcutsPage() {
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder=t('shortcuts.search_key')
+          placeholder={t('shortcuts.search_key')}
           className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 outline-none"
         />
       </div>

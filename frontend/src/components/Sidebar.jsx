@@ -58,6 +58,7 @@ import {
   Globe,
   Key,
   Clock,
+  Download,
   Volume2,
   Monitor,
   Landmark,
