@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
-from common.llm import call_llm, call_llm_async, parse_llm_json
+from common.llm import call_llm, call_llm_async, parse_llm_json, _safe_exc_msg
 from prd_engine import stream_llm_response
 from task_queue import create_task, register_handler
 
@@ -2072,7 +2072,7 @@ def generate_code(data: CodeGenRequest, current_user: dict = require_auth()):
             )
         return {"ok": True, "id": gen_id, "result": result}
     except Exception as e:
-        raise HTTPException(500, f"代码生成失败: {str(e)}") from e
+        raise HTTPException(500, f"代码生成失败: {_safe_exc_msg(e)}") from e
 
 
 @router.get("/api/code/generations")
@@ -2135,7 +2135,7 @@ async def review_code(data: CodeReviewRequest, current_user: dict = require_auth
         return {"ok": True, "id": review_id, "result": result}
     except Exception as e:
         logger.error(f"[review_code] {traceback.format_exc()}")
-        raise HTTPException(500, f"代码审查失败: {str(e)}") from e
+        raise HTTPException(500, f"代码审查失败: {_safe_exc_msg(e)}") from e
 
 
 @router.post("/api/code/improve")
@@ -2162,7 +2162,7 @@ def improve_code(data: CodeImproveRequest, current_user: dict = require_auth()):
         return {"ok": True, "result": result}
     except Exception as e:
         logger.error(f"[code_improve] {traceback.format_exc()}")
-        raise HTTPException(500, f"代码修改失败: {str(e)}") from e
+        raise HTTPException(500, f"代码修改失败: {_safe_exc_msg(e)}") from e
 
 
 @router.get("/api/code/reviews")
@@ -2412,7 +2412,7 @@ def analyze_sandbox_logs(project_id: str, current_user: dict = require_auth()):
     try:
         analysis = call_llm(sys_prompt, f"【容器日志】\n{logs[-6000:]}")
     except Exception as e:
-        raise HTTPException(500, f"日志分析失败: {str(e)}") from e
+        raise HTTPException(500, f"日志分析失败: {_safe_exc_msg(e)}") from e
     return {"ok": True, "analysis": analysis, "logs": logs}
 
 
@@ -2965,7 +2965,7 @@ async def export_translation(data: TranslationExportRequest, current_user: dict 
         return {"ok": True, "filename": fname, "download_url": f"/api/translation/download/{fname}"}
     except Exception as e:
         logger.exception("translation export failed")
-        raise HTTPException(500, f"导出失败：{e}") from e
+        raise HTTPException(500, f"导出失败：{_safe_exc_msg(e)}") from e
 
 
 @router.get("/api/translation/download/{filename}")
@@ -4016,7 +4016,7 @@ def excel_operate(data: ExcelRequest, current_user: dict = require_auth()):
         conn.commit()
         return {"ok": True, "id": op_id, "result": result}
     except Exception as e:
-        raise HTTPException(500, f"Excel操作失败: {str(e)}") from e
+        raise HTTPException(500, f"Excel操作失败: {_safe_exc_msg(e)}") from e
     finally:
         conn.close()
 

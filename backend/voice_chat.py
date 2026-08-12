@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def voice_respond(req: RespondRequest, current_user: dict = require_auth()):
         reply = raw.strip()
     except Exception as e:
         logger.exception("voice respond failed")
-        raise HTTPException(500, f"AI回复失败：{e}") from e
+        raise HTTPException(500, f"AI回复失败：{_safe_exc_msg(e)}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("voice_respond", len(req.message), len(reply), elapsed)

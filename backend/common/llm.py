@@ -96,6 +96,16 @@ def _readable_error(exc: Exception) -> str:
     return str(exc) or f"{type(exc).__name__}（连接异常），请稍后重试"
 
 
+def _safe_exc_msg(exc: Exception) -> str:
+    """从异常中提取安全错误消息，过滤路径、IP、敏感词，防止信息泄露。"""
+    import re as _re
+    msg = str(exc)[:200]
+    msg = _re.sub(r"/[^\s,;]{6,}", "<path>", msg)
+    msg = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", msg)
+    msg = _re.sub(r"(?:password|secret|token|key)\s*[:=]\s*\S+", "<cred>", msg, flags=_re.IGNORECASE)
+    return msg or "操作失败，请稍后重试"
+
+
 def api_error_detail(exc: Exception) -> str:
     """提取外部 API 调用异常的供应商错误详情（兼容 requests/httpx），替代无信息量的 "400 Client Error"。
 

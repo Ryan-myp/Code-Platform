@@ -61,6 +61,22 @@ PAGES = [
     {"id": "monitor", "path": "/monitor", "label": "竞品监控"},
     {"id": "favorites", "path": "/favorites", "label": "收藏中心"},
     {"id": "data-analyzer", "path": "/data-analyzer", "label": "数据分析沙箱"},
+    # ── 门户系统新增页面 ──
+    {"id": "board",         "path": "/board",           "label": "需求看板"},
+    {"id": "workspace",     "path": "/workspace",        "label": "AI 工作台"},
+    {"id": "projects",      "path": "/projects",         "label": "项目空间"},
+    {"id": "artifacts",     "path": "/artifacts",        "label": "成果仓库"},
+    {"id": "pipelines",     "path": "/pipelines",        "label": "CI/CD 流水线"},
+    {"id": "teams",         "path": "/teams",            "label": "Team 管理"},
+    {"id": "knowledge-bases","path": "/knowledge-bases", "label": "知识库"},
+    {"id": "skills",        "path": "/skills",           "label": "Skills"},
+    {"id": "mcp-servers",   "path": "/mcp-servers",      "label": "MCP Servers"},
+    {"id": "tool-hub",      "path": "/tool-hub",         "label": "全部工具"},
+    {"id": "tasks",         "path": "/tasks",            "label": "任务中心"},
+    {"id": "records",       "path": "/records",          "label": "记录中心"},
+    {"id": "notifications", "path": "/notifications",    "label": "通知中心"},
+    {"id": "config",        "path": "/config",           "label": "模型配置"},
+    {"id": "help",          "path": "/help",             "label": "使用帮助"},
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊

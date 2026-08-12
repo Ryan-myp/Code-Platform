@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from common.llm import _safe_exc_msg
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -476,7 +477,7 @@ def _ai_bg(prompt: str) -> Image.Image:
         raise HTTPException(500, f"文生图失败: {api_error_detail(exc)}")
     data = resp.json()
     if not data.get("data"):
-        raise HTTPException(500, f"文生图失败: {data}")
+        raise HTTPException(500, f"文生图失败: {_safe_exc_msg(e)}")
     item = data["data"][0]
     url = item.get("url")
     if url:
@@ -490,7 +491,7 @@ def _ai_bg(prompt: str) -> Image.Image:
             .convert("RGB")
             .resize((CANVAS, CANVAS), Image.LANCZOS)
         )
-    raise HTTPException(500, f"文生图返回异常: {data}")
+    raise HTTPException(500, "文生图返回异常，请稍后重试")
 
 
 def _save_artifact(filename: str, top_text: str, bottom_text: str, style: str, ai_prompt: str) -> str:
@@ -810,7 +811,7 @@ async def get_image(filename: str, size: int = 1080):
                 with Image.open(path) as im:
                     im.resize((size, size), Image.LANCZOS).save(cached, "PNG")
             except Exception as e:
-                raise HTTPException(500, f"尺寸导出失败: {e}") from e
+                raise HTTPException(500, f"尺寸导出失败: {_safe_exc_msg(e)}") from e
         return FileResponse(cached, media_type="image/png")
     return FileResponse(path, media_type="image/png")
 

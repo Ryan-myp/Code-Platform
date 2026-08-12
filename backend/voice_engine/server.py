@@ -39,7 +39,10 @@ logger = logging.getLogger("voice_engine")
 
 app = FastAPI(title="Voice Engine (CosyVoice2)", version="0.1.0")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["http://localhost:8888", "http://127.0.0.1:8888"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 _infer_lock = threading.Lock()

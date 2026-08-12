@@ -881,7 +881,7 @@ export default function TemplateMarketPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 选择购买方式
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {[
                   ['once', '按次', '永久可用', 'once'],
                   ['day', '按天', '24 小时有效', 'day'],

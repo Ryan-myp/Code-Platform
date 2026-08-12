@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
         raise HTTPException(500, "LLM返回格式异常，无法解析为JSON") from e
     except Exception as e:
         logger.exception("nl-query failed")
-        raise HTTPException(500, f"查询失败：{e}") from e
+        raise HTTPException(500, f"查询失败：{_safe_exc_msg(e)}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("dashboard_nl_query", len(req.query), len(raw), elapsed)

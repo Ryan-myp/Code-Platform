@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
-from common.llm import api_error_detail
+from common.llm import api_error_detail, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -470,7 +470,7 @@ v20 内容丰富度要求（必须全部满足）：
             timeout=90,
         )
         if response.status_code != 200:
-            raise HTTPException(500, f"生成歌词失败: {response.text}")
+            raise HTTPException(500, "生成歌词失败，请稍后重试")
         data = response.json()
         lyrics = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not lyrics:
@@ -479,7 +479,7 @@ v20 内容丰富度要求（必须全部满足）：
         raise
     except Exception as e:
         logger.error(f"生成歌词异常: {e}")
-        raise HTTPException(500, f"生成歌词失败: {str(e)}") from e
+        raise HTTPException(500, f"生成歌词失败: {_safe_exc_msg(e)}") from e
 
     # 保存生成的歌词
     lyrics_filename = f"{generate_music_id()}.txt"

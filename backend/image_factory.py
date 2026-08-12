@@ -33,7 +33,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
 from common.config import load_config
-from common.llm import api_error_detail
+from common.llm import api_error_detail, _safe_exc_msg
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -167,8 +167,11 @@ def save_image(img: Image.Image, fmt: str = "PNG", keep_alpha: bool = False) -> 
 # family → (候选字体路径列表, 斜体候选 face index, 是否支持中文, 粗体 face index 或 None)
 # 多平台路径覆盖：macOS（本机）+ Windows + Linux（Docker 已装 Noto/WQY）
 # 真实粗体：Hiragino Sans GB 的 W6（index 2）可用于 bold，其余 family 用描边模拟
+# macOS Catalina+ PingFang 存储在 Asset Catalog 路径，非标准 /System/Library/Fonts/
+_ASSET_PINGFANG = "/System/Library/AssetsV2/com_apple_MobileAsset_Font7/3419f2a427639ad8c8e139149a287865a90fa17e.asset/AssetData/PingFang.ttc"
+
 FONT_FAMILIES = [
-    ("pingfang", [("/System/Library/Fonts/PingFang.ttc", 1), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
+    ("pingfang", [(_ASSET_PINGFANG, 1), ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
     ("helvetica", [("/System/Library/Fonts/Helvetica.ttc", 1), ("/Library/Fonts/Arial.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0)], False, None),
     ("hiragino", [("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1)], True, 2),
     ("heiti", [("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0)], True, None),
@@ -182,7 +185,7 @@ FONT_FAMILIES = [
 # 最后兜底：常见中文字体（mac/win/linux），保证中文文本永远可用
 _FALLBACK_FONTS = [
     ("/Library/Fonts/Arial Unicode.ttf", 0),
-    ("/System/Library/Fonts/PingFang.ttc", 1),
+    (_ASSET_PINGFANG, 1),
     ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
     ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
     ("/System/Library/Fonts/STSongti-SC-Regular.otf", 0),
@@ -248,9 +251,10 @@ def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool 
                     bold_idx = e[3]
                     break
         try:
+            kwargs = dict(index=face_idx if italic else 0)
             if bold and bold_idx is not None:
-                return ImageFont.truetype(path, size, index=bold_idx)
-            return ImageFont.truetype(path, size, index=face_idx if italic else 0)
+                kwargs['index'] = bold_idx
+            return ImageFont.truetype(path, size, **kwargs)
         except Exception:
             try:
                 return ImageFont.truetype(path, size)
@@ -663,7 +667,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
             elif b64:
                 result_img = Image.open(io.BytesIO(base64.b64decode(b64)))
             else:
-                raise HTTPException(500, f"生成失败: {data}")
+                raise HTTPException(500, "生成失败，请稍后重试")
             filename = save_image(result_img)
             art_id = _save_artifact(
                 filename, project_id, prompt, {"size": size, "model": model, "strength": strength}
@@ -676,7 +680,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
                 "prompt": prompt,
                 "project_id": project_id,
             }
-        raise HTTPException(500, f"生成失败: {data}")
+        raise HTTPException(500, "生成失败，请稍后重试")
     except HTTPException:
         raise
     except Exception as e:
@@ -1004,18 +1008,26 @@ async def _gen_template_preview(template: dict) -> None:
 
 @router.get("/templates")
 async def list_templates():
-    """列出所有模板（附加封面地址与分类）"""
+    """列出所有模板（附加封面地址、分类与使用热度）。"""
+    from template_store import get_usage_stats
+
+    usage_map = get_usage_stats()
     templates = []
     if os.path.exists(TEMPLATE_DIR):
-        for f in os.listdir(TEMPLATE_DIR):
-            if f.endswith(".json"):
-                filepath = os.path.join(TEMPLATE_DIR, f)
-                with open(filepath, encoding="utf-8") as fh:
-                    template = json.load(fh)
-                    template["category"] = template.get("category") or "通用"
-                    template["preview"] = f"/api/image-factory/template-preview/{template['id']}"
-                    templates.append(template)
-    templates.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        for fname in os.listdir(TEMPLATE_DIR):
+            if not fname.endswith(".json"):
+                continue
+            filepath = os.path.join(TEMPLATE_DIR, fname)
+            with open(filepath, encoding="utf-8") as fh:
+                template = json.load(fh)
+            tid = template.get("id", "")
+            template["category"] = template.get("category") or "通用"
+            template["preview"] = f"/api/image-factory/template-preview/{tid}"
+            template["render_count"] = usage_map.get(tid, 0)
+            templates.append(template)
+    def _sort_key(t):
+        return (int(t.get("render_count", 0) or 0), t.get("created_at", "") or "")
+    templates.sort(key=_sort_key, reverse=True)
     return templates
 
 
@@ -1035,7 +1047,19 @@ async def template_preview(template_id: str):
 
 @router.post("/template/create")
 async def create_template(req: dict):
-    """创建模板（保存后自动生成封面缩略图）"""
+    """创建模板（保存后自动生成封面缩略图）。"""
+    template_id = generate_id()
+    template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
+    template = {
+        "id": template_id,
+        **req,
+        "created_at": datetime.now().isoformat(),
+        "render_count": 0,
+    }
+    with open(template_path, "w", encoding="utf-8") as f:
+        json.dump(template, f, ensure_ascii=False, indent=2)
+    await _gen_template_preview(template)
+    return {"id": template_id, **template}
     template_id = generate_id()
     template_path = os.path.join(TEMPLATE_DIR, f"{template_id}.json")
 
@@ -1599,7 +1623,7 @@ async def person_segmentation(
         return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
     except Exception as e:
-        raise HTTPException(500, f"人像分割失败: {str(e)}") from e
+        raise HTTPException(500, f"人像分割失败: {_safe_exc_msg(e)}") from e
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
@@ -1747,11 +1771,11 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         )
 
         if response.status_code != 200:
-            raise HTTPException(500, f"生成失败: {response.text}")
+            raise HTTPException(500, "生成失败，请稍后重试")
 
         data = response.json()
         if not data.get("data"):
-            raise HTTPException(500, f"生成失败: {data}")
+            raise HTTPException(500, "生成失败，请稍后重试")
 
         # API 返回 url 或 b64_json，两种都要兼容
         first_item = data["data"][0]
@@ -1764,7 +1788,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             img_data = base64.b64decode(first_item["b64_json"])
             result_img = Image.open(BytesIO(img_data))
         else:
-            raise HTTPException(500, f"生成失败: {data}")
+            raise HTTPException(500, "生成失败，请稍后重试")
 
         filename = save_image(result_img)
         art_id = _save_artifact(
@@ -1784,7 +1808,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"虚拟试衣失败: {str(e)}") from e
+        raise HTTPException(500, f"虚拟试衣失败: {_safe_exc_msg(e)}") from e
 
 
 @router.post("/try-on/generate")
@@ -1901,7 +1925,7 @@ async def replace_background(
         }
 
     except Exception as e:
-        raise HTTPException(500, f"背景替换失败: {str(e)}") from e
+        raise HTTPException(500, f"背景替换失败: {_safe_exc_msg(e)}") from e
 
 
 # ── 预置电商模板 ──────────────────────────────────────────────

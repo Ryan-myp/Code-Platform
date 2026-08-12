@@ -5,11 +5,12 @@
 仅 admin 角色可访问（403 兜底）。
 """
 
+import json
 import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from common.auth import expire_stale_orders, require_auth, review_order
 from common.db import get_db
@@ -662,5 +663,116 @@ async def admin_delete_share(share_id: str, current_user: dict = require_auth())
         conn.execute("DELETE FROM share_visits WHERE share_id=?", (share_id,))
         conn.commit()
         return {"success": True, "id": share_id}
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# 门户管理 API（v16.0）
+# ══════════════════════════════════════════════════════════════
+
+class AdminPortalUserUpdateRequest(BaseModel):
+    """管理员批量设置用户门户类型。"""
+
+    portal_type: str = Field(..., description="门户类型: rdm / media / general")
+    user_ids: list[str] = Field(..., description="目标用户 ID 列表")
+
+
+@router.get("/portals")
+async def admin_list_portals(current_user: dict = require_auth()):
+    """获取所有门户定义（管理后台用）。"""
+    _check_admin(current_user)
+    from portals import get_all_portals, PORTAL_DEFS
+
+    db_portals = {p["id"]: p for p in get_all_portals()}
+    result = []
+    for pid, defn in PORTAL_DEFS.items():
+        db = db_portals.get(pid, {})
+        result.append({**defn, "db_updated_at": db.get("updated_at"), "db_created_at": db.get("created_at")})
+    return {"portals": result}
+
+
+@router.put("/portals/{portal_type}/pages")
+async def admin_update_portal_pages(
+    portal_type: str,
+    page_ids: list[str],
+    current_user: dict = require_auth(),
+):
+    """管理员修改门户的页面配置（启用/禁用特定页面）。"""
+    _check_admin(current_user)
+    from portals import PORTAL_DEFS
+
+    if portal_type not in PORTAL_DEFS:
+        raise HTTPException(404, "门户不存在")
+    conn = get_db()
+    try:
+        # 先删除旧配置
+        conn.execute("DELETE FROM portal_page_config WHERE portal_id=?", (portal_type,))
+        # 写入新配置
+        for page_id in page_ids:
+            conn.execute(
+                "INSERT INTO portal_page_config (portal_id, page_id, enabled) VALUES (?, ?, 1)",
+                (portal_type, page_id),
+            )
+        # 同步更新数据库的 nav_groups 和 highlight_tools
+        defn = PORTAL_DEFS[portal_type]
+        conn.execute(
+            "UPDATE portals SET nav_groups=?, highlight_tools=?, updated_at=? WHERE id=?",
+            (
+                json.dumps(defn["nav_groups"], ensure_ascii=False),
+                json.dumps(defn["highlight_tools"], ensure_ascii=False),
+                datetime.now().isoformat(),
+                portal_type,
+            ),
+        )
+        conn.commit()
+        return {"message": f"门户 {portal_type} 页面配置已更新，共 {len(page_ids)} 个页面"}
+    finally:
+        conn.close()
+
+
+@router.post("/users/portal-batch")
+async def admin_batch_set_portal(
+    req: AdminPortalUserUpdateRequest,
+    current_user: dict = require_auth(),
+):
+    """批量设置用户门户类型。"""
+    _check_admin(current_user)
+    from portals import set_user_portal_type
+
+    if req.portal_type not in ("rdm", "media", "general"):
+        raise HTTPException(400, "无效门户类型")
+    if not req.user_ids:
+        raise HTTPException(400, "user_ids 不能为空")
+    conn = get_db()
+    try:
+        updated = 0
+        for uid in req.user_ids:
+            try:
+                row = conn.execute("SELECT id FROM users WHERE id=?", (uid,)).fetchone()
+                if not row:
+                    continue
+                set_user_portal_type(uid, req.portal_type)
+                updated += 1
+            except Exception:
+                continue
+        conn.commit()
+        return {"message": f"已更新 {updated} 个用户的门户类型", "updated": updated}
+    finally:
+        conn.close()
+
+
+@router.get("/portals/stats")
+async def admin_portal_stats(current_user: dict = require_auth()):
+    """门户分布统计。"""
+    _check_admin(current_user)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT portal_type, COUNT(*) AS cnt FROM users WHERE portal_type IS NOT NULL GROUP BY portal_type"
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()["cnt"]
+        distribution = {r["portal_type"] or "general": r["cnt"] for r in rows}
+        return {"total_users": total, "distribution": distribution}
     finally:
         conn.close()

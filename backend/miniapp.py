@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.llm import call_llm_async, log_usage
+from common.llm import call_llm_async, log_usage, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import license_text, pack_dir_name
 from task_queue import create_task, register_handler
@@ -716,7 +716,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"生成失败: {e}") from e
+        raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
 
     files = None
     qc = None
@@ -779,7 +779,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"生成失败: {e}") from e
+            raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
     if not files or qc is None:
         raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
     if not qc["ok"]:

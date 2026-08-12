@@ -171,11 +171,23 @@ export default function App() {
     () => !!localStorage.getItem('token') && !!user
   )
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  // 门户配置（登录后从后端加载，决定侧边栏导航结构）
+  const [portal, setPortal] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('portal') || 'null')
+    } catch { return null }
+  })
 
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token && user) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      // 加载门户配置
+      axios.get('/api/portal/current').then(res => {
+        const p = res.data
+        setPortal(p)
+        localStorage.setItem('portal', JSON.stringify(p))
+      }).catch(() => {})
     }
   }, [user])
 
@@ -194,6 +206,12 @@ export default function App() {
   const handleUserUpdate = (userData) => {
     setUser(userData)
     localStorage.setItem('user', JSON.stringify(userData))
+    // 用户资料更新时重新加载门户配置
+    axios.get('/api/portal/current').then(res => {
+      const p = res.data
+      setPortal(p)
+      localStorage.setItem('portal', JSON.stringify(p))
+    }).catch(() => {})
   }
 
   const handleLogout = () => {
@@ -235,7 +253,9 @@ export default function App() {
                       sidebarOpen={sidebarOpen}
                       setSidebarOpen={setSidebarOpen}
                       user={user}
+                      portal={portal}
                       onLogout={handleLogout}
+                      onPortalSwitch={(p) => { setPortal(p); localStorage.setItem('portal', JSON.stringify(p)); }}
                     />
                     <div className="flex-1 flex flex-col md:ml-64 min-w-0">
                       <main className="flex-1 overflow-y-auto p-4 md:p-6 pb-20 md:pb-6 animate-page-in">

@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from common.llm import _safe_exc_msg
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -271,14 +272,14 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str =
         )
         if resp.status_code == 200:
             return resp.content
-        raise HTTPException(500, f"TTS 调用失败: {resp.status_code} {resp.text[:300]}")
+        raise HTTPException(500, "TTS 调用失败，请稍后重试")
     except Exception:
         # 中转站不可用：免费通道可能已恢复，最后再回试一次
         logger.warning("中转站 TTS 失败，回试 edge-tts")
         try:
             return _edge_with_retry(2)
         except Exception as e:
-            raise HTTPException(500, f"TTS 通道均不可用: {e}") from e
+            raise HTTPException(500, f"TTS 通道均不可用，请稍后重试")
 
 
 def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> bytes:
@@ -531,7 +532,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
         raise
     except Exception as e:
         logger.error(f"TTS 生成失败: {e}")
-        raise HTTPException(500, f"配音生成失败: {str(e)}") from e
+        raise HTTPException(500, f"配音生成失败: {_safe_exc_msg(e)}") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

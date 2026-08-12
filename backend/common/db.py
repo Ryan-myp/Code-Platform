@@ -627,6 +627,26 @@ def migrate() -> None:
         _add_column_if_missing(conn, "shares", "is_test", "INTEGER DEFAULT 0")
         # v9.5：MCP 授权验证 / 知识库连接配置
         _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
+        # v16.0 门户系统：用户门户类型（rdm=研发管理 / media=自媒体创作 / general=通用）
+        _add_column_if_missing(conn, "users", "portal_type", "TEXT DEFAULT 'general'")
+        # v16.0 门户定义表
+        conn.execute("""CREATE TABLE IF NOT EXISTS portals (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            nav_groups TEXT NOT NULL DEFAULT '[]',
+            highlight_tools TEXT DEFAULT '[]',
+            created_at TEXT,
+            updated_at TEXT
+        )""")
+        # v16.0 门户页面映射表
+        conn.execute("""CREATE TABLE IF NOT EXISTS portal_page_config (
+            portal_id TEXT NOT NULL,
+            page_id TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            PRIMARY KEY (portal_id, page_id),
+            FOREIGN KEY (portal_id) REFERENCES portals(id) ON DELETE CASCADE
+        )""")
         _add_column_if_missing(conn, "mcp_servers", "auth_config", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "knowledge_bases", "config", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "knowledge_bases", "description", "TEXT DEFAULT ''")
@@ -673,6 +693,8 @@ def init_schema() -> None:
 
     # 预置 admin 用户（仅在不存在时）
     from common.auth import ensure_admin_user
-
     ensure_admin_user()
+    # 预置门户数据（幂等，upsert）
+    from portals import seed_portals
+    seed_portals()
     logger.info("Database schema initialized")

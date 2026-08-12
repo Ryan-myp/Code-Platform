@@ -285,7 +285,7 @@ function LayerProps({ layer, onChange }) {
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>字号</label>
               <input type="number" value={num(layer.font_size)} onChange={setNum('font_size')} className={inputCls} />
@@ -314,7 +314,7 @@ function LayerProps({ layer, onChange }) {
               <input type="number" value={num(layer.rotation)} onChange={setNum('rotation')} className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -407,7 +407,7 @@ function LayerProps({ layer, onChange }) {
 
       {layer.type === 'rect' && (
         <div className="space-y-3">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -425,7 +425,7 @@ function LayerProps({ layer, onChange }) {
               <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>圆角</label>
               <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
@@ -491,7 +491,7 @@ function LayerProps({ layer, onChange }) {
 
       {layer.type === 'circle' && (
         <div className="space-y-3">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>圆心 X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -517,7 +517,7 @@ function LayerProps({ layer, onChange }) {
               />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>边框宽度（0=无）</label>
               <input type="number" value={num(layer.border_width)} onChange={setNum('border_width')} className={inputCls} />
@@ -565,7 +565,7 @@ function LayerProps({ layer, onChange }) {
 
       {layer.type === 'line' && (
         <div className="space-y-3">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>起点 X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -583,7 +583,7 @@ function LayerProps({ layer, onChange }) {
               <input type="number" value={num(layer.angle)} onChange={setNum('angle')} className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>线宽</label>
               <input type="number" value={num(layer.width)} onChange={setNum('width')} className={inputCls} />
@@ -631,7 +631,7 @@ function LayerProps({ layer, onChange }) {
               className={inputCls}
             />
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label className={labelCls}>槽位变量名（可选）</label>
               <input
@@ -662,7 +662,7 @@ function LayerProps({ layer, onChange }) {
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>X</label>
               <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
@@ -680,7 +680,7 @@ function LayerProps({ layer, onChange }) {
               <input type="number" value={num(layer.height)} onChange={setNum('height')} className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
               <label className={labelCls}>圆角</label>
               <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
@@ -1902,7 +1902,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">图片尺寸</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-2 sm:grid-cols-3 gap-2">
                   {SIZES.map((s) => (
                     <button
                       key={s.value}
@@ -2128,7 +2128,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">尺寸</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-2 sm:grid-cols-3 gap-2">
                   {SIZES.map((s) => (
                     <button
                       key={s.value}
@@ -2822,7 +2822,7 @@ export default function ImageFactoryPage() {
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">背景场景</label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-2 sm:grid-cols-3 gap-2">
                   {TRYON_BACKGROUNDS.map((bg) => (
                     <button
                       key={bg.id}
@@ -3259,7 +3259,7 @@ export default function ImageFactoryPage() {
               />
             </div>
             {/* v18-B：灯箱元信息（prompt/尺寸/时间），让每张图可追溯 */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
               <div className="p-2.5 rounded-lg bg-gray-50 border border-gray-100">
                 <div className="text-gray-400 mb-0.5">提示词</div>
                 <div className="text-gray-700 line-clamp-2">{previewImage.prompt || '-'}</div>
@@ -3443,7 +3443,7 @@ export default function ImageFactoryPage() {
               ))}
             </div>
             {templateForm.pricing?.mode !== 'free' && (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
                 {[
                   ['once', '按次价格'],
                   ['day', '按天价格'],
@@ -3690,7 +3690,7 @@ export default function ImageFactoryPage() {
                   ))}
                 </div>
               )}
-              <div className="grid grid-cols-5 gap-2 mt-2.5">
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 mt-2.5">
                 <button
                   onClick={() => addTemplateLayer('text')}
                   className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
@@ -4389,7 +4389,7 @@ export default function ImageFactoryPage() {
           )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">目标平台</label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {[
                 ['wechat', '公众号'],
                 ['douyin', '抖音'],

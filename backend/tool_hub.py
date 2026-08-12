@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm_async
+from common.llm import call_llm_async, _safe_exc_msg
 from permissions import access_status, get_visibility_map, load_user_ctx
 from task_queue import create_task, register_handler
 
@@ -7509,7 +7509,7 @@ async def enhance_prompt(req: EnhancePromptRequest, current_user: dict = require
         raise
     except Exception as e:
         logger.error(f"[enhance_prompt] {traceback.format_exc()}")
-        raise HTTPException(500, f"智能补充失败：{str(e)}") from e
+        raise HTTPException(500, f"智能补充失败：{_safe_exc_msg(e)}") from e
 
 
 @router.get("/api/tools")

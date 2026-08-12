@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +344,7 @@ def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()
         raise HTTPException(500, "AI分析结果格式异常") from e
     except Exception as e:
         logger.exception("competitor analysis failed")
-        raise HTTPException(500, f"竞品分析失败：{e}") from e
+        raise HTTPException(500, f"竞品分析失败：{_safe_exc_msg(e)}") from e
 
     # 2. 雷达图
     try:

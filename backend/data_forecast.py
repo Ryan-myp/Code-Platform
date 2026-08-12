@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json
+from common.llm import call_llm, log_usage, parse_llm_json, _safe_exc_msg
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -391,7 +391,7 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
                 )
             else:
                 logger.exception("forecast analyze failed")
-                raise HTTPException(500, f"数据预测失败：{e}") from e
+                raise HTTPException(500, f"数据预测失败：{_safe_exc_msg(e)}") from e
 
     _report(70, "生成预测图表")
     log_usage("data_forecast", len(user_prompt), len(raw), 0)

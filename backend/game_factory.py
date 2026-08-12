@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.llm import call_llm_async, log_usage
+from common.llm import call_llm_async, log_usage, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, publish_registry
 from task_queue import create_task, register_handler
@@ -724,7 +724,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"生成失败: {e}") from e
+            raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
     if not files or qc is None:
         raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
     if not qc["ok"]:
@@ -1110,7 +1110,7 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
         raise
     except Exception as e:
         conn.close()
-        raise HTTPException(500, f"迭代生成失败: {e}") from e
+        raise HTTPException(500, f"迭代生成失败: {_safe_exc_msg(e)}") from e
 
     try:
         new_files = _validate_files(_extract_json(result))

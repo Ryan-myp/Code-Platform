@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from common.auth import require_auth
 from common.config import load_config
 from common.db import get_db
+from common.llm import _safe_exc_msg
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,23 @@ def _get_usage(template_id: str) -> int:
         return int(row["usage_count"]) if row else 0
     except Exception:
         return 0
+
+
+def get_usage_stats() -> dict:
+    """返回所有模板的使用热度统计：{template_id: usage_count}。"""
+    result = {}
+    try:
+        conn = get_db()
+        _ensure_tables(conn)
+        rows = conn.execute(
+            "SELECT template_id, usage_count FROM image_template_stats ORDER BY usage_count DESC"
+        ).fetchall()
+        conn.close()
+        for r in rows:
+            result[r["template_id"]] = int(r["usage_count"])
+    except Exception:
+        pass
+    return result
 
 
 def user_access(conn, username: str, template_id: str) -> dict | None:
@@ -513,7 +531,7 @@ async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) ->
             imgs = await render_template_image(template, overrides)
         except Exception as e:
             logger.warning(f"批量渲染第 {i + 1} 行失败: {e}")
-            raise HTTPException(500, f"第 {i + 1} 行渲染失败：{e}") from e
+            raise HTTPException(500, f"第 {i + 1} 行渲染失败，请稍后重试")
         fname = save_image(imgs[0])
         results.append(f"/api/image-factory/images/{fname}")
         record_usage(template_id)

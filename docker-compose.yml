@@ -18,10 +18,19 @@ services:
       - DB_PATH=/data/platform.db
       - HOST=0.0.0.0
       - PORT=8888
+      # 远程备份（S3/OSS/MinIO）
+      - BACKUP_BUCKET=${BACKUP_BUCKET:-}
+      - BACKUP_ENDPOINT=${BACKUP_ENDPOINT:-}
+      - BACKUP_ACCESS_KEY=${BACKUP_ACCESS_KEY:-}
+      - BACKUP_SECRET_KEY=${BACKUP_SECRET_KEY:-}
+      - BACKUP_PREFIX=${BACKUP_PREFIX:-backups}
+      # 上传文件保留期（天，默认 30）
+      - UPLOAD_RETENTION_DAYS=${UPLOAD_RETENTION_DAYS:-30}
     volumes:
       - db-data:/data
       - ./backend/artifacts:/app/backend/artifacts
-      - ./backend/uploads:/app/backend/uploads  # 上传媒体（数字人形象/声音/音频视频），容器重建不丢失
+      - ./backend/uploads:/app/backend/uploads
+    command: gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8888 --timeout 120
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8888/api/health"]
       interval: 30s

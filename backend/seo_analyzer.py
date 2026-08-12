@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.llm import call_llm, log_usage
+from common.llm import call_llm, log_usage, _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ def analyze_seo(req: SEOAnalyzeRequest, current_user: dict = require_auth()):
         raise HTTPException(500, "SEO分析结果格式异常") from e
     except Exception as e:
         logger.exception("seo analyze failed")
-        raise HTTPException(500, f"SEO分析失败：{e}") from e
+        raise HTTPException(500, f"SEO分析失败：{_safe_exc_msg(e)}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("seo_analyze", len(req.title) + len(req.content), len(raw), elapsed)
@@ -273,7 +273,7 @@ def research_keywords(req: KeywordResearchRequest, current_user: dict = require_
         raise HTTPException(500, "关键词研究结果格式异常") from e
     except Exception as e:
         logger.exception("keyword research failed")
-        raise HTTPException(500, f"关键词研究失败：{e}") from e
+        raise HTTPException(500, f"关键词研究失败：{_safe_exc_msg(e)}") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("seo_keywords", len(req.seed_keyword), len(raw), elapsed)

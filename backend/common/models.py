@@ -395,3 +395,12 @@ class OptimizePromptsRequest(BaseModel):
 
 class PluginExecuteRequest(BaseModel):
     input_data: dict[str, Any] = {}
+
+
+# ══════════════════════════════════════════════════════════════
+# 门户系统（v16.0）
+# ══════════════════════════════════════════════════════════════
+
+
+class PortalSwitchRequest(BaseModel):
+    portal_type: str = Field(..., description="门户类型: rdm / media / general")

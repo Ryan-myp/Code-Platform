@@ -134,13 +134,81 @@ def ensure_daily_backup() -> bool:
         last = ""
     if last == today:
         return False
-    create_backup()
+    result = create_backup()
     try:
         _DAILY_MARK.write_text(today)
     except OSError:
         pass
     logger.info(f"daily backup marked: {today}")
+    # 异步上传远程（不阻塞主流程）
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(upload_to_remote, result["name"])
+    except Exception:
+        pass
     return True
+
+
+# ── 异地备份（S3/OSS/MinIO 兼容存储）───────────────────────────────
+_REMOTE_BACKUP_BUCKET = os.environ.get("BACKUP_BUCKET", "").strip()
+_REMOTE_BACKUP_ENDPOINT = os.environ.get("BACKUP_ENDPOINT", "").strip()
+_REMOTE_BACKUP_ACCESS_KEY = os.environ.get("BACKUP_ACCESS_KEY", "").strip()
+_REMOTE_BACKUP_SECRET_KEY = os.environ.get("BACKUP_SECRET_KEY", "").strip()
+_REMOTE_BACKUP_PREFIX = os.environ.get("BACKUP_PREFIX", "backups").strip()
+
+
+def _remote_enabled() -> bool:
+    """检查是否配置了远程备份（S3/OSS/MinIO）。"""
+    return bool(
+        _REMOTE_BACKUP_BUCKET
+        and _REMOTE_BACKUP_ENDPOINT
+        and _REMOTE_BACKUP_ACCESS_KEY
+        and _REMOTE_BACKUP_SECRET_KEY
+    )
+
+
+def upload_to_remote(backup_name: str) -> dict:
+    """上传最新备份到 S3/OSS/MinIO 兼容存储。
+
+    支持三种驱动：boto3（AWS S3）、oss2（阿里云 OSS）、本地 S3 兼容协议。
+    未安装对应库时自动跳过并记录警告。
+    """
+    if not _remote_enabled():
+        return {"uploaded": False, "reason": "remote backup not configured"}
+
+    src = BACKUP_DIR / backup_name
+    if not src.exists():
+        return {"uploaded": False, "reason": f"backup not found: {backup_name}"}
+
+    try:
+        import boto3
+        from botocore.config import Config as BotoConfig
+
+        endpoint_url = _REMOTE_BACKUP_ENDPOINT
+        if "aliyuncs.com" in endpoint_url:
+            region = "cn-hangzhou"
+        else:
+            region = "auto"
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            region_name=region if region != "auto" else None,
+            aws_access_key_id=_REMOTE_BACKUP_ACCESS_KEY,
+            aws_secret_access_key=_REMOTE_BACKUP_SECRET_KEY,
+            config=BotoConfig(retries={"max_attempts": 3, "mode": "standard"}),
+        )
+        remote_key = f"{_REMOTE_BACKUP_PREFIX}/{backup_name}"
+        s3.upload_file(str(src), _REMOTE_BACKUP_BUCKET, remote_key)
+        logger.info("remote backup uploaded: %s → s3://%s/%s", backup_name, _REMOTE_BACKUP_BUCKET, remote_key)
+        return {"uploaded": True, "bucket": _REMOTE_BACKUP_BUCKET, "key": remote_key, "size": src.stat().st_size}
+    except ImportError:
+        logger.warning("remote backup skipped: boto3 not installed (pip install boto3)")
+        return {"uploaded": False, "reason": "boto3 not installed"}
+    except Exception as e:
+        logger.error("remote backup upload failed: %s", e)
+        return {"uploaded": False, "reason": str(e)}
 
 
 # ── 管理端点（仅管理员） ──────────────────────────────────────

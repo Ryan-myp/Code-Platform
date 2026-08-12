@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
 from common.config import load_config
+from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -471,11 +472,11 @@ async def _dashscope_create_task(api_payload: dict, report: Callable) -> str:
         timeout=60,
     )
     if resp.status_code != 200:
-        raise HTTPException(500, f"创建百炼视频任务失败: {resp.text}")
+        raise HTTPException(500, "创建百炼视频任务失败，请稍后重试")
     data = resp.json()
     task_id = data.get("output", {}).get("task_id") or data.get("task_id")
     if not task_id:
-        raise HTTPException(500, f"未获取到百炼任务ID: {data}")
+        raise HTTPException(500, "未获取到百炼任务ID，请检查 API 配置")
     return task_id
 
 
@@ -493,18 +494,18 @@ async def _create_video_task(api_payload: dict, report: Callable, channel: str =
             timeout=60,
         )
         if response.status_code != 200:
-            logger.error(f"创建视频任务失败: {response.text}")
-            raise HTTPException(500, f"创建视频任务失败: {response.text}")
+            logger.error(f"创建视频任务失败: {api_error_detail(Exception(response.text[:200]))}")
+            raise HTTPException(500, "创建视频任务失败，请稍后重试")
         data = response.json()
         video_id = data.get("video_id") or data.get("task_id")
         if not video_id:
-            raise HTTPException(500, f"未获取到视频ID: {data}")
+            raise HTTPException(500, "未获取到视频ID，请稍后重试")
         return video_id
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"创建视频任务异常: {e}")
-        raise HTTPException(500, f"创建视频任务失败: {str(e)}") from e
+        raise HTTPException(500, f"创建视频任务失败: {_safe_exc_msg(e)}") from e
 
 
 async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
@@ -520,22 +521,22 @@ async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
                 timeout=30,
             )
             if resp.status_code != 200:
-                raise HTTPException(500, f"获取百炼任务失败: {resp.text}")
+                raise HTTPException(500, "获取百炼任务失败，请稍后重试")
             d = resp.json()
             out = d.get("output") or {}
             status = (out.get("task_status") or "").upper()
             if status == "SUCCEEDED":
                 if not out.get("video_url"):
-                    raise HTTPException(500, f"百炼任务完成但无视频地址: {d}")
+                    raise HTTPException(500, "百炼任务完成但未返回视频地址，请稍后重试")
                 return {"status": "completed", "output": out, "prompt": "", "duration": 0, "width": 0, "height": 0}
             if status == "FAILED":
-                raise HTTPException(500, f"百炼视频生成失败: {out.get('message') or d}")
+                raise HTTPException(500, "百炼视频生成失败，请稍后重试")
             report(min(90, 20 + int(out.get("progress") or 0)), out.get("message") or "百炼渲染中…")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"获取百炼任务异常: {e}")
-            raise HTTPException(500, f"获取百炼任务失败: {str(e)}") from e
+            raise HTTPException(500, f"获取百炼任务失败: {_safe_exc_msg(e)}") from e
     raise HTTPException(504, "百炼视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
@@ -555,20 +556,20 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
                 timeout=30,
             )
             if resp.status_code not in [200, 202]:
-                raise HTTPException(500, f"获取视频结果失败: {resp.text}")
+                raise HTTPException(500, "获取视频结果失败，请稍后重试")
             d = resp.json()
             status = d.get("status", "unknown")
             if status == "completed":
                 return d
             if status == "failed":
-                raise HTTPException(500, f"视频生成失败: {d.get('error', 'unknown')}")
+                raise HTTPException(500, "视频生成失败，请稍后重试")
             ext_progress = float(d.get("progress") or 0)
             report(min(90, 20 + int(ext_progress * 70 / 100)), d.get("message") or "云端渲染中…")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"获取视频结果异常: {e}")
-            raise HTTPException(500, f"获取视频结果失败: {str(e)}") from e
+            raise HTTPException(500, f"获取视频结果失败: {_safe_exc_msg(e)}") from e
     raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
@@ -647,7 +648,7 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
             logger.warning(f"视频通道 {channel} 失败，尝试备用通道: {e.detail}")
             if idx < len(channels) - 1:
                 _report(10, f"通道 {channel} 不可用（{str(e.detail)[:40]}），尝试备用通道…")
-    raise HTTPException(500, "所有视频通道均失败: " + " | ".join(errors))
+    raise HTTPException(500, "所有视频通道均失败，请稍后重试")
 
 
 # ── v20：AI 画质增强提示词（免费辅助能力；LLM 失败静默回退原 prompt）──
@@ -754,7 +755,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
         )
 
         if response.status_code not in [200, 202]:
-            raise HTTPException(500, f"获取视频结果失败: {response.text}")
+            raise HTTPException(500, "获取视频结果失败，请稍后重试")
 
         data = response.json()
         status = data.get("status", "unknown")
@@ -798,7 +799,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
                 "project_id": project_id,
             }
         elif status == "failed":
-            raise HTTPException(500, f"视频生成失败: {data.get('error', 'unknown')}")
+            raise HTTPException(500, "视频生成失败，请稍后重试")
         else:
             return {
                 "video_id": video_id,
@@ -811,7 +812,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
         raise
     except Exception as e:
         logger.error(f"获取视频结果异常: {e}")
-        raise HTTPException(500, f"获取视频结果失败: {str(e)}") from e
+        raise HTTPException(500, f"获取视频结果失败: {_safe_exc_msg(e)}") from e
 
 
 @router.get("/videos/{filename}")
@@ -1011,7 +1012,7 @@ async def video_publish_pack(
     cmd += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]) + [str(out_path)]
     r = subprocess.run(cmd, capture_output=True, timeout=600)
     if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 1024:
-        raise HTTPException(500, "规格转码失败: " + r.stderr.decode(errors="replace")[-200:])
+        raise HTTPException(500, "规格转码失败，请稍后重试")
 
     # 从规格成片抽帧做封面（与成片同规格）
     cover_name = _extract_cover(out_name)
@@ -1178,9 +1179,9 @@ async def concat_videos(
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     except Exception as e:
-        raise HTTPException(500, f"拼接失败: {e}") from None
+        raise HTTPException(500, f"拼接失败，请稍后重试")
     if r.returncode != 0 or not out.exists():
-        raise HTTPException(500, f"拼接失败: {r.stderr[-500:]}")
+        raise HTTPException(500, "拼接失败，请稍后重试")
     return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "width": w, "height": h}
 
 
@@ -1231,9 +1232,9 @@ async def add_music(
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         except Exception as e:
-            raise HTTPException(500, f"配乐失败: {e}") from None
+            raise HTTPException(500, f"配乐失败，请稍后重试")
         if r.returncode != 0 or not out.exists():
-            raise HTTPException(500, f"配乐失败: {r.stderr[-500:]}")
+            raise HTTPException(500, "配乐失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "bg_volume": vol}
     finally:
         bgm_path.unlink(missing_ok=True)
@@ -1267,9 +1268,9 @@ async def burn_subtitle(
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         except Exception as e:
-            raise HTTPException(500, f"字幕烧录失败: {e}") from None
+            raise HTTPException(500, f"字幕烧录失败，请稍后重试")
         if r.returncode != 0 or not out.exists():
-            raise HTTPException(500, f"字幕烧录失败: {r.stderr[-500:]}")
+            raise HTTPException(500, "字幕烧录失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name}
     finally:
         srt_file.unlink(missing_ok=True)

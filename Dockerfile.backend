@@ -63,4 +63,8 @@ EXPOSE 8888
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8888/api/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888"]
+# 生产环境使用 gunicorn 多 worker；开发环境使用 uvicorn（CMD 可通过 env 覆盖）
+RUN pip install --no-cache-dir "gunicorn>=21.2.0"
+ENV WORKERS=4
+ENV CMD=${CMD:-"gunicorn main:app -w $WORKERS -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8888 --timeout 120"}
+CMD ["bash", "-c", "$CMD"]

@@ -15,7 +15,7 @@ from fastapi.responses import Response, StreamingResponse
 from common.auth import decode_access_token, get_user_profile, require_auth
 from common.config import BIZ_DELIVERY_DIR, DEFAULT_MODELS, load_config
 from common.db import get_db
-from common.llm import call_llm, call_llm_async, log_usage, stream_llm_async
+from common.llm import call_llm, call_llm_async, log_usage, stream_llm_async, _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["研发流程"])
@@ -426,7 +426,7 @@ async def generate_prd(req: dict):
         return {"result": result}
     except Exception as e:
         logger.error(f"PRD generate failed: {e}")
-        raise HTTPException(500, f"PRD 生成失败: {str(e)}") from e
+        raise HTTPException(500, f"PRD 生成失败: {_safe_exc_msg(e)}") from e
 
 
 @router.post("/api/prd/review")

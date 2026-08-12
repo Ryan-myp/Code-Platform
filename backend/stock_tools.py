@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm_async
+from common.llm import call_llm_async, _safe_exc_msg
 
 router = APIRouter()
 
@@ -938,7 +938,7 @@ async def run_stock_analysis(symbol: str, period: str = "3mo", analysis_type: st
     try:
         result = await call_llm_async(_ANALYST_ROLE, prompt)
     except Exception as e:
-        raise HTTPException(500, f"分析失败: {str(e)}") from e
+        raise HTTPException(500, f"分析失败: {_safe_exc_msg(e)}") from e
     if not result or not str(result).strip():
         raise HTTPException(502, "AI 未返回分析内容，请重试")
     result = str(result)

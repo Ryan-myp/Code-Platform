@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json
+from common.llm import call_llm, log_usage, parse_llm_json, _safe_exc_msg
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -423,7 +423,7 @@ async def _video_analyze_worker(payload: dict, progress: Callable | None = None)
         result = parse_llm_json(raw)
     except Exception as e:
         logger.exception("video analyze failed")
-        raise HTTPException(500, f"视频分析失败：{e}") from e
+        raise HTTPException(500, f"视频分析失败：{_safe_exc_msg(e)}") from e
 
     _report(70, "提炼关键场景")
     log_usage("video_analyze", len(description), len(raw), 0)

@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -50,6 +51,7 @@ from common.auth import (  # noqa: E402
     get_invite_info,
     get_my_orders,
     get_quota_info,
+    _auth_by_api_key,
     get_share,
     get_user_profile,
     login_user,
@@ -60,9 +62,10 @@ from common.auth import (  # noqa: E402
 )
 from common.backup import ensure_daily_backup  # noqa: E402
 from common.backup import router as backup_router  # noqa: E402
-from common.config import ALLOWED_ORIGINS, validate_security_config  # noqa: E402
+from common.config import ALLOWED_ORIGINS, is_production, validate_security_config  # noqa: E402
 from common.db import get_db, init_schema  # noqa: E402
-from common.llm import call_llm_async, log_usage  # noqa: E402
+from common.db_async import is_pg_enabled, get_async_db, close_async_db  # noqa: E402
+from common.llm import call_llm_async, log_usage, stream_llm_async  # noqa: E402
 from common.models import (  # noqa: E402
     AgentCreateRequest,
     AgentUpdateRequest,
@@ -83,6 +86,7 @@ from common.models import (  # noqa: E402
     ShareCreateRequest,
     SkillCreateRequest,
     SkillUpdateRequest,
+    PortalSwitchRequest,
     TeamCreateRequest,
     TeamUpdateRequest,
     WorkflowCreateRequest,
@@ -129,6 +133,7 @@ from seed_data import seed_if_empty  # noqa: E402
 from seo_analyzer import router as seo_analyzer_router  # noqa: E402
 from sessions import router as sessions_router  # noqa: E402
 from short_drama import router as drama_router  # noqa: E402
+from stripe_api import router as stripe_router  # noqa: E402
 from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from task_queue import router as task_queue_router  # noqa: E402
@@ -161,6 +166,24 @@ def _rl(rate: str) -> str:
     return "10000 per minute" if _is_test else rate
 
 
+def _safe_error(msg: str) -> str:
+    """清洗命令执行错误信息，防止泄露内部路径/密码/IP 等敏感内容。"""
+    import re as _re
+    safe = _re.sub(r"/[^\s,;]{8,}", "<path>", msg)[:200]
+    safe = _re.sub(r"(?:password|secret|token|key)\s*[:=]\s*\S+", "<cred>", safe, flags=_re.IGNORECASE)
+    safe = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", safe)
+    return safe or "命令执行失败，请检查配置后重试"
+
+
+def _safe_exc_msg(e: Exception) -> str:
+    """从异常中提取安全错误消息，过滤路径和敏感信息。"""
+    import re as _re
+    msg = str(e)[:200]
+    msg = _re.sub(r"/[^\s,;]{6,}", "<path>", msg)
+    msg = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", msg)
+    return msg or "操作失败，请稍后重试"
+
+
 # ── 数据库初始化（保留 init_db 名字供 conftest 调用） ─────────
 def init_db():
     """委托给 common.db.init_schema（24 表 + 迁移 + admin 用户）。"""
@@ -173,6 +196,14 @@ async def lifespan(app: FastAPI):
     """启动时初始化数据库 + 安全校验 + 排期后台调度器。关闭时无特殊处理。"""
     validate_security_config()
     init_db()
+    # PostgreSQL 异步连接预热（仅在生产模式）
+    if is_pg_enabled():
+        try:
+            async with get_async_db() as conn:
+                await conn.fetchval("SELECT 1")
+            logger.info("PostgreSQL 连接预热成功")
+        except Exception as e:
+            logger.warning(f"PostgreSQL 预热失败（回退 SQLite）: {e}")
     seed_if_empty()
     skills_store.migrate_legacy()
     # v12.0 数据可靠性：每日自动备份（按日期去重）
@@ -188,6 +219,8 @@ async def lifespan(app: FastAPI):
 
     recover_interrupted_batches()
     start_storage_cleaner()
+    # 上传文件自动清理
+    start_uploads_cleaner()
     # 通用异步任务框架（master-worker）：恢复中断任务 + 启动调度/工作线程
     # 注入主事件循环：worker 线程通过 realtime 向 WebSocket 任务频道广播进度
     import asyncio as _asyncio
@@ -203,13 +236,25 @@ async def lifespan(app: FastAPI):
     _threading.Thread(target=_tts_prewarm, args=(True,), daemon=True, name="tts-prewarm").start()
     logger.info("Smart R&D Platform v8.0 started")
     yield
+    # 清理 PostgreSQL 连接
+    import asyncio as _asyncio
+    try:
+        _asyncio.run_coroutine_threadsafe(close_async_db(), _asyncio.get_running_loop())
+    except Exception:
+        pass
     stop_workers()
     stop_scheduler()
     logger.info("Smart R&D Platform v8.0 shutting down")
 
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
-app = FastAPI(title="小团智能平台 v12.0", version="12.0.0", lifespan=lifespan)
+_docs_disabled = is_production()
+app = FastAPI(
+    title="小团智能平台 v12.0", version="12.0.0", lifespan=lifespan,
+    docs_url=None if _docs_disabled else "/docs",
+    redoc_url=None if _docs_disabled else "/redoc",
+    openapi_url=None if _docs_disabled else "/openapi.json",
+)
 
 # 支付凭证上传目录（静态可访问，管理后台预览）
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -221,6 +266,50 @@ PORTRAIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "image_f
 os.makedirs(PORTRAIT_DIR, exist_ok=True)
 app.mount("/api/image-factory/avatars", StaticFiles(directory=PORTRAIT_DIR), name="avatar_portraits")
 
+# ── 上传文件自动清理（保留 N 天，默认 30，<=0 不清理）─────────────────
+UPLOAD_RETENTION_DAYS = max(0, int(os.environ.get("UPLOAD_RETENTION_DAYS", "30")))
+
+
+def _cleanup_expired_uploads() -> int:
+    """删除超过保留期的上传文件，返回删除数量。"""
+    if UPLOAD_RETENTION_DAYS <= 0:
+        return 0
+    import threading
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.now() - timedelta(days=UPLOAD_RETENTION_DAYS)).timestamp()
+    deleted = 0
+    for root, _, files in os.walk(UPLOAD_DIR):
+        for fn in files:
+            fp = os.path.join(root, fn)
+            try:
+                if os.path.getmtime(fp) < cutoff:
+                    os.remove(fp)
+                    deleted += 1
+            except OSError:
+                pass
+    if deleted:
+        logger.info("上传文件清理：删除 %d 个超过 %d 天的文件", deleted, UPLOAD_RETENTION_DAYS)
+    return deleted
+
+
+def start_uploads_cleaner() -> None:
+    """启动上传文件清理守护线程：启动时执行一次，之后每 24h 执行。"""
+    if UPLOAD_RETENTION_DAYS <= 0:
+        logger.info("上传文件清理已禁用（UPLOAD_RETENTION_DAYS=%s）", UPLOAD_RETENTION_DAYS)
+        return
+
+    def _loop():
+        while True:
+            try:
+                _cleanup_expired_uploads()
+            except Exception:
+                logger.exception("上传文件清理失败")
+            time.sleep(24 * 3600)
+
+    threading.Thread(target=_loop, daemon=True, name="uploads-cleaner").start()
+    logger.info("上传文件清理守护线程已启动（保留 %s 天）", UPLOAD_RETENTION_DAYS)
+
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
 app.state.limiter = limiter
@@ -228,13 +317,41 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # ── 全局异常兜底：任何未捕获错误返回友好 JSON，不泄露堆栈 ──────
+# 错误分类映射：根据异常类型返回不同的用户可见提示
+_ERROR_HINTS = {
+    "sqlite3.OperationalError": "数据库暂时繁忙，请稍后重试",
+    "sqlite3.OperationalError: database is locked": "数据库写入冲突，请等待几秒后重试",
+    "sqlite3.OperationalError: no such table": "数据库表不存在，请联系管理员重新初始化",
+    "httpx.ConnectError": "无法连接到 LLM 服务，请检查 AGNES_API_KEY 配置",
+    "httpx.ConnectTimeout": "LLM 服务响应超时，请稍后重试",
+    "httpx.ReadTimeout": "LLM 服务读取超时，请稍后重试",
+    "ConnectionRefusedError": "网络连接被拒绝，请检查服务状态",
+    "json.JSONDecodeError": "收到无效的数据响应，请重试",
+    "asyncpg.PostgresError": "数据库错误，请联系管理员",
+    "asyncpg.InvalidAuthorizationSpecification": "PostgreSQL 认证失败，请检查 ASYNC_PG_URL",
+    "asyncpg.ConnectionDoesNotExistError": "PostgreSQL 连接断开，请重启服务",
+}
+
+
+def _error_hint(exc: Exception) -> str:
+    """根据异常类型返回友好的用户提示。"""
+    exc_type = type(exc).__name__
+    exc_msg = str(exc)
+    # 精确匹配
+    for pattern, hint in _ERROR_HINTS.items():
+        if pattern in exc_type or pattern in exc_msg:
+            return hint
+    # 通用兜底
+    return "服务器内部错误，请稍后重试或联系管理员"
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={
-            "detail": "服务器内部错误，请稍后重试或联系管理员",
+            "detail": _error_hint(exc),
             "request_id": getattr(request.state, "request_id", ""),
         },
     )
@@ -259,15 +376,31 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
     loc = first.get("loc", [])
     msg = first.get("msg", "")
     field = str(loc[-1]) if loc else ""
-    if field in ("body", "query"):
-        hint = "请求参数不合法"
+    # 字段名映射为中文
+    _FIELD_LABELS = {
+        "username": "用户名",
+        "password": "密码",
+        "message": "消息内容",
+        "template_id": "模板 ID",
+        "agent_id": "智能体 ID",
+        "workflow_id": "工作流 ID",
+        "plan": "套餐类型",
+        "model": "模型",
+        "size": "尺寸",
+        "prompt": "提示词",
+    }
+    label = _FIELD_LABELS.get(field, field)
+    if field in ("body", "query", "path", "header"):
+        hint = "请求参数格式错误，请检查输入"
+    elif msg and "ensure this input" in msg.lower():
+        # Pydantic 标准错误消息，提取关键信息
+        hint = f"{label}：{msg.split('ensure this input')[1].strip() if 'ensure this input' in msg else msg}"
     else:
-        hint = f"参数「{field}」不合法"
-    if "required" in str(msg):
-        hint = f"缺少必填参数「{field}」"
-    logger.warning("Validation error %s %s: %s", request.method, request.url.path, exc)
-    safe_errors = [_safe_serializable(e) for e in errors[:5]]
-    return JSONResponse(status_code=422, content={"detail": hint, "errors": safe_errors})
+        hint = f"{label} 输入不合法：{msg}"
+    return JSONResponse(
+        status_code=422,
+        content={"detail": hint, "field": field, "raw_msg": msg},
+    )
 
 
 app.add_middleware(
@@ -279,6 +412,47 @@ app.add_middleware(
 )
 # v12.0 可观测性：request-id 注入 + 结构化访问日志 + 运行指标（最外层，覆盖全部请求）
 app.add_middleware(RequestContextMiddleware)
+
+
+# ── 安全响应头中间件（CSP / HSTS / X-Frame-Options）──────────
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """为所有响应添加基础安全头，生产环境额外开启 HSTS。"""
+    from starlette.responses import Response as StarletteResponse
+    response = await call_next(request)
+    # 基本安全头（始终设置）
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cache-Control"] = "no-store"
+    if not _docs_disabled:
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+    # 生产环境启用 HSTS（31536000s = 1年）
+    if _docs_disabled:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# ── 上传文件鉴权中间件（防止未登录用户直链下载敏感文件）────────
+_UPLOAD_PATHS = ("/uploads", "/api/image-factory/avatars")
+
+
+@app.middleware("http")
+async def uploads_auth_middleware(request: Request, call_next):
+    """拦截 /uploads 和 /api/image-factory/avatars 请求，要求 Bearer JWT 或 API Key。"""
+    if not any(request.url.path.startswith(p) for p in _UPLOAD_PATHS):
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    if not auth or not auth.startswith("Bearer "):
+        return JSONResponse({"error": "unauthorized", "code": "UPLOAD_AUTH_REQUIRED"}, status_code=401)
+    token = auth[7:]
+    try:
+        if token.startswith("xt-"):
+            _auth_by_api_key(token)
+        else:
+            decode_access_token(token)
+        return await call_next(request)
+    except Exception:
+        return JSONResponse({"error": "unauthorized", "code": "UPLOAD_AUTH_INVALID"}, status_code=401)
 
 
 # ── 额度扣减中间件（商业版） ─────────────────────────────────
@@ -397,16 +571,25 @@ async def health_check():
     try:
         disk = shutil.disk_usage(os.path.dirname(os.path.abspath(__file__)))
         disk_free_gb = round(disk.free / 1e9, 1)
+        # 磁盘告警：低于 5GB 警告，低于 2GB 严重
+        if disk_free_gb is not None and disk_free_gb < 2:
+            disk_status = "critical"
+        elif disk_free_gb is not None and disk_free_gb < 5:
+            disk_status = "warning"
+        else:
+            disk_status = "ok"
     except Exception:
         disk_free_gb = None
+        disk_status = "unknown"
     return {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if db_ok and disk_status != "critical" else "degraded",
         "timestamp": datetime.now().isoformat(),
         "version": app.version,
         "uptime_seconds": uptime_seconds(),
         "db": "ok" if db_ok else "error",
         "llm": "ok" if llm_ok else "not_configured",
         "disk_free_gb": disk_free_gb,
+        "disk_status": disk_status,
     }
 
 
@@ -553,15 +736,24 @@ _ASSISTANT_SYSTEM = """你是「小团智能平台」的 AI 客服助手「小�
 - 不确定的信息不要编造，如实说明并建议查阅帮助中心或联系管理员。"""
 
 
+# ── 全局助手 SSE 头（与 chat_engine 保持一致）────────────────
+_ASSISTANT_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """序列化 SSE 事件。"""
+    import json as _json
+    return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 @app.post("/api/assistant/chat")
 @limiter.limit(_rl("10 per minute"))
 async def assistant_chat(request: Request, req: AssistantChatRequest, current_user: dict = require_auth()):
-    """全局浮动机器人对话：基于平台知识回答用户问题。"""
+    """全局浮动机器人对话（非流式，兼容旧客户端）。"""
     message = req.message.strip()
     if not message:
         raise HTTPException(400, "消息不能为空")
 
-    # 拼接最近对话历史（最多 10 条），保持上下文连贯
     parts = []
     for m in (req.history or [])[-10:]:
         role = "用户" if m.get("role") == "user" else "助手"
@@ -580,10 +772,56 @@ async def assistant_chat(request: Request, req: AssistantChatRequest, current_us
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"助手服务异常: {str(e)}") from e
+        raise HTTPException(500, f"助手服务异常: {_safe_exc_msg(e)}") from e
     elapsed = round(time.time() - start, 2)
     log_usage("assistant_chat", len(user_prompt), len(result), elapsed, user_id=str(current_user.get("user_id", "")))
     return {"result": result, "elapsed": elapsed}
+
+
+@app.post("/api/assistant/chat/stream")
+@limiter.limit(_rl("10 per minute"))
+async def assistant_chat_stream(request: Request, req: AssistantChatRequest, current_user: dict = require_auth()):
+    """全局浮动机器人对话（SSE 流式）— 打字机增量输出。"""
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(400, "消息不能为空")
+
+    import json as _json
+
+    parts = []
+    for m in (req.history or [])[-10:]:
+        role = "用户" if m.get("role") == "user" else "助手"
+        content = (m.get("content") or "").strip()
+        if content:
+            parts.append(f"{role}: {content[:500]}")
+    user_prompt = "\n\n".join(parts)
+    if user_prompt:
+        user_prompt += f"\n\n用户最新问题: {message}"
+    else:
+        user_prompt = message
+
+    start = time.time()
+
+    async def gen():
+        try:
+            full = ""
+            async for delta, full in stream_llm_async(
+                system_prompt=_ASSISTANT_SYSTEM,
+                user_prompt=user_prompt,
+                max_tokens=1500,
+                temperature=0.5,
+            ):
+                yield _sse_event("delta", {"text": delta})
+            elapsed = round(time.time() - start, 2)
+            log_usage("assistant_chat_stream", len(user_prompt), len(full), elapsed, user_id=str(current_user.get("user_id", "")))
+            yield _sse_event("done", {"full": full, "elapsed": elapsed})
+        except HTTPException as e:
+            yield _sse_event("error", {"detail": e.detail})
+        except Exception as e:
+            logger.exception("assistant stream failed")
+            yield _sse_event("error", {"detail": f"助手服务异常: {str(e)[:200]}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=_ASSISTANT_SSE_HEADERS)
 
 
 @app.get("/api/auth/me")
@@ -1738,7 +1976,7 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
             ),
         )
     except (ValueError, OSError) as e:
-        raise HTTPException(500, f"初始化 Skill 目录失败：{e}") from e
+        raise HTTPException(500, f"初始化 Skill 目录失败：{_safe_exc_msg(e)}") from e
     return {"id": skill_id, "name": req.name}
 
 
@@ -1801,7 +2039,7 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
             skill_id, dict(row), {u for u in updates if u in ("name", "description", "content", "references")}
         )
     except (ValueError, OSError) as e:
-        raise HTTPException(500, f"同步 Skill 文件失败：{e}") from e
+        raise HTTPException(500, f"同步 Skill 文件失败：{_safe_exc_msg(e)}") from e
     return {"success": True, "id": skill_id}
 
 
@@ -2819,7 +3057,7 @@ def sandbox_redis_command(project_id: str, req: SandboxRedisCommandRequest, curr
     # 命令按空白拆分为 argv，避免注入（redis-cli 接收参数数组，无 shell 解释）
     result = process_manager.exec_command(project_id, ["redis-cli", *cmd.split()], timeout=30)
     if result["status"] != "success":
-        raise HTTPException(500, result["message"])
+        raise HTTPException(500, _safe_error(result["message"]))
     return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
 
 
@@ -2922,7 +3160,7 @@ def sandbox_mongo_command(project_id: str, req: SandboxRedisCommandRequest, curr
     argv = ["mongosh", "--quiet", "-u", user, "-p", pwd, "--authenticationDatabase", "admin", "--eval", cmd]
     result = process_manager.exec_command(project_id, argv, timeout=30)
     if result["status"] != "success":
-        raise HTTPException(500, result["message"])
+        raise HTTPException(500, _safe_error(result["message"]))
     return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
 
 
@@ -2951,7 +3189,7 @@ def sandbox_rabbitmq_command(project_id: str, req: SandboxRedisCommandRequest, c
         raise HTTPException(400, "参数格式不合法")
     result = process_manager.exec_command(project_id, ["rabbitmqctl", *parts], timeout=30)
     if result["status"] != "success":
-        raise HTTPException(500, result["message"])
+        raise HTTPException(500, _safe_error(result["message"]))
     return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
 
 
@@ -2972,7 +3210,7 @@ def sandbox_nginx_command(project_id: str, req: SandboxRedisCommandRequest, curr
         raise HTTPException(400, "仅支持 nginx -v / nginx -V / nginx -t / nginx -T 只读命令")
     result = process_manager.exec_command(project_id, ["nginx", args[1]], timeout=30)
     if result["status"] != "success":
-        raise HTTPException(500, result["message"])
+        raise HTTPException(500, _safe_error(result["message"]))
     return {"ok": True, "command": cmd, "output": result["output"].rstrip("\n")}
 
 
@@ -3211,6 +3449,7 @@ app.include_router(template_store_router)
 app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)
+app.include_router(stripe_router)
 app.include_router(collab_engine_router)
 app.include_router(content_strategy_router)
 app.include_router(digital_human_router)
@@ -3271,6 +3510,35 @@ app.include_router(stock_tools_router)
 
 # v9.1: 管理后台 API
 app.include_router(admin_api_router)
+
+
+# ══════════════════════════════════════════════════════════════
+# 门户系统 API（v16.0）
+# ══════════════════════════════════════════════════════════════
+@app.get("/api/portal/current")
+async def get_current_portal(current_user: dict = require_auth()):
+    """获取当前用户绑定的门户配置（导航树 + 高亮工具），用于前端渲染侧边栏。"""
+    from portals import get_user_portal_type, load_user_ctx, get_portal_nav_for_user
+
+    user_ctx = load_user_ctx(current_user)
+    return get_portal_nav_for_user(user_ctx)
+
+
+@app.get("/api/portal/list")
+async def list_portals():
+    """列出所有可用门户（公开接口，前端切换器展示）。"""
+    from portals import PORTAL_DEFS
+
+    return {"portals": list(PORTAL_DEFS.values())}
+
+
+@app.post("/api/portal/switch")
+async def switch_portal(req: PortalSwitchRequest, current_user: dict = require_auth()):
+    """切换当前用户的门户类型（用户自主切换）。"""
+    from portals import set_user_portal_type
+
+    set_user_portal_type(current_user["user_id"], req.portal_type)
+    return {"portal_type": req.portal_type, "message": "门户已切换"}
 
 
 if __name__ == "__main__":
