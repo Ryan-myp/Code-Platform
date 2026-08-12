@@ -453,13 +453,30 @@ async def security_headers_middleware(request: Request, call_next):
 
 
 # ── 上传文件鉴权中间件（防止未登录用户直链下载敏感文件）────────
-_UPLOAD_PATHS = ("/uploads", "/api/image-factory/avatars")
+# 仅对敏感子目录（凭据/二维码/文档/数据等）要求鉴权；
+# 图片/音视频等资源目录（<img>/<video>/<audio> 标签无法携带 JWT）直接放行，
+# 否则前端所有 /uploads 静态资源会 401 导致图片全丢。
+_UPLOAD_PROTECTED = (
+    "/uploads/vouchers",
+    "/uploads/qr",
+    "/uploads/docs",
+    "/uploads/kb",
+    "/uploads/data",
+    "/uploads/batch",
+    "/uploads/ppt",
+    "/uploads/translations",
+    "/api/image-factory/avatars",
+)
 
 
 @app.middleware("http")
 async def uploads_auth_middleware(request: Request, call_next):
-    """拦截 /uploads 和 /api/image-factory/avatars 请求，要求 Bearer JWT 或 API Key。"""
-    if not any(request.url.path.startswith(p) for p in _UPLOAD_PATHS):
+    """仅拦截敏感上传路径（凭据/二维码/文档），要求 Bearer JWT 或 API Key。
+
+    资源目录（dh_avatars/dh_voices/audio/videos/tts 等）不鉴权，
+    因为 <img>/<video> 标签无法携带 Authorization 头。
+    """
+    if not any(request.url.path.startswith(p) for p in _UPLOAD_PROTECTED):
         return await call_next(request)
     auth = request.headers.get("authorization", "")
     if not auth or not auth.startswith("Bearer "):
