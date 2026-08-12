@@ -708,4 +708,7 @@ def init_schema() -> None:
     # 预置门户数据（幂等，upsert）
     from portals import seed_portals
     seed_portals()
+    # 预置模板市场种子数据（幂等，仅空表时插入）
+    from seed_templates import seed_templates
+    seed_templates()
     logger.info("Database schema initialized")

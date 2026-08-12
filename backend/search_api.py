@@ -94,7 +94,32 @@ async def quick_search(
                 tool_copy["score"] = _score_result(tool_copy, keywords)
                 results.append(tool_copy)
         
-        # 2. 搜索用户模板 (user_templates)
+        # 2. 搜索模板（内置 templates 表 + 用户自定义 user_templates）
+        try:
+            rows = conn.execute(
+                """SELECT id, name, description, category, tool_id, usage_count
+                   FROM templates
+                   WHERE (name LIKE ? OR description LIKE ?)
+                   ORDER BY usage_count DESC
+                   LIMIT 10""",
+                (f"%{q}%", f"%{q}%")
+            ).fetchall()
+            for r in rows:
+                doc = {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "description": r["description"] or "",
+                    "category": r["category"],
+                    "tool_id": r["tool_id"],
+                    "usage_count": r["usage_count"],
+                    "type": "template",
+                    "source": "builtin",
+                }
+                doc["score"] = _score_result(doc, keywords)
+                results.append(doc)
+        except Exception as e:
+            logger.debug(f"Builtin template search error: {e}")
+
         try:
             rows = conn.execute(
                 """SELECT id, name, description, created_at
@@ -417,7 +442,24 @@ def global_search(params: dict, current_user: dict) -> dict:
                 if query.lower() in text.lower():
                     results.append({**tool, "score": 10})
         
-        if "templates" in types and "user_templates" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+        if "templates" in types:
+            # 内置模板（seed_templates 填充的 templates 表）
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, description, category, tool_id, usage_count FROM templates WHERE name LIKE ? OR description LIKE ? LIMIT ?",
+                    (kw, kw, limit),
+                ).fetchall()
+                for r in rows:
+                    results.append({
+                        "id": r["id"], "name": r["name"],
+                        "type": "template", "source": "builtin",
+                        "category": r["category"], "tool_id": r["tool_id"],
+                        "usage_count": r["usage_count"],
+                        "description": r["description"] or "", "score": 9,
+                    })
+            except Exception:
+                pass
+            # 用户自定义模板（user_templates 表）
             try:
                 rows = conn.execute(
                     "SELECT id, name, description, created_at FROM user_templates WHERE name LIKE ? LIMIT ?",

@@ -241,6 +241,8 @@ async def lifespan(app: FastAPI):
     start_storage_cleaner()
     # 上传文件自动清理
     start_uploads_cleaner()
+    # 试用到期邮件提醒（商业化：引导续费）
+    start_trial_reminder()
     # 通用异步任务框架（master-worker）：恢复中断任务 + 启动调度/工作线程
     # 注入主事件循环：worker 线程通过 realtime 向 WebSocket 任务频道广播进度
     import asyncio as _asyncio
@@ -329,6 +331,78 @@ def start_uploads_cleaner() -> None:
 
     threading.Thread(target=_loop, daemon=True, name="uploads-cleaner").start()
     logger.info("上传文件清理守护线程已启动（保留 %s 天）", UPLOAD_RETENTION_DAYS)
+
+
+# ── 试用到期邮件提醒（商业化：引导续费）──────────────────────
+TRIAL_REMIND_DAYS = (3, 1)  # 剩余 3 天 / 1 天各提醒一次
+
+
+def _send_trial_reminders() -> int:
+    """扫描 pro 试用即将到期的用户，发送邮件提醒，返回发送数量。
+
+    仅提醒还在 pro 试用期（trial_expires 非空且 membership=pro）的用户；
+    已续费（membership_expires 晚于 trial_expires）自动跳过。
+    """
+    from common.mailer import is_smtp_configured, send_trial_expiry_email
+    if not is_smtp_configured():
+        return 0
+    from datetime import datetime, timedelta
+
+    conn = get_db()
+    sent = 0
+    try:
+        rows = conn.execute(
+            "SELECT id, username, email, membership, trial_expires, membership_expires FROM users "
+            "WHERE email IS NOT NULL AND email != '' AND trial_expires IS NOT NULL AND trial_expires != ''"
+        ).fetchall()
+        now = datetime.now()
+        for r in rows:
+            try:
+                trial_end = datetime.fromisoformat(r["trial_expires"])
+            except (ValueError, TypeError):
+                continue
+            # 试用已结束或已过期则跳过
+            if trial_end <= now:
+                continue
+            # 已续费（会员到期晚于试用到期）则跳过
+            if r["membership_expires"]:
+                try:
+                    if datetime.fromisoformat(r["membership_expires"]) >= trial_end:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            days_left = (trial_end - now).days + (1 if (trial_end - now).seconds > 0 else 0)
+            if days_left in TRIAL_REMIND_DAYS:
+                res = send_trial_expiry_email(r["email"], r["username"], days_left)
+                if res.get("ok"):
+                    sent += 1
+                    logger.info("试用到期提醒已发送: %s (%s 剩 %s 天)", r["username"], r["email"], days_left)
+    except Exception as e:
+        logger.exception("试用到期提醒扫描失败: %s", e)
+    finally:
+        conn.close()
+    return sent
+
+
+def start_trial_reminder() -> None:
+    """启动试用到期提醒守护线程：每 6h 检查，仅每天首次命中时发送（防重复）。"""
+    import threading
+
+    def _loop():
+        last_sent_date = ""
+        while True:
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+                if today != last_sent_date:
+                    n = _send_trial_reminders()
+                    if n:
+                        last_sent_date = today
+            except Exception:
+                logger.exception("试用提醒线程异常")
+            time.sleep(6 * 3600)
+
+    threading.Thread(target=_loop, daemon=True, name="trial-reminder").start()
+    logger.info("试用到期提醒守护线程已启动（剩余 %s 天提醒）", TRIAL_REMIND_DAYS)
 
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
