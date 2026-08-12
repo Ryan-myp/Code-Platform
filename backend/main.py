@@ -465,7 +465,6 @@ _UPLOAD_PROTECTED = (
     "/uploads/batch",
     "/uploads/ppt",
     "/uploads/translations",
-    "/api/image-factory/avatars",
 )
 
 
