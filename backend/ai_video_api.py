@@ -418,6 +418,102 @@ def _validate_upload_refs(req: VideoGenerateRequest) -> None:
 # ── 异步任务处理器 ─────────────────────────────────────────────
 
 
+def _try_tts_dub(filename: str, local_path: str, payload: dict, update: callable) -> tuple | None:
+    """混合方案：为 AGNES 照片活化视频叠加 TTS 配音（音频驱动口型的近似方案）。
+
+    流程：
+    1. 文案 → 平台 TTS（edge-tts 多通道降级）生成 mp3
+    2. ffmpeg 把配音叠加到视频：视频循环到配音时长（配音较长时循环画面），
+       混合音轨 → 输出带语音的完整数字人视频
+    3. 失败静默回退原视频（不阻塞主链路）
+
+    返回 (local_path, filename, duration) 或 None（合成失败走原视频）。
+    """
+    try:
+        text = (payload.get("prompt") or "").strip()
+        # 口型同步模式：优先用外部 audio_url（若提供且可访问）
+        audio_url = payload.get("audio_url") or ""
+        if not text and not audio_url:
+            return None
+        update(88, "正在合成配音…")
+
+        # 1. 生成/获取配音音频
+        audio_path = None
+        if audio_url:
+            local_audio = _resolve_local_upload(audio_url)
+            if audio_url.startswith("/uploads/") and os.path.exists(local_audio):
+                audio_path = local_audio
+        if audio_path is None and text:
+            # 调平台 TTS（复用 voice_factory 多通道：agnes TTS → edge-tts 本地合成）
+            from voice_factory import _tts_one
+
+            voice = "zh-CN-XiaoxiaoNeural"
+            audio_bytes = _tts_one(text[:500], voice, 1.0, 0)
+            if not audio_bytes or len(audio_bytes) < 512:
+                raise RuntimeError("TTS 配音为空")
+            audio_path = os.path.join(_UPLOAD_VIDEO_DIR, f".dub_{filename}.mp3")
+            with open(audio_path, "wb") as f:
+                f.write(audio_bytes)
+
+        if not audio_path or not os.path.exists(audio_path):
+            return None
+
+        # 2. ffmpeg 合成：视频循环到配音时长 + 音轨
+        import subprocess as _sp
+
+        from common.media_check import is_valid_audio, is_valid_video
+
+        if not is_valid_audio(audio_path):
+            return None
+        out_path = os.path.join(_UPLOAD_VIDEO_DIR, f"ai_dub_{filename}")
+        cmd = [
+            "ffmpeg", "-y",
+            "-stream_loop", "-1", "-i", local_path,  # 视频循环
+            "-i", audio_path,  # 配音
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-shortest", out_path,
+        ]
+        r = _sp.run(cmd, capture_output=True, timeout=300)
+        if r.returncode != 0 or not os.path.exists(out_path) or not is_valid_video(out_path):
+            raise RuntimeError("ffmpeg 合成失败")
+
+        # 清理临时文件，用合成视频替换
+        import subprocess as _sp2
+
+        _sp2.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
+                 capture_output=True, timeout=15)
+        import os as _os
+
+        try:
+            _os.remove(local_path)
+        except OSError:
+            pass
+        try:
+            _os.remove(audio_path)
+        except OSError:
+            pass
+        _os.replace(out_path, local_path)
+        dur = float(_probe_duration_s(local_path) or 0) or float(payload.get("duration", 5))
+        update(92, "配音合成完成")
+        return local_path, filename, dur
+    except Exception as e:  # noqa: BLE001 — 配音失败不影响主链路
+        logger.warning("TTS 配音合成失败，回退原视频: %s", e)
+        return None
+
+
+def _probe_duration_s(path: str) -> float:
+    """ffprobe 读取视频时长（秒）。"""
+    import subprocess as _sp
+
+    try:
+        r = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                    capture_output=True, text=True, timeout=15)
+        return float(r.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
 def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) -> dict:  # noqa: C901
     """AI 视频任务：提交云端 → 轮询 → 下载到 uploads/videos/ → 返回结果。失败退费。"""
     billing_id = payload.pop("billing_id", "")
@@ -441,6 +537,10 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
                 update(85, "生成完成，正在下载视频…")
                 filename = f"ai_{task_id.replace('task_', '')}.mp4"
                 local = _download(url, os.path.join(_UPLOAD_VIDEO_DIR, filename))
+                # v17.7 混合方案：AGNES 照片活化视频 + 平台 TTS 配音 → ffmpeg 合成完整数字人
+                mixed = _try_tts_dub(filename, local, payload, update)
+                if mixed:
+                    local, filename, duration = mixed
                 return {
                     "status": "done",
                     "mode": mode,
@@ -449,6 +549,7 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
                     "duration": float(duration),
                     "resolution": resolution,
                     "provider": "agnes",
+                    "dubbed": bool(mixed),
                 }
             except Exception as e:  # noqa: BLE001 — AGNES 失败回退百炼
                 agnes_err = e
