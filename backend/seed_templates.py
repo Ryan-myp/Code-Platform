@@ -101,4 +101,4 @@ def seed_templates() -> int:
 
 if __name__ == "__main__":
     seed_templates()
-    print("模板种子数据填充完成")
+logger.info("模板种子数据填充完成")

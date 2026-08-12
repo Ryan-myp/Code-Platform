@@ -226,6 +226,15 @@ def _execute_job(job) -> tuple:
             # Webhook 推送（飞书/企业微信等；未配置则静默跳过）
             pushed = asyncio.run(send_webhook_message(uid, f"每日股票分析：{symbol}", report[:2000]))
             return True, f"报告已生成{'(并推送 Webhook)' if pushed else ''}（{len(report)} 字）"
+        if job_type == "enterprise_optimizer":
+            # v18：企业级智能优化（每小时20分运行，全面提升系统到商用级别）
+            try:
+                from enterprise_optimizer import run_enterprise_optimizer
+                report_path = run_enterprise_optimizer()
+                return True, f"优化完成，报告：{report_path}"
+            except Exception as e:
+                logger.exception("[Scheduler] 企业级优化失败: %s", e)
+                return False, str(e)
         # 默认 report：生成调度运行统计摘要
         conn = get_db()
         try:
@@ -488,3 +497,36 @@ def trigger_job(job_id: int, current_user: dict = Depends(require_auth)):
         "output": run.get("output", ""),
         "error": run.get("error", ""),
     }
+
+# ══════════════════════════════════════════════════════════════
+# 企业级优化器任务注册（v18.0）
+# ══════════════════════════════════════════════════════════════
+def _ensure_optimizer_job():
+    """确保企业级优化器任务已注册（每小时20分运行）。"""
+    conn = get_db()
+    try:
+        # 检查是否已存在
+        row = conn.execute(
+            "SELECT id FROM scheduler_jobs WHERE name='企业级智能优化'"
+        ).fetchone()
+        if row:
+            # 更新 cron 表达式为每小时20分
+            conn.execute(
+                "UPDATE scheduler_jobs SET cron_expression='20 * * * *', enabled=1 WHERE name='企业级智能优化'"
+            )
+            conn.commit()
+            logger.info("✅ 企业级优化器任务已更新: 每小时20分")
+        else:
+            # 插入新任务
+            conn.execute(
+                "INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, enabled) VALUES (?, ?, ?, ?, ?, ?)",
+                ("admin", "企业级智能优化", "每小时自动运行，全面提升系统到商用级别", "enterprise_optimizer", "20 * * * *", 1)
+            )
+            conn.commit()
+            logger.info("✅ 企业级优化器任务已注册: 每小时20分")
+    finally:
+        conn.close()
+
+
+# 启动时注册
+_ensure_optimizer_job()

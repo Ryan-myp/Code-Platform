@@ -1,18 +1,16 @@
 """
-企业级优化器集成
-将优化器注册到定时任务系统，并提供API端点查看状态。
+企业级优化器集成（API端点）
+提供REST API查看优化状态和手动触发优化。
+调度由 backend/scheduler.py 统一处理（每小时20分自动运行）。
 """
 
 import asyncio
 import json
 import logging
-import threading
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-
-logger = logging.getLogger("optimizer_integration")
 
 from common.auth import require_auth
 from common.db import get_db
@@ -24,27 +22,7 @@ from enterprise_optimizer import (
 
 router = APIRouter(prefix="/api/optimizer", tags=["企业级优化器"])
 
-# 调度器状态
-_optimizer_thread = None
-_optimizer_lock = threading.Lock()
-
-
-def _start_optimizer_scheduler():
-    """启动优化器后台调度线程（每小时20分运行）。"""
-    global _optimizer_thread
-    
-    with _optimizer_lock:
-        if _optimizer_thread and _optimizer_thread.is_alive():
-            return
-        
-        def _run_loop():
-            from optimizer_scheduler import EnterpriseOptimizerScheduler
-            scheduler = EnterpriseOptimizerScheduler(callback=run_enterprise_optimizer)
-            scheduler.start(background=True)
-        
-        _optimizer_thread = threading.Thread(target=_run_loop, daemon=True)
-        _optimizer_thread.start()
-        logger.info("🕐 企业级优化调度器已启动（每小时20分运行）")
+logger = logging.getLogger("optimizer_integration")
 
 
 @router.get("/status")
@@ -55,7 +33,7 @@ def get_optimizer_status_endpoint(current_user: dict = Depends(require_auth)):
         "last_run": status.get("last_run"),
         "enterprise_readiness": status.get("enterprise_readiness"),
         "ready": status.get("ready", False),
-        "scheduler_active": _optimizer_thread and _optimizer_thread.is_alive(),
+        "scheduler_active": True,  # 由 scheduler.py 统一管理
     }
 
 
@@ -66,21 +44,6 @@ def get_optimizer_report(current_user: dict = Depends(require_auth)):
     if not report:
         return {"message": "暂无优化报告", "report": None}
     return report
-
-
-@router.post("/run-now")
-def run_optimizer_now(current_user: dict = Depends(require_auth)):
-    """立即运行一次优化。"""
-    try:
-        result = run_enterprise_optimizer()
-        return {
-            "message": "优化完成",
-            "report_path": result,
-            "timestamp": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"优化失败: {e}")
-        raise
 
 
 @router.get("/metrics")
@@ -109,37 +72,38 @@ def get_optimizer_metrics(current_user: dict = Depends(require_auth)):
     }
 
 
-def init_optimizer_system():
-    """初始化优化器系统（启动调度器）。"""
-    # 确保表结构存在
+@router.post("/run-now")
+def run_optimizer_now(current_user: dict = Depends(require_auth)):
+    """立即运行一次优化。"""
+    try:
+        result = run_enterprise_optimizer()
+        return {
+            "message": "优化完成",
+            "report_path": result,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"优化失败: {e}")
+        raise
+
+
+@router.get("/schedule")
+def get_optimizer_schedule(current_user: dict = Depends(require_auth)):
+    """获取优化器调度信息。"""
     conn = get_db()
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS optimizer_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                cron_expression TEXT NOT NULL DEFAULT '20 * * * *',
-                enabled INTEGER DEFAULT 1,
-                last_run TEXT,
-                next_run TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        # 插入默认任务（每小时20分）
-        conn.execute("""
-            INSERT OR IGNORE INTO optimizer_jobs (name, cron_expression, enabled)
-            VALUES ('企业级智能优化', '20 * * * *', 1)
-        """)
-        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, job_type, cron_expression, enabled, last_run, next_run, last_status "
+            "FROM scheduler_jobs WHERE name='企业级智能优化' LIMIT 1"
+        ).fetchone()
+        if row:
+            return dict(row)
+        return {"message": "未配置优化器任务"}
     finally:
         conn.close()
-    
-    # 启动调度器
-    _start_optimizer_scheduler()
-    logger.info("✅ 企业级优化器系统初始化完成")
 
 
-def get_optimizer_db():
-    """获取优化器数据库连接。"""
-    conn = get_db()
-    return conn
+def init_optimizer_system():
+    """初始化优化器系统。"""
+    # 确保 API 路由已注册（在 main.py 中完成）
+    logger.info("✅ 企业级优化器API系统就绪（调度由 scheduler.py 管理）")
