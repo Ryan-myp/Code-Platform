@@ -20,6 +20,8 @@ from common.auth import require_auth
 from common.db import get_db
 from common.llm import _safe_exc_msg
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/notify", tags=["通知渠道"])
 
 

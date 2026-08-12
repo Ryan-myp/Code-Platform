@@ -1,7 +1,9 @@
 import React, { useState } from 'react'
+import { useI18n } from '../i18n/index.jsx'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, Lock, User as UserIcon, UserPlus, AtSign, Sparkles, Wand2, Zap, Puzzle } from 'lucide-react'
 import { api } from '../lib/api'
+const { t } = useI18n()
 
 export default function LoginPage({ onLogin }) {
   const [mode, setMode] = useState('login') // login | register
@@ -23,11 +25,11 @@ export default function LoginPage({ onLogin }) {
     e.preventDefault()
     // 前端校验
     if (!username.trim()) {
-      setError('请输入用户名')
+      setError(t('auth.username'))
       return
     }
     if (!password) {
-      setError('请输入密码')
+      setError(t('auth.password'))
       return
     }
     if (mode === 'register') {
@@ -128,7 +130,7 @@ export default function LoginPage({ onLogin }) {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70"
-                placeholder="请输入用户名"
+                placeholder=t('auth.username')
                 autoComplete="username"
               />
             </div>
@@ -158,7 +160,7 @@ export default function LoginPage({ onLogin }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 outline-none transition-all bg-white/70"
-                placeholder={mode === 'register' ? '请设置密码（至少 6 位）' : '请输入密码'}
+                placeholder={mode === 'register' ? '请设置密码（至少 6 位）' : t('auth.password')}
                 autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               />
               <button
@@ -222,7 +224,7 @@ export default function LoginPage({ onLogin }) {
             ) : mode === 'register' ? (
               '注册并登录'
             ) : (
-              '登录'
+              t('auth.login_btn')
             )}
           </button>
         </form>

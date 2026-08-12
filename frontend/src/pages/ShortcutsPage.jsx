@@ -1,11 +1,13 @@
 import React from 'react'
+import { useI18n } from '../i18n/index.jsx'
 import { Keyboard, Search, Zap, Grid3x3, Download, Share2, Settings, Sun, Moon } from 'lucide-react'
+const { t } = useI18n()
 
 const KEYMAP = [
-  { keys: ['Ctrl', 'K'], action: '打开搜索面板', section: '通用' },
-  { keys: ['Ctrl', 'Shift', 'K'], action: '打开命令面板', section: '通用' },
-  { keys: ['Esc'], action: '关闭弹窗/面板', section: '通用' },
-  { keys: ['/'], action: '聚焦搜索框', section: '通用' },
+  { keys: ['Ctrl', 'K'], action: '打开搜索面板', section: t('shortcuts.general') },
+  { keys: ['Ctrl', 'Shift', 'K'], action: '打开命令面板', section: t('shortcuts.general') },
+  { keys: ['Esc'], action: '关闭弹窗/面板', section: t('shortcuts.general') },
+  { keys: ['/'], action: '聚焦搜索框', section: t('shortcuts.general') },
   { keys: ['Ctrl', 'N'], action: '新建项目', section: '文件' },
   { keys: ['Ctrl', 'S'], action: '保存当前内容', section: '文件' },
   { keys: ['Ctrl', 'O'], action: '打开文件', section: '文件' },
@@ -31,7 +33,7 @@ const KEYMAP = [
   { keys: ['Ctrl', 'Shift', 'F5'], action: '强制刷新', section: '工具' },
 ]
 
-const SECTIONS = ['通用', '文件', '编辑', '视图', '工具']
+const SECTIONS = [t('shortcuts.general'), '文件', '编辑', '视图', '工具']
 
 export default function ShortcutsPage() {
   const [search, setSearch] = React.useState('')
@@ -63,7 +65,7 @@ export default function ShortcutsPage() {
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="搜索快捷键..."
+          placeholder=t('shortcuts.search_key')
           className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:border-purple-500 outline-none"
         />
       </div>
@@ -104,7 +106,7 @@ export default function ShortcutsPage() {
               <div key={i} className="flex items-center justify-between px-5 py-3.5 hover:bg-gray-50">
                 <div className="flex items-center gap-4">
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    k.section === '通用' ? 'bg-blue-100 text-blue-700' :
+                    k.section === t('shortcuts.general') ? 'bg-blue-100 text-blue-700' :
                     k.section === '文件' ? 'bg-green-100 text-green-700' :
                     k.section === '编辑' ? 'bg-purple-100 text-purple-700' :
                     k.section === '视图' ? 'bg-amber-100 text-amber-700' :

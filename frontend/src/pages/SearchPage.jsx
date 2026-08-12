@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useI18n } from '../i18n/index.jsx'
 import { Search, Clock, FileText, Folder, MessageCircle, Zap, Tag } from 'lucide-react'
 import { api } from '../lib/api'
+const { t } = useI18n()
 
 const TYPE_ICONS = {
-  tool: { icon: Tool, color: 'text-blue-500', label: '工具' },
-  template: { icon: FileText, color: 'text-purple-500', label: '模板' },
-  project: { icon: Folder, color: 'text-amber-500', label: '项目' },
-  task: { icon: Tag, color: 'text-green-500', label: '任务' },
+  tool: { icon: Tool, color: 'text-blue-500', label: t('search.tools') },
+  template: { icon: FileText, color: 'text-purple-500', label: t('search.templates') },
+  project: { icon: Folder, color: 'text-amber-500', label: t('search.projects') },
+  task: { icon: Tag, color: 'text-green-500', label: t('search.tasks') },
   conversation: { icon: MessageCircle, color: 'text-cyan-500', label: '对话' },
   recent: { icon: Clock, color: 'text-gray-400', label: '最近' },
 }
@@ -118,11 +120,11 @@ export default function SearchPage() {
         {active && (
           <div className="mt-3 flex flex-wrap gap-2">
             {[
-              { key: 'all', label: '全部', count: results.length },
-              { key: 'tool', label: '工具', icon: Tool },
-              { key: 'template', label: '模板', icon: FileText },
-              { key: 'project', label: '项目', icon: Folder },
-              { key: 'task', label: '任务', icon: Tag },
+              { key: 'all', label: t('common.all'), count: results.length },
+              { key: 'tool', label: t('search.tools'), icon: Tool },
+              { key: 'template', label: t('search.templates'), icon: FileText },
+              { key: 'project', label: t('search.projects'), icon: Folder },
+              { key: 'task', label: t('search.tasks'), icon: Tag },
               { key: 'conversation', label: '对话', icon: MessageCircle },
             ].map(cat => (
               <button

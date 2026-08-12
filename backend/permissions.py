@@ -77,6 +77,12 @@ PAGES = [
     {"id": "notifications", "path": "/notifications",    "label": "通知中心"},
     {"id": "config",        "path": "/config",           "label": "模型配置"},
     {"id": "help",          "path": "/help",             "label": "使用帮助"},
+    {'id': 'downloads', 'name': 'downloads', 'path': '/downloads', 'requires': 'all', 'locked': False}, 
+    {'id': 'search', 'name': 'search', 'path': '/search', 'requires': 'all', 'locked': False}, 
+    {'id': 'audit-log', 'name': 'audit-log', 'path': '/audit-log', 'requires': 'all', 'locked': False}, 
+    {'id': 'creator-center', 'name': 'creator-center', 'path': '/creator-center', 'requires': 'all', 'locked': False}, 
+    {'id': 'invite-history', 'name': 'invite-history', 'path': '/invite-history', 'requires': 'all', 'locked': False}, 
+    {'id': 'usage-detail', 'name': 'usage-detail', 'path': '/usage-detail', 'requires': 'all', 'locked': False}, 
 ]
 
 # 会员等级权重：免费 < 专业 < 至尊

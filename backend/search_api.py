@@ -317,3 +317,164 @@ async def get_search_categories():
             {"id": "conversations", "name": "对话", "icon": "💬"},
         ]
     }
+
+def _search_works(conn, keyword: str, limit: int = 20) -> list:
+    """搜索创作工厂作品（artifacts、game_projects、miniapp_projects）。"""
+    results = []
+    type_map = {
+        "image": ("图片作品", "/image-factory"),
+        "video": ("视频作品", "/video-factory"),
+        "audio": ("歌曲作品", "/music-factory"),
+        "lyrics": ("歌词作品", "/music-factory"),
+        "meme": ("表情包", "/meme-factory"),
+    }
+    try:
+        rows = conn.execute(
+            """SELECT id, type, author, content, media_url, metadata, created_at
+               FROM artifacts WHERE content LIKE ? OR metadata LIKE ?
+               LIMIT ?""",
+            (keyword, keyword, limit),
+        ).fetchall()
+        for r in rows:
+            meta = {}
+            try:
+                import json
+                meta = json.loads(r["metadata"] or "{}")
+            except Exception:
+                pass
+            title = meta.get("title")
+            if not title:
+                try:
+                    import json as _json
+                    _content = json.loads(r["content"] or "{}")
+                    title = (_content.get("prompt") or r["content"] or "")[:24]
+                except Exception:
+                    title = (r["content"] or "")[:24]
+            t = r["type"]
+            label, path = type_map.get(t, ("作品", f"/{t}-factory"))
+            results.append({
+                "id": r["id"], "type": t, "title": title,
+                "path": path, "module": label,
+                "author": r["author"], "created_at": r["created_at"],
+            })
+    except Exception:
+        pass
+    # game_projects
+    try:
+        rows = conn.execute(
+            """SELECT id, name, requirement, created_at FROM game_projects
+               WHERE name LIKE ? OR requirement LIKE ? LIMIT ?""",
+            (keyword, keyword, limit),
+        ).fetchall()
+        for r in rows:
+            results.append({
+                "id": r["id"], "type": "game",
+                "title": r["name"], "path": "/games",
+                "module": "小游戏",
+                "author": "", "created_at": r["created_at"],
+            })
+    except Exception:
+        pass
+    # miniapp_projects
+    try:
+        rows = conn.execute(
+            """SELECT id, name, requirement, created_at FROM miniapp_projects
+               WHERE name LIKE ? OR requirement LIKE ? LIMIT ?""",
+            (keyword, keyword, limit),
+        ).fetchall()
+        for r in rows:
+            results.append({
+                "id": r["id"], "type": "miniapp",
+                "title": r["name"], "path": "/miniapp",
+                "module": "小程序",
+                "author": "", "created_at": r["created_at"],
+            })
+    except Exception:
+        pass
+    return results
+
+
+def global_search(params: dict, current_user: dict) -> dict:
+    """全局搜索入口 — 支持 types 过滤。"""
+    from common.db import get_db
+    query = params.get("query", "").strip()
+    types = params.get("types", ["tools", "templates", "projects", "tasks", "requirements", "contents", "works"])
+    limit = min(params.get("limit", 20), 50)
+    
+    if not query:
+        return {"results": [], "total": 0, "query": "", "suggestions": []}
+        return {"results": [], "total": 0, "query": "", "suggestions": []}
+    
+    conn = get_db()
+    try:
+        results = []
+        kw = f"%{query}%"
+        
+        if "tools" in types:
+            from search_api import TOOLS
+            for tool in TOOLS:
+                text = f"{tool['name']} {tool['desc']}"
+                if query.lower() in text.lower():
+                    results.append({**tool, "score": 10})
+        
+        if "templates" in types and "user_templates" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, description, created_at FROM user_templates WHERE name LIKE ? LIMIT ?",
+                    (kw, limit),
+                ).fetchall()
+                for r in rows:
+                    results.append({
+                        "id": r["id"], "name": r["name"],
+                        "type": "template", "source": "user_template",
+                        "created_at": r["created_at"], "score": 8,
+                    })
+            except Exception:
+                pass
+        
+        if "works" in types:
+            works = _search_works(conn, kw, limit)
+            results.extend(works)
+        
+        if "requirements" in types and "requirements" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, description FROM requirements WHERE name LIKE ? LIMIT ?",
+                    (kw, limit),
+                ).fetchall()
+                for r in rows:
+                    results.append({
+                        "id": r["id"], "name": r["name"],
+                        "type": "requirement", "source": "project",
+                        "description": r["description"] or "", "score": 7,
+                    })
+            except Exception:
+                pass
+        
+        if "projects" in types and "projects" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, description FROM projects WHERE name LIKE ? LIMIT ?",
+                    (kw, limit),
+                ).fetchall()
+                for r in rows:
+                    results.append({
+                        "id": r["id"], "name": r["name"],
+                        "type": "project", "source": "project",
+                        "description": r["description"] or "", "score": 6,
+                    })
+            except Exception:
+                pass
+        
+        # 排序去重
+        seen = set()
+        unique = []
+        for r in sorted(results, key=lambda x: x.get("score", 0), reverse=True):
+            key = f"{r.get('type','')}-{r.get('id','')}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+        
+        return {"results": unique[:limit], "total": len(unique), "query": query, "suggestions": []}
+    finally:
+        conn.close()
