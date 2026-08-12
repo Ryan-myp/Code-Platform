@@ -86,14 +86,23 @@ def _task_endpoint(cloud_task_id: str) -> str:
 
 
 def _require_gateway() -> None:
-    """API Key 缺失时抛 400 + 配置指引（不消耗配额）。"""
+    """API Key 缺失时抛 400 + 配置指引（不消耗配额）。
+
+    v17.7：优先使用 AGNES 视频模型（agnes-video-v2.0 支持 audio 驱动口型）；
+    未配置 AGNES 时回退要求阿里云百炼（可灵/万相）。
+    """
+    from common.config import AGNES_API_KEY
+
+    if AGNES_API_KEY:
+        return
     cfg = _config()
-    if not cfg["api_key"] or not cfg["workspace_id"]:
-        raise HTTPException(
-            400,
-            "AI 视频网关未配置：请在 backend/.env 填写 DASHSCOPE_API_KEY 与 DASHSCOPE_WORKSPACE_ID"
-            "（阿里云百炼控制台开通可灵/万相模型后获取），或联系平台管理员配置后重试",
-        )
+    if cfg["api_key"] and cfg["workspace_id"]:
+        return
+    raise HTTPException(
+        400,
+        "AI 视频网关未配置：请在 backend/.env 填写 AGNES_API_KEY（推荐，已配置），"
+        "或 DASHSCOPE_API_KEY + DASHSCOPE_WORKSPACE_ID（阿里云百炼），联系平台管理员配置后重试",
+    )
 
 
 def _headers() -> dict:
@@ -129,6 +138,119 @@ def _query_cloud(cloud_task_id: str) -> dict:
         raise RuntimeError(f"云端查询返回 {resp.status_code}: {resp.text[:200]}")
     data = resp.json()
     out = data.get("output", {}) or {}
+
+
+# ── AGNES 通道（v17.7：用 agnes-video-v2.0 + audio 驱动口型，免百炼 Key）──
+
+def _agnes_available() -> bool:
+    """AGNES 视频通道是否可用（已配置 API Key）。"""
+    from common.config import AGNES_API_KEY
+
+    return bool(AGNES_API_KEY)
+
+
+def _agnes_avatar_submit(payload: dict) -> str:
+    """提交 AGNES 视频任务（口型同步：image + audio → 说话视频），返回 video_id。"""
+    import requests as _req
+
+    from common.config import AGNES_API_BASE, AGNES_API_KEY
+
+    mode = payload.get("mode", "text2video")
+    prompt = payload.get("prompt", "")
+    duration = int(payload.get("duration", 5))
+    aspect = payload.get("aspect_ratio", "16:9")
+    dims = {"16:9": (1152, 768), "9:16": (768, 1152), "1:1": (1024, 1024)}.get(aspect, (1152, 768))
+    width, height = dims
+    num_frames = min(duration * 24, 441)
+    if (num_frames - 1) % 8 != 0:
+        num_frames = ((num_frames - 1) // 8) * 8 + 1
+
+    body = {
+        "model": "agnes-video-v2.0",
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "num_frames": num_frames,
+        "frame_rate": 24,
+        "mode": "ti2vid",
+    }
+    # 图生视频/口型同步：附参考图（agnes-video-v2.0 为文/图生视频模型，
+    # 支持 image 让照片“活化”（动起来/转头/表情），audio 参数可附加背景音；
+    # 精确口型同步需可灵 Omni（百炼通道）——AGNES 通道退化为照片活化）
+    img = _resolve_local_upload(payload.get("image_url", ""))
+    if img:
+        # 本地文件 → base64 data URL（AGNES 云端无法访问 localhost，仅接受公网 URL 或 base64）
+        if os.path.exists(img):
+            import base64 as _b64
+
+            mime = "image/png" if img.lower().endswith(".png") else "image/jpeg"
+            with open(img, "rb") as _f:
+                img_b64 = _b64.b64encode(_f.read()).decode()
+            body["image"] = f"data:{mime};base64,{img_b64}"
+        else:
+            body["image"] = img
+    aud = _resolve_local_upload(payload.get("audio_url", ""))
+    if aud and mode == "lipsync":
+        body["audio"] = aud
+
+    try:
+        resp = _req.post(
+            f"{AGNES_API_BASE}/videos",
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json=body,
+            timeout=60,
+        )
+    except Exception as e:
+        raise RuntimeError(f"AGNES 视频任务提交失败: {e}") from e
+    if resp.status_code != 200:
+        raise RuntimeError(f"AGNES 返回 {resp.status_code}: {resp.text[:200]}")
+    data = resp.json()
+    vid = data.get("video_id") or data.get("task_id")
+    if not vid:
+        raise RuntimeError(f"AGNES 未返回视频 ID: {resp.text[:200]}")
+    return vid
+
+
+def _agnes_avatar_poll(video_id: str, update: callable) -> str:
+    """轮询 AGNES 视频任务直到完成，返回视频直链 URL。"""
+    import time as _time
+
+    import requests as _req
+
+    from common.config import AGNES_API_BASE, AGNES_API_KEY
+
+    deadline = _time.monotonic() + _POLL_DEADLINE
+    consecutive_err = 0
+    while _time.monotonic() < deadline:
+        _time.sleep(_POLL_INTERVAL)
+        try:
+            resp = _req.get(
+                f"{AGNES_API_BASE}/agnesapi",
+                params={"video_id": video_id},
+                headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
+                timeout=30,
+            )
+            consecutive_err = 0
+            if resp.status_code not in (200, 202):
+                raise RuntimeError(f"AGNES 查询返回 {resp.status_code}")
+            d = resp.json()
+            status = d.get("status", "unknown")
+            if status == "completed":
+                out = d.get("output", {}) or {}
+                url = out.get("video_url") or out.get("url") or d.get("url") or d.get("video_url")
+                if not url:
+                    raise RuntimeError("AGNES 完成但未返回视频 URL")
+                return url
+            if status == "failed":
+                raise RuntimeError(f"AGNES 生成失败: {d.get('error') or '未知错误'}")
+            prog = float(d.get("internal_progress") or d.get("progress") or 0)
+            update(min(80, 10 + int(prog * 0.7)), "云端数字人生成中…")
+        except Exception as e:
+            consecutive_err += 1
+            if consecutive_err >= 3:
+                raise RuntimeError(f"AGNES 轮询失败: {e}") from e
+            logger.warning(f"AGNES 轮询瞬时异常（{consecutive_err}/3）: {e}")
+    raise RuntimeError(f"AGNES 生成超时（>{_POLL_DEADLINE // 60} 分钟）")
     return {
         "status": data.get("task_status", "UNKNOWN"),
         "video_url": out.get("video_url", ""),
@@ -308,6 +430,29 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
         resolution = payload.get("resolution", "720p")
         aspect = payload.get("aspect_ratio", "16:9")
 
+        # v17.7：优先走 AGNES 通道（音频驱动口型），失败时回退百炼
+        agnes_err: Exception | None = None
+        if _agnes_available() and mode in ("lipsync", "image2video", "text2video"):
+            try:
+                update(5, "正在提交 AGNES 云端任务…")
+                vid = _agnes_avatar_submit(payload)
+                update(10, "任务已提交，云端数字人生成中（约 1-5 分钟）…")
+                url = _agnes_avatar_poll(vid, update)
+                update(85, "生成完成，正在下载视频…")
+                filename = f"ai_{task_id.replace('task_', '')}.mp4"
+                local = _download(url, os.path.join(_UPLOAD_VIDEO_DIR, filename))
+                return {
+                    "status": "done",
+                    "mode": mode,
+                    "video_url": f"/uploads/videos/{filename}",
+                    "local_path": local,
+                    "duration": float(duration),
+                    "resolution": resolution,
+                    "provider": "agnes",
+                }
+            except Exception as e:  # noqa: BLE001 — AGNES 失败回退百炼
+                agnes_err = e
+                logger.warning("AGNES 通道失败，回退百炼: %s", e)
         # 口型同步：omni 模型 + 音频/图片引用（内部路径转绝对路径）
         if mode == "lipsync":
             body = {"model": _OMNI_MODEL, "input": {"prompt": prompt, "audio_url": _resolve_local_upload(payload.get("audio_url", ""))}}
