@@ -175,6 +175,10 @@ SCRIPT_TEMPLATES = [
 
 
 def save_video(data: bytes, filename: str) -> str:
+    """保存视频文件；空内容或小于 1KB 视为生成失败，抛异常拒绝落盘（防 0KB 废文件污染列表）。"""
+    if not data or len(data) < 1024:
+        logger.warning("视频内容异常（%d bytes），拒绝保存 %s", len(data or b""), filename)
+        raise HTTPException(502, "视频生成异常，请稍后重试")
     filepath = VIDEO_DIR / filename
     filepath.write_bytes(data)
     return filename
@@ -837,10 +841,19 @@ async def get_cover(filename: str):
 
 @router.get("/list")
 async def list_videos():
-    """视频列表（v13.26：从 artifacts 合并语义化标题 title，替代随机文件名展示）。"""
+    """视频列表（v13.26：从 artifacts 合并语义化标题 title，替代随机文件名展示）。
+
+    v17.7：过滤 0KB 空文件（历史生成失败残留，避免污染列表）。
+    """
     meta = _artifact_meta()
     videos = []
     for f in sorted(VIDEO_DIR.glob("*.mp4"), reverse=True):
+        try:
+            size = f.stat().st_size
+        except OSError:
+            continue
+        if size < 1024:  # 空文件/失败残留：不展示
+            continue
         cover_name = f"{f.stem}.jpg"
         cover_url = f"/api/video-factory/covers/{cover_name}" if (VIDEO_DIR / cover_name).exists() else ""
         # 旧视频缺封面：后台异步补抽帧（防重集合避免重复触发）
@@ -855,7 +868,7 @@ async def list_videos():
                 "title": m.get("title") or derive_title("video", {"prompt": prompt}, m) or _fallback_title(f.name),
                 "url": f"/api/video-factory/videos/{f.name}",
                 "cover_url": cover_url,
-                "size": f.stat().st_size,
+                "size": size,
             }
         )
     return {"videos": videos}
