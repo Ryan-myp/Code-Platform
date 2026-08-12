@@ -1,0 +1,26 @@
+{
+  "id": "mt_review",
+  "name": "好评晒单",
+  "category": "电商营销",
+  "icon": "⭐",
+  "desc": "买家秀好评包：晒单返现、五星好评必备",
+  "style": "gradient",
+  "ai_style": "3d",
+  "top_hint": "五星好评！",
+  "bottom_hint": "值得回购",
+  "texts": [
+    "五星好评！|值得回购",
+    "收到啦！|超级满意",
+    "回购第 3 次|闭眼入"
+  ],
+  "prompt_hint": "可爱的购物袋上堆满星星与爱心，3D 软萌卡通，渐变背景，喜悦氛围",
+  "decoration": "⭐,💖",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:12:46.866933",
+  "updated_at": "2026-08-12T08:12:46.866933"
+}

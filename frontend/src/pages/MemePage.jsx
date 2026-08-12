@@ -127,6 +127,11 @@ export default function MemePage() {
   const setAiStyle = (v) => setInputs((p) => ({ ...p, aiStyle: v }))
   const [bgUpload, setBgUpload] = useState('')
   const [decoration, setDecoration] = useState('')
+  // v22 表情包模板库：热门梗/场景配方（底图风格 + AI 画面 + 文案 + 装饰）
+  const [memeTpls, setMemeTpls] = useState([])
+  const [memeTplId, setMemeTplId] = useState('')
+  const [memeTplInfo, setMemeTplInfo] = useState(null)
+  const [memeTplCat, setMemeTplCat] = useState('全部')
   const [generating, setGenerating] = useState(false)
   const [items, setItems] = useState([])
   const [stats, setStats] = useState(null)
@@ -166,6 +171,11 @@ export default function MemePage() {
     api
       .get('/api/meme/style-previews')
       .then((res) => setPreviews(res.data || []))
+      .catch(() => {})
+    // v22 表情包模板
+    api
+      .get('/api/meme-templates/list')
+      .then((res) => setMemeTpls(res.data?.items || []))
       .catch(() => {})
   }, [])
 
@@ -255,6 +265,7 @@ export default function MemePage() {
     fd.append('ai_style', aiStyle)
     fd.append('bg_upload', bgUpload)
     fd.append('decoration', decoration.trim())
+    if (memeTplId) fd.append('template_id', memeTplId)
     await submitTask('/api/meme/generate', fd, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: async () => {
@@ -512,6 +523,19 @@ export default function MemePage() {
     setBottomText(s.bottom)
   }
 
+  // v22 表情包模板：一键应用配方（文案/风格/AI 画面/装饰）
+  const applyMemeTpl = (t) => {
+    const parts = (t.texts?.[0] || '').split('|')
+    setTopText((parts[0] || '').trim())
+    setBottomText((parts[1] || '').trim())
+    setStyle(t.style)
+    setAiStyle(t.ai_style)
+    setDecoration(t.decoration || '')
+    if (t.prompt_hint) setAiPrompt(t.prompt_hint)
+    setMemeTplId(t.id)
+    toast.success(`已应用「${t.name}」模板，可直接生成`)
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -592,6 +616,86 @@ export default function MemePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── 左列：生成配置 ── */}
         <div className="space-y-4">
+          {/* v22 表情包模板库：热门梗/场景配方，选模板一键填充（文案/风格/装饰） */}
+          {memeTpls.length > 0 && (
+            <Card>
+              <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                <Sticker className="w-4 h-4 text-amber-500" /> 表情包模板
+                <span className="text-xs font-normal text-gray-400">
+                  选热门梗模板，文案/风格/装饰一键填充，可直接生成
+                </span>
+              </h3>
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {['全部', ...new Set(memeTpls.map((t) => t.category))].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setMemeTplCat(cat)}
+                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                      memeTplCat === cat
+                        ? 'bg-amber-500 text-white border-amber-500'
+                        : 'bg-white text-gray-500 border-gray-200 hover:border-amber-300'
+                    }`}
+                  >
+                    {cat}
+                    {cat !== '全部' && (
+                      <span className="ml-1 opacity-70">
+                        {memeTpls.filter((t) => t.category === cat).length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {memeTpls
+                  .filter((t) => memeTplCat === '全部' || t.category === memeTplCat)
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => applyMemeTpl(t)}
+                      title={t.desc}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors flex items-center gap-1 ${
+                        memeTplId === t.id
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-amber-300'
+                      }`}
+                    >
+                      <span>{t.icon}</span>
+                      {t.name}
+                      {t.pricing?.mode !== 'free' && (
+                        <span
+                          className={`text-[10px] px-1 rounded ${
+                            memeTplId === t.id ? 'bg-white/20' : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {t.pricing_label}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+              </div>
+              {memeTpls.some((t) => t.id === memeTplId) && (
+                <div className="mt-3 flex items-center justify-between">
+                  <p className="text-[11px] text-amber-600">
+                    ✓ 已应用「{memeTpls.find((t) => t.id === memeTplId)?.name}」——文案/风格/装饰已填充，可继续微调后生成
+                  </p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.get(`/api/meme-templates/${memeTplId}`)
+                        setMemeTplInfo(res.data)
+                      } catch {
+                        toast.error('模板详情加载失败')
+                      }
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-lg border border-amber-200 text-amber-600 hover:bg-amber-50 transition-colors"
+                  >
+                    📖 查看模板
+                  </button>
+                </div>
+              )}
+            </Card>
+          )}
+
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <SmilePlus className="w-4 h-4 text-amber-500" /> 选择风格
@@ -1023,7 +1127,7 @@ export default function MemePage() {
                       src={item.url}
                       alt="表情包"
                       loading="lazy"
-                      className="w-full aspect-square object-cover"
+                      className="w-full aspect-square object-contain bg-gray-50"
                     />
                     {/* 标题条（非 hover 也可见） */}
                     <div className="absolute top-0 inset-x-0 bg-gradient-to-b from-black/60 to-transparent p-1.5 pb-4 flex items-center justify-between">
@@ -1274,6 +1378,85 @@ export default function MemePage() {
             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none"
           />
         </div>
+      </Modal>
+
+      {/* v22 表情包模板详情弹窗 */}
+      <Modal
+        open={!!memeTplInfo}
+        onClose={() => setMemeTplInfo(null)}
+        title="表情包模板"
+      >
+        {memeTplInfo && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{memeTplInfo.icon}</span>
+              <h3 className="text-lg font-semibold text-gray-800">{memeTplInfo.name}</h3>
+              <Badge color="amber">{memeTplInfo.category_label || memeTplInfo.category}</Badge>
+              {memeTplInfo.pricing?.mode !== 'free' && (
+                <Badge color="red">{memeTplInfo.pricing_label}</Badge>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 leading-relaxed">{memeTplInfo.desc}</p>
+            <div className="text-xs text-gray-400">
+              热度 {memeTplInfo.usage || 0} 次使用{memeTplInfo.pricing?.mode === 'free' ? ' · 免费' : ''}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ['🎨 底图风格', memeTplInfo.style],
+                ['🖼️ AI 画面风格', memeTplInfo.ai_style],
+                ['✨ 推荐装饰', memeTplInfo.decoration || '无'],
+              ].map(([k, v]) => (
+                <div key={k} className="rounded-xl bg-gray-50 border border-gray-100 p-2.5">
+                  <div className="text-[11px] text-gray-400">{k}</div>
+                  <div className="text-xs font-medium text-gray-700 mt-0.5">{v}</div>
+                </div>
+              ))}
+              <div className="rounded-xl bg-gray-50 border border-gray-100 p-2.5">
+                <div className="text-[11px] text-gray-400">📝 文案建议</div>
+                <div className="text-xs font-medium text-gray-700 mt-0.5">
+                  {memeTplInfo.top_hint}… / {memeTplInfo.bottom_hint}…
+                </div>
+              </div>
+            </div>
+            {memeTplInfo.prompt_hint && (
+              <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+                <div className="text-xs font-semibold text-amber-600 mb-1">🎬 AI 场景建议</div>
+                <p className="text-[13px] text-gray-600 leading-relaxed">{memeTplInfo.prompt_hint}</p>
+              </div>
+            )}
+            <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+              <div className="text-xs font-semibold text-amber-600 mb-1.5">💬 即用文案（点击一键填充）</div>
+              <div className="space-y-1.5">
+                {memeTplInfo.texts?.map((tx, i) => {
+                  const parts = String(tx).split('|')
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setTopText((parts[0] || '').trim())
+                        setBottomText((parts[1] || '').trim())
+                        setMemeTplInfo(null)
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg bg-white border border-gray-200 hover:border-amber-300 hover:bg-amber-50 text-xs text-gray-600 transition-colors"
+                    >
+                      <span className="font-medium">{parts[0]}</span>
+                      <span className="text-gray-400"> / </span>
+                      {parts[1]}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="flex items-center justify-end pt-1">
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setMemeTplInfo(null)}>
+                  关闭
+                </Button>
+                <Button onClick={() => applyMemeTpl(memeTplInfo)}>应用此模板</Button>
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

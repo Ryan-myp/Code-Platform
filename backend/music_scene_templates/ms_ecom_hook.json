@@ -1,0 +1,25 @@
+{
+  "id": "ms_ecom_hook",
+  "name": "带货钩子开场",
+  "category": "电商",
+  "icon": "🛍️",
+  "desc": "短视频带货黄金 0-3 秒钩子音效 + 强节拍，情绪直接拉满，观众划不走",
+  "style": "electronic",
+  "mood": "energetic",
+  "voice": "female",
+  "duration": 15,
+  "bpm": 128,
+  "instrument": "合成器 Pad + 鼓机 Four-on-floor + 侧链贝斯",
+  "structure": "前奏 2 秒（悬念音）→ 鼓点 4 拍爆入（钩子画面）→ 副歌循环卡点（卖点快闪）→ 尾音淡出",
+  "lyrics_template": "[Verse 1]\n三二一 别划走\n这个好东西今天必须有\n库存只剩最后一百件\n手慢真的拍不到\n\n[Chorus]\n买它买它就是现在\n错过今天再等一年\n直播间里最后一波\n倒计时五 四 三 二 一",
+  "theme_suggestion": "电商直播限时秒杀带货",
+  "pro_tips": "0-3 秒必须上鼓点；卖点词卡在正拍；结尾留强收拍衔接下一镜",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:08:46.847147",
+  "updated_at": "2026-08-12T08:08:46.847152"
+}

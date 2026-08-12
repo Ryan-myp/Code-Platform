@@ -1,0 +1,61 @@
+{
+  "id": "mmt_swot",
+  "name": "SWOT 分析",
+  "category": "战略管理",
+  "icon": "⚖️",
+  "desc": "经典企业/个人 SWOT 四象限：优势·劣势·机会·威胁，附带对策推演",
+  "style": "business",
+  "depth": 3,
+  "example_topic": "XX公司 2026 年度战略分析",
+  "structure": [
+    {
+      "name": "优势 Strengths",
+      "hint": "内部积极因素",
+      "children": [
+        "核心资源",
+        "技术壁垒",
+        "品牌资产",
+        "成本优势"
+      ]
+    },
+    {
+      "name": "劣势 Weaknesses",
+      "hint": "内部消极因素",
+      "children": [
+        "资源短板",
+        "流程瓶颈",
+        "人才缺口",
+        "规模限制"
+      ]
+    },
+    {
+      "name": "机会 Opportunities",
+      "hint": "外部利好环境",
+      "children": [
+        "市场增长",
+        "政策红利",
+        "技术变革",
+        "竞争空窗"
+      ]
+    },
+    {
+      "name": "威胁 Threats",
+      "hint": "外部不利因素",
+      "children": [
+        "新进入者",
+        "替代品",
+        "客户议价",
+        "政策风险"
+      ]
+    }
+  ],
+  "pro_tips": "每个象限按影响力排序；SWOT 后追加 SO/WT 对策分支更专业",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:25:25.859819",
+  "updated_at": "2026-08-12T08:25:25.859823"
+}

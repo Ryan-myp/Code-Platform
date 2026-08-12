@@ -1,0 +1,25 @@
+{
+  "id": "ms_short_dance",
+  "name": "卡点舞蹈",
+  "category": "短视频",
+  "icon": "💃",
+  "desc": "抖音/快手卡点舞专用：电子强拍 + 高频节拍点，动作卡拍零门槛",
+  "style": "electronic",
+  "mood": "energetic",
+  "voice": "female",
+  "duration": 15,
+  "bpm": 122,
+  "instrument": "合成器主音 + 电子鼓 + 重低音",
+  "structure": "4 拍预备 → 主旋律 8 拍（舞蹈动作）→ 重音段落（变装/特写）→ 循环收尾",
+  "lyrics_template": "[Verse 1]\n跟我一起 举起手\n左右摇摆 不回头\n音乐一响 全场嗨\n这一刻 尽情摇摆\n\n[Chorus]\n咚哒咚哒 踩节拍\n转身跳跃 超精彩\n卡点卡点 一起来\n今晚舞池 你最帅",
+  "theme_suggestion": "抖音卡点舞蹈挑战",
+  "pro_tips": "动作切换点必须落在重音；变装镜对重音段落；15-30 秒为最佳完播区间",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847159",
+  "updated_at": "2026-08-12T08:08:46.847160"
+}

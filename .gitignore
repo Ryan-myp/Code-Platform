@@ -101,3 +101,4 @@ backend/uploads/
 backend/music_factory/*.mp3
 backend/music_factory/*.wav
 backend/music_factory/*.flac
+backend/video_templates/renders/

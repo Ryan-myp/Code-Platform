@@ -169,11 +169,13 @@ def _ensure_tables(conn) -> None:
 class ContractReviewRequest(BaseModel):
     text: str = Field(..., min_length=20, max_length=10000, description="合同全文")
     title: str = Field("合同审查", max_length=200)
+    template_id: str = Field("", description="合同审查模板 ID（pdf-doc-templates，如 pdt_rent）")
 
 
 class ResumeOptimizeRequest(BaseModel):
     text: str = Field(..., min_length=20, max_length=8000, description="简历全文")
     target_position: str = Field("", max_length=200, description="目标岗位（可选）")
+    template_id: str = Field("", description="简历优化模板 ID（pdf-doc-templates，如 pdt_tech）")
 
 
 # ── API ──────────────────────────────────────────────────
@@ -343,7 +345,18 @@ def contract_review(req: ContractReviewRequest, current_user: dict = require_aut
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
 
     try:
-        raw = call_llm(CONTRACT_SYSTEM, req.text, max_tokens=2500, temperature=0.3, timeout=90)
+        user_prompt = req.text
+        # 文档模板注入：审查要点提示词（按模板专家视角，非法 id 静默忽略）
+        if req.template_id:
+            try:
+                from pdf_doc_templates import _load_one, record_usage
+                tpl = _load_one(req.template_id)
+                if tpl.get("pro_tips"):
+                    user_prompt = f"【模板：《{tpl['name']}》】请额外重点审查以下要点：{tpl['pro_tips']}\n\n{user_prompt}"
+                record_usage(req.template_id)
+            except Exception:  # noqa: BLE001
+                pass
+        raw = call_llm(CONTRACT_SYSTEM, user_prompt, max_tokens=2500, temperature=0.3, timeout=90)
         raw = raw.strip()
         if raw.startswith("```"):
             lines = raw.split("\n")
@@ -390,6 +403,18 @@ def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_aut
     user_prompt = req.text
     if req.target_position:
         user_prompt = f"目标岗位：{req.target_position}\n\n简历内容：\n{req.text}"
+    # 文档模板注入：岗位优化要点（按模板专家视角，非法 id 静默忽略）
+    if req.template_id:
+        try:
+            from pdf_doc_templates import _load_one, record_usage
+            tpl = _load_one(req.template_id)
+            if tpl.get("pro_tips"):
+                user_prompt = f"【模板：《{tpl['name']}》】请额外重点参考以下优化要点：{tpl['pro_tips']}\n\n{user_prompt}"
+            if tpl.get("position") and not req.target_position:
+                user_prompt = f"目标岗位：{tpl['position']}\n\n{user_prompt}"
+            record_usage(req.template_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     try:
         raw = call_llm(RESUME_SYSTEM, user_prompt, max_tokens=2500, temperature=0.4, timeout=90)

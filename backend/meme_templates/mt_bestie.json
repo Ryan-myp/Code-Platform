@@ -1,0 +1,26 @@
+{
+  "id": "mt_bestie",
+  "name": "闺蜜日常",
+  "category": "情感吐槽",
+  "icon": "💅",
+  "desc": "闺蜜吐槽专用，塑料姐妹花的真诚时刻",
+  "style": "gradient",
+  "ai_style": "3d",
+  "top_hint": "姐妹，",
+  "bottom_hint": "快出来吃瓜",
+  "texts": [
+    "姐妹，|快出来吃瓜",
+    "我有个大瓜|微信说",
+    "塑料姐妹|在线互夸"
+  ],
+  "prompt_hint": "两个可爱的闺蜜卡通形象凑在一起说悄悄话，3D 软萌风格，高饱和渐变背景",
+  "decoration": "💅,🍉",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866924",
+  "updated_at": "2026-08-12T08:12:46.866925"
+}

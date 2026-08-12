@@ -1,0 +1,25 @@
+{
+  "id": "ms_sleep_relax",
+  "name": "睡前放松",
+  "category": "生活",
+  "icon": "🌙",
+  "desc": "冥想/助眠/读书 BGM：抒情钢琴慢板，白噪音友好型舒缓氛围",
+  "style": "ballad",
+  "mood": "calm",
+  "voice": "female",
+  "duration": 120,
+  "bpm": 72,
+  "instrument": "钢琴单音 + 弦乐长音垫",
+  "structure": "钢琴主题缓入（呼吸引导）→ 弦乐垫铺开（深度放松）→ 极简收尾（渐弱）",
+  "lyrics_template": "[Verse 1]\n夜色温柔 星光低垂\n深呼吸 慢慢放松\n把今天的疲惫\n都交给夜晚\n\n[Chorus]\n放空思绪 闭上眼\n世界安静 心也安然\n晚安 好梦\n明天又是 新的一天",
+  "theme_suggestion": "睡前冥想助眠",
+  "pro_tips": "无强拍无鼓点；音量-15dB 以下；循环 120-300 秒剪辑",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847171",
+  "updated_at": "2026-08-12T08:08:46.847171"
+}

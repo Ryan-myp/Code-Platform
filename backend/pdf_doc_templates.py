@@ -1,0 +1,423 @@
+# -*- coding: utf-8 -*-
+"""PDF 文档模板库：合同审查场景模板 + 简历优化岗位模板。
+
+每个模板 = 示例文档（即用填充）+ 专业审查/优化要点（注入 LLM 提示词），
+让 AI 工具输出达到执业律师/资深 HR 的水准。商业化 + 热度统计与其余模板库一致。
+"""
+import json
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
+
+TEMPLATE_DIR = Path(__file__).parent / "pdf_doc_templates"
+TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
+
+router = APIRouter(prefix="/api/pdf-doc-templates", tags=["PDF文档模板"])
+
+
+def _tpl(tid, name, category, icon, desc, sample, tips, position="", pricing=None):
+    """category: contract（合同审查）/ resume（简历优化）"""
+    return {
+        "id": tid, "name": name, "category": category, "icon": icon, "desc": desc,
+        "sample": sample, "pro_tips": tips, "position": position,
+        "pricing": pricing or {"mode": "free", "once": 0, "day": 0, "month": 0},
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+    }
+
+
+def _pdf_doc_templates():
+    T = []
+    # ══ 合同审查 6 ══
+    T.append(_tpl(
+        "pdt_rent", "房屋租赁合同", "合同审查", "🏠",
+        "住宅/商用租赁合同审查：租金、押金、维修、解约条款逐条把关",
+        """房屋租赁合同（摘录）
+
+出租方（甲方）：王某某
+承租方（乙方）：李某某
+
+一、甲方将位于某某市某某区某某路XX号X栋X单元XX室房屋出租给乙方使用，建筑面积90平方米。
+二、租赁期限自2026年9月1日起至2027年8月31日止，共计12个月。
+三、月租金人民币5000元，押一付三，乙方应于每月1日前支付当月租金。
+四、租赁期内，乙方不得转租、转借该房屋；如需退租，应提前30日书面通知甲方。
+五、房屋及附属设施的自然损耗由甲方负责维修，乙方人为损坏由乙方承担维修费用。
+六、任何一方违约，应向守约方支付违约金人民币10000元。
+七、本合同一式两份，甲乙双方各执一份，自双方签字之日起生效。""",
+        "重点审查：押金退还条件与时限、维修责任边界（'自然损耗'定义模糊）、违约金是否过高（超过实际损失30%可请求酌减）、转租限制是否绝对、续租优先权、房屋内物品损坏赔偿标准、水电气物业费承担方",
+        "",
+        {"mode": "once", "once": 5, "day": 2, "month": 19},
+    ))
+    T.append(_tpl(
+        "pdt_labor", "劳动合同", "合同审查", "👔",
+        "劳动合同审查：工时、报酬、竞业限制、解除条款合规性",
+        """劳动合同（摘录）
+
+甲方（用人单位）：某某科技有限公司
+乙方（劳动者）：张某某
+
+一、合同期限：自2026年7月1日起，期限三年。
+二、乙方担任后端开发工程师岗位，工作地点为甲方办公地。
+三、乙方实行标准工时制，月工资人民币25000元，其中基本工资12000元，绩效工资13000元。
+四、试用期六个月，试用期工资为转正工资的80%。
+五、乙方应遵守甲方保密制度，离职后两年内不得从事与甲方有竞争关系的业务，竞业限制补偿金为每月2000元。
+六、甲方可根据经营需要调整乙方工作岗位及工作地点。
+七、解除劳动合同需提前三十日书面通知对方。""",
+        "重点审查：试用期是否超限（3年合同试用期最长6个月，恰好临界）、绩效工资占比过高（工资结构是否模糊基本工资底线）、竞业限制补偿金是否低于法定标准（不得低于劳动合同履行地最低工资标准）、调岗调薪条款是否过于宽泛、加班费计算基数、社保公积金约定",
+        "",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_procure", "采购合同", "合同审查", "📦",
+        "货物采购合同审查：交付、验收、质保、付款节点风险",
+        """采购合同（摘录）
+
+买方：某某商贸有限公司
+卖方：某某供应链管理有限公司
+
+一、采购标的：定制包装箱10000个，单价12元，总价120000元。
+二、交货时间：合同签订后30日内交付第一批5000个，其余按买方通知分批发货。
+三、验收标准：按双方确认的样品标准验收，验收期为收货后7日内，逾期视为验收合格。
+四、付款方式：合同签订后3日内支付定金30%，货到验收合格后支付65%，质保期满后支付5%。
+五、质量保证：卖方对产品提供12个月质保期，质保期内非人为损坏免费更换。
+六、违约责任：延迟交货每日按合同总价0.5%支付违约金；质量问题导致的损失由卖方承担。
+七、争议解决：提交某某仲裁委员会仲裁。""",
+        "重点审查：'按买方通知'交货是否导致履行期限不确定、验收期7日是否过短、'视为验收合格'的默示条款风险、定金30%是否符合法定上限（不得超过主合同标的额20%）、质保金5%比例与质保义务是否对等、违约金0.5%/日是否过高、仲裁条款明确性",
+        "",
+        {"mode": "once", "once": 5, "day": 2, "month": 19},
+    ))
+    T.append(_tpl(
+        "pdt_nda", "保密协议", "合同审查", "🔒",
+        "保密协议审查：保密范围、期限、违约责任边界",
+        """保密协议（摘录）
+
+甲方：某某信息技术有限公司
+乙方：某某（员工/合作方）
+
+一、保密范围：乙方在合作期间接触的甲方所有商业信息、技术资料、客户名单、经营数据等。
+二、保密义务：未经甲方书面同意，乙方不得以任何方式向第三方披露、使用保密信息。
+三、保密期限：本协议保密义务自签署之日起持续有效，且不因合作关系终止而失效。
+四、违约责任：乙方违反保密义务的，应向甲方支付违约金人民币500000元，并赔偿全部损失。
+五、保密信息不包括：乙方自行开发的信息、已公开的信息、甲方书面同意披露的信息。""",
+        "重点审查：保密范围是否过宽（'所有商业信息'定义模糊）、保密期限是否无限期（可约定合理期限）、违约金50万是否有合理性支撑（过高可能被酌减）、免责条款是否完整（加'非乙方过错获得'）、是否约定保密费或对价（纯义务无对价可能被主张显失公平）",
+        "",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_loan", "借款合同", "合同审查", "💰",
+        "民间借贷合同审查：利率、担保、逾期罚息合规",
+        """借款合同（摘录）
+
+出借人：刘某某
+借款人：陈某某
+
+一、借款金额：人民币500000元。
+二、借款期限：自2026年6月1日至2027年5月31日，共12个月。
+三、借款利率：月利率2%，按月支付利息。
+四、还款方式：到期一次性还本，利息按月支付。
+五、担保条款：借款人以其名下房产（地址：某某市某某区XX路XX号）为本笔借款提供抵押担保，并办理抵押登记。
+六、逾期处理：逾期还款的，按未还本金的每日万分之五加收逾期利息。
+七、争议解决：双方协商不成，提交某某人民法院诉讼。""",
+        "重点审查：月利率2%（年化24%）是否超过司法保护上限（LPR四倍，2026年约13.8%）、利息是否预先扣除（砍头息）、抵押担保是否办理登记（未登记不产生对抗效力）、逾期利率+正常利率是否超上限、是否有夫妻共同债务签字、转账凭证留痕建议",
+        "",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_service", "服务外包合同", "合同审查", "🤝",
+        "IT/人力服务外包合同：服务标准、验收、知识产权归属",
+        """服务外包合同（摘录）
+
+委托方：某某电子商务有限公司
+受托方：某某软件开发有限公司
+
+一、服务内容：受托方为委托方提供电商平台定制开发及维护服务。
+二、服务期限：自2026年8月1日起至2027年7月31日止。
+三、服务费用：开发费人民币300000元，维护费每月20000元，按季度结算。
+四、交付与验收：受托方按里程碑交付，委托方应在收到交付物后10个工作日内验收。
+五、知识产权：开发成果的知识产权归受托方所有，委托方仅享有使用权。
+六、保密条款：双方对合作中知悉的商业秘密承担保密义务，期限为合同终止后三年。
+七、违约责任：受托方逾期交付的，每日按合同总额0.3%支付违约金。""",
+        "重点审查：知识产权归属条款是否对委托方不利（委托开发成果通常应归委托方或共有）、验收标准是否明确（'10个工作日验收'的默示条款风险）、维护费涨价机制是否约定、源代码是否交付及交付后使用限制、数据安全与个人信息保护义务、服务中断的SLA与赔偿",
+        "",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    # ══ 简历优化 6 ══
+    T.append(_tpl(
+        "pdt_tech", "技术开发简历", "简历优化", "💻",
+        "后端/前端/算法工程师简历优化：项目量化、技术栈呈现",
+        """张伟
+求职意向：高级后端开发工程师
+电话：138XXXX0000 | 邮箱：zhangwei@example.com
+
+工作经历：
+2021.06 - 至今  某某科技有限公司  后端开发工程师
+- 负责公司电商系统后端开发，使用 Java Spring Boot
+- 参与订单模块开发，处理高并发场景
+- 负责系统日常维护和 bug 修复
+
+2019.07 - 2021.05  某某网络公司  初级开发工程师
+- 参与公司内部管理系统开发
+- 使用 Python 编写自动化脚本
+
+项目经历：
+- 电商平台订单系统：负责订单模块的设计与开发
+
+教育背景：
+2015.09 - 2019.06  某某大学  计算机科学与技术  本科""",
+        "优化要点：项目描述必须量化（QPS/响应时间/转化率提升/服务规模）、技术栈按熟练度分层（精通/熟悉/了解）、突出架构设计与性能优化成果、补充技术博客/开源贡献、工作职责改为'动词+成果'句式",
+        "高级后端开发工程师",
+        {"mode": "once", "once": 5, "day": 2, "month": 19},
+    ))
+    T.append(_tpl(
+        "pdt_product", "产品经理简历", "简历优化", "📱",
+        "产品经理简历优化：数据结果、方法论、项目主导力",
+        """李娜
+求职意向：高级产品经理
+电话：139XXXX1111 | 邮箱：lina@example.com
+
+工作经历：
+2020.03 - 至今  某某互联网公司  产品经理
+- 负责公司 APP 产品规划与迭代
+- 输出 PRD 文档，协调研发测试上线
+- 分析用户反馈，优化产品体验
+
+2018.06 - 2020.02  某某科技公司  产品助理
+- 协助产品经理完成需求收集与分析
+- 跟进项目进度，整理产品文档
+
+项目经历：
+- 公司主 APP 改版项目：负责整体规划与推进
+
+教育背景：
+2014.09 - 2018.06  某某大学  工商管理  本科""",
+        "优化要点：突出数据结果（DAU/转化率/留存率/NPS 提升百分比）、强调方法论（用户研究/AB实验/数据分析）、项目描述按'背景-目标-动作-结果'结构、补充产品案例链接或作品集、量化团队协调规模",
+        "高级产品经理",
+        {"mode": "once", "once": 5, "day": 2, "month": 19},
+    ))
+    T.append(_tpl(
+        "pdt_ops", "运营增长简历", "简历优化", "📈",
+        "运营岗位简历优化：增长指标、活动效果、用户洞察",
+        """王芳
+求职意向：用户运营经理
+电话：137XXXX2222 | 邮箱：wangfang@example.com
+
+工作经历：
+2019.04 - 至今  某某电商公司  用户运营
+- 负责用户运营工作，包括拉新、促活、留存
+- 策划运营活动，提升用户活跃度
+- 维护用户社群，处理用户问题
+
+2017.07 - 2019.03  某某新媒体公司  运营专员
+- 负责公众号内容运营与粉丝增长
+- 策划线上活动，提升互动率
+
+项目经历：
+- 618 大促用户运营项目：负责活动策划与执行
+
+教育背景：
+2013.09 - 2017.06  某某大学  市场营销  本科""",
+        "优化要点：所有活动描述量化效果（GMV/转化率/ROI/涨粉数/复购率）、突出用户分层运营方法论（RFM/生命周期）、社群运营规模（人数/活跃率）、A/B 测试与数据驱动案例、补充工具能力（Excel/SQL/数据分析平台）",
+        "用户运营经理",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_design", "视觉设计简历", "简历优化", "🎨",
+        "UI/视觉设计师简历优化：作品集、设计系统、业务赋能",
+        """陈晨
+求职意向：资深 UI 设计师
+电话：136XXXX3333 | 邮箱：chenchen@example.com
+
+工作经历：
+2020.05 - 至今  某某科技公司  资深 UI 设计师
+- 负责公司产品界面设计
+- 维护设计规范与组件库
+- 配合产品经理完成需求设计
+
+2018.03 - 2020.04  某某设计公司  视觉设计师
+- 负责品牌视觉设计与宣传物料设计
+- 参与线上线下活动视觉支持
+
+项目经历：
+- 公司核心产品 UI 改版：主导视觉升级
+
+教育背景：
+2014.09 - 2018.06  某某美术学院  视觉传达设计  本科""",
+        "优化要点：突出设计系统搭建经验（组件库/规范文档）、设计对业务指标的赋能（转化率/完成率提升）、作品集链接必须放在显眼位置、补充设计工具链（Figma/Sketch/动效）、项目描述含设计思考过程（调研-方案-验证）",
+        "资深 UI 设计师",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_market", "市场营销简历", "简历优化", "📣",
+        "市场营销简历优化：渠道投放、品牌曝光、ROI 数据",
+        """赵敏
+求职意向：市场经理
+电话：135XXXX4444 | 邮箱：zhaomin@example.com
+
+工作经历：
+2019.06 - 至今  某某消费品牌公司  市场专员
+- 负责品牌线上推广与投放
+- 运营品牌官方账号，策划内容
+- 对接外部合作渠道，组织线下活动
+
+2017.08 - 2019.05  某某广告公司  媒介执行
+- 负责广告投放执行与数据整理
+- 协助策划完成方案撰写
+
+项目经历：
+- 新品上市推广项目：负责传播方案执行
+
+教育背景：
+2013.09 - 2017.06  某某大学  广告学  本科""",
+        "优化要点：投放数据必须量化（曝光/点击率/CPM/ROI/获客成本）、突出全渠道营销方法论（内容/投放/PR/私域）、预算规模与团队管理经验、案例式呈现（品牌从0到1/爆款活动复盘）、补充数据分析与营销工具能力",
+        "市场经理",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    T.append(_tpl(
+        "pdt_data", "数据分析简历", "简历优化", "📊",
+        "数据分析师简历优化：分析框架、SQL/BI 能力、业务洞察",
+        """孙悦
+求职意向：数据分析师
+电话：134XXXX5555 | 邮箱：sunyue@example.com
+
+工作经历：
+2020.02 - 至今  某某互联网公司  数据分析师
+- 负责业务数据报表开发
+- 分析用户行为数据，输出分析报告
+- 支持业务部门数据需求
+
+2018.06 - 2020.01  某某金融公司  数据助理
+- 协助搭建数据看板
+- 处理日常数据提取需求
+
+项目经历：
+- 用户留存分析项目：负责数据分析与报告
+
+教育背景：
+2014.09 - 2018.06  某某大学  统计学  本科""",
+        "优化要点：突出分析框架（漏斗/留存/归因/AB实验）、量化分析产出（发现XX问题带来XX提升）、SQL 处理数据规模与 BI 工具（Tableau/PowerBI/帆软）、补充机器学习基础能力（Python/建模）、项目描述按'业务问题-分析方法-结论落地'结构",
+        "数据分析师",
+        {"mode": "free", "once": 0, "day": 0, "month": 0},
+    ))
+    return T
+
+
+def init_pdf_doc_templates():
+    """启动初始化：模板不存在才写盘（用户可编辑 JSON）。"""
+    for t in _pdf_doc_templates():
+        path = TEMPLATE_DIR / f"{t['id']}.json"
+        if not path.exists():
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(t, f, ensure_ascii=False, indent=2)
+            logger.info(f"初始化 PDF 文档模板：{t['name']}")
+    return _load_all()
+
+
+def _load_all() -> list[dict]:
+    items = []
+    for f in sorted(os.listdir(TEMPLATE_DIR)):
+        if not f.endswith(".json"):
+            continue
+        try:
+            with open(TEMPLATE_DIR / f, encoding="utf-8") as fh:
+                items.append(json.load(fh))
+        except Exception:  # noqa: BLE001
+            continue
+    return items
+
+
+def _load_one(tid: str) -> dict:
+    path = TEMPLATE_DIR / f"{tid}.json"
+    if not path.exists():
+        raise HTTPException(404, "PDF 文档模板不存在")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _get_usage(tid: str) -> int:
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT usage_count FROM pdf_doc_template_usage WHERE template_id=?", (tid,)
+        ).fetchone()
+        conn.close()
+        return int(row["usage_count"]) if row else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def record_usage(tid: str) -> None:
+    """使用文档模板时记录热度（接口调用方触发，失败静默）。"""
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS pdf_doc_template_usage "
+            "(template_id TEXT PRIMARY KEY, usage_count INTEGER DEFAULT 0)"
+        )
+        conn.execute(
+            "INSERT INTO pdf_doc_template_usage(template_id, usage_count) VALUES(?,1) "
+            "ON CONFLICT(template_id) DO UPDATE SET usage_count=usage_count+1",
+            (tid,),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@router.get("/list")
+async def pdf_doc_templates_list(category: str = "", q: str = ""):
+    """PDF 文档模板市场列表（合同审查/简历优化两类，含一键填充所需全量字段）。"""
+    items = []
+    for t in _load_all():
+        pricing = t.get("pricing") or {}
+        items.append({
+            "id": t["id"],
+            "name": t.get("name", "未命名"),
+            "category": t.get("category", "通用"),
+            "icon": t.get("icon", "📄"),
+            "desc": t.get("desc", ""),
+            "position": t.get("position", ""),
+            "sample": t.get("sample", ""),
+            "pro_tips": t.get("pro_tips", ""),
+            "pricing": pricing,
+            "pricing_label": {"free": "免费", "once": "按次", "day": "按天", "month": "按月"}
+            .get(pricing.get("mode", "free"), "免费"),
+            "usage": _get_usage(t["id"]),
+        })
+    if q:
+        ql = q.strip().lower()
+        items = [i for i in items if ql in i["name"].lower() or ql in i["desc"].lower()]
+    if category and category != "全部":
+        items = [i for i in items if i["category"] == category]
+    cats: dict = {}
+    for it in items:
+        cats.setdefault(it["category"], {"label": it["category"], "count": 0})
+        cats[it["category"]]["count"] += 1
+    return {"total": len(items), "items": items, "categories": list(cats.values())}
+
+
+@router.get("/{tid}")
+async def pdf_doc_template_detail(tid: str):
+    """PDF 文档模板详情（示例文本 + 专业要点，供一键填充与展示）。"""
+    t = _load_one(tid)
+    pricing = t.get("pricing") or {}
+    data = {k: t[k] for k in ("id", "name", "category", "icon", "desc", "sample",
+                              "pro_tips", "position", "pricing") if k in t}
+    labels = {"free": "免费", "once": "按次", "day": "按天", "month": "按月"}
+    data["category_label"] = {"contract": "合同审查", "resume": "简历优化"}.get(data.get("category", ""), data.get("category", "通用"))
+    data["pricing_label"] = labels.get(pricing.get("mode", "free"), "免费")
+    data["usage"] = _get_usage(tid)
+    return data
+
+
+# 启动初始化
+init_pdf_doc_templates()

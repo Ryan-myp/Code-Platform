@@ -1,0 +1,55 @@
+{
+  "id": "mmt_okr",
+  "name": "OKR 目标对齐",
+  "category": "战略管理",
+  "icon": "🎯",
+  "desc": "目标与关键结果：O→KR→执行计划三级联动，对齐公司/团队/个人",
+  "style": "professional",
+  "depth": 3,
+  "example_topic": "2026 年 Q3 增长目标",
+  "structure": [
+    {
+      "name": "公司目标 O1",
+      "hint": "定性目标",
+      "children": [
+        "关键结果 KR1",
+        "关键结果 KR2",
+        "关键结果 KR3"
+      ]
+    },
+    {
+      "name": "团队目标 O2",
+      "hint": "承接拆解",
+      "children": [
+        "关键结果 KR1",
+        "关键结果 KR2"
+      ]
+    },
+    {
+      "name": "个人目标 O3",
+      "hint": "具体到人",
+      "children": [
+        "关键结果 KR1",
+        "关键结果 KR2"
+      ]
+    },
+    {
+      "name": "执行计划",
+      "hint": "落地动作",
+      "children": [
+        "里程碑",
+        "负责人",
+        "资源需求"
+      ]
+    }
+  ],
+  "pro_tips": "每个 KR 必须可量化（含数字指标）；O 是方向、KR 是结果、计划是动作，三层不可混淆",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:25:25.859824",
+  "updated_at": "2026-08-12T08:25:25.859825"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mt_love_acid",
+  "name": "恋爱酸臭",
+  "category": "情感吐槽",
+  "icon": "🍋",
+  "desc": "被秀恩爱暴击的柠檬精现场，酸度拉满",
+  "style": "sticker",
+  "ai_style": "3d",
+  "top_hint": "你们继续，",
+  "bottom_hint": "我吃柠檬",
+  "texts": [
+    "你们继续，|我吃柠檬",
+    "又秀恩爱|举报了",
+    "恋爱的酸臭味|刺鼻"
+  ],
+  "prompt_hint": "一只抱着柠檬的委屈小猫，3D 软萌卡通风格，柔和光影，表情委屈",
+  "decoration": "🍋,😤",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866920",
+  "updated_at": "2026-08-12T08:12:46.866921"
+}

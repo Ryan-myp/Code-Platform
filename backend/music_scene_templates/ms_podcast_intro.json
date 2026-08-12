@@ -1,0 +1,25 @@
+{
+  "id": "ms_podcast_intro",
+  "name": "播客片头",
+  "category": "播客",
+  "icon": "🎙️",
+  "desc": "播客/栏目开场 15 秒记忆点：电子史诗感，品牌听觉 Logo",
+  "style": "electronic",
+  "mood": "epic",
+  "voice": "female",
+  "duration": 15,
+  "bpm": 122,
+  "instrument": "合成器 Rise + 鼓组 + 人声切片",
+  "structure": "Rise 渐强 4 秒（悬念）→ 主题旋律 8 秒（节目口号）→ 强收拍（进入正片）",
+  "lyrics_template": "[Verse 1]\n欢迎收听\n我们的声音宇宙\n每周与你 准时相遇\n好故事 从这里开始\n\n[Chorus]\n听见 看见 想见\n每一期都值得期待\n这里是\n不设限的谈话现场",
+  "theme_suggestion": "科技播客栏目片头",
+  "pro_tips": "片头控制在 12-18 秒；口号词对准主题旋律；结尾强收拍接人声",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:08:46.847166",
+  "updated_at": "2026-08-12T08:08:46.847166"
+}

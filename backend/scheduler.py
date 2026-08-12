@@ -58,6 +58,10 @@ def _ensure_table():
                 finished_at TEXT
             )"""
         )
+        # v24：幂等补列（旧库升级：缺 last_status 时 ALTER 补齐，否则回写 last_run/last_status 报 no such column）
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(scheduler_jobs)").fetchall()}
+        if 'last_status' not in cols:
+            conn.execute("ALTER TABLE scheduler_jobs ADD COLUMN last_status TEXT DEFAULT ''")
         conn.commit()
     finally:
         conn.close()

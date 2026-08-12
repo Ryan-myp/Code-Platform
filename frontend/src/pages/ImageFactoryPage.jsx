@@ -37,7 +37,11 @@ import {
   ChevronUp,
   Type,
   Square,
+  Circle,
+  Minus,
   Copy,
+  Send,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -147,7 +151,9 @@ const FONT_OPTIONS = [
   { id: 'pingfang', label: '苹方 PingFang' },
   { id: 'helvetica', label: '黑体 Helvetica' },
   { id: 'hiragino', label: '冬青黑体 Hiragino' },
+  { id: 'heiti', label: '黑体 Heiti（中文首选）' },
   { id: 'songti', label: '宋体 Songti' },
+  { id: 'noto', label: '思源黑体 Noto（服务端）' },
   { id: 'arial', label: 'Arial' },
   { id: 'times', label: 'Times New Roman' },
 ]
@@ -156,7 +162,9 @@ const FONT_CSS = {
   pingfang: 'PingFang SC, PingFangTC, sans-serif',
   helvetica: 'Helvetica, Arial, sans-serif',
   hiragino: 'Hiragino Sans GB, sans-serif',
+  heiti: 'STHeiti, Heiti SC, sans-serif',
   songti: 'Songti SC, STSong, serif',
+  noto: 'Noto Sans CJK SC, sans-serif',
   arial: 'Arial, sans-serif',
   times: 'Times New Roman, serif',
 }
@@ -190,7 +198,15 @@ function LayerProps({ layer, onChange }) {
         <label className="text-sm font-medium text-gray-700">
           图层属性 ·{' '}
           <span className="text-violet-600">
-            {layer.type === 'text' ? '文字' : layer.type === 'rect' ? '矩形' : '图片'}
+            {layer.type === 'text'
+              ? '文字'
+              : layer.type === 'rect'
+                ? '矩形'
+                : layer.type === 'circle'
+                  ? '圆形'
+                  : layer.type === 'line'
+                    ? '线条'
+                    : '图片'}
           </span>
         </label>
         <span className="text-[11px] text-gray-400">单位：像素（相对画布）</span>
@@ -318,13 +334,14 @@ function LayerProps({ layer, onChange }) {
               <div className="flex items-center gap-2">
                 <input
                   type="color"
-                  value={layer.color || '#000000'}
+                  value={(layer.color || '#000000').split('→')[0].trim()}
                   onChange={(e) => onChange({ color: e.target.value })}
                   className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
                 />
                 <input
                   value={layer.color || ''}
                   onChange={(e) => onChange({ color: e.target.value })}
+                  placeholder="#RRGGBB 或 #A→#B 垂直渐变"
                   className={inputCls}
                 />
               </div>
@@ -349,11 +366,11 @@ function LayerProps({ layer, onChange }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>阴影偏移（如 2,3）</label>
+              <label className={labelCls}>阴影偏移（如 2,3 或 2,3,8）</label>
               <input
                 value={layer.shadow || ''}
                 onChange={(e) => onChange({ shadow: e.target.value })}
-                placeholder="x,y；留空为无阴影"
+                placeholder="x,y,blur；blur 为模糊半径，留空无阴影"
                 className={inputCls}
               />
             </div>
@@ -464,6 +481,137 @@ function LayerProps({ layer, onChange }) {
                 <input
                   value={layer.border_color || ''}
                   onChange={(e) => onChange({ border_color: e.target.value })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {layer.type === 'circle' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>圆心 X</label>
+              <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>圆心 Y</label>
+              <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>半径</label>
+              <input type="number" value={num(layer.radius)} onChange={setNum('radius')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>不透明度（0-1）</label>
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1"
+                value={num(layer.opacity)}
+                onChange={setNum('opacity')}
+                className={inputCls}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>边框宽度（0=无）</label>
+              <input type="number" value={num(layer.border_width)} onChange={setNum('border_width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>旋转°</label>
+              <input type="number" value={num(layer.rotation)} onChange={setNum('rotation')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>填充颜色（支持渐变 #A→#B）</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={String(layer.fill || '#F3F4F6').split('→')[0]}
+                  onChange={(e) => onChange({ fill: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.fill || ''}
+                  onChange={(e) => onChange({ fill: e.target.value })}
+                  placeholder="#F3F4F6 或 #FF6B6B→#C0392B（留空=仅边框）"
+                  className={`${inputCls} font-mono`}
+                />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>边框颜色</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={layer.border_color || '#FFFFFF'}
+                  onChange={(e) => onChange({ border_color: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.border_color || ''}
+                  onChange={(e) => onChange({ border_color: e.target.value })}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {layer.type === 'line' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>起点 X</label>
+              <input type="number" value={num(layer.x)} onChange={setNum('x')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>起点 Y</label>
+              <input type="number" value={num(layer.y)} onChange={setNum('y')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>长度</label>
+              <input type="number" value={num(layer.length)} onChange={setNum('length')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>角度°（0=水平向右）</label>
+              <input type="number" value={num(layer.angle)} onChange={setNum('angle')} className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className={labelCls}>线宽</label>
+              <input type="number" value={num(layer.width)} onChange={setNum('width')} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>不透明度（0-1）</label>
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1"
+                value={num(layer.opacity)}
+                onChange={setNum('opacity')}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>颜色</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={layer.color || '#DDDDDD'}
+                  onChange={(e) => onChange({ color: e.target.value })}
+                  className="w-10 h-8 rounded border border-gray-200 cursor-pointer"
+                />
+                <input
+                  value={layer.color || ''}
+                  onChange={(e) => onChange({ color: e.target.value })}
                   className={inputCls}
                 />
               </div>
@@ -699,6 +847,7 @@ export default function ImageFactoryPage() {
     layers: [], // 图层对象数组（可视化编辑器维护）
     layerJson: '', // 高级模式 JSON 文本
     showJson: false, // 是否展开高级 JSON 编辑
+    pricing: { mode: 'free', once: 0, day: 0, month: 0 }, // 市场定价（积分）
   })
   const [selectedLayerIdx, setSelectedLayerIdx] = useState(-1) // 可视化编辑选中的图层
   const [templateSaving, setTemplateSaving] = useState(false)
@@ -708,6 +857,23 @@ export default function ImageFactoryPage() {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   // 模板市场：分类筛选
   const [templateCategoryFilter, setTemplateCategoryFilter] = useState('全部')
+  // Excel 批量套版（对标跨境卖家批量出图工具）：上传表格 + 字段映射 → 逐行生成
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchFile, setBatchFile] = useState(null) // File
+  const [batchColumns, setBatchColumns] = useState([]) // 表头列名
+  const [batchFieldMap, setBatchFieldMap] = useState({}) // {列名: 图层key}
+  const [batchName, setBatchName] = useState('')
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchResult, setBatchResult] = useState(null) // {count, images, zip}
+  const [batchTask, setBatchTask] = useState(null)
+  const batchFileRef = useRef(null)
+  // 一键发布（商业化）：图片成品 → 公众号/抖音/快手账号
+  const [pubOpen, setPubOpen] = useState(false)
+  const [pubTarget, setPubTarget] = useState(null) // 待发布的图片
+  const [pubPlatform, setPubPlatform] = useState('wechat')
+  const [pubTitle, setPubTitle] = useState('')
+  const [pubContent, setPubContent] = useState('')
+  const [pubBusy, setPubBusy] = useState(false)
   // 模板编辑：背景模式（纯色/渐变/图片）
   const [bgMode, setBgMode] = useState('solid')
   const [bgGradientFrom, setBgGradientFrom] = useState('#FFFFFF')
@@ -775,11 +941,17 @@ export default function ImageFactoryPage() {
     try {
       const res = await api.get('/api/image-factory/templates')
       setTemplates(res.data)
-      if (res.data.length > 0 && !selectedTemplate) setSelectedTemplate(res.data[0].id)
+      // 支持 /image-factory?template=xxx 直达指定模板（模板市场「去使用」跳转）
+      const fromUrl = new URLSearchParams(window.location.search).get('template')
+      setSelectedTemplate((cur) => {
+        if (fromUrl && res.data.some((t) => t.id === fromUrl)) return fromUrl
+        if (cur && res.data.some((t) => t.id === cur)) return cur
+        return res.data.length > 0 ? res.data[0].id : ''
+      })
     } catch {
       /* 静默 */
     }
-  }, [selectedTemplate])
+  }, [])
 
   useEffect(() => {
     fetchStats()
@@ -917,6 +1089,136 @@ export default function ImageFactoryPage() {
     )
   }
 
+  // ── Excel 批量套版（商业化：对标跨境卖家批量出图工具）──
+  // 智能匹配：列名与图层 key 规范化后相同/包含则自动映射
+  const autoMapColumns = (cols, tmpl) => {
+    const map = {}
+    const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-（）()]/g, '')
+    ;(tmpl?.layers || [])
+      .filter((l) => l.key)
+      .forEach((l) => {
+        const hit = cols.find((c) => norm(c) === norm(l.key) || norm(c).includes(norm(l.key)))
+        if (hit && !Object.values(map).includes(l.key)) map[hit] = l.key
+      })
+    return map
+  }
+
+  const openBatchModal = () => {
+    if (!selectedTemplate) {
+      toast.error('请先选择模板')
+      return
+    }
+    setBatchOpen(true)
+    setBatchFile(null)
+    setBatchColumns([])
+    setBatchFieldMap({})
+    setBatchName('')
+    setBatchResult(null)
+    setBatchTask(null)
+  }
+
+  const handleBatchFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      toast.error('请上传 .xlsx / .csv 文件')
+      return
+    }
+    setBatchFile(file)
+    setBatchColumns([])
+    setBatchFieldMap({})
+    setBatchResult(null)
+    setBatchTask(null)
+    const form = new FormData()
+    form.append('file', file)
+    try {
+      const res = await api.post('/api/image-store/columns', form)
+      const cols = res.data.columns || []
+      setBatchColumns(cols)
+      const tmpl = templates.find((t) => t.id === selectedTemplate)
+      setBatchFieldMap(autoMapColumns(cols, tmpl))
+      toast.success(`已解析 ${cols.length} 列字段`)
+    } catch (err) {
+      toast.error(`解析失败：${err.message}`)
+    } finally {
+      e.target.value = ''
+    }
+  }
+
+  const handleBatchStart = async () => {
+    if (!batchFile) {
+      toast.error('请先上传 Excel/CSV 表格')
+      return
+    }
+    if (Object.values(batchFieldMap).filter(Boolean).length === 0) {
+      toast.error('请至少映射一个字段')
+      return
+    }
+    setBatchBusy(true)
+    setBatchResult(null)
+    setBatchTask({ progress: 0, stage: '任务排队中…', status: 'pending' })
+    const form = new FormData()
+    form.append('template_id', selectedTemplate)
+    form.append('file', batchFile)
+    form.append('field_map', JSON.stringify(batchFieldMap))
+    if (batchName.trim()) form.append('batch_name', batchName.trim())
+    await submitTask(
+      '/api/image-store/batch',
+      form,
+      {
+        onUpdate: (t) => setBatchTask(t),
+        onSuccess: (data) => {
+          setBatchResult(data)
+          setBatchTask({ progress: 100, stage: '批量生成完成', status: 'success' })
+          toast.success(`批量生成完成，共 ${data.count} 张，可下载 zip 压缩包`)
+          fetchImages()
+          setBatchBusy(false)
+        },
+        onError: (e) => {
+          setBatchBusy(false)
+          setBatchTask(null)
+          toast.error(`批量生成失败：${e.message}`)
+        },
+      }
+    )
+  }
+
+  // ── 一键发布（商业化）：图片成品 → 公众号/抖音/快手账号 ──
+  const openPublish = (img) => {
+    setPubTarget(img)
+    setPubPlatform('wechat')
+    setPubTitle(img.prompt ? `AI 图片作品：${img.prompt.slice(0, 18)}` : 'AI 图片作品')
+    setPubContent(
+      `# AI 图片作品\n\n${img.prompt ? `提示词：${img.prompt}\n\n` : ''}由小团智能平台 AI 图片工厂生成 · ${new Date().toLocaleString()}`
+    )
+    setPubOpen(true)
+  }
+
+  const handlePublish = async () => {
+    if (!pubTarget) return
+    if (!pubTitle.trim()) {
+      toast.error('请输入标题')
+      return
+    }
+    setPubBusy(true)
+    try {
+      const res = await api.post('/api/publish/submit', {
+        platform: pubPlatform,
+        content_type: 'image',
+        title: pubTitle.trim(),
+        content: pubContent.trim(),
+        asset_urls: [pubTarget.url.replace(MEDIA_BASE, '')],
+      })
+      setPubOpen(false)
+      const auto = res.data.mode === 'auto'
+      toast.success(auto ? '发布成功！内容已自动投递到平台账号' : '素材包已生成，请按发布指引完成发布')
+    } catch (e) {
+      toast.error(`发布失败：${e.message}`)
+    } finally {
+      setPubBusy(false)
+    }
+  }
+
   // ── 图生图 ──
   const handleImg2ImgUpload = (e) => {
     const file = e.target.files?.[0]
@@ -974,6 +1276,8 @@ export default function ImageFactoryPage() {
   const LAYER_DEFAULTS = {
     text: { type: 'text', text: '文字内容', key: '', x: 50, y: 100, font_size: 28, color: '#000000', align: 'left', max_width: 0, shadow: '', shadow_color: '#00000080', family: '', bold: false, italic: false, letter_spacing: 0, line_height: 1.35, stroke_width: 0, stroke_color: '#000000', rotation: 0 },
     rect: { type: 'rect', x: 50, y: 50, width: 300, height: 80, radius: 16, fill: '#F3F4F6', opacity: 1, rotation: 0, border_width: 0, border_color: '#FFFFFF' },
+    circle: { type: 'circle', x: 200, y: 200, radius: 80, fill: '#F3F4F6', opacity: 1, rotation: 0, border_width: 0, border_color: '#FFFFFF' },
+    line: { type: 'line', x: 100, y: 200, length: 300, angle: 0, color: '#DDDDDD', width: 2, opacity: 1 },
     image: { type: 'image', key: '', x: 0, y: 0, width: 300, height: 300, url: '', slot: '', fit: 'cover', radius: 0, opacity: 1, rotation: 0, border_width: 0, border_color: '#FFFFFF' },
   }
 
@@ -1036,6 +1340,7 @@ export default function ImageFactoryPage() {
       layers: [],
       layerJson: '',
       showJson: false,
+      pricing: { mode: 'free', once: 0, day: 0, month: 0 },
     })
     setTemplateModal('create')
   }
@@ -1062,6 +1367,12 @@ export default function ImageFactoryPage() {
       layers: Array.isArray(t.layers) ? t.layers.map((l) => ({ ...l })) : [],
       layerJson: JSON.stringify(Array.isArray(t.layers) ? t.layers : [], null, 2),
       showJson: false,
+      pricing: {
+        mode: ['free', 'once', 'day', 'month'].includes(t.pricing?.mode) ? t.pricing.mode : 'free',
+        once: Number(t.pricing?.once) || 0,
+        day: Number(t.pricing?.day) || 0,
+        month: Number(t.pricing?.month) || 0,
+      },
     })
     setTemplateModal('edit')
   }
@@ -1093,6 +1404,8 @@ export default function ImageFactoryPage() {
         background_image: templateForm.background_image || '',
         background_darken: Number(templateForm.background_darken) || 0,
         layers,
+        // 市场定价：免费或按次/按天/按月（积分），同步到模板市场
+        pricing: templateForm.pricing || { mode: 'free', once: 0, day: 0, month: 0 },
       }
       let res
       if (templateModal === 'edit') {
@@ -1399,6 +1712,13 @@ export default function ImageFactoryPage() {
         title="下载"
       >
         <Download className="w-4 h-4" />
+      </button>
+      <button
+        onClick={() => openPublish(img)}
+        className="p-2 bg-white rounded-full hover:bg-rose-100 hover:text-rose-600 transition-colors"
+        title="一键发布到公众号/抖音/快手"
+      >
+        <Send className="w-4 h-4" />
       </button>
       <span onClick={(e) => e.stopPropagation()}>
         <ShareButton
@@ -1711,14 +2031,16 @@ export default function ImageFactoryPage() {
                   ))}
                 </div>
               ) : generatedImages.length > 0 ? (
-                <div className="grid grid-cols-2 gap-4">
+                // v24：单张图单列大图、多张两列；去掉 aspect-square 硬约束，图片按自身比例完整放大，无需点详情即可看全
+                <div className={generatedImages.length === 1 ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-2 gap-4'}>
                   {generatedImages.map((img, idx) => (
                     <div key={idx} className="relative group rounded-xl overflow-hidden shadow-sm bg-gray-50">
-                      {/* v18-B：object-contain + aspect-square 完整展示构图，避免裁切；hover 浮层快速预览 */}
                       <img
                         src={img.url}
                         alt={img.prompt}
-                        className="w-full aspect-square object-contain transition-transform duration-300 group-hover:scale-[1.03]"
+                        className={`w-full object-contain transition-transform duration-300 group-hover:scale-[1.03] ${
+                          generatedImages.length === 1 ? 'max-h-[70vh]' : 'max-h-[46vh]'
+                        }`}
                       />
                       {generatedImages.length > 1 && (
                         <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/50 text-white text-[10px] font-medium">
@@ -1769,7 +2091,7 @@ export default function ImageFactoryPage() {
                 <label className="text-sm font-medium text-gray-700 mb-3 block">参考图</label>
                 {img2imgPreview ? (
                   <div className="relative rounded-xl overflow-hidden border border-gray-200">
-                    <img src={img2imgPreview} alt="参考图" className="w-full h-56 object-cover" />
+                    <img src={img2imgPreview} alt="参考图" className="w-full max-h-80 object-contain bg-gray-50" />
                     <button
                       onClick={() => {
                         setImg2imgFile(null)
@@ -1871,12 +2193,21 @@ export default function ImageFactoryPage() {
               {img2imgBusy ? (
                 <div className="h-64 rounded-xl bg-gray-100 animate-pulse" />
               ) : generatedImages.length > 0 ? (
-                <div className="relative group rounded-xl overflow-hidden shadow-sm">
+                <div className="relative group rounded-xl overflow-hidden shadow-sm bg-gray-50">
                   <img
                     src={generatedImages[0].url}
                     alt={img2imgPrompt}
-                    className="w-full h-64 object-cover"
+                    className="w-full max-h-[70vh] object-contain transition-transform duration-300 group-hover:scale-[1.03]"
                   />
+                  <button
+                    onClick={() => setPreviewImage(generatedImages[0])}
+                    className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center"
+                    aria-label="放大查看结果"
+                  >
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/90 text-xs font-medium text-gray-800 shadow">
+                      <ZoomIn className="w-3.5 h-3.5" /> 放大查看
+                    </span>
+                  </button>
                   {renderImageActions(generatedImages[0])}
                 </div>
               ) : (
@@ -1902,6 +2233,13 @@ export default function ImageFactoryPage() {
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm font-medium text-gray-700">选择模板</label>
                   <div className="flex gap-1.5">
+                    <button
+                      onClick={openBatchModal}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
+                      title="上传 Excel/CSV，按行套版批量生成图片（如商品主图、报价海报）"
+                    >
+                      <FileSpreadsheet className="w-3 h-3" /> Excel 批量
+                    </button>
                     <button
                       onClick={openCreateTemplate}
                       className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-100 transition-all"
@@ -2110,15 +2448,26 @@ export default function ImageFactoryPage() {
                   }`}
                 >
                   {generatedImages.map((img, i) => (
-                    <div key={`${img.filename || img.url}-${i}`} className="relative group rounded-xl overflow-hidden shadow-sm">
+                    <div key={`${img.filename || img.url}-${i}`} className="relative group rounded-xl overflow-hidden shadow-sm bg-gray-50">
                       <img
                         src={img.url}
                         alt="模板结果"
-                        className="w-full h-64 object-cover"
+                        className={`w-full object-contain transition-transform duration-300 group-hover:scale-[1.03] ${
+                          generatedImages.length > 1 ? 'max-h-[46vh]' : 'max-h-[70vh]'
+                        }`}
                       />
                       <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/50 text-white text-xs">
                         {i + 1}/{generatedImages.length}
                       </div>
+                      <button
+                        onClick={() => setPreviewImage(img)}
+                        className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center"
+                        aria-label={`放大查看第 ${i + 1} 张`}
+                      >
+                        <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/90 text-xs font-medium text-gray-800 shadow">
+                          <ZoomIn className="w-3.5 h-3.5" /> 放大查看
+                        </span>
+                      </button>
                       {renderImageActions(img)}
                     </div>
                   ))}
@@ -2390,7 +2739,7 @@ export default function ImageFactoryPage() {
                       <img
                         src={personImage.url}
                         alt="人物"
-                        className="w-full h-48 object-contain rounded-lg"
+                        className="w-full max-h-72 object-contain rounded-lg"
                       />
                     ) : (
                       <>
@@ -2432,7 +2781,7 @@ export default function ImageFactoryPage() {
                       <img
                         src={clothingImage.url}
                         alt="衣物"
-                        className="w-full h-48 object-contain rounded-lg"
+                        className="w-full max-h-72 object-contain rounded-lg"
                       />
                     ) : (
                       <>
@@ -2537,8 +2886,8 @@ export default function ImageFactoryPage() {
               {tryOnGenerating ? (
                 <div className="h-96 rounded-xl bg-gray-100 animate-pulse" />
               ) : tryOnResult ? (
-                <div className="rounded-xl overflow-hidden border border-gray-200">
-                  <img src={tryOnResult.url} alt="试穿效果" className="w-full h-96 object-cover" />
+                <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
+                  <img src={tryOnResult.url} alt="试穿效果" className="w-full max-h-[70vh] object-contain" />
                 </div>
               ) : (
                 <div className="h-96">
@@ -2885,7 +3234,7 @@ export default function ImageFactoryPage() {
         open={!!previewImage}
         onClose={() => setPreviewImage(null)}
         title={previewImage?.filename}
-        size="lg"
+        size="xl"
         footer={
           <>
             <Button variant="secondary" onClick={() => setPreviewImage(null)}>
@@ -2902,11 +3251,11 @@ export default function ImageFactoryPage() {
       >
         {previewImage && (
           <div className="space-y-3">
-            <div className="bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden max-h-[55vh]">
+            <div className="bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden max-h-[78vh]">
               <img
                 src={previewImage.url}
                 alt={previewImage.filename}
-                className="max-w-full max-h-[55vh] object-contain"
+                className="max-w-full max-h-[78vh] object-contain"
               />
             </div>
             {/* v18-B：灯箱元信息（prompt/尺寸/时间），让每张图可追溯 */}
@@ -2964,7 +3313,7 @@ export default function ImageFactoryPage() {
                   <img
                     src={absUrl(img.thumb_url || img.url)}
                     alt={img.filename}
-                    className="w-full h-32 object-cover"
+                    className="w-full h-32 object-contain bg-gray-50"
                     loading="lazy"
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
@@ -3052,6 +3401,80 @@ export default function ImageFactoryPage() {
               </div>
             </div>
           </div>
+          {/* 市场定价（商业化）：免费或按次/按天/按月，保存后同步到模板市场 */}
+          <div className="rounded-xl border border-gray-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-medium text-gray-700">市场定价（积分）</label>
+              <span className="text-[11px] text-gray-400">
+                收费模板将在模板市场展示价格，用户购买/订阅后才能使用
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                ['free', '免费', '所有人可用'],
+                ['once', '按次·永久', '购买后永久可用'],
+                ['day', '按天订阅', '1 天有效期'],
+                ['month', '按月订阅', '30 天有效期'],
+              ].map(([id, label, tip]) => (
+                <label
+                  key={id}
+                  className={`flex items-start gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-all ${
+                    templateForm.pricing?.mode === id
+                      ? 'border-violet-500 bg-violet-50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    checked={templateForm.pricing?.mode === id}
+                    onChange={() =>
+                      setTemplateForm({
+                        ...templateForm,
+                        pricing: { ...(templateForm.pricing || {}), mode: id },
+                      })
+                    }
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-xs font-medium text-gray-800">{label}</span>
+                    <span className="block text-[10px] text-gray-400">{tip}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {templateForm.pricing?.mode !== 'free' && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                {[
+                  ['once', '按次价格'],
+                  ['day', '按天价格'],
+                  ['month', '按月价格'],
+                ].map(([key, label]) => (
+                  <div key={key}>
+                    <label className="block text-xs text-gray-500 mb-1">{label}（积分）</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={templateForm.pricing?.[key] || 0}
+                      onChange={(e) =>
+                        setTemplateForm({
+                          ...templateForm,
+                          pricing: {
+                            ...(templateForm.pricing || {}),
+                            [key]: Math.max(0, Number(e.target.value) || 0),
+                          },
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* 主体三栏：左=背景+图层 / 中=画布实时预览 / 右=图层属性（编辑与预览同屏） */}
+          <div className="grid grid-cols-1 lg:grid-cols-[250px_1fr_300px] gap-5">
+            {/* 左栏：背景设置 */}
+            <div className="space-y-5">
           {/* 背景：纯色 / 渐变 / 图片 */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">背景</label>
@@ -3174,11 +3597,10 @@ export default function ImageFactoryPage() {
                 </div>
               </div>
             )}
-          </div>
+            </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-            {/* 左：图层列表 */}
-            <div className="lg:col-span-2">
+            {/* 左栏：图层列表 */}
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 图层（列表越靠下，绘制时越靠上层）
               </label>
@@ -3199,16 +3621,28 @@ export default function ImageFactoryPage() {
                       }`}
                     >
                       <span
-                        className={`text-xs font-medium px-1.5 py-0.5 rounded ${layer.type === 'text' ? 'bg-blue-50 text-blue-600' : layer.type === 'rect' ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}
+                        className={`text-xs font-medium px-1.5 py-0.5 rounded ${layer.type === 'text' ? 'bg-blue-50 text-blue-600' : layer.type === 'rect' ? 'bg-amber-50 text-amber-600' : layer.type === 'circle' ? 'bg-rose-50 text-rose-600' : layer.type === 'line' ? 'bg-cyan-50 text-cyan-600' : 'bg-emerald-50 text-emerald-600'}`}
                       >
-                        {layer.type === 'text' ? '文字' : layer.type === 'rect' ? '矩形' : '图片'}
+                        {layer.type === 'text'
+                          ? '文字'
+                          : layer.type === 'rect'
+                            ? '矩形'
+                            : layer.type === 'circle'
+                              ? '圆形'
+                              : layer.type === 'line'
+                                ? '线条'
+                                : '图片'}
                       </span>
                       <span className="flex-1 text-xs text-gray-600 truncate">
                         {layer.type === 'text'
                           ? layer.text || '（空文字）'
                           : layer.type === 'image'
                             ? layer.key || layer.url || '图片槽'
-                            : `${layer.width}×${layer.height}`}
+                            : layer.type === 'circle'
+                              ? `半径 ${layer.radius || 0} · 圆心 (${layer.x || 0},${layer.y || 0})`
+                              : layer.type === 'line'
+                                ? `长度 ${layer.length || 0} · ${layer.angle || 0}°`
+                                : `${layer.width}×${layer.height}`}
                       </span>
                       <button
                         onClick={(e) => {
@@ -3256,7 +3690,7 @@ export default function ImageFactoryPage() {
                   ))}
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-2 mt-2.5">
+              <div className="grid grid-cols-5 gap-2 mt-2.5">
                 <button
                   onClick={() => addTemplateLayer('text')}
                   className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all"
@@ -3270,6 +3704,18 @@ export default function ImageFactoryPage() {
                   <Square className="w-3.5 h-3.5" /> 矩形
                 </button>
                 <button
+                  onClick={() => addTemplateLayer('circle')}
+                  className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 transition-all"
+                >
+                  <Circle className="w-3.5 h-3.5" /> 圆形
+                </button>
+                <button
+                  onClick={() => addTemplateLayer('line')}
+                  className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-cyan-50 text-cyan-600 border border-cyan-200 hover:bg-cyan-100 transition-all"
+                >
+                  <Minus className="w-3.5 h-3.5" /> 线条
+                </button>
+                <button
                   onClick={() => addTemplateLayer('image')}
                   className="flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100 transition-all"
                 >
@@ -3277,17 +3723,18 @@ export default function ImageFactoryPage() {
                 </button>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-gray-400">
-                图片层不填地址即为「图片槽」，渲染时自动套入所选图片（适合批量套版）；文字层的「变量名」可在渲染时批量替换内容。
+                图片层不填地址即为「图片槽」，渲染时自动套入所选图片（适合批量套版）；文字层的「变量名」可在渲染时批量替换内容。圆形/线条适合做装饰光斑、徽章底与分隔线，支持渐变与透明度。
               </p>
             </div>
+            </div>
 
-            {/* 右：画布预览 + 图层属性 */}
-            <div className="lg:col-span-3 space-y-4">
-              {/* 画布实时预览（支持拖拽移动图层） */}
+            {/* 中栏：画布实时预览（sticky 常驻，编辑属性时同步可见） */}
+            <div className="lg:sticky lg:top-0 lg:self-start space-y-2">
+              <label className="block text-sm font-medium text-gray-700">实时预览（点击/拖拽可选中移动图层）</label>
               {(() => {
                 const w = Number(templateForm.width) || 1080
                 const h = Number(templateForm.height) || 1920
-                const scale = Math.min(1, 340 / w)
+                const scale = Math.min(1, 460 / w)
                 const pv = (v) => (Number(v) || 0) * scale
                 const bg = String(templateForm.background || '#FFFFFF')
                 const isGradient = bg.includes('→')
@@ -3304,6 +3751,21 @@ export default function ImageFactoryPage() {
                         px <= (l.x || 0) + (l.width || 0) &&
                         py >= (l.y || 0) &&
                         py <= (l.y || 0) + (l.height || 0)
+                    } else if (l.type === 'circle') {
+                      const r = Number(l.radius) || 0
+                      hit = Math.hypot(px - (l.x || 0), py - (l.y || 0)) <= r
+                    } else if (l.type === 'line') {
+                      // 点到线段距离 <= 线宽×2 视为命中
+                      const x1 = l.x || 0
+                      const y1 = l.y || 0
+                      const ang = ((Number(l.angle) || 0) * Math.PI) / 180
+                      const len = Number(l.length) || 100
+                      const x2 = x1 + len * Math.cos(ang)
+                      const y2 = y1 + len * Math.sin(ang)
+                      const dx = x2 - x1
+                      const dy = y2 - y1
+                      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy || 1)))
+                      hit = Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy)) <= Math.max(10, (Number(l.width) || 2) * 2)
                     } else if (l.type === 'text') {
                       const fs = Number(l.font_size) || 28
                       const lines = String(l.text || '').split('\n')
@@ -3321,10 +3783,11 @@ export default function ImageFactoryPage() {
                 }
                 const shadowCss = (layer) => {
                   if (!layer.shadow) return undefined
-                  const [sx, sy] = String(layer.shadow)
+                  // v24：支持 x,y,blur 三参数软阴影，缺省 blur 时用 3px
+                  const [sx, sy, blur] = String(layer.shadow)
                     .split(',')
                     .map((s) => Number(s.trim()) || 0)
-                  return `${sx}px ${sy}px ${pv(3)}px ${layer.shadow_color || 'rgba(0,0,0,0.5)'}`
+                  return `${sx}px ${sy}px ${blur ? pv(blur) : pv(3)}px ${layer.shadow_color || 'rgba(0,0,0,0.5)'}`
                 }
                 return (
                   <div
@@ -3413,7 +3876,58 @@ export default function ImageFactoryPage() {
                           />
                         )
                       }
+                      if (layer.type === 'circle') {
+                        const fill = String(layer.fill || '#F3F4F6')
+                        const grad = fill.includes('→')
+                        const [cFrom, cTo] = grad ? fill.split('→').map((s) => s.trim()) : []
+                        const r = Number(layer.radius) || 0
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              position: 'absolute',
+                              left: pv((layer.x || 0) - r),
+                              top: pv((layer.y || 0) - r),
+                              width: pv(r * 2),
+                              height: pv(r * 2),
+                              borderRadius: '50%',
+                              background: grad ? `linear-gradient(135deg, ${cFrom}, ${cTo})` : fill,
+                              opacity: layer.opacity ?? 1,
+                              border:
+                                layer.border_width > 0
+                                  ? `${pv(layer.border_width)}px solid ${layer.border_color || '#FFFFFF'}`
+                                  : undefined,
+                              transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+                              outline,
+                              outlineOffset: -1,
+                            }}
+                          />
+                        )
+                      }
+                      if (layer.type === 'line') {
+                        return (
+                          <div
+                            key={idx}
+                            style={{
+                              position: 'absolute',
+                              left: pv(layer.x),
+                              top: pv((layer.y || 0) - (Number(layer.width) || 2) / 2),
+                              width: pv(layer.length || 100),
+                              height: pv(Math.max(1, Number(layer.width) || 2)),
+                              background: layer.color || '#DDDDDD',
+                              opacity: layer.opacity ?? 1,
+                              transform: `rotate(${layer.angle || 0}deg)`,
+                              transformOrigin: '0 50%',
+                              outline,
+                              outlineOffset: -1,
+                            }}
+                          />
+                        )
+                      }
                       if (layer.type === 'text') {
+                        // v24：color 支持 #A→#B 渐变，画布预览用 background-clip 模拟
+                        const gradParts = String(layer.color || '').split('→').map((s) => s.trim())
+                        const isGradText = gradParts.length > 1 && gradParts[0].startsWith('#')
                         return (
                           <div
                             key={idx}
@@ -3423,7 +3937,10 @@ export default function ImageFactoryPage() {
                               top: pv(layer.y),
                               width: layer.max_width > 0 ? pv(layer.max_width) : undefined,
                               fontSize: Math.max(6, pv(layer.font_size)),
-                              color: layer.color,
+                              color: isGradText ? 'transparent' : layer.color,
+                              backgroundImage: isGradText ? `linear-gradient(180deg, ${gradParts[0]}, ${gradParts[1]})` : undefined,
+                              WebkitBackgroundClip: isGradText ? 'text' : undefined,
+                              WebkitTextFillColor: isGradText ? 'transparent' : undefined,
                               textAlign: layer.align || 'left',
                               lineHeight: Number(layer.line_height) || 1.35,
                               letterSpacing: `${pv(layer.letter_spacing)}px`,
@@ -3499,15 +4016,25 @@ export default function ImageFactoryPage() {
                 )
               })()}
 
-              {/* 选中图层的属性面板 */}
-              {selectedLayerIdx >= 0 && templateForm.layers[selectedLayerIdx] && (
-                <LayerProps
-                  layer={templateForm.layers[selectedLayerIdx]}
-                  onChange={(patch) => updateTemplateLayer(selectedLayerIdx, patch)}
-                />
-              )}
             </div>
-          </div>
+
+              {/* 右栏：选中图层的属性面板（与画布同屏，改动实时可见） */}
+              <div className="space-y-3">
+                {selectedLayerIdx >= 0 && templateForm.layers[selectedLayerIdx] ? (
+                  <LayerProps
+                    layer={templateForm.layers[selectedLayerIdx]}
+                    onChange={(patch) => updateTemplateLayer(selectedLayerIdx, patch)}
+                  />
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-gray-200 px-4 py-10 text-center">
+                    <p className="text-sm text-gray-400 mb-1.5">未选中图层</p>
+                    <p className="text-[11px] leading-relaxed text-gray-300">
+                      在左侧图层列表或画布上点击图层，即可在这里编辑属性，修改会实时反映到中间预览
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
 
           {/* 高级模式：JSON 编辑（保留给熟悉格式的用户） */}
           <div className="border-t border-gray-100 pt-3">
@@ -3600,7 +4127,7 @@ export default function ImageFactoryPage() {
                   <img
                     src={absUrl(img.thumb_url || img.url)}
                     alt={img.filename}
-                    className="w-full h-32 object-cover"
+                    className="w-full h-32 object-contain bg-gray-50"
                     loading="lazy"
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
@@ -3648,7 +4175,7 @@ export default function ImageFactoryPage() {
                   <img
                     src={absUrl(img.thumb_url || img.url)}
                     alt={img.filename}
-                    className="w-full h-32 object-cover"
+                    className="w-full h-32 object-contain bg-gray-50"
                     loading="lazy"
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1">
@@ -3674,6 +4201,239 @@ export default function ImageFactoryPage() {
           <Button variant="gradient" onClick={() => setShowTemplatePicker(false)}>
             确定（已选 {templateImages.length} 张）
           </Button>
+        </div>
+      </Modal>
+
+      {/* Excel 批量套版弹窗（商业化：对标跨境卖家批量出图工具） */}
+      <Modal open={batchOpen} onClose={() => setBatchOpen(false)} title="Excel 批量生成图片" size="2xl">
+        <div className="space-y-5">
+          {/* 当前模板信息 */}
+          <div className="flex items-start gap-3 rounded-xl bg-violet-50 border border-violet-100 px-4 py-3">
+            <LayoutTemplate className="w-4 h-4 text-violet-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <div className="text-sm font-medium text-gray-900">
+                {templates.find((x) => x.id === selectedTemplate)?.name || '未选择模板'}
+              </div>
+              <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                表格每行数据生成一张图片（自动套用模板变量），完成后打包 zip 下载，单次最多 500 行
+              </div>
+            </div>
+          </div>
+
+          {/* 步骤 1：上传表格 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">① 上传 Excel/CSV 表格</label>
+            <button
+              onClick={() => batchFileRef.current?.click()}
+              className="w-full rounded-xl border-2 border-dashed border-gray-200 hover:border-emerald-400 hover:bg-emerald-50/50 transition-all px-4 py-6 text-center"
+            >
+              {batchFile ? (
+                <span className="flex items-center justify-center gap-2 text-sm text-emerald-600 font-medium">
+                  <FileSpreadsheet className="w-5 h-5" />
+                  {batchFile.name}
+                </span>
+              ) : (
+                <span className="flex flex-col items-center gap-1 text-sm text-gray-400">
+                  <Upload className="w-6 h-6" />
+                  点击上传 .xlsx / .csv（首行为表头，如：商品名、价格、折扣）
+                </span>
+              )}
+            </button>
+            <input
+              ref={batchFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleBatchFile}
+              className="hidden"
+            />
+          </div>
+
+          {/* 步骤 2：字段映射（表格列 → 模板变量） */}
+          {batchColumns.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-gray-700">② 字段映射（表格列 → 模板变量）</label>
+                <button
+                  onClick={() => {
+                    const tmpl = templates.find((t) => t.id === selectedTemplate)
+                    setBatchFieldMap(autoMapColumns(batchColumns, tmpl))
+                  }}
+                  className="text-xs text-violet-600 hover:text-violet-700"
+                >
+                  ↺ 自动匹配
+                </button>
+              </div>
+              <div className="rounded-xl border border-gray-200 divide-y divide-gray-100 max-h-56 overflow-y-auto">
+                {(templates.find((t) => t.id === selectedTemplate)?.layers || [])
+                  .filter((l) => l.key)
+                  .map((l) => (
+                    <div key={l.key} className="flex items-center gap-3 px-3 py-2">
+                      <span className="text-xs font-medium text-gray-700 w-36 truncate flex-shrink-0">
+                        {l.type === 'image' ? '🖼' : '🔤'} {l.key}
+                      </span>
+                      <select
+                        value={Object.entries(batchFieldMap).find(([, v]) => v === l.key)?.[0] || ''}
+                        onChange={(e) => {
+                          const nm = { ...batchFieldMap }
+                          Object.keys(nm).forEach((c) => {
+                            if (nm[c] === l.key) delete nm[c]
+                          })
+                          if (e.target.value) nm[e.target.value] = l.key
+                          setBatchFieldMap(nm)
+                        }}
+                        className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm outline-none focus:border-violet-500 bg-white"
+                      >
+                        <option value="">— 不映射 —</option>
+                        {batchColumns.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+              </div>
+              <p className="mt-1.5 text-[11px] text-gray-400">
+                🔤 文字变量填入文本；🖼 图片变量填入图片 URL（http）或图库相对路径
+              </p>
+            </div>
+          )}
+
+          {/* 步骤 3：批次名称 */}
+          {batchColumns.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">③ 批次名称（可选）</label>
+              <input
+                value={batchName}
+                onChange={(e) => setBatchName(e.target.value)}
+                placeholder="如：8月大促主图"
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+              />
+            </div>
+          )}
+
+          {/* 任务进度 */}
+          {batchTask && (
+            <div className="rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+              <div className="flex items-center gap-2 text-xs text-emerald-700">
+                <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                <span className="flex-1 truncate">{batchTask.stage || '任务执行中…'}</span>
+                <span className="font-medium">{Math.round(batchTask.progress || 0)}%</span>
+              </div>
+              <div className="mt-1.5 h-1.5 bg-emerald-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-600 rounded-full transition-all"
+                  style={{ width: `${batchTask.progress || 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 完成结果 */}
+          {batchResult && (
+            <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+                <Check className="w-4 h-4" /> 已生成 {batchResult.count} 张图片
+              </div>
+              <div className="flex items-center gap-3 mt-2">
+                <a
+                  href={absUrl(batchResult.zip)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors"
+                >
+                  <DownloadCloud className="w-3.5 h-3.5" /> 下载全部（zip）
+                </a>
+                <span className="text-[11px] text-emerald-600/70">图片已保存到图片库，可关闭弹窗在预览区查看</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="outline" onClick={() => setBatchOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              variant="gradient"
+              icon={FileSpreadsheet}
+              loading={batchBusy}
+              disabled={
+                !batchFile ||
+                (batchColumns.length > 0 && Object.values(batchFieldMap).filter(Boolean).length === 0)
+              }
+              onClick={handleBatchStart}
+            >
+              {batchBusy ? '提交中…' : '开始批量生成'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 一键发布弹窗（商业化：图片 → 公众号/抖音/快手账号） */}
+      <Modal open={pubOpen} onClose={() => setPubOpen(false)} title="一键发布到平台">
+        <div className="space-y-4">
+          {pubTarget && (
+            <div className="flex items-center gap-3 rounded-xl bg-gray-50 border border-gray-100 p-3">
+              <img
+                src={pubTarget.url}
+                alt="待发布"
+                className="w-16 h-16 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-500 truncate">
+                  发布图片：{pubTarget.filename || 'AI 生成图片'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  后端将按平台规格自动裁切封面、改写文案并生成话题标签
+                </p>
+              </div>
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">目标平台</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                ['wechat', '公众号'],
+                ['douyin', '抖音'],
+                ['kuaishou', '快手'],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setPubPlatform(id)}
+                  className={`px-3 py-2 rounded-xl border text-sm font-medium transition-all ${
+                    pubPlatform === id
+                      ? 'border-rose-500 bg-rose-50 text-rose-600'
+                      : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">标题</label>
+            <input
+              value={pubTitle}
+              onChange={(e) => setPubTitle(e.target.value)}
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">文案</label>
+            <textarea
+              value={pubContent}
+              onChange={(e) => setPubContent(e.target.value)}
+              rows={4}
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-sm resize-none"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-1">
+            <Button variant="outline" onClick={() => setPubOpen(false)}>
+              取消
+            </Button>
+            <Button variant="gradient" icon={Send} loading={pubBusy} onClick={handlePublish}>
+              {pubBusy ? '发布中…' : '确认发布'}
+            </Button>
+          </div>
         </div>
       </Modal>
 

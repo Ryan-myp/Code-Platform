@@ -1,0 +1,26 @@
+{
+  "id": "mt_mid_autumn",
+  "name": "中秋团圆",
+  "category": "节日祝福",
+  "icon": "🌕",
+  "desc": "中秋祝福包：月圆人团圆，温情满满",
+  "style": "paper",
+  "ai_style": "ink",
+  "top_hint": "中秋快乐！",
+  "bottom_hint": "花好月圆",
+  "texts": [
+    "中秋快乐！|花好月圆",
+    "人月两团圆|千里共婵娟",
+    "月亮代表|我的心"
+  ],
+  "prompt_hint": "水墨风格的圆月与桂花枝，玉兔剪影，留白得当，水墨国风",
+  "decoration": "🌕,🐰",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866937",
+  "updated_at": "2026-08-12T08:12:46.866937"
+}

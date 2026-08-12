@@ -1,0 +1,26 @@
+{
+  "id": "mt_raise",
+  "name": "升职加薪",
+  "category": "职场打工人",
+  "icon": "💸",
+  "desc": "升职加薪的荣耀时刻，红底公告风自带官宣感",
+  "style": "red",
+  "ai_style": "flat",
+  "top_hint": "恭喜！",
+  "bottom_hint": "升职加薪",
+  "texts": [
+    "恭喜！|升职加薪",
+    "今天起，|我是经理了",
+    "加薪通知|请查收"
+  ],
+  "prompt_hint": "金色奖杯与红包堆叠，喜庆的红金配色，扁平插画风格",
+  "decoration": "🎉,💰",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:12:46.866919",
+  "updated_at": "2026-08-12T08:12:46.866919"
+}

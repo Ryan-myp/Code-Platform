@@ -471,6 +471,15 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     speed = float(payload.get("speed") or 1.0)
     pitch = int(payload.get("pitch") or 0)
     format = payload.get("format") or "mp3"
+    emotion = payload.get("emotion") or ""
+    # v23 配音场景模板热度：按模板生成时记录（失败静默）
+    tpl_id = (payload.get("template_id") or "").strip()
+    if tpl_id:
+        try:
+            from voice_templates import record_usage
+            record_usage(tpl_id)
+        except Exception:  # noqa: BLE001
+            pass
     if not text:
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
@@ -495,7 +504,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
         seg_files, seg_durations = [], []
         for i, seg in enumerate(segments):
             _report(10 + int(i * 70 / len(segments)), f"正在合成第 {i + 1}/{len(segments)} 段…")
-            data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch)
+            data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch, emotion)
             seg_path = os.path.join(tmp_dir, f"seg_{i}.mp3")
             with open(seg_path, "wb") as f:
                 f.write(data)
@@ -568,6 +577,8 @@ async def generate_voice(
     speed: float = Form(1.0),
     pitch: int = Form(0),
     format: str = Form("mp3"),
+    emotion: str = Form("", description="情绪风格（happy/sad/angry/gentle/serious，空=无）"),
+    template_id: str = Form("", description="配音场景模板 ID（voice-templates，如 vt_ecom_sell）"),
     project_id: str = Form(""),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
@@ -592,6 +603,8 @@ async def generate_voice(
         "speed": speed,
         "pitch": pitch,
         "format": format,
+        "emotion": emotion,
+        "template_id": template_id,
         "project_id": project_id,
     }
     if sync:

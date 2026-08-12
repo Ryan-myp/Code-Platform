@@ -1,0 +1,26 @@
+{
+  "id": "mt_flash_sale",
+  "name": "限时秒杀",
+  "category": "电商营销",
+  "icon": "⚡",
+  "desc": "大促秒杀氛围包：红底公告风，紧迫感与转化率拉满",
+  "style": "red",
+  "ai_style": "flat",
+  "top_hint": "限时秒杀！",
+  "bottom_hint": "手慢无",
+  "texts": [
+    "限时秒杀！|手慢无",
+    "最后 100 件|错过再等一年",
+    "今晚 8 点|准时开抢"
+  ],
+  "prompt_hint": "红色背景上巨大的金色闪电与倒计时数字，扁平插画风格，冲击力强",
+  "decoration": "⚡,🛒",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:12:46.866931",
+  "updated_at": "2026-08-12T08:12:46.866932"
+}

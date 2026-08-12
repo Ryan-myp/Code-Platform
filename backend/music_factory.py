@@ -641,6 +641,15 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
     project_id = payload.get("project_id") or ""
     if not lyrics:
         raise HTTPException(400, "请输入歌词内容")
+    # v22 音乐场景模板热度：按模板生成时记录（失败静默）
+    tpl_id = (payload.get("template_id") or "").strip()
+    if tpl_id:
+        try:
+            from music_scene_templates import record_usage
+
+            record_usage(tpl_id)
+        except Exception:  # noqa: BLE001
+            pass
     if style not in _STYLE_CFG:
         style = "pop"
 
@@ -1712,6 +1721,7 @@ async def generate_music(
     voice: str = Form("female"),
     theme: str = Form(""),
     duration: int = Form(30),
+    template_id: str = Form("", description="音乐场景模板 ID（music-scene-templates，如 ms_ecom_hook）"),
     project_id: str = Form(""),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
@@ -1732,6 +1742,7 @@ async def generate_music(
         "theme": theme,
         "project_id": project_id,
         "duration": duration,
+        "template_id": template_id,
     }
     if sync:
         return await _compose_music_worker(payload)

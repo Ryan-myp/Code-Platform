@@ -152,15 +152,49 @@ export default function VoicePage() {
     voice: 'zh-CN-XiaoxiaoNeural',
     speed: 1.0,
     pitch: 0,
+    emotion: '',
     format: 'mp3',
   })
-  const { scene, text, voice, speed, pitch, format } = inputs
+  const { scene, text, voice, speed, pitch, emotion, format } = inputs
   const setScene = (v) => setInputs((p) => ({ ...p, scene: v }))
   const setText = (v) => setInputs((p) => ({ ...p, text: v ?? '' }))
   const setVoice = (v) => setInputs((p) => ({ ...p, voice: v }))
   const setSpeed = (v) => setInputs((p) => ({ ...p, speed: v }))
   const setPitch = (v) => setInputs((p) => ({ ...p, pitch: v }))
+  const setEmotion = (v) => setInputs((p) => ({ ...p, emotion: v }))
   const setFormat = (v) => setInputs((p) => ({ ...p, format: v }))
+  // 配音场景模板库：一键填充配方（音色/语速/音调/情绪/文案）+ 热度/商业化
+  const [voiceTpls, setVoiceTpls] = useState([])
+  const [voiceTplId, setVoiceTplId] = useState('')
+  const [voiceTplInfo, setVoiceTplInfo] = useState(null)
+  const [voiceTplCat, setVoiceTplCat] = useState('全部')
+  useEffect(() => {
+    api
+      .get('/api/voice-templates/list')
+      .then((res) => setVoiceTpls(res.data?.items || []))
+      .catch(() => {})
+  }, [])
+  const voiceTplCats = useMemo(
+    () => ['全部', ...new Set(voiceTpls.map((t) => t.category))],
+    [voiceTpls]
+  )
+  const applyVoiceTpl = (t) => {
+    setVoiceTplId(t.id)
+    setScene('custom') // 模板走自由音色通道，精准应用配方
+    setVoice(t.voice)
+    setSpeed(t.speed)
+    setPitch(t.pitch)
+    setEmotion(t.emotion || '')
+    if (t.texts?.length) setText(t.texts[0])
+  }
+  const openVoiceTpl = async (tid) => {
+    try {
+      const res = await api.get(`/api/voice-templates/${tid}`)
+      setVoiceTplInfo(res.data)
+    } catch (e) {
+      toast.error(`模板详情加载失败：${e.message}`)
+    }
+  }
   // 随机文案：从当前场景模板池抽取（custom/无匹配时从全部场景池抽取）
   const pickRandomText = () => {
     const pool = SCENE_TEXT_TEMPLATES[scene] || []
@@ -224,7 +258,7 @@ export default function VoicePage() {
         .post('/api/drafts/save', {
           tool_id: 'voice',
           title: text.slice(0, 30),
-          content: { text, scene, voice, speed, pitch, format },
+          content: { text, scene, voice, speed, pitch, emotion, format },
         })
         .catch(() => {})
     }, 1500)
@@ -275,7 +309,9 @@ export default function VoicePage() {
     fd.append('voice', scene === 'custom' ? voice : '')
     fd.append('speed', String(speed))
     fd.append('pitch', String(pitch))
+    fd.append('emotion', emotion)
     fd.append('format', format)
+    if (voiceTplId) fd.append('template_id', voiceTplId)
     await submitTask('/api/voice/generate', fd, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: async (data) => {
@@ -509,6 +545,65 @@ export default function VoicePage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── 左列：生成配置 ── */}
         <div className="space-y-4">
+          {/* 配音场景模板库：一键应用专业配音配方 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Wand2 className="w-4 h-4 text-purple-500" /> 配音场景模板
+              <span className="ml-auto text-[11px] font-normal text-gray-400">
+                {voiceTpls.length} 个专业配方
+              </span>
+            </h3>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {voiceTplCats.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setVoiceTplCat(c)}
+                  className={`px-2.5 py-1 rounded-full text-xs transition-all ${
+                    voiceTplCat === c
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto pr-1">
+              {voiceTpls
+                .filter((t) => voiceTplCat === '全部' || t.category === voiceTplCat)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => applyVoiceTpl(t)}
+                    title={t.desc}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs transition-all ${
+                      voiceTplId === t.id
+                        ? 'bg-purple-50 border-purple-400 ring-2 ring-purple-500/20 text-purple-700 font-medium'
+                        : 'border-gray-200 text-gray-600 hover:border-purple-300 hover:bg-purple-50/50'
+                    }`}
+                  >
+                    <span>{t.icon}</span>
+                    {t.name}
+                    {t.pricing?.mode !== 'free' && (
+                      <span className="px-1 rounded bg-amber-100 text-amber-700 text-[10px]">
+                        {t.pricing_label}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400">🔥{t.usage || 0}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openVoiceTpl(t.id)
+                      }}
+                      className="ml-0.5 text-purple-400 hover:text-purple-600"
+                    >
+                      📖
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </Card>
+
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-pink-500" /> 选择场景
@@ -913,6 +1008,99 @@ export default function VoicePage() {
           </Card>
         </div>
       </div>
+
+      {/* ── 配音场景模板详情 Modal ── */}
+      <Modal
+        open={!!voiceTplInfo}
+        onClose={() => setVoiceTplInfo(null)}
+        title={`${voiceTplInfo?.icon || '🎙️'} ${voiceTplInfo?.name || '配音场景模板'}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setVoiceTplInfo(null)}>
+              知道了
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                applyVoiceTpl(voiceTplInfo)
+                setVoiceTplInfo(null)
+              }}
+            >
+              应用此配方
+            </Button>
+          </>
+        }
+      >
+        {voiceTplInfo && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge color="purple">{voiceTplInfo.category}</Badge>
+              <Badge color={voiceTplInfo.pricing?.mode !== 'free' ? 'amber' : 'green'}>
+                {voiceTplInfo.pricing_label}
+              </Badge>
+              <Badge color="gray">🔥 使用 {voiceTplInfo.usage || 0} 次</Badge>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">{voiceTplInfo.desc}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-2.5 rounded-lg bg-gray-50">
+                <div className="text-[11px] text-gray-400">推荐音色</div>
+                <div className="text-sm font-medium text-gray-800 mt-0.5">
+                  {VOICES.find((v) => v.id === voiceTplInfo.voice)?.name || voiceTplInfo.voice}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-gray-50">
+                <div className="text-[11px] text-gray-400">语速 / 音调</div>
+                <div className="text-sm font-medium text-gray-800 mt-0.5">
+                  {voiceTplInfo.speed}x / {voiceTplInfo.pitch > 0 ? '+' : ''}
+                  {voiceTplInfo.pitch}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-gray-50">
+                <div className="text-[11px] text-gray-400">情绪风格</div>
+                <div className="text-sm font-medium text-gray-800 mt-0.5">
+                  {voiceTplInfo.emotion
+                    ? {
+                        happy: '😊 欢快',
+                        sad: '😢 悲伤',
+                        angry: '🔥 激昂',
+                        gentle: '🍃 柔和',
+                        serious: '🎯 严肃',
+                      }[voiceTplInfo.emotion] || voiceTplInfo.emotion
+                    : '无（自然语态）'}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-gray-50">
+                <div className="text-[11px] text-gray-400">建议时长</div>
+                <div className="text-sm font-medium text-gray-800 mt-0.5">
+                  {voiceTplInfo.duration}s
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-medium text-gray-500 mb-1.5">💬 即用文案（点击应用）</div>
+              <div className="space-y-1.5">
+                {(voiceTplInfo.texts || []).map((tx, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setText(tx)}
+                    className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-600 hover:border-purple-300 hover:bg-purple-50/50 transition-all"
+                  >
+                    {tx}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {voiceTplInfo.pro_tips && (
+              <div className="p-3 rounded-lg bg-purple-50 border border-purple-100">
+                <div className="text-xs font-medium text-purple-700 mb-1">🎬 配音技巧</div>
+                <div className="text-xs text-purple-700/80 leading-relaxed">
+                  {voiceTplInfo.pro_tips}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
 
       {/* ── 重命名 Modal ── */}
       <Modal

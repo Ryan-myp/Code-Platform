@@ -1,0 +1,25 @@
+{
+  "id": "ms_game_loop",
+  "name": "游戏循环配乐",
+  "category": "游戏",
+  "icon": "🎮",
+  "desc": "小游戏/休闲游戏 BGM：电子循环友好型，8-16 秒无缝循环",
+  "style": "electronic",
+  "mood": "energetic",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 122,
+  "instrument": "合成器琶音 + 电子鼓 + 贝斯",
+  "structure": "琶音循环 2 小节（场景基调）→ 加鼓（操作反馈）→ 加贝斯（关卡推进）→ 回到循环起点",
+  "lyrics_template": "[Verse 1]\n出发吧 冒险家\n前方有新的关卡\n收集能量 解锁技能\n一关一关 向前冲\n\n[Chorus]\n叮咚 得分\n漂亮 通关\n再来一局 停不下来\n这就是游戏的快乐",
+  "theme_suggestion": "休闲小游戏背景音乐",
+  "pro_tips": "循环点必须无痕（首尾小节和弦一致）；操作音效与节拍错开",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847172",
+  "updated_at": "2026-08-12T08:08:46.847173"
+}

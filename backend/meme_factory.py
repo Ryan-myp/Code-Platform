@@ -568,6 +568,15 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
     top_text = (payload.get("top_text") or "").strip()
     bottom_text = (payload.get("bottom_text") or "").strip()
     style = payload.get("style") or "yellow"
+    # v22 表情包模板热度：按模板生成时记录（失败静默）
+    tpl_id = (payload.get("template_id") or "").strip()
+    if tpl_id:
+        try:
+            from meme_templates import record_usage
+
+            record_usage(tpl_id)
+        except Exception:  # noqa: BLE001
+            pass
     ai_style = payload.get("ai_style") or "flat"
     bg_upload = payload.get("bg_upload") or ""
     decoration = payload.get("decoration") or ""
@@ -649,6 +658,7 @@ async def generate_meme(
     ai_style: str = Form("flat", description="AI 模式画面风格（flat/3d/pixel/ink/neon/oil/anime/film）"),
     bg_upload: str = Form("", description="上传背景图 base64 dataURL（style=upload 时必填，≤8MB）"),
     decoration: str = Form("", description="右下角 emoji 装饰，逗号分隔，最多 4 个（如 😂,🔥,💯）"),
+    template_id: str = Form("", description="表情包模板 ID（meme-templates，如 mt_monday）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
@@ -670,6 +680,7 @@ async def generate_meme(
         "ai_style": ai_style,
         "bg_upload": bg_upload,
         "decoration": decoration,
+        "template_id": template_id,
     }
     if sync:
         return await _meme_generate_worker(payload)

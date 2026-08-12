@@ -1,0 +1,25 @@
+{
+  "id": "ms_event_open",
+  "name": "年会活动开场",
+  "category": "活动",
+  "icon": "🎉",
+  "desc": "年会/发布会/活动开场 BGM：电子史诗感，掌声与灯光的入场仪式",
+  "style": "electronic",
+  "mood": "epic",
+  "voice": "female",
+  "duration": 20,
+  "bpm": 122,
+  "instrument": "合成器 + 鼓组 + 人声合唱垫",
+  "structure": "Rise 渐强（灯光暗下）→ 鼓点爆入（嘉宾登场）→ 主题旋律（开场致辞）→ 强收拍",
+  "lyrics_template": "[Verse 1]\n灯光亮起 音乐响起\n今晚属于每一个你\n过去一年 感谢有你\n新的篇章 一起开启\n\n[Chorus]\n欢呼吧 掌声响起来\n这是我们的高光时刻\n举杯吧 敬奋斗的自己\n明年还要 一起精彩",
+  "theme_suggestion": "公司年会开场片头",
+  "pro_tips": "嘉宾登场对鼓点爆入；开场致辞对主题旋律；20-30 秒为佳",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847173",
+  "updated_at": "2026-08-12T08:08:46.847174"
+}

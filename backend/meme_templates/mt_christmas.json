@@ -1,0 +1,26 @@
+{
+  "id": "mt_christmas",
+  "name": "圣诞快乐",
+  "category": "节日祝福",
+  "icon": "🎄",
+  "desc": "圣诞祝福包：霓虹圣诞树，节日氛围拉满",
+  "style": "neon",
+  "ai_style": "neon",
+  "top_hint": "Merry Christmas！",
+  "bottom_hint": "圣诞快乐",
+  "texts": [
+    "Merry Christmas！|圣诞快乐",
+    "圣诞老人|加班中",
+    "今天 要快乐|也要收礼物"
+  ],
+  "prompt_hint": "霓虹灯管勾勒的圣诞树与星星，深色背景，赛博朋克光效",
+  "decoration": "🎄,🎅",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866938",
+  "updated_at": "2026-08-12T08:12:46.866939"
+}

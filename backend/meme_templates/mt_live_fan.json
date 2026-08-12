@@ -1,0 +1,26 @@
+{
+  "id": "mt_live_fan",
+  "name": "粉丝互动",
+  "category": "直播互动",
+  "icon": "💬",
+  "desc": "粉丝弹幕包：主播与粉丝的快乐互动",
+  "style": "sticker",
+  "ai_style": "3d",
+  "top_hint": "主播看我看我！",
+  "bottom_hint": "已三连",
+  "texts": [
+    "主播看我看我！|已三连",
+    "哈哈哈哈|太有才了",
+    "新来的|求带"
+  ],
+  "prompt_hint": "可爱的弹幕气泡与爱心飞向屏幕，3D 软萌卡通，贴纸质感",
+  "decoration": "💬,👍",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866941",
+  "updated_at": "2026-08-12T08:12:46.866941"
+}

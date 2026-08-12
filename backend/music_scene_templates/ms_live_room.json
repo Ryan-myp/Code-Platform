@@ -1,0 +1,25 @@
+{
+  "id": "ms_live_room",
+  "name": "直播间氛围",
+  "category": "直播",
+  "icon": "📺",
+  "desc": "直播带货/聊天背景乐：循环友好型轻流行，不抢人声、久听不腻",
+  "style": "pop",
+  "mood": "calm",
+  "voice": "female",
+  "duration": 60,
+  "bpm": 108,
+  "instrument": "钢琴 + 轻鼓 + 贝斯",
+  "structure": "主歌循环（讲解中）→ 副歌轻起（福利时刻）→ 回到主歌（循环衔接）",
+  "lyrics_template": "[Verse 1]\n欢迎来到直播间\n今天福利特别多\n喜欢的朋友点点关注\n好物马上安排\n\n[Chorus]\n热闹的夜晚 有你在\n分享好物 分享爱\n直播间里 不见不散\n快乐就是这么简单",
+  "theme_suggestion": "晚间直播陪聊氛围",
+  "pro_tips": "音量比讲解人声低 8-10dB；副歌只作短暂点缀；60-120 秒循环剪辑",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847164",
+  "updated_at": "2026-08-12T08:08:46.847165"
+}

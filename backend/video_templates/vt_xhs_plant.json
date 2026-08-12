@@ -1,0 +1,444 @@
+{
+  "id": "vt_xhs_plant",
+  "name": "小红书种草视频",
+  "category": "社媒",
+  "platform": "xiaohongshu",
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "scenes": [
+    {
+      "background": "#FFF9F2→#FFE8E8",
+      "seconds": 3.2,
+      "layers": [
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 320,
+          "radius": 280,
+          "fill": "#FF2442",
+          "opacity": 0.35
+        },
+        {
+          "type": "rect",
+          "x": 300,
+          "y": 130,
+          "width": 480,
+          "height": 78,
+          "radius": 39,
+          "fill": "#FFFFFF",
+          "opacity": 0.12,
+          "border_width": 2,
+          "border_color": "#FF2442"
+        },
+        {
+          "type": "text",
+          "key": "tag",
+          "x": 300,
+          "y": 150,
+          "text": "好物分享",
+          "font_size": 26,
+          "color": "#FF2442",
+          "align": "center",
+          "max_width": 480,
+          "bold": true,
+          "family": "hiragino"
+        },
+        {
+          "type": "text",
+          "key": "title",
+          "x": 80,
+          "y": 260,
+          "text": "自用 30 天\n真心推荐",
+          "font_size": 92,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino",
+          "shadow": "0,8",
+          "shadow_color": "#00000066",
+          "line_height": 1.25
+        },
+        {
+          "type": "text",
+          "key": "subtitle",
+          "x": 80,
+          "y": 560,
+          "text": "无广测评 · 真实体验",
+          "font_size": 32,
+          "color": "#DDDDDD",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "hiragino"
+        },
+        {
+          "type": "line",
+          "x": 280,
+          "y": 640,
+          "length": 520,
+          "angle": 0,
+          "color": "#FFFFFF33",
+          "width": 2
+        },
+        {
+          "type": "image",
+          "key": "product",
+          "x": 140,
+          "y": 1240,
+          "width": 800,
+          "height": 520,
+          "radius": 28,
+          "fit": "cover",
+          "border_width": 6,
+          "border_color": "#FFFFFF22"
+        }
+      ],
+      "motion": "zoom_in"
+    },
+    {
+      "background": "#FFF9F2→#FFE8E8",
+      "seconds": 2.8,
+      "layers": [
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 240,
+          "radius": 230,
+          "fill": "#FF2442",
+          "opacity": 0.22
+        },
+        {
+          "type": "circle",
+          "x": 200,
+          "y": 320,
+          "radius": 66,
+          "fill": "#FF2442"
+        },
+        {
+          "type": "text",
+          "key": "num1",
+          "x": 200,
+          "y": 294,
+          "text": "01",
+          "font_size": 52,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 132,
+          "bold": true,
+          "family": "hiragino"
+        },
+        {
+          "type": "text",
+          "key": "point1",
+          "x": 80,
+          "y": 480,
+          "text": "自用 30 天",
+          "font_size": 76,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino",
+          "shadow": "0,6",
+          "shadow_color": "#00000066",
+          "line_height": 1.3
+        },
+        {
+          "type": "text",
+          "key": "desc1",
+          "x": 80,
+          "y": 760,
+          "text": "每天记录 · 效果看得见",
+          "font_size": 30,
+          "color": "#CCCCCC",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "hiragino"
+        },
+        {
+          "type": "image",
+          "key": "product",
+          "x": 140,
+          "y": 900,
+          "width": 800,
+          "height": 620,
+          "radius": 32,
+          "fit": "cover",
+          "border_width": 6,
+          "border_color": "#FFFFFF22"
+        }
+      ],
+      "motion": "zoom_out"
+    },
+    {
+      "background": "#FFF9F2→#FFE8E8",
+      "seconds": 2.8,
+      "layers": [
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 240,
+          "radius": 230,
+          "fill": "#FF2442",
+          "opacity": 0.22
+        },
+        {
+          "type": "circle",
+          "x": 200,
+          "y": 320,
+          "radius": 66,
+          "fill": "#FF2442"
+        },
+        {
+          "type": "text",
+          "key": "num2",
+          "x": 200,
+          "y": 294,
+          "text": "02",
+          "font_size": 52,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 132,
+          "bold": true,
+          "family": "hiragino"
+        },
+        {
+          "type": "text",
+          "key": "point2",
+          "x": 80,
+          "y": 480,
+          "text": "真实测评",
+          "font_size": 76,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino",
+          "shadow": "0,6",
+          "shadow_color": "#00000066",
+          "line_height": 1.3
+        },
+        {
+          "type": "text",
+          "key": "desc2",
+          "x": 80,
+          "y": 760,
+          "text": "优点缺点都说清",
+          "font_size": 30,
+          "color": "#CCCCCC",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "hiragino"
+        },
+        {
+          "type": "image",
+          "key": "product",
+          "x": 140,
+          "y": 900,
+          "width": 800,
+          "height": 620,
+          "radius": 32,
+          "fit": "cover",
+          "border_width": 6,
+          "border_color": "#FFFFFF22"
+        }
+      ],
+      "motion": "zoom_out"
+    },
+    {
+      "background": "#FF2442→#C2183B",
+      "seconds": 2.8,
+      "layers": [
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 380,
+          "radius": 170,
+          "fill": "#FFFFFF",
+          "opacity": 0.1
+        },
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 380,
+          "radius": 150,
+          "fill": "",
+          "border_width": 8,
+          "border_color": "#FFFFFF44"
+        },
+        {
+          "type": "text",
+          "key": "price",
+          "x": 80,
+          "y": 230,
+          "text": "¥89",
+          "font_size": 120,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino",
+          "shadow": "0,10",
+          "shadow_color": "#00000055",
+          "line_height": 1.15
+        },
+        {
+          "type": "text",
+          "key": "old",
+          "x": 80,
+          "y": 430,
+          "text": "原价 ¥129",
+          "font_size": 36,
+          "color": "#FFFFFF99",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "hiragino"
+        },
+        {
+          "type": "text",
+          "key": "flash",
+          "x": 80,
+          "y": 520,
+          "text": "笔记同款",
+          "font_size": 42,
+          "color": "#FFD93D",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino"
+        },
+        {
+          "type": "line",
+          "x": 240,
+          "y": 620,
+          "length": 600,
+          "angle": 0,
+          "color": "#FFFFFF33",
+          "width": 2
+        },
+        {
+          "type": "image",
+          "key": "product",
+          "x": 170,
+          "y": 700,
+          "width": 740,
+          "height": 620,
+          "radius": 32,
+          "fit": "cover",
+          "border_width": 6,
+          "border_color": "#FFFFFF22"
+        },
+        {
+          "type": "rect",
+          "x": 240,
+          "y": 1420,
+          "width": 600,
+          "height": 130,
+          "radius": 65,
+          "fill": "#FFD93D"
+        },
+        {
+          "type": "text",
+          "key": "cta",
+          "x": 240,
+          "y": 1458,
+          "text": "点击收藏",
+          "font_size": 44,
+          "color": "#1A1A1A",
+          "align": "center",
+          "max_width": 600,
+          "bold": true,
+          "family": "hiragino"
+        }
+      ],
+      "motion": "zoom_in"
+    },
+    {
+      "background": "#FFF9F2→#FFE8E8",
+      "seconds": 2.0,
+      "layers": [
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 560,
+          "radius": 120,
+          "fill": "",
+          "border_width": 8,
+          "border_color": "#FF2442"
+        },
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 560,
+          "radius": 92,
+          "fill": "",
+          "border_width": 6,
+          "border_color": "#FF2442"
+        },
+        {
+          "type": "circle",
+          "x": 540,
+          "y": 560,
+          "radius": 10,
+          "fill": "#FF2442"
+        },
+        {
+          "type": "text",
+          "key": "brand",
+          "x": 80,
+          "y": 800,
+          "text": "小团种草日记",
+          "font_size": 76,
+          "color": "#FFFFFF",
+          "align": "center",
+          "max_width": 920,
+          "bold": true,
+          "family": "hiragino",
+          "line_height": 1.25
+        },
+        {
+          "type": "text",
+          "key": "slogan",
+          "x": 80,
+          "y": 960,
+          "text": "关注 · 每周一篇测评",
+          "font_size": 34,
+          "color": "#CCCCCC",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "hiragino"
+        },
+        {
+          "type": "text",
+          "key": "follow",
+          "x": 80,
+          "y": 1420,
+          "text": "FOLLOW US",
+          "font_size": 28,
+          "color": "#FF2442",
+          "align": "center",
+          "max_width": 920,
+          "bold": false,
+          "family": "helvetica",
+          "letter_spacing": 8
+        }
+      ],
+      "motion": "zoom_out"
+    }
+  ],
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "desc": "小红书种草：米白温柔风 + 种草红，适合笔记种草",
+  "created_at": "2026-08-12T01:29:24.442412",
+  "updated_at": "2026-08-12T01:29:24.442413"
+}

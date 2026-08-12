@@ -1,0 +1,61 @@
+{
+  "id": "mmt_pest",
+  "name": "PEST 宏观分析",
+  "category": "战略管理",
+  "icon": "🌐",
+  "desc": "宏观环境扫描：政治·经济·社会·技术四维，辅助市场进入决策",
+  "style": "business",
+  "depth": 3,
+  "example_topic": "新能源汽车行业 PEST 分析",
+  "structure": [
+    {
+      "name": "政治 Political",
+      "hint": "政策法规",
+      "children": [
+        "产业政策",
+        "税收优惠",
+        "监管环境",
+        "国际关系"
+      ]
+    },
+    {
+      "name": "经济 Economic",
+      "hint": "宏观经济",
+      "children": [
+        "GDP 增速",
+        "利率汇率",
+        "消费力",
+        "产业链成本"
+      ]
+    },
+    {
+      "name": "社会 Social",
+      "hint": "社会文化",
+      "children": [
+        "人口结构",
+        "消费习惯",
+        "环保意识",
+        "城镇化"
+      ]
+    },
+    {
+      "name": "技术 Technological",
+      "hint": "技术演进",
+      "children": [
+        "技术成熟度",
+        "研发投入",
+        "专利格局",
+        "颠覆性技术"
+      ]
+    }
+  ],
+  "pro_tips": "每个维度聚焦与主题强相关的 3-4 个要素，避免泛泛而谈",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:25:25.859826",
+  "updated_at": "2026-08-12T08:25:25.859827"
+}

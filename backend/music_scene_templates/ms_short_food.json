@@ -1,0 +1,25 @@
+{
+  "id": "ms_short_food",
+  "name": "美食治愈",
+  "category": "短视频",
+  "icon": "🍜",
+  "desc": "美食制作/探店 BGM：轻爵士律动，食材处理的细节声与音乐自然融合",
+  "style": "jazz",
+  "mood": "calm",
+  "voice": "female",
+  "duration": 20,
+  "bpm": 108,
+  "instrument": "钢琴 + 贝斯 + 轻刷鼓",
+  "structure": "钢琴单音开场（食材特写）→ 律动进入（烹饪过程）→ 轻快段落（出锅瞬间）→ 收尾",
+  "lyrics_template": "[Verse 1]\n锅里咕嘟咕嘟响\n香气飘满了厨房\n一把葱花撒下去\n人间烟火最治愈\n\n[Chorus]\n好好吃饭 好好生活\n一碗热汤 慰藉你我\n食物的温度里\n藏着最简单的快乐",
+  "theme_suggestion": "深夜食堂美食制作",
+  "pro_tips": "煎炸声与鼓点错开不打架；出锅镜对副歌第一拍；ASMR 感优先",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847162",
+  "updated_at": "2026-08-12T08:08:46.847162"
+}

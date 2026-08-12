@@ -1,0 +1,26 @@
+{
+  "id": "mt_single",
+  "name": "单身贵族",
+  "category": "情感吐槽",
+  "icon": "👑",
+  "desc": "单身不是可怜，是贵族！自信放光芒",
+  "style": "neon",
+  "ai_style": "neon",
+  "top_hint": "单身怎么了？",
+  "bottom_hint": "我是贵族",
+  "texts": [
+    "单身怎么了？|我是贵族",
+    "情人节|与我无瓜",
+    "一个人|也很精彩"
+  ],
+  "prompt_hint": "霓虹灯管组成的王冠悬浮在深色背景上，赛博朋克光效",
+  "decoration": "👑,✨",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866921",
+  "updated_at": "2026-08-12T08:12:46.866922"
+}

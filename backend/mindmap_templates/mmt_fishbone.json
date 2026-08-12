@@ -1,0 +1,75 @@
+{
+  "id": "mmt_fishbone",
+  "name": "鱼骨图因果分析",
+  "category": "工作方法",
+  "icon": "🐟",
+  "desc": "石川图：从人机料法环测六维定位问题根因",
+  "style": "creative",
+  "depth": 3,
+  "example_topic": "订单交付延迟原因分析",
+  "structure": [
+    {
+      "name": "人员 Man",
+      "hint": "人的因素",
+      "children": [
+        "技能不足",
+        "排班问题",
+        "沟通不畅"
+      ]
+    },
+    {
+      "name": "机器 Machine",
+      "hint": "设备因素",
+      "children": [
+        "设备故障",
+        "产能瓶颈",
+        "维护缺失"
+      ]
+    },
+    {
+      "name": "物料 Material",
+      "hint": "供应因素",
+      "children": [
+        "到料延迟",
+        "质量问题",
+        "库存不足"
+      ]
+    },
+    {
+      "name": "方法 Method",
+      "hint": "流程因素",
+      "children": [
+        "流程繁琐",
+        "标准缺失",
+        "审批链长"
+      ]
+    },
+    {
+      "name": "环境 Environment",
+      "hint": "外部因素",
+      "children": [
+        "突发状况",
+        "季节波动",
+        "政策变化"
+      ]
+    },
+    {
+      "name": "测量 Measurement",
+      "hint": "度量因素",
+      "children": [
+        "指标失真",
+        "数据缺失",
+        "口径不一"
+      ]
+    }
+  ],
+  "pro_tips": "先发散穷举原因，再收敛到 2-3 个根因；每个原因分支给出对策建议",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:25:25.859829",
+  "updated_at": "2026-08-12T08:25:25.859830"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "mt_dating",
+  "name": "相亲现场",
+  "category": "情感吐槽",
+  "icon": "🤝",
+  "desc": "相亲名场面：尴尬而不失礼貌的微笑",
+  "style": "white",
+  "ai_style": "film",
+  "top_hint": "阿姨介绍的对象，",
+  "bottom_hint": "就这？",
+  "texts": [
+    "阿姨介绍的对象，|就这？",
+    "第一次见面|已想回家",
+    "对方家长：条件很好|我：好的好的"
+  ],
+  "prompt_hint": "咖啡馆里两人尴尬对坐，气氛微妙，电影写实质感，自然光影",
+  "decoration": "😅,☕",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866923",
+  "updated_at": "2026-08-12T08:12:46.866923"
+}

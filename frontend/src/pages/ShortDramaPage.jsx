@@ -25,9 +25,11 @@ import {
   ListChecks,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const DURATIONS = [30, 45, 60, 120, 300, 600]
 
@@ -47,10 +49,58 @@ const SCENES_EXAMPLE = `[
 ]`
 
 export default function ShortDramaPage() {
-  const [theme, setTheme] = useState('')
-  const [title, setTitle] = useState('')
-  const [duration, setDuration] = useState(45)
-  const [customDur, setCustomDur] = useState('') // v13.28 自定义时长（分钟，支持小数）
+  // 输入态持久化（刷新/误关不丢创作草稿）
+  const [persistForm, setPersistForm] = usePersistentToolState('drama_inputs', {
+    theme: '',
+    title: '',
+    duration: 45,
+    customDur: '',
+  })
+  const [theme, setTheme] = useState(persistForm.theme || '')
+  const [title, setTitle] = useState(persistForm.title || '')
+  const [duration, setDuration] = useState(persistForm.duration || 45)
+  const [customDur, setCustomDur] = useState(persistForm.customDur || '') // v13.28 自定义时长（分钟，支持小数）
+  useEffect(() => {
+    if (persistForm.theme) setTheme(persistForm.theme)
+    if (persistForm.title) setTitle(persistForm.title)
+    if (persistForm.customDur) setCustomDur(persistForm.customDur)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPersistForm({ theme, title, duration, customDur })
+    }, 800)
+    return () => clearTimeout(t)
+  }, [theme, title, duration, customDur, setPersistForm])
+  // 剧本 Markdown 单一来源：分享/复制复用（避免内容漂移）
+  const buildScriptMd = () => {
+    const sd = scriptData
+    if (!sd) return ''
+    const lines = [`# ${sd.title || title || '短剧剧本'}`, '', `主题：${theme || '—'}`]
+    if ((sd.characters || []).length) {
+      lines.push('', '## 角色表', ...sd.characters.map((c, i) => `${i + 1}. ${c.name}（${c.desc || ''}）`))
+    }
+    lines.push('', `## 分镜（${sd.scenes.length} 镜）`)
+    sd.scenes.forEach((s, i) => {
+      lines.push('', `### 第 ${i + 1} 镜 · ${s.duration || ''}s · ${s.emotion || ''}`)
+      if (s.camera) lines.push(`镜头：${s.camera}`)
+      if (s.visual) lines.push(`画面：${s.visual}`)
+      if (s.dialogue) lines.push(`台词：${s.dialogue}`)
+      if (s.keywords) lines.push(`关键词：${s.keywords}`)
+    })
+    lines.push('', `> 由小团智能平台 AI 短剧工厂生成 · ${new Date().toLocaleString()}`)
+    return lines.join('\n')
+  }
+  const copyScript = async () => {
+    const md = buildScriptMd()
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('剧本已复制到剪贴板')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
+    }
+  }
   const [mode, setMode] = useState('material') // material | avatar
   const [avatarId, setAvatarId] = useState('business-female')
   const [dhEngine, setDhEngine] = useState('2d')
@@ -60,6 +110,10 @@ export default function ShortDramaPage() {
   const [showCustom, setShowCustom] = useState(false)
   const [scriptData, setScriptData] = useState(null) // v13.29 AI 剧本工作台：{title, scenes[]}
   const [scripting, setScripting] = useState(false)
+  // v22 剧本题材模板库：爆款题材（人设/结构/风格/钩子）注入 AI 编剧
+  const [dramaTpls, setDramaTpls] = useState([])
+  const [dramaTplId, setDramaTplId] = useState('')
+  const [dramaTplInfo, setDramaTplInfo] = useState(null) // 题材详情弹窗
   const [generating, setGenerating] = useState(false)
   const [genTask, setGenTask] = useState(null)
   const [items, setItems] = useState([])
@@ -101,6 +155,11 @@ export default function ShortDramaPage() {
       .get('/api/drama/config')
       .then((res) => setSrcCfg(res.data))
       .catch(() => {})
+    // v22 剧本题材模板库
+    api
+      .get('/api/drama-templates/list')
+      .then((res) => setDramaTpls(res.data?.items || []))
+      .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -122,6 +181,7 @@ export default function ShortDramaPage() {
     const durSeconds =
       customDur.trim() && !Number.isNaN(customMin) ? Math.round(customMin * 60) : duration
     form.append('duration', durSeconds)
+    if (dramaTplId) form.append('template_id', dramaTplId)
     if (scriptData) {
       form.append('scenes_json', JSON.stringify(scriptData.scenes))
       // v13.30 角色表：确认生成时一并提交（角色一致性锚定）
@@ -179,6 +239,7 @@ export default function ShortDramaPage() {
     const form = new FormData()
     form.append('theme', theme.trim())
     form.append('duration', durSeconds)
+    if (dramaTplId) form.append('template_id', dramaTplId)
     try {
       const res = await api.post('/api/drama/script', form)
       const data = res.data || {}
@@ -360,6 +421,65 @@ export default function ShortDramaPage() {
             />
           </div>
 
+          {/* v22 剧本题材模板库：爆款题材注入 AI 编剧（人设/结构/风格/钩子） */}
+          {dramaTpls.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                剧本题材模板
+                <span className="text-xs text-gray-400 font-normal">
+                  选一个爆款题材，AI 按专业编剧套路创作（人设 / 结构 / 风格 / 钩子）
+                </span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setDramaTplId('')}
+                  className={`px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                    !dramaTplId
+                      ? 'bg-violet-600 text-white border-violet-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300'
+                  }`}
+                >
+                  自由创作
+                </button>
+                {dramaTpls.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setDramaTplId(dramaTplId === t.id ? '' : t.id)}
+                    title={t.desc}
+                    className={`px-3 py-1.5 rounded-lg text-xs border transition-colors flex items-center gap-1 ${
+                      dramaTplId === t.id
+                        ? 'bg-violet-600 text-white border-violet-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-violet-300'
+                    }`}
+                  >
+                    <span>{t.icon}</span>
+                    {t.name}
+                    {t.pricing?.mode !== 'free' && (
+                      <span className={`text-[10px] px-1 rounded ${dramaTplId === t.id ? 'bg-white/20' : 'bg-amber-100 text-amber-700'}`}>
+                        {t.pricing_label}
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {dramaTpls.some((t) => t.id === dramaTplId) && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.get(`/api/drama-templates/${dramaTplId}`)
+                        setDramaTplInfo(res.data)
+                      } catch {
+                        toast.error('题材详情加载失败')
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs border border-violet-200 text-violet-600 hover:bg-violet-50 transition-colors"
+                  >
+                    📖 查看设定
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">剧名（可选）</label>
@@ -529,6 +649,19 @@ export default function ShortDramaPage() {
                   AI 剧本（{scriptData.scenes.length} 镜）· 可编辑
                 </span>
                 <div className="flex items-center gap-2">
+                  <ShareButton
+                    content={buildScriptMd()}
+                    title={`短剧剧本：${scriptData.title || title || '未命名'}`}
+                    contentType="drama"
+                    className="!px-2.5 !py-1 !text-xs"
+                  />
+                  <button
+                    onClick={copyScript}
+                    title="复制剧本 Markdown"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-violet-600 hover:bg-violet-100"
+                  >
+                    📋 复制
+                  </button>
                   <button
                     onClick={exportShots}
                     disabled={exportingShots}
@@ -1094,6 +1227,45 @@ export default function ShortDramaPage() {
               <MonitorPlay className="w-3.5 h-3.5" />
               创建于 {playing.created_at} · 右键视频可保存 MP4
             </p>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── v22 剧本题材详情弹窗 ── */}
+      <Modal open={!!dramaTplInfo} onClose={() => setDramaTplInfo(null)} title="题材设定">
+        {dramaTplInfo && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{dramaTplInfo.icon}</span>
+              <h3 className="text-lg font-semibold text-gray-800">{dramaTplInfo.name}</h3>
+              <Badge color="purple">{dramaTplInfo.category_label || dramaTplInfo.category}</Badge>
+              {dramaTplInfo.pricing?.mode !== 'free' && (
+                <Badge color="amber">{dramaTplInfo.pricing_label}</Badge>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 leading-relaxed">{dramaTplInfo.desc}</p>
+            <div className="text-xs text-gray-400">
+              热度 {dramaTplInfo.usage || 0} 次创作{dramaTplInfo.pricing?.mode === 'free' ? ' · 免费使用' : ''}
+            </div>
+            <div className="space-y-3">
+              {[
+                ['👤 人设与关系', dramaTplInfo.setup],
+                ['📈 剧情结构', dramaTplInfo.structure],
+                ['🎭 台词风格', dramaTplInfo.style],
+                ['🪝 开篇钩子', dramaTplInfo.hook],
+              ].map(([label, val]) => (
+                <div key={label} className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+                  <div className="text-xs font-semibold text-violet-600 mb-1.5">{label}</div>
+                  <p className="text-[13px] text-gray-600 leading-relaxed whitespace-pre-line">{val}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <p className="text-xs text-gray-400">
+                选择该题材后点击「让 AI 写剧本」，将按此设定注入专业编剧套路
+              </p>
+              <Button onClick={() => setDramaTplInfo(null)}>知道了</Button>
+            </div>
           </div>
         )}
       </Modal>

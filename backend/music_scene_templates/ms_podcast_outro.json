@@ -1,0 +1,25 @@
+{
+  "id": "ms_podcast_outro",
+  "name": "播客片尾",
+  "category": "播客",
+  "icon": "🌙",
+  "desc": "播客/节目收尾 BGM：抒情钢琴渐弱，自然过渡到结束语与下期预告",
+  "style": "ballad",
+  "mood": "calm",
+  "voice": "female",
+  "duration": 20,
+  "bpm": 72,
+  "instrument": "钢琴 + 弦乐垫",
+  "structure": "钢琴主题（本期回顾）→ 弦乐铺开（下期预告）→ 渐弱淡出",
+  "lyrics_template": "[Verse 1]\n感谢你的收听\n今晚的故事到这里\n如果喜欢请订阅\n我们下期再见\n\n[Chorus]\n愿每个夜晚\n都有好声音陪伴\n晚安 好梦\n下期不见不散",
+  "theme_suggestion": "播客节目收尾",
+  "pro_tips": "音量渐弱至 -12dB 淡出；预告词对准弦乐铺开段；20-30 秒为宜",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847167",
+  "updated_at": "2026-08-12T08:08:46.847167"
+}

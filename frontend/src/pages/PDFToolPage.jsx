@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   FileText,
   Merge,
@@ -15,10 +15,13 @@ import {
   FileWarning,
   History,
   FileArchive,
+  Wand2,
 } from 'lucide-react'
-import { Card, Button, PageHeader, Badge, Empty, ErrorState } from '../components/ui'
+import { Card, Button, PageHeader, Badge, Empty, ErrorState, Modal } from '../components/ui'
+import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const TABS = [
   { id: 'merge', label: 'PDF合并', icon: Merge, desc: '多个PDF文件合并为一个' },
@@ -40,6 +43,47 @@ const RISK_LABELS = { high: '高风险', medium: '中风险', low: '低风险' }
 export default function PDFToolPage() {
   const toast = useToast()
   const [tab, setTab] = useState('merge')
+
+  // 文档模板库：合同审查/简历优化场景模板（一键填充示例 + 注入专家要点）
+  const [docTpls, setDocTpls] = useState([])
+  const [docTplId, setDocTplId] = useState('')
+  const [docTplInfo, setDocTplInfo] = useState(null)
+  const [docTplCat, setDocTplCat] = useState('全部')
+  useEffect(() => {
+    api
+      .get('/api/pdf-doc-templates/list')
+      .then((res) => setDocTpls(res.data?.items || []))
+      .catch(() => {})
+  }, [])
+  const docTplCats = useMemo(
+    () => ['全部', ...new Set(docTpls.map((t) => t.category))],
+    [docTpls]
+  )
+  const openDocTpl = async (tid) => {
+    try {
+      const res = await api.get(`/api/pdf-doc-templates/${tid}`)
+      setDocTplInfo(res.data)
+    } catch (e) {
+      toast.error(`模板详情加载失败：${e.message}`)
+    }
+  }
+  const applyDocTplTo = (t, kind) => {
+    setDocTplId(t.id)
+    if (kind === 'contract') {
+      setContractText(t.sample || '')
+      if (t.name) setContractTitle(t.name)
+    } else {
+      setResumeText(t.sample || '')
+      if (t.position) setTargetPosition(t.position)
+    }
+  }
+  // 输入态持久化（刷新/误关不丢草稿）
+  const [persistInputs, setPersistInputs] = usePersistentToolState('pdf_ai_inputs', {
+    contractText: '',
+    contractTitle: '',
+    resumeText: '',
+    targetPosition: '',
+  })
 
   // Merge
   const [mergeFiles, setMergeFiles] = useState([])
@@ -74,6 +118,21 @@ export default function PDFToolPage() {
   const [quality, setQuality] = useState(5)
   const [compressing, setCompressing] = useState(false)
   const [compressResult, setCompressResult] = useState(null)
+
+  // 输入态持久化生效（useEffect 须在 state 声明之后，避免 TDZ）
+  useEffect(() => {
+    if (persistInputs.contractText) setContractText(persistInputs.contractText)
+    if (persistInputs.contractTitle) setContractTitle(persistInputs.contractTitle)
+    if (persistInputs.resumeText) setResumeText(persistInputs.resumeText)
+    if (persistInputs.targetPosition) setTargetPosition(persistInputs.targetPosition)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPersistInputs({ contractText, contractTitle, resumeText, targetPosition })
+    }, 800)
+    return () => clearTimeout(t)
+  }, [contractText, contractTitle, resumeText, targetPosition, setPersistInputs])
 
   // 任务记录（GET /api/pdf/jobs）
   const [jobs, setJobs] = useState([])
@@ -194,6 +253,7 @@ export default function PDFToolPage() {
       const res = await api.post('/api/pdf/contract-review', {
         text: contractText.trim(),
         title: contractTitle || '合同审查',
+        template_id: docTplId && docTplId.startsWith('pdt_') ? docTplId : '',
       })
       setContractResult(res.data)
       toast.success(`审查完成 — 风险等级：${res.data.risk_level}`)
@@ -242,6 +302,7 @@ export default function PDFToolPage() {
       const res = await api.post('/api/pdf/resume-optimize', {
         text: resumeText.trim(),
         target_position: targetPosition,
+        template_id: docTplId && docTplId.startsWith('pdt_') ? docTplId : '',
       })
       setResumeResult(res.data)
       toast.success(`优化完成 — 综合评分: ${res.data.overall_score} 分`)
@@ -506,7 +567,47 @@ export default function PDFToolPage() {
         <Card>
           <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <Shield className="w-4 h-4 text-red-500" /> AI合同审查
+            <span className="ml-auto text-[11px] font-normal text-gray-400 flex items-center gap-1">
+              <Wand2 className="w-3.5 h-3.5" /> 模板一键填充示例合同
+            </span>
           </h3>
+          {/* 合同审查模板：一键填充示例 + 注入审查要点 */}
+          <div className="mb-3">
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {docTpls
+                .filter((t) => t.category === '合同审查')
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => applyDocTplTo(t, 'contract')}
+                    title={t.desc}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs transition-all ${
+                      docTplId === t.id
+                        ? 'bg-red-50 border-red-400 ring-2 ring-red-500/20 text-red-700 font-medium'
+                        : 'border-gray-200 text-gray-600 hover:border-red-300 hover:bg-red-50/50'
+                    }`}
+                  >
+                    <span>{t.icon}</span>
+                    {t.name}
+                    {t.pricing?.mode !== 'free' && (
+                      <span className="px-1 rounded bg-amber-100 text-amber-700 text-[10px]">
+                        {t.pricing_label}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400">🔥{t.usage || 0}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openDocTpl(t.id)
+                      }}
+                      className="ml-0.5 text-red-400 hover:text-red-600"
+                    >
+                      📖
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </div>
           <div className="space-y-3">
             <input
               value={contractTitle}
@@ -533,6 +634,34 @@ export default function PDFToolPage() {
           </div>
           {contractResult && (
             <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <ShareButton
+                  content={`# 合同审查报告：${contractTitle || '合同审查'}\n\n整体风险：${RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}\n${contractResult.summary || ''}\n\n${(contractResult.risks || [])
+                    .map((r) => `- 【${RISK_LABELS[r.risk] || r.risk}】${r.clause}：${r.issue}\n  建议：${r.suggestion}`)
+                    .join('\n')}\n\n> 由小团智能平台 AI 合同审查生成 · ${new Date().toLocaleString()}`}
+                  title={`合同审查：${contractTitle || '合同审查'}`}
+                  contentType="pdf"
+                />
+                <button
+                  onClick={() => {
+                    const md = `# 合同审查报告：${contractTitle || '合同审查'}\n\n整体风险：${RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}\n${contractResult.summary || ''}\n\n${(contractResult.risks || [])
+                      .map((r) => `- 【${RISK_LABELS[r.risk] || r.risk}】${r.clause}：${r.issue}\n  建议：${r.suggestion}`)
+                      .join('\n')}`
+                    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `合同审查-${contractTitle || Date.now()}.md`
+                    document.body.appendChild(a)
+                    a.click()
+                    a.remove()
+                    setTimeout(() => URL.revokeObjectURL(url), 3000)
+                  }}
+                  className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 border border-gray-200"
+                >
+                  📄 导出报告
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge color={riskColor(contractResult.risk_level)}>
                   整体风险：{RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}
@@ -584,7 +713,47 @@ export default function PDFToolPage() {
         <Card>
           <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
             <UserCheck className="w-4 h-4 text-violet-500" /> AI简历优化
+            <span className="ml-auto text-[11px] font-normal text-gray-400 flex items-center gap-1">
+              <Wand2 className="w-3.5 h-3.5" /> 模板一键填充示例简历
+            </span>
           </h3>
+          {/* 简历优化模板：一键填充示例 + 注入岗位要点 */}
+          <div className="mb-3">
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {docTpls
+                .filter((t) => t.category === '简历优化')
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => applyDocTplTo(t, 'resume')}
+                    title={t.desc}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs transition-all ${
+                      docTplId === t.id
+                        ? 'bg-violet-50 border-violet-400 ring-2 ring-violet-500/20 text-violet-700 font-medium'
+                        : 'border-gray-200 text-gray-600 hover:border-violet-300 hover:bg-violet-50/50'
+                    }`}
+                  >
+                    <span>{t.icon}</span>
+                    {t.name}
+                    {t.pricing?.mode !== 'free' && (
+                      <span className="px-1 rounded bg-amber-100 text-amber-700 text-[10px]">
+                        {t.pricing_label}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400">🔥{t.usage || 0}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openDocTpl(t.id)
+                      }}
+                      className="ml-0.5 text-violet-400 hover:text-violet-600"
+                    >
+                      📖
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </div>
           <div className="space-y-3">
             <input
               value={targetPosition}
@@ -611,6 +780,34 @@ export default function PDFToolPage() {
           </div>
           {resumeResult && (
             <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <ShareButton
+                  content={`# 简历优化报告：${targetPosition || '简历'}\n\n综合评分：${resumeResult.overall_score || '-'}\n${resumeResult.summary || ''}\n\n## 亮点\n${(resumeResult.highlights || []).map((h) => `- ${h}`).join('\n')}\n\n## 优化建议\n${(resumeResult.suggestions || [])
+                    .map((s) => `- 原文：${s.original}\n  改写：${s.rewrite}\n  理由：${s.reason}`)
+                    .join('\n')}\n\n> 由小团智能平台 AI 简历优化生成 · ${new Date().toLocaleString()}`}
+                  title={`简历优化：${targetPosition || '简历'}`}
+                  contentType="pdf"
+                />
+                <button
+                  onClick={() => {
+                    const md = `# 简历优化报告：${targetPosition || '简历'}\n\n综合评分：${resumeResult.overall_score || '-'}\n${resumeResult.summary || ''}\n\n## 亮点\n${(resumeResult.highlights || []).map((h) => `- ${h}`).join('\n')}\n\n## 优化建议\n${(resumeResult.suggestions || [])
+                      .map((s) => `- 原文：${s.original}\n  改写：${s.rewrite}\n  理由：${s.reason}`)
+                      .join('\n')}`
+                    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `简历优化-${targetPosition || Date.now()}.md`
+                    document.body.appendChild(a)
+                    a.click()
+                    a.remove()
+                    setTimeout(() => URL.revokeObjectURL(url), 3000)
+                  }}
+                  className="text-xs text-gray-500 hover:text-violet-600 px-2 py-1 rounded-lg hover:bg-violet-50 border border-gray-200"
+                >
+                  📄 导出报告
+                </button>
+              </div>
               <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200">
                 <div className="text-3xl font-bold text-violet-600">
                   {resumeResult.overall_score || '-'}
@@ -726,6 +923,76 @@ export default function PDFToolPage() {
           </div>
         )}
       </Card>
+
+      {/* ── 文档模板详情 Modal ── */}
+      <Modal
+        open={!!docTplInfo}
+        onClose={() => setDocTplInfo(null)}
+        title={`${docTplInfo?.icon || '📄'} ${docTplInfo?.name || '文档模板'}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDocTplInfo(null)}>
+              知道了
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                applyDocTplTo(
+                  docTplInfo,
+                  docTplInfo?.category === '简历优化' ? 'resume' : 'contract'
+                )
+                setDocTplInfo(null)
+              }}
+            >
+              应用此模板
+            </Button>
+          </>
+        }
+      >
+        {docTplInfo && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge color={docTplInfo.category === '简历优化' ? 'violet' : 'red'}>
+                {docTplInfo.category_label}
+              </Badge>
+              <Badge color={docTplInfo.pricing?.mode !== 'free' ? 'amber' : 'green'}>
+                {docTplInfo.pricing_label}
+              </Badge>
+              <Badge color="gray">🔥 使用 {docTplInfo.usage || 0} 次</Badge>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">{docTplInfo.desc}</p>
+            {docTplInfo.position && (
+              <div className="p-2.5 rounded-lg bg-gray-50">
+                <span className="text-[11px] text-gray-400">目标岗位：</span>
+                <span className="text-sm font-medium text-gray-800">{docTplInfo.position}</span>
+              </div>
+            )}
+            {docTplInfo.sample && (
+              <div>
+                <div className="text-xs font-medium text-gray-500 mb-1.5">📋 示例文档（点击应用）</div>
+                <button
+                  onClick={() => {
+                    applyDocTplTo(docTplInfo, docTplInfo.category === '简历优化' ? 'resume' : 'contract')
+                    setDocTplInfo(null)
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg border border-gray-200 text-xs text-gray-600 hover:border-purple-300 hover:bg-purple-50/50 transition-all max-h-40 overflow-y-auto whitespace-pre-wrap"
+                >
+                  {docTplInfo.sample.slice(0, 600)}
+                  {docTplInfo.sample.length > 600 ? '…' : ''}
+                </button>
+              </div>
+            )}
+            {docTplInfo.pro_tips && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
+                <div className="text-xs font-medium text-amber-700 mb-1">🎯 专家审查/优化要点</div>
+                <div className="text-xs text-amber-700/80 leading-relaxed">
+                  {docTplInfo.pro_tips}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

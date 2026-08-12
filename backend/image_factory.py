@@ -164,39 +164,93 @@ def save_image(img: Image.Image, fmt: str = "PNG", keep_alpha: bool = False) -> 
 
 
 # ── 字体系统：family/粗细/斜体（PIL 无内置粗斜体时用描边模拟粗体）──
-# family → (字体文件路径, 斜体候选 face index)
+# family → (候选字体路径列表, 斜体候选 face index, 是否支持中文, 粗体 face index 或 None)
+# 多平台路径覆盖：macOS（本机）+ Windows + Linux（Docker 已装 Noto/WQY）
+# 真实粗体：Hiragino Sans GB 的 W6（index 2）可用于 bold，其余 family 用描边模拟
 FONT_FAMILIES = [
-    ("pingfang", "/System/Library/Fonts/PingFang.ttc", 1),
-    ("helvetica", "/System/Library/Fonts/Helvetica.ttc", 1),
-    ("hiragino", "/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
-    ("songti", "/System/Library/Fonts/STSongti-SC-Regular.otf", 0),
-    ("arial", "/Library/Fonts/Arial.ttf", 0),
-    ("times", "/Library/Fonts/Times New Roman.ttf", 1),
-    ("noto", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),  # Linux
-    ("wqy", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),  # Linux
+    ("pingfang", [("/System/Library/Fonts/PingFang.ttc", 1), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
+    ("helvetica", [("/System/Library/Fonts/Helvetica.ttc", 1), ("/Library/Fonts/Arial.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0)], False, None),
+    ("hiragino", [("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1)], True, 2),
+    ("heiti", [("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0)], True, None),
+    ("songti", [("/System/Library/Fonts/STSongti-SC-Regular.otf", 0), ("/System/Library/Fonts/Songti.ttc", 0), ("C:/Windows/Fonts/simsun.ttc", 0)], True, None),
+    ("arial", [("/Library/Fonts/Arial.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0)], False, None),
+    ("times", [("/Library/Fonts/Times New Roman.ttf", 1), ("C:/Windows/Fonts/times.ttf", 0)], False, None),
+    ("noto", [("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0), ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
+    ("wqy", [("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0), ("/usr/share/fonts/wqy-microhei/wqy-microhei.ttc", 0)], True, None),
+]
+
+# 最后兜底：常见中文字体（mac/win/linux），保证中文文本永远可用
+_FALLBACK_FONTS = [
+    ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ("/System/Library/Fonts/PingFang.ttc", 1),
+    ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+    ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+    ("/System/Library/Fonts/STSongti-SC-Regular.otf", 0),
+    ("C:/Windows/Fonts/msyh.ttc", 0),
+    ("C:/Windows/Fonts/simhei.ttf", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
 ]
 
 
-def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False) -> ImageFont.FreeTypeFont:
-    """获取字体：按 family 选择（macOS PingFang → Linux Noto/WQY → 默认）。
+def _has_cjk(text: str) -> bool:
+    """是否包含中日韩表意/全角字符（含中文标点），含则必须使用支持中文的字体。"""
+    return any(
+        "\u4e00" <= ch <= "\u9fff"  # CJK 统一表意
+        or "\u3400" <= ch <= "\u4dbf"  # CJK 扩展 A
+        or "\uf900" <= ch <= "\ufaff"  # CJK 兼容表意
+        or "\u3000" <= ch <= "\u303f"  # CJK 标点（。、【】等）
+        or "\uff00" <= ch <= "\uffef"  # 全角/半角（￥、……等）
+        for ch in text
+    )
 
-    bold 由调用方用描边模拟（PIL 无可靠粗体变体）；italic 尝试 face index 1。
+
+def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False,
+             text: str = "") -> ImageFont.FreeTypeFont:
+    """获取字体：按 family 选择，多平台兜底；文本含中文时强制使用支持中文的字体（避免【】方块）。
+
+    bold 优先使用 family 的真实粗体 face（如 Hiragino W6），无真实粗体时由调用方用描边模拟；
+    italic 尝试 face index 1。
     """
+    prefer_cjk = _has_cjk(text)
     fam = (family or "").strip().lower()
-    path, italic_idx = None, 0
-    for name, fp, ii in FONT_FAMILIES:
-        if fam and fam == name and os.path.exists(fp):
-            path, italic_idx = fp, ii
-            break
-    if path is None:
-        # 指定字体缺失或未指定 → 依次兜底
-        for _, fp, ii in FONT_FAMILIES:
+    path, face_idx = None, 0
+    # 1) 指定 family（文本含中文时，仅接受本身支持中文的 family，避免 Helvetica 等渲染中文变方块）
+    entry = next((e for e in FONT_FAMILIES if e[0] == fam), None)
+    if entry and (not prefer_cjk or entry[2]):
+        for fp, ii in entry[1]:
             if os.path.exists(fp):
-                path, italic_idx = fp, ii
+                path, face_idx = fp, ii
+                break
+    # 2) 兜底：按序找可用字体（中文文本优先中文字体）
+    if path is None:
+        pool = FONT_FAMILIES if not prefer_cjk else [e for e in FONT_FAMILIES if e[2]]
+        for name, paths, _, _ in pool:
+            for fp, ii in paths:
+                if os.path.exists(fp):
+                    path, face_idx = fp, ii
+                    break
+            if path:
+                break
+    # 3) 最后兜底：常见中文字体目录（覆盖 mac/win/linux）
+    if path is None:
+        for fp, ii in _FALLBACK_FONTS:
+            if os.path.exists(fp):
+                path, face_idx = fp, ii
                 break
     if path:
+        # 粗体优先真实粗体 face：按【实际解析到的字体路径】匹配 family 的 bold face（
+        # 避免指定 family 无真实粗体但兜底落到 Hiragino 时仍走描边模拟）
+        bold_idx = None
+        if bold:
+            for e in FONT_FAMILIES:
+                if any(fp == path for fp, _ in e[1]) and len(e) > 3 and e[3] is not None:
+                    bold_idx = e[3]
+                    break
         try:
-            return ImageFont.truetype(path, size, index=italic_idx if italic else 0)
+            if bold and bold_idx is not None:
+                return ImageFont.truetype(path, size, index=bold_idx)
+            return ImageFont.truetype(path, size, index=face_idx if italic else 0)
         except Exception:
             try:
                 return ImageFont.truetype(path, size)
@@ -763,7 +817,7 @@ async def text_overlay(
     draw = ImageDraw.Draw(overlay)
 
     try:
-        font = get_font(font_size)
+        font = get_font(font_size, text=text)
     except Exception:
         font = ImageFont.load_default()
 
@@ -893,7 +947,7 @@ async def add_watermark(
     draw = ImageDraw.Draw(overlay)
 
     try:
-        font = get_font(font_size)
+        font = get_font(font_size, text=text)
     except Exception:
         font = ImageFont.load_default()
 
@@ -995,6 +1049,8 @@ async def create_template(req: dict):
         "layers": req.get("layers", []),
         "background_image": req.get("background_image", ""),
         "background_darken": req.get("background_darken", 0),
+        "pricing": req.get("pricing") or {"mode": "free", "once": 0, "day": 0, "month": 0},
+        "seller": req.get("seller", ""),
         "created_at": datetime.now().isoformat(),
     }
 
@@ -1167,6 +1223,65 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
                     canvas.paste(overlay, (x, y), overlay)
                 draw = ImageDraw.Draw(canvas)
 
+            if layer_type == "circle":
+                # 圆/圆环（光斑、装饰环、徽章底）：x/y 为圆心，支持渐变填充/边框/旋转
+                cx = int(layer.get("x", 0))
+                cy = int(layer.get("y", 0))
+                radius = max(1, int(layer.get("radius", 50)))
+                fill = layer.get("fill", "#FFFFFF")
+                opacity = float(layer.get("opacity", 1.0))
+                rotation = float(layer.get("rotation", 0) or 0)
+                border_w = int(layer.get("border_width", 0) or 0)
+                border_color = layer.get("border_color", fill)
+                pad = max(border_w, 2)
+                d = radius * 2 + pad * 2
+                overlay = Image.new("RGBA", (d, d), (0, 0, 0, 0))
+                od = ImageDraw.Draw(overlay)
+                box = [pad, pad, d - 1 - pad, d - 1 - pad]
+                if fill and isinstance(fill, str) and "→" in fill:
+                    from image_edit_engine import make_gradient
+
+                    top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
+                    grad = make_gradient(d, d, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+                    mask = Image.new("L", (d, d), 0)
+                    ImageDraw.Draw(mask).ellipse(box, fill=255)
+                    overlay.paste(grad, (0, 0), mask)
+                elif fill:
+                    od.ellipse(box, fill=fill)
+                if border_w > 0:
+                    od.ellipse([pad, pad, d - 1 - pad, d - 1 - pad], outline=border_color, width=border_w)
+                if opacity < 1.0:
+                    overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+                if rotation:
+                    overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+                canvas.paste(overlay, (cx - overlay.width // 2, cy - overlay.height // 2), overlay)
+                draw = ImageDraw.Draw(canvas)
+
+            if layer_type == "line":
+                # 直线/分隔线：x1/y1/x2/y2 或 x/y/length/angle（角度制，0=水平向右）
+                x1 = int(layer.get("x1", layer.get("x", 0)))
+                y1 = int(layer.get("y1", layer.get("y", 0)))
+                x2 = int(layer.get("x2", 0))
+                y2 = int(layer.get("y2", 0))
+                if layer.get("length"):
+                    import math
+
+                    angle = math.radians(float(layer.get("angle", 0) or 0))
+                    length = int(layer.get("length", 100))
+                    x2 = x1 + int(length * math.cos(angle))
+                    y2 = y1 + int(length * math.sin(angle))
+                color = layer.get("color", "#DDDDDD")
+                lw = max(1, int(layer.get("width", 2) or 2))
+                opacity = float(layer.get("opacity", 1.0))
+                if opacity < 1.0:
+                    overlay = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
+                    ImageDraw.Draw(overlay).line([x1, y1, x2, y2], fill=color, width=lw)
+                    overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+                    canvas.paste(overlay, (0, 0), overlay)
+                else:
+                    draw.line([x1, y1, x2, y2], fill=color, width=lw)
+                draw = ImageDraw.Draw(canvas)
+
             if layer_type == "text":
                 # 文字排版：字体族/粗体/斜体/字间距/行高/描边/阴影色/旋转
                 x = int(layer.get("x", 0))
@@ -1189,13 +1304,16 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
                 stroke_color = layer.get("stroke_color", font_color)
                 rotation = float(layer.get("rotation", 0) or 0)
 
-                font = get_font(font_size, family, bold, italic)
+                font = get_font(font_size, family, bold, italic, text)
 
-                # 自动换行（max_width>0 时按像素宽度折行）
+                # 自动换行（max_width>0 时按像素宽度折行；显式 \n 优先断行）
                 if max_width > 0:
                     lines, cur = [], ""
                     for ch in text:
-                        if draw.textlength(cur + ch, font=font) > max_width:
+                        if ch == "\n":
+                            lines.append(cur)
+                            cur = ""
+                        elif draw.textlength(cur + ch, font=font) > max_width:
                             lines.append(cur)
                             cur = ch
                         else:
@@ -1211,29 +1329,61 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
                 block_h = line_h * len(text_lines)
                 # 粗体模拟：同色描边加粗（PIL 无可靠粗体变体）
                 sim_bold = max(1, round(font_size * 0.055)) if bold else 0
-                pad = 8 + (stroke_w + sim_bold) * 2
-                txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
-                td = ImageDraw.Draw(txt_img)
                 sx, sy = 2, 2
+                shadow_blur = 0
                 if shadow:
                     try:
-                        sx, sy = (int(v) for v in shadow.split(","))
+                        parts = [int(v) for v in shadow.split(",")]
+                        sx, sy = parts[0], parts[1]
+                        shadow_blur = parts[2] if len(parts) > 2 else 0
                     except Exception:
                         pass
+                pad = 8 + (stroke_w + sim_bold) * 2 + shadow_blur
+                txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
+                td = ImageDraw.Draw(txt_img)
+                # v24：渐变文字（color 支持 #A→#B，垂直渐变——商业海报标题标配）
+                grad_fill = ""
+                if isinstance(font_color, str) and "→" in font_color:
+                    grad_fill = font_color
+                    font_color = "#FFFFFF"  # 文字本体先画白色，渐变最后按 alpha 覆盖
                 stroke_total = stroke_w + sim_bold
-                for i, ln in enumerate(text_lines):
+
+                def _line_pos(i, ln):
                     lx = pad
                     if align == "center":
                         lx = pad + (block_w - int(td.textlength(ln, font=font))) // 2
                     elif align == "right":
                         lx = pad + block_w - int(td.textlength(ln, font=font))
-                    ly = pad + i * line_h
-                    if shadow:
-                        _draw_text_run(td, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing, stroke_total, shadow_color)
+                    return lx, pad + i * line_h
+
+                # 阴影层：先单独绘制并模糊（软阴影），再合成到底层，避免模糊糊住正字
+                if shadow:
+                    sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
+                    sd = ImageDraw.Draw(sh_img)
+                    for i, ln in enumerate(text_lines):
+                        lx, ly = _line_pos(i, ln)
+                        _draw_text_run(
+                            sd, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing,
+                            stroke_total, shadow_color,
+                        )
+                    if shadow_blur > 0:
+                        sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
+                    txt_img = Image.alpha_composite(txt_img, sh_img)
+                    td = ImageDraw.Draw(txt_img)
+                # 正字层
+                for i, ln in enumerate(text_lines):
+                    lx, ly = _line_pos(i, ln)
                     _draw_text_run(
                         td, lx, ly, ln, font, font_color, letter_spacing, stroke_total,
                         stroke_color if stroke_w else font_color,
                     )
+                # 渐变覆盖：按文字 alpha 填充垂直渐变（描边/阴影保留原色，只染字身）
+                if grad_fill:
+                    from image_edit_engine import make_gradient
+
+                    top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
+                    grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+                    txt_img = Image.composite(grad, txt_img, txt_img.split()[3])
                 if rotation:
                     txt_img = txt_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
                     nw, nh = txt_img.size
@@ -1295,7 +1445,7 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
 
 
 async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """渲染模板生成图片（同步/异步任务共用执行体），返回结果与任务进度兼容。"""
+    """渲染模板生成图片（同步/异步任务共用执行体），返回结果与任务进度兼容 。"""
     template_id = payload.get("template_id")
     # 兼容两种参数形态：images/背景等既可放 overrides 内，也可放请求顶层
     overrides = dict(payload.get("overrides") or {})
@@ -1309,11 +1459,18 @@ async def _image_template_worker(payload: dict, progress: Callable | None = None
     with open(template_path, encoding="utf-8") as f:
         template = json.load(f)
 
+    # 商业化鉴权：收费模板需已购买/订阅（按次永久、按天/按月未过期）
+    from template_store import check_render_access, record_usage
+
+    user = payload.get("_username", "")
+    check_render_access(user, template)
+
     imgs = await render_template_image(template, overrides, progress)
     results = []
     for img in imgs:
         filename = save_image(img)
         results.append({"id": filename, "url": f"/api/image-factory/images/{filename}"})
+        record_usage(template_id)  # 热度 +1
 
     if len(results) > 1:
         out = {"images": results}
@@ -1334,7 +1491,11 @@ async def render_template(
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
     if sync:
+        req = dict(req)
+        req["_username"] = user
         return await _image_template_worker(req)
+    req = dict(req)
+    req["_username"] = user
     task = create_task("image_template", req, username=user, user_id=uid, role=role)
     return {
         "task_id": task["id"],
@@ -1395,6 +1556,11 @@ async def update_template(template_id: str, req: dict):
     template["background_darken"] = req.get("background_darken", template.get("background_darken", 0))
     template["layers"] = req.get("layers", template.get("layers", []))
     template["updated_at"] = datetime.now().isoformat()
+    # 商业化字段：定价（免费/按次/按天/按月）与创作者（默认平台）
+    if "pricing" in req:
+        template["pricing"] = req.get("pricing") or {"mode": "free", "once": 0, "day": 0, "month": 0}
+    if "seller" in req:
+        template["seller"] = req.get("seller", "")
     # 兼容内置模板：缺 created_at 时补当前时间，保证列表按时间排序
     if not template.get("created_at"):
         template["created_at"] = datetime.now().isoformat()
@@ -1739,8 +1905,21 @@ async def replace_background(
 
 
 # ── 预置电商模板 ──────────────────────────────────────────────
+# 已下架模板（质量不达标/废弃）：启动时清理磁盘残留并跳过内置恢复
+_RETIRED_TEMPLATES = {
+    "tmplt_baidu_ad", "tmplt_insta_post", "tmplt_weibo_ad", "tmplt_douyin",
+    "tmplt_jd_main", "tmplt_taobao_main", "tmplt_pinduoduo", "tmplt_facebook_ad",
+    "img_1786461663469",
+}
+
+
 def init_templates():
-    """初始化预置模板"""
+    """初始化预置模板（跳过已下架模板，并清理其在磁盘上的残留文件）"""
+    for retired in _RETIRED_TEMPLATES:
+        p = os.path.join(TEMPLATE_DIR, f"{retired}.json")
+        if os.path.exists(p):
+            os.remove(p)
+            logger.info(f"清理已下架模板：{retired}")
     templates = [
         {
             "id": "tmplt_taobao_main",
@@ -2281,6 +2460,8 @@ def init_templates():
     ]
 
     for tmpl in templates:
+        if tmpl["id"] in _RETIRED_TEMPLATES:
+            continue
         tmpl_path = os.path.join(TEMPLATE_DIR, f"{tmpl['id']}.json")
         if not os.path.exists(tmpl_path):
             with open(tmpl_path, "w", encoding="utf-8") as f:

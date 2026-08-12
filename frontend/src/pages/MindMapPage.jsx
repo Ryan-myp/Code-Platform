@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Sparkles,
   Download,
@@ -13,7 +13,7 @@ import {
   FileText,
   X,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState, Modal, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
@@ -189,6 +189,36 @@ export default function MindMapPage() {
   const [topic, setTopic] = useState('')
   const [depth, setDepth] = useState(3)
   const [paletteKey, setPaletteKey] = useState('classic')
+  // 思维导图模板库：一键套用专业结构（SWOT/OKR/金字塔等）
+  const [mmTpls, setMmTpls] = useState([])
+  const [mmTplId, setMmTplId] = useState('')
+  const [mmTplStyle, setMmTplStyle] = useState('professional')
+  const [mmTplInfo, setMmTplInfo] = useState(null)
+  const [mmTplCat, setMmTplCat] = useState('全部')
+  useEffect(() => {
+    api
+      .get('/api/mindmap-templates/list')
+      .then((res) => setMmTpls(res.data?.items || []))
+      .catch(() => {})
+  }, [])
+  const mmTplCats = useMemo(
+    () => ['全部', ...new Set(mmTpls.map((t) => t.category))],
+    [mmTpls]
+  )
+  const applyMmTpl = (t) => {
+    setMmTplId(t.id)
+    setMmTplStyle(t.style || 'professional')
+    setDepth(t.depth || 3)
+    if (t.example_topic) setTopic(t.example_topic)
+  }
+  const openMmTpl = async (tid) => {
+    try {
+      const res = await api.get(`/api/mindmap-templates/${tid}`)
+      setMmTplInfo(res.data)
+    } catch (e) {
+      toast.error(`模板详情加载失败：${e.message}`)
+    }
+  }
   const [task, setTask] = useState(null)
   const [result, setResult] = useState(null)
   const [records, setRecords] = useState([])
@@ -223,7 +253,7 @@ export default function MindMapPage() {
     }
     await submitTask(
       '/api/mindmap/generate',
-      { topic: topic.trim(), depth, style: 'professional' },
+      { topic: topic.trim(), depth, style: mmTplStyle, template_id: mmTplId },
       {
         onUpdate: (t) => setTask(t),
         onSuccess: (data) => {
@@ -332,6 +362,65 @@ export default function MindMapPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：输入 */}
         <div className="space-y-4">
+          {/* 思维导图模板库：一键套用经典思维模型结构 */}
+          <Card>
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-violet-500" /> 导图模板
+              <span className="ml-auto text-[11px] font-normal text-gray-400">
+                {mmTpls.length} 个经典模型
+              </span>
+            </h3>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {mmTplCats.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setMmTplCat(c)}
+                  className={`px-2.5 py-1 rounded-full text-xs transition-all ${
+                    mmTplCat === c
+                      ? 'bg-violet-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {mmTpls
+                .filter((t) => mmTplCat === '全部' || t.category === mmTplCat)
+                .map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => applyMmTpl(t)}
+                    title={t.desc}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full border text-xs transition-all ${
+                      mmTplId === t.id
+                        ? 'bg-violet-50 border-violet-400 ring-2 ring-violet-500/20 text-violet-700 font-medium'
+                        : 'border-gray-200 text-gray-600 hover:border-violet-300 hover:bg-violet-50/50'
+                    }`}
+                  >
+                    <span>{t.icon}</span>
+                    {t.name}
+                    {t.pricing?.mode !== 'free' && (
+                      <span className="px-1 rounded bg-amber-100 text-amber-700 text-[10px]">
+                        {t.pricing_label}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-gray-400">🔥{t.usage || 0}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openMmTpl(t.id)
+                      }}
+                      className="ml-0.5 text-violet-400 hover:text-violet-600"
+                    >
+                      📖
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </Card>
+
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center justify-between gap-2">
               <span className="flex items-center gap-2">
@@ -574,6 +663,71 @@ export default function MindMapPage() {
           </Card>
         </div>
       </div>
+
+      {/* ── 导图模板详情 Modal ── */}
+      <Modal
+        open={!!mmTplInfo}
+        onClose={() => setMmTplInfo(null)}
+        title={`${mmTplInfo?.icon || '🧠'} ${mmTplInfo?.name || '思维导图模板'}`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setMmTplInfo(null)}>
+              知道了
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                applyMmTpl(mmTplInfo)
+                setMmTplInfo(null)
+              }}
+            >
+              应用此模板
+            </Button>
+          </>
+        }
+      >
+        {mmTplInfo && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge color="purple">{mmTplInfo.category}</Badge>
+              <Badge color={mmTplInfo.pricing?.mode !== 'free' ? 'amber' : 'green'}>
+                {mmTplInfo.pricing_label}
+              </Badge>
+              <Badge color="gray">🔥 使用 {mmTplInfo.usage || 0} 次</Badge>
+              <Badge color="gray">深度 {mmTplInfo.depth} 层</Badge>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">{mmTplInfo.desc}</p>
+            <div className="p-3 rounded-lg bg-gray-50">
+              <div className="text-xs font-medium text-gray-500 mb-1.5">
+                🏗️ 分支结构（AI 将严格按此骨架展开）
+              </div>
+              <div className="space-y-1.5">
+                {(mmTplInfo.structure || []).map((b, i) => (
+                  <div key={i} className="text-xs text-gray-600">
+                    <span className="font-medium text-violet-600">├─ {b.name}</span>
+                    <span className="text-gray-400">（{b.hint}）</span>
+                    {b.children?.length > 0 && (
+                      <span className="text-gray-500"> · {b.children.join(' / ')}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {mmTplInfo.example_topic && (
+              <div className="p-3 rounded-lg bg-violet-50 border border-violet-100">
+                <div className="text-xs font-medium text-violet-700 mb-1">✏️ 示例主题</div>
+                <div className="text-xs text-violet-700/80">{mmTplInfo.example_topic}</div>
+              </div>
+            )}
+            {mmTplInfo.pro_tips && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-100">
+                <div className="text-xs font-medium text-amber-700 mb-1">💡 使用技巧</div>
+                <div className="text-xs text-amber-700/80 leading-relaxed">{mmTplInfo.pro_tips}</div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

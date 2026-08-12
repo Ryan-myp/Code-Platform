@@ -1,0 +1,26 @@
+{
+  "id": "mt_truth_bomb",
+  "name": "真香现场",
+  "category": "搞笑沙雕",
+  "icon": "🍚",
+  "desc": "嘴上说着不要，身体却很诚实——真香定律",
+  "style": "red",
+  "ai_style": "3d",
+  "top_hint": "我说了不吃！",
+  "bottom_hint": "真香",
+  "texts": [
+    "我说了不吃！|真香",
+    "就一口|再来一口",
+    "减肥？|明天开始"
+  ],
+  "prompt_hint": "圆滚滚的橘猫大口吃面的可爱场景，3D 软萌卡通，满足的表情，红色喜庆背景",
+  "decoration": "🍜,😋",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:12:46.866928",
+  "updated_at": "2026-08-12T08:12:46.866929"
+}

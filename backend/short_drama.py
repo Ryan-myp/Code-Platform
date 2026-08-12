@@ -182,17 +182,27 @@ _SCRIPT_SYSTEM = """你是资深短剧编剧。把用户主题扩写成一部节
 8. 剧情有起承转合，结尾留悬念钩子"""
 
 
-async def _generate_script(theme: str, duration_hint: int) -> dict:
-    """LLM 生成剧本（v13.29：worker 与 /script 接口共用）。
+async def _generate_script(theme: str, duration_hint: int, template: dict | None = None) -> dict:
+    """LLM 生成剧本（v13.29：worker 与 /script 接口共用；v22：题材模板注入）。
 
     最多重试 3 次解析（LLM 偶发坏 JSON），返回经时长防御校验的剧本，
     保证接口返回的剧本与最终成片剧本一致（所见即所得）。
+    题材模板（drama_templates）注入人设/结构/风格/钩子，让 AI 按爆款套路创作。
     """
     last_err = ""
+    tpl_prompt = ""
+    if template:
+        tpl_prompt = (
+            f"\n【题材模板：{template.get('name', '')}】\n"
+            f"人设与关系：{template.get('setup', '')}\n"
+            f"剧情结构：{template.get('structure', '')}\n"
+            f"台词风格：{template.get('style', '')}\n"
+            f"开篇钩子：{template.get('hook', '')}"
+        )
     for attempt in range(3):
         raw = await call_llm_async(
             _SCRIPT_SYSTEM,
-            f"主题：{theme}\n目标时长约 {duration_hint} 秒，场次数与每场秒数按编剧规则匹配。",
+            f"主题：{theme}\n目标时长约 {duration_hint} 秒，场次数与每场秒数按编剧规则匹配。{tpl_prompt}",
             max_tokens=8000,
             temperature=0.85,
             timeout=300,
@@ -824,7 +834,24 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         script = {"title": title, "scenes": scenes_override} if scenes_override else None
         if script is None:
             # v13.29 剧本生成共用（worker 与 /script 接口）：LLM 重试 3 次 + 时长防御
-            script = await _generate_script(theme, duration_hint)
+            # v22 题材模板：按模板注入人设/结构/风格/钩子（AI 按爆款套路创作）
+            tpl = None
+            tid = payload.get("template_id") or ""
+            if tid:
+                try:
+                    from drama_templates import _load_one
+
+                    tpl = _load_one(tid)
+                except Exception:  # noqa: BLE001
+                    logger.warning(f"题材模板加载失败：{tid}")
+            script = await _generate_script(theme, duration_hint, tpl)
+            if tpl:
+                try:
+                    from drama_templates import record_usage
+
+                    record_usage(tid)
+                except Exception:  # noqa: BLE001
+                    pass
         scenes = script["scenes"]
         # v13.28 时长硬校验：场次数 + 台词量双重防御（自定义分镜也兜底；LLM 剧本已校验，幂等）
         scenes = _enforce_duration(scenes, duration_hint)
@@ -1160,9 +1187,10 @@ async def material_manifest(
 async def generate_script(
     theme: str = Form(""),
     duration: int = Form(45),
+    template_id: str = Form("", description="题材模板 ID（drama-templates，如 dt_ceo）"),
     current_user: dict = require_auth(),
 ):
-    """AI 写剧本（v13.29）：主题 + 目标时长 → 剧本 JSON（分镜/台词/画面描述/素材关键词）。
+    """AI 写剧本（v13.29 + v22 题材模板）：主题 + 目标时长 + 可选题材模板 → 剧本 JSON。
 
     返回的 scenes 可直接作为 /generate 的 scenes_json 提交——前端剧本工作台
     编辑后确认生成，保证"所见即所得"（返回即最终成片剧本，已过时长防御）。
@@ -1171,11 +1199,20 @@ async def generate_script(
     if not theme:
         raise HTTPException(400, "请输入短剧主题")
     duration_hint = max(20, min(1800, int(duration) or 45))
-    script = await _generate_script(theme, duration_hint)
+    tpl = None
+    if template_id:
+        try:
+            from drama_templates import _load_one
+
+            tpl = _load_one(template_id)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(404, "题材模板不存在") from None
+    script = await _generate_script(theme, duration_hint, tpl)
     return {
         "title": script["title"],
         "scenes": script["scenes"],
         "characters": script.get("characters") or [],  # v13.30 角色表（角色一致性）
+        "template_id": template_id or "",
     }
 
 
@@ -1186,6 +1223,7 @@ async def generate_drama(
     duration: int = Form(45),
     scenes_json: str = Form(""),
     characters_json: str = Form("", description="角色表 JSON（[{id,name,gender,age,appearance,outfit,search}]）"),
+    template_id: str = Form("", description="题材模板 ID（drama-templates，如 dt_ceo）"),
     illust_mode: bool = Form(False, description="true=AI 插画模式（AGNES 文生图/图生图，角色一致性）"),
     avatar_mode: bool = Form(False, description="true=数字人播报模式（每镜生成人像口播视频）"),
     avatar_id: str = Form("business-female", description="数字人形象ID（avatar_mode 时生效）"),
@@ -1229,6 +1267,7 @@ async def generate_drama(
         "duration": duration,
         "scenes": scenes,
         "characters": characters,
+        "template_id": template_id,
         "illust_mode": illust_mode,
         "avatar_mode": avatar_mode,
         "avatar_id": avatar_id,

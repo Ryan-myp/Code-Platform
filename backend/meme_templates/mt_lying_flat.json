@@ -1,0 +1,26 @@
+{
+  "id": "mt_lying_flat",
+  "name": "摆烂人生",
+  "category": "搞笑沙雕",
+  "icon": "🛌",
+  "desc": "躺平宣言，当代年轻人的精神状态",
+  "style": "paper",
+  "ai_style": "flat",
+  "top_hint": "努力？",
+  "bottom_hint": "我选择躺平",
+  "texts": [
+    "努力？|我选择躺平",
+    "随便吧|就这样吧",
+    "明天再说|后天也行"
+  ],
+  "prompt_hint": "一只咸鱼躺在沙发上，身边散落零食，报纸复古质感，扁平插画",
+  "decoration": "🛌,🥤",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866927",
+  "updated_at": "2026-08-12T08:12:46.866928"
+}

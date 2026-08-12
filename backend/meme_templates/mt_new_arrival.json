@@ -1,0 +1,26 @@
+{
+  "id": "mt_new_arrival",
+  "name": "上新预告",
+  "category": "电商营销",
+  "icon": "🎁",
+  "desc": "新品发布预告包：霓虹灯效果拉高期待值",
+  "style": "neon",
+  "ai_style": "neon",
+  "top_hint": "新品即将上线！",
+  "bottom_hint": "敬请期待",
+  "texts": [
+    "新品即将上线！|敬请期待",
+    "倒计时 3 天|抢先预定",
+    "这次的新品|有点东西"
+  ],
+  "prompt_hint": "霓虹灯管勾勒的礼物盒在深色背景上闪烁，赛博朋克光效，神秘期待感",
+  "decoration": "🎁,✨",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866934",
+  "updated_at": "2026-08-12T08:12:46.866934"
+}

@@ -1,0 +1,25 @@
+{
+  "id": "ms_gym_workout",
+  "name": "健身运动",
+  "category": "生活",
+  "icon": "🏋️",
+  "desc": "健身/运动打卡 BPM 120+：摇滚硬核节拍，训练节奏感拉满",
+  "style": "rock",
+  "mood": "energetic",
+  "voice": "male",
+  "duration": 60,
+  "bpm": 126,
+  "instrument": "失真吉他 + 摇滚鼓 + 强贝斯",
+  "structure": "强拍开场（热身）→ 主歌推进（力量训练）→ 副歌爆发（冲刺组）→ 收尾减速（拉伸）",
+  "lyrics_template": "[Verse 1]\n汗水滴落 肌肉燃烧\n每一次坚持 都算数\n别停下来 再撑一秒\n你会感谢 现在的自己\n\n[Chorus]\n燃烧吧 脂肪\n突破吧 极限\n今天的汗水\n是明天的勋章",
+  "theme_suggestion": "健身房力量训练",
+  "pro_tips": "训练动作切换对重音；冲刺组对副歌爆发段；拉伸段用后半减速小节",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847170",
+  "updated_at": "2026-08-12T08:08:46.847170"
+}

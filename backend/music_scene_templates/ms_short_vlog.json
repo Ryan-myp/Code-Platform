@@ -1,0 +1,25 @@
+{
+  "id": "ms_short_vlog",
+  "name": "生活 Vlog 日常",
+  "category": "短视频",
+  "icon": "📷",
+  "desc": "日常 Vlog 治愈 BGM：民谣木吉他 + 轻快节奏，记录感的松弛氛围",
+  "style": "folk",
+  "mood": "calm",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 96,
+  "instrument": "木吉他扫弦 + 手鼓 + 口琴点缀",
+  "structure": "前奏 2 小节（环境空镜）→ 主歌（日常片段）→ 副歌轻快（高光时刻）→ 渐弱收尾",
+  "lyrics_template": "[Verse 1]\n今天的阳光刚刚好\n街角的猫在打盹\n买了束花给自己\n生活要有仪式感\n\n[Chorus]\n慢一点 再慢一点\n把平凡过成诗篇\n记录每一帧温暖\n就是最好的纪念",
+  "theme_suggestion": "城市漫步日常记录",
+  "pro_tips": "环境音与吉他前奏交融；高光镜对副歌；字幕卡在乐句停顿处",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847160",
+  "updated_at": "2026-08-12T08:08:46.847161"
+}

@@ -16,6 +16,7 @@ import {
   Package,
   BookOpen,
   Layers,
+  ChevronDown,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -251,6 +252,18 @@ export default function VideoFactoryPage() {
   const [scriptTemplates, setScriptTemplates] = useState([])
   const [scriptCategory, setScriptCategory] = useState('全部')
   const [scriptTopic, setScriptTopic] = useState('')
+  // v21：视频模板市场（TikTok/电商/社媒/节日/生活 → 广告短片，复用图片引擎渲染镜头帧 + ffmpeg 运镜/转场/BGM）
+  const [vtplTemplates, setVtplTemplates] = useState([])
+  const [vtplCategory, setVtplCategory] = useState('全部')
+  // v24：模板市场默认收起（横幅形式），避免占用大片纵向空间挤压下方生成表单
+  const [vtplOpen, setVtplOpen] = useState(false)
+  const [vtplModal, setVtplModal] = useState(null) // 正在查看的模板
+  const [vtplVars, setVtplVars] = useState([]) // 模板变量（文本替换 + 图片槽）
+  const [vtplOverrides, setVtplOverrides] = useState({}) // 文本变量 {key: text}
+  const [vtplImages, setVtplImages] = useState({}) // 图片槽 {key: url}
+  const [vtplAccess, setVtplAccess] = useState('once')
+  const [vtplBusy, setVtplBusy] = useState(false)
+  const [vtplResult, setVtplResult] = useState(null) // {url, cover, duration, filename}
 
   const fetchStats = useCallback(async () => {
     try {
@@ -284,6 +297,7 @@ export default function VideoFactoryPage() {
     fetchVideos()
     fetchCloudPrompts()
     fetchScriptTemplates()
+    fetchVtplTemplates()
     return () => {
       stopPolling()
     }
@@ -304,6 +318,78 @@ export default function VideoFactoryPage() {
       setCloudPrompts(res.data?.prompts || [])
     } catch {
       /* 静默：后端无此接口时降级为本地模板 */
+    }
+  }
+
+  // v21：视频模板市场数据
+  const fetchVtplTemplates = async () => {
+    try {
+      const res = await api.get('/api/video-templates/list')
+      setVtplTemplates(res.data?.items || [])
+    } catch {
+      /* 静默：后端无此接口时隐藏模板市场 */
+    }
+  }
+
+  // v21：打开模板 → 拉取变量清单（文本替换 + 图片槽）
+  const openVtplModal = async (item) => {
+    setVtplModal(item)
+    setVtplResult(null)
+    setVtplOverrides({})
+    setVtplImages({})
+    setVtplVars([])
+    try {
+      const res = await api.get(`/api/video-templates/${item.id}`)
+      const vars = res.data?.vars || []
+      setVtplVars(vars)
+      const ov = {}
+      const im = {}
+      vars.forEach((v) => {
+        if (v.type === 'text') ov[v.key] = v.text ?? ''
+        else if (v.type === 'image') im[v.key] = ''
+      })
+      setVtplOverrides(ov)
+      setVtplImages(im)
+    } catch {
+      /* 静默 */
+    }
+  }
+
+  // v21：购买授权（收费模板：按次 / 按天 / 按月，积分）
+  const handleVtplPurchase = async (accessType) => {
+    if (!vtplModal || vtplBusy) return
+    setVtplBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('template_id', vtplModal.id)
+      fd.append('access_type', accessType)
+      const res = await api.post('/api/video-templates/purchase', fd)
+      toast.success(res.data?.message || '购买成功')
+    } catch (e) {
+      toast.error(`购买失败：${e.message}`)
+    } finally {
+      setVtplBusy(false)
+    }
+  }
+
+  // v21：渲染成片（镜头帧 → Ken Burns 运镜 → xfade 转场 → 节拍 BGM，耗时 30-90s）
+  const handleVtplRender = async () => {
+    if (!vtplModal || vtplBusy) return
+    setVtplBusy(true)
+    setVtplResult(null)
+    try {
+      const fd = new FormData()
+      fd.append('template_id', vtplModal.id)
+      fd.append('overrides', JSON.stringify(vtplOverrides))
+      fd.append('images', JSON.stringify(Object.fromEntries(Object.entries(vtplImages).filter(([, v]) => v))))
+      const res = await api.post('/api/video-templates/render', fd, { timeout: 600000 })
+      setVtplResult({ ...res.data, url: absUrl(res.data.url), cover: absUrl(res.data.cover) })
+      toast.success('视频渲染完成！')
+      fetchVtplTemplates() // 刷新使用热度
+    } catch (e) {
+      toast.error(`渲染失败：${e.message}`)
+    } finally {
+      setVtplBusy(false)
     }
   }
 
@@ -621,6 +707,96 @@ export default function VideoFactoryPage() {
           </Button>
         }
       />
+
+      {/* v24 视频模板市场：可折叠横幅（默认收起）+ 展开后横向滚动紧凑卡片，不再占满纵向空间 */}
+      {vtplTemplates.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200">
+          <button
+            onClick={() => setVtplOpen(!vtplOpen)}
+            className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left group"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Clapperboard className="w-5 h-5 text-blue-500 shrink-0" />
+              <span className="font-semibold text-gray-900 whitespace-nowrap">视频模板市场</span>
+              <span className="text-xs text-gray-400 font-normal hidden md:inline truncate">
+                专业级广告短片模板 · 一键渲染成片（Ken Burns 运镜 + 转场 + 节拍 BGM）
+              </span>
+              <span className="text-xs text-gray-400 shrink-0">{vtplTemplates.length} 个模板</span>
+            </div>
+            <span className="flex items-center gap-1 text-sm text-blue-600 shrink-0">
+              {vtplOpen ? '收起模板' : '展开模板'}
+              <ChevronDown
+                className={`w-4 h-4 transition-transform ${vtplOpen ? 'rotate-180' : ''}`}
+              />
+            </span>
+          </button>
+          {vtplOpen && (
+            <div className="px-5 pb-5 space-y-3">
+              {/* 分类筛选 */}
+              <div className="flex flex-wrap gap-1.5">
+                {['全部', ...new Set(vtplTemplates.map((t) => t.category))].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setVtplCategory(c)}
+                    className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                      vtplCategory === c
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {c}
+                    <span className="ml-1 opacity-70">
+                      {c === '全部' ? vtplTemplates.length : vtplTemplates.filter((t) => t.category === c).length}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {/* 模板卡片：横向滚动一行，不再 5 列网格占满纵向空间 */}
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {vtplTemplates
+                  .filter((t) => vtplCategory === '全部' || t.category === vtplCategory)
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => openVtplModal(t)}
+                      className="group text-left rounded-xl border border-gray-200 overflow-hidden hover:border-blue-300 hover:shadow-lg transition-all w-36 sm:w-40 shrink-0"
+                    >
+                      <div className="relative aspect-[3/4] bg-gray-100 overflow-hidden">
+                        <img
+                          src={absUrl(t.preview)}
+                          alt={t.name}
+                          loading="lazy"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                        <span className="absolute top-1.5 left-1.5 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-white">
+                          {t.platform}
+                        </span>
+                        {t.pricing?.mode !== 'free' && (
+                          <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500 text-white">
+                            {t.pricing_label}
+                          </span>
+                        )}
+                        <span className="absolute bottom-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-white">
+                          {(t.duration || 0).toFixed(1)}s
+                        </span>
+                      </div>
+                      <div className="p-2">
+                        <div className="text-xs font-medium text-gray-800 truncate">{t.name}</div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{t.category}</span>
+                          <span className="text-[10px] text-gray-400">{t.usage} 次使用</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 统计 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1590,6 +1766,144 @@ export default function VideoFactoryPage() {
             >
               预览
             </Button>
+          </div>
+        )}
+      </Modal>
+
+      {/* v21 视频模板渲染 Modal：预览 + 变量编辑 + 购买授权 + 一键成片 */}
+      <Modal
+        open={!!vtplModal}
+        onClose={() => setVtplModal(null)}
+        title={vtplModal ? `视频模板 · ${vtplModal.name}` : ''}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setVtplModal(null)} disabled={vtplBusy}>
+              取消
+            </Button>
+            {vtplModal?.pricing?.mode !== 'free' && (
+              <div className="flex items-center gap-1.5">
+                {['once', 'day', 'month'].map((a) => (
+                  <button
+                    key={a}
+                    onClick={() => setVtplAccess(a)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${
+                      vtplAccess === a
+                        ? 'border-amber-500 bg-amber-50 text-amber-700'
+                        : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {a === 'once'
+                      ? `按次 ${vtplModal?.pricing?.once || 0}`
+                      : a === 'day'
+                        ? `按天 ${vtplModal?.pricing?.day || 0}`
+                        : `按月 ${vtplModal?.pricing?.month || 0}`}
+                    积分
+                  </button>
+                ))}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  icon={Package}
+                  disabled={vtplBusy}
+                  onClick={() => handleVtplPurchase(vtplAccess)}
+                  className="bg-amber-500 hover:bg-amber-600"
+                >
+                  购买授权
+                </Button>
+              </div>
+            )}
+            <Button
+              variant="primary"
+              icon={Clapperboard}
+              loading={vtplBusy}
+              onClick={handleVtplRender}
+              className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700"
+            >
+              渲染视频
+            </Button>
+          </>
+        }
+      >
+        {vtplModal && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* 左侧：首帧预览 + 模板信息 */}
+            <div className="space-y-3">
+              <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-900 flex items-center justify-center">
+                <img src={absUrl(vtplModal.preview)} alt={vtplModal.name} className="max-h-[46vh] object-contain" />
+              </div>
+              <div className="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2.5 text-xs space-y-1">
+                <div className="text-gray-700">{vtplModal.desc}</div>
+                <div className="text-gray-400">
+                  规格：{vtplModal.width}×{vtplModal.height} · {vtplModal.fps}fps · 成片约 {vtplModal.duration}s
+                  {vtplModal.pricing?.mode !== 'free'
+                    ? ` · ${vtplModal.pricing_label}（按次 ${vtplModal.pricing.once} / 按天 ${vtplModal.pricing.day} / 按月 ${vtplModal.pricing.month} 积分）`
+                    : ' · 免费'}
+                </div>
+              </div>
+              {/* 渲染结果播放器 */}
+              {vtplResult && (
+                <div className="rounded-xl overflow-hidden border border-green-200 bg-black">
+                  <video src={vtplResult.url} poster={vtplResult.cover} controls autoPlay playsInline className="w-full max-h-[42vh]" />
+                </div>
+              )}
+            </div>
+            {/* 右侧：变量编辑（文本替换 + 产品图槽） */}
+            <div className="space-y-3">
+              <div className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-blue-500" />
+                内容变量
+                <span className="text-xs text-gray-400 font-normal">修改后点击「渲染视频」生成专属成片</span>
+              </div>
+              {vtplVars.length === 0 && (
+                <div className="text-xs text-gray-400 py-8 text-center">模板变量加载中…</div>
+              )}
+              <div className="space-y-2.5 max-h-[44vh] overflow-y-auto pr-1">
+                {vtplVars.map((v, vi) =>
+                  v.type === 'image' ? (
+                    <div key={vi}>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">
+                        产品图 URL（{v.key}）
+                        <span className="text-gray-400 font-normal"> 留空则跳过该图层</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={vtplImages[v.key] || ''}
+                        onChange={(e) => setVtplImages((p) => ({ ...p, [v.key]: e.target.value }))}
+                        placeholder="https://… 产品或场景图（建议 1:1 以上）"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <div key={vi}>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{v.key}</label>
+                      <input
+                        type="text"
+                        value={vtplOverrides[v.key] || ''}
+                        onChange={(e) => setVtplOverrides((p) => ({ ...p, [v.key]: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                      />
+                    </div>
+                  ),
+                )}
+              </div>
+              {vtplResult && (
+                <div className="rounded-xl bg-green-50 border border-green-200 px-3 py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-gray-800">成片已生成 · {vtplResult.duration}s</div>
+                    <div className="text-[11px] text-gray-500 truncate mt-0.5">{vtplResult.filename}</div>
+                  </div>
+                  <a
+                    href={vtplResult.url}
+                    download={vtplResult.filename}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    下载 MP4
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Modal>

@@ -1,0 +1,26 @@
+{
+  "id": "mt_schadenfreude",
+  "name": "幸灾乐祸",
+  "category": "搞笑沙雕",
+  "icon": "🤭",
+  "desc": "看别人倒霉时忍不住上扬的嘴角，损友专用",
+  "style": "yellow",
+  "ai_style": "flat",
+  "top_hint": "哈哈哈哈，",
+  "bottom_hint": "你也有今天",
+  "texts": [
+    "哈哈哈哈，|你也有今天",
+    "不是我干的|但我不后悔",
+    "惨？|再惨点"
+  ],
+  "prompt_hint": "一只躲在墙角偷笑的柴犬，露出半个脑袋，扁平插画风格，高饱和",
+  "decoration": "🤭,😂",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866926",
+  "updated_at": "2026-08-12T08:12:46.866926"
+}

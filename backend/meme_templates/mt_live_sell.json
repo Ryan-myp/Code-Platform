@@ -1,0 +1,26 @@
+{
+  "id": "mt_live_sell",
+  "name": "主播带货",
+  "category": "直播互动",
+  "icon": "📢",
+  "desc": "直播间弹幕氛围包：3-2-1 上链接，节奏感强",
+  "style": "yellow",
+  "ai_style": "flat",
+  "top_hint": "三二一，",
+  "bottom_hint": "上链接！",
+  "texts": [
+    "三二一，|上链接！",
+    "家人们|拼手速了",
+    "这个价格|史无前例"
+  ],
+  "prompt_hint": "直播间的聚光灯下，麦克风与购物车图标，扁平插画，热闹氛围",
+  "decoration": "📢,🔥",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866939",
+  "updated_at": "2026-08-12T08:12:46.866940"
+}

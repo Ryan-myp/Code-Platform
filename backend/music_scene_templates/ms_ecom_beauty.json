@@ -1,0 +1,25 @@
+{
+  "id": "ms_ecom_beauty",
+  "name": "美妆展示高级感",
+  "category": "电商",
+  "icon": "💄",
+  "desc": "美妆/护肤品牌质感 BGM：爵士律动 + 浪漫氛围，产品展示像广告大片",
+  "style": "jazz",
+  "mood": "romantic",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 108,
+  "instrument": "钢琴 + 爵士鼓刷 + 贝斯 Walking + 弦乐垫",
+  "structure": "钢琴单音开场（产品特写）→ 律动进入（使用过程）→ 弦乐铺开（效果对比）→ 轻收尾",
+  "lyrics_template": "[Verse 1]\n晨光落在梳妆台\n一抹温柔慢慢晕开\n肌肤喝饱了水光\n镜子里的自己发光\n\n[Chorus]\n每一天都值得\n被自己温柔对待\n这份美 由内而外\n像星光一样闪耀",
+  "theme_suggestion": "高端美妆产品宣传",
+  "pro_tips": "特写镜对钢琴单音；效果对比镜对弦乐铺开；语速放慢显高级",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847156",
+  "updated_at": "2026-08-12T08:08:46.847157"
+}

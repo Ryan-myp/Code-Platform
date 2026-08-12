@@ -22,6 +22,7 @@ import { useToast } from '../lib/toast'
 import { formatBytes, copyToClipboard } from '../lib/format'
 import {
   Button,
+  Badge,
   Empty,
   SkeletonList,
   ErrorState,
@@ -325,6 +326,7 @@ export default function MusicFactoryPage() {
   const setRhyme = (v) => setInputs((p) => ({ ...p, rhyme: v }))
   const setStructure = (v) => setInputs((p) => ({ ...p, structure: v }))
   const setMusicVoice = (v) => setInputs((p) => ({ ...p, musicVoice: v }))
+  const setMusicDuration = (v) => setInputs((p) => ({ ...p, musicDuration: v }))
   const [stats, setStats] = useState({ total_tracks: 0, api_configured: false })
   const [audios, setAudios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -342,6 +344,11 @@ export default function MusicFactoryPage() {
   const [selectedLyrics, setSelectedLyrics] = useState('')
   const [generatingMusic, setGeneratingMusic] = useState(false)
   const [musicResult, setMusicResult] = useState(null)
+  // v22 音乐场景模板库：场景化配方（风格/情绪/歌词示例/时长/BPM/乐器/结构）
+  const [musicTpls, setMusicTpls] = useState([])
+  const [musicTplId, setMusicTplId] = useState('')
+  const [musicTplInfo, setMusicTplInfo] = useState(null) // 配方详情弹窗
+  const [musicTplCat, setMusicTplCat] = useState('全部')
 
   // TTS
   const [ttsText, setTtsText] = useState('')
@@ -400,6 +407,13 @@ export default function MusicFactoryPage() {
       .catch(() => {
         /* 静默 */
       })
+    // v22 音乐场景模板
+    api
+      .get('/api/music-scene-templates/list')
+      .then((res) => setMusicTpls(res.data?.items || []))
+      .catch(() => {
+        /* 静默 */
+      })
   }, [fetchStats, fetchAudios])
 
   const generateLyrics = async () => {
@@ -454,6 +468,7 @@ export default function MusicFactoryPage() {
     form.append('voice', musicVoice)
     form.append('theme', theme || 'AI 音乐作品')
     form.append('duration', musicDuration)
+    if (musicTplId) form.append('template_id', musicTplId)
     await submitTask('/api/music-factory/music/generate', form, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
@@ -894,6 +909,102 @@ export default function MusicFactoryPage() {
             <Disc className="w-5 h-5 text-purple-500" />
             AI 音乐创作
           </h2>
+
+          {/* v22 音乐场景模板库：选场景自动填充专业配方（风格/情绪/歌词/时长/BPM） */}
+          {musicTpls.length > 0 && (
+            <div className="rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50/70 to-pink-50/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-700">
+                  🎼 音乐场景模板
+                  <span className="text-xs text-gray-400 font-normal ml-2">
+                    按使用场景选配方：风格 / 情绪 / 歌词 / 时长 / BPM 自动填充，不懂乐理也能出专业级成品
+                  </span>
+                </label>
+                {musicTpls.some((t) => t.id === musicTplId) && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.get(`/api/music-scene-templates/${musicTplId}`)
+                        setMusicTplInfo(res.data)
+                      } catch {
+                        toast.error('配方加载失败')
+                      }
+                    }}
+                    className="text-xs px-2.5 py-1 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 transition-colors shrink-0"
+                  >
+                    🎛️ 查看配方
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {['全部', ...new Set(musicTpls.map((t) => t.category))].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setMusicTplCat(cat)}
+                    className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                      musicTplCat === cat
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300'
+                    }`}
+                  >
+                    {cat}
+                    {cat !== '全部' && (
+                      <span className="ml-1 opacity-70">
+                        {musicTpls.filter((t) => t.category === cat).length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {musicTpls
+                  .filter((t) => musicTplCat === '全部' || t.category === musicTplCat)
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        const next = musicTplId === t.id ? '' : t.id
+                        setMusicTplId(next)
+                        if (next) {
+                          // 一键填充专业配方
+                          setSelectedLyrics(t.lyrics_template || selectedLyrics)
+                          setStyle(t.style)
+                          setMood(t.mood)
+                          setMusicVoice(t.voice)
+                          setMusicDuration(t.duration)
+                          setTheme(t.theme_suggestion || theme)
+                          toast.success(`已应用「${t.name}」配方，可直接生成`)
+                        }
+                      }}
+                      title={t.desc}
+                      className={`px-3 py-1.5 rounded-lg text-xs border transition-colors flex items-center gap-1 ${
+                        musicTplId === t.id
+                          ? 'bg-purple-600 text-white border-purple-600'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
+                      }`}
+                    >
+                      <span>{t.icon}</span>
+                      {t.name}
+                      {t.pricing?.mode !== 'free' && (
+                        <span
+                          className={`text-[10px] px-1 rounded ${
+                            musicTplId === t.id ? 'bg-white/20' : 'bg-amber-100 text-amber-700'
+                          }`}
+                        >
+                          {t.pricing_label}
+                        </span>
+                      )}
+                      <span className="text-[10px] opacity-60">{t.duration}s</span>
+                    </button>
+                  ))}
+              </div>
+              {musicTplId && (
+                <p className="text-[11px] text-purple-500">
+                  ✓ 已选：{musicTpls.find((t) => t.id === musicTplId)?.name}——歌词/风格/情绪/声音/时长已自动填充，可直接生成或继续微调
+                </p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
@@ -1454,6 +1565,80 @@ export default function MusicFactoryPage() {
         message={`确定要删除「${deleteTarget?.filename}」吗？此操作不可撤销。`}
         confirmLabel="确认删除"
       />
+
+      {/* v22 音乐场景配方详情弹窗 */}
+      <Modal open={!!musicTplInfo} onClose={() => setMusicTplInfo(null)} title="场景配方">
+        {musicTplInfo && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{musicTplInfo.icon}</span>
+              <h3 className="text-lg font-semibold text-gray-800">{musicTplInfo.name}</h3>
+              <Badge color="purple">{musicTplInfo.category_label || musicTplInfo.category}</Badge>
+              {musicTplInfo.pricing?.mode !== 'free' && (
+                <Badge color="amber">{musicTplInfo.pricing_label}</Badge>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 leading-relaxed">{musicTplInfo.desc}</p>
+            <div className="text-xs text-gray-400">
+              热度 {musicTplInfo.usage || 0} 次使用{musicTplInfo.pricing?.mode === 'free' ? ' · 免费' : ''}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ['🎵 风格', musicTplInfo.style],
+                ['🎭 情绪', musicTplInfo.mood],
+                ['🎤 声音', musicTplInfo.voice === 'male' ? '男声' : '女声'],
+                ['⏱️ 时长', `${musicTplInfo.duration}s`],
+                ['🥁 BPM', musicTplInfo.bpm],
+                ['🎸 乐器编配', musicTplInfo.instrument],
+              ].map(([k, v]) => (
+                <div key={k} className="rounded-xl bg-gray-50 border border-gray-100 p-2.5">
+                  <div className="text-[11px] text-gray-400">{k}</div>
+                  <div className="text-xs font-medium text-gray-700 mt-0.5 leading-relaxed">{v}</div>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+              <div className="text-xs font-semibold text-purple-600 mb-1">📐 段落结构</div>
+              <p className="text-[13px] text-gray-600 leading-relaxed">{musicTplInfo.structure}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+              <div className="text-xs font-semibold text-purple-600 mb-1">💡 专业提示</div>
+              <p className="text-[13px] text-gray-600 leading-relaxed">{musicTplInfo.pro_tips}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 border border-gray-100 p-3.5">
+              <div className="text-xs font-semibold text-purple-600 mb-1.5">📜 歌词示例（已随配方填充）</div>
+              <pre className="text-[12px] text-gray-600 leading-relaxed whitespace-pre-wrap font-sans">
+                {musicTplInfo.lyrics_template}
+              </pre>
+            </div>
+            <div className="flex items-center justify-between pt-1">
+              <p className="text-xs text-gray-400">
+                选中该模板后点击生成，将按此配方创作音乐
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={() => setMusicTplInfo(null)}>
+                  关闭
+                </Button>
+                <Button
+                  onClick={() => {
+                    setSelectedLyrics(musicTplInfo.lyrics_template || selectedLyrics)
+                    setStyle(musicTplInfo.style)
+                    setMood(musicTplInfo.mood)
+                    setMusicVoice(musicTplInfo.voice)
+                    setMusicDuration(musicTplInfo.duration)
+                    setTheme(musicTplInfo.theme_suggestion || theme)
+                    setMusicTplId(musicTplInfo.id)
+                    setMusicTplInfo(null)
+                    toast.success(`已应用「${musicTplInfo.name}」配方`)
+                  }}
+                >
+                  应用此配方
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

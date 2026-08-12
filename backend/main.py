@@ -101,6 +101,7 @@ from dh_gateway import router as dh_gateway_router  # noqa: E402
 from digital_human import router as digital_human_router  # noqa: E402
 from doc_qa import router as doc_qa_router  # noqa: E402
 from drafts import router as drafts_router  # noqa: E402
+from drama_templates import router as drama_templates_router  # noqa: E402
 from extensions_agents import router as extensions_agents_router  # noqa: E402
 from favorites_api import router as favorites_api_router  # noqa: E402
 from gallery import router as gallery_router  # noqa: E402
@@ -108,12 +109,16 @@ from game_factory import router as game_factory_router  # noqa: E402
 from growth_engine import router as growth_engine_router  # noqa: E402
 from image_factory import router as image_factory_router  # noqa: E402
 from meme_factory import router as meme_factory_router  # noqa: E402
+from meme_templates import router as meme_templates_router  # noqa: E402
+from mindmap_templates import router as mindmap_templates_router  # noqa: E402
 from mindmap import router as mindmap_router  # noqa: E402
 from miniapp import router as miniapp_router  # noqa: E402
 from music_factory import router as music_factory_router  # noqa: E402
+from music_scene_templates import router as music_scene_templates_router  # noqa: E402
 from notify_api import router as notify_api_router  # noqa: E402
 from openai_gateway import router as openai_gateway_router  # noqa: E402
 from pdf_tools import router as pdf_tools_router  # noqa: E402
+from pdf_doc_templates import router as pdf_doc_templates_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
 from publishing import router as publishing_router  # noqa: E402
 from realtime import router as realtime_router  # noqa: E402
@@ -128,11 +133,14 @@ from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
 from task_queue import router as task_queue_router  # noqa: E402
 from templates_market import router as templates_market_router  # noqa: E402
+from template_store import router as template_store_router  # noqa: E402
 from video_analyzer import router as video_analyzer_router  # noqa: E402
 from video_factory import router as video_factory_router  # noqa: E402
+from video_templates import router as video_templates_router  # noqa: E402
 from voice_chat import router as voice_chat_router  # noqa: E402
 from voice_factory import _tts_health_check as _tts_prewarm  # noqa: E402
 from voice_factory import router as voice_factory_router  # noqa: E402
+from voice_templates import router as voice_templates_router  # noqa: E402
 from web_search import router as web_search_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
@@ -3186,16 +3194,20 @@ def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
 app.include_router(ai_video_router)
 app.include_router(image_factory_router)
 app.include_router(video_factory_router)
+app.include_router(video_templates_router)
 app.include_router(music_factory_router)
 app.include_router(miniapp_router)
 app.include_router(publishing_router)
 app.include_router(game_factory_router)
 app.include_router(growth_engine_router)
 app.include_router(voice_factory_router)
+app.include_router(voice_templates_router)
 app.include_router(meme_factory_router)
+app.include_router(meme_templates_router)
 app.include_router(drafts_router)
 app.include_router(gallery_router)
 app.include_router(templates_market_router)
+app.include_router(template_store_router)
 app.include_router(prd_engine_router)
 app.include_router(chat_engine_router)
 app.include_router(sessions_router)
@@ -3203,9 +3215,12 @@ app.include_router(collab_engine_router)
 app.include_router(content_strategy_router)
 app.include_router(digital_human_router)
 app.include_router(drama_router)
+app.include_router(drama_templates_router)
+app.include_router(music_scene_templates_router)
 app.include_router(task_queue_router)
 app.include_router(smart_dashboard_router)
 app.include_router(pdf_tools_router)
+app.include_router(pdf_doc_templates_router)
 app.include_router(competitor_monitor_router)
 app.include_router(seo_analyzer_router)
 app.include_router(realtime_router)
@@ -3215,6 +3230,7 @@ app.include_router(extensions_agents_router)
 app.include_router(voice_chat_router)
 app.include_router(video_analyzer_router)
 app.include_router(mindmap_router)
+app.include_router(mindmap_templates_router)
 app.include_router(data_forecast_router)
 app.include_router(doc_qa_router)
 app.include_router(web_search_router)

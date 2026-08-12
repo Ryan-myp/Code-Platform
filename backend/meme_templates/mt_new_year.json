@@ -1,0 +1,26 @@
+{
+  "id": "mt_new_year",
+  "name": "春节祝福",
+  "category": "节日祝福",
+  "icon": "🧧",
+  "desc": "新春拜年包：红底金文，恭喜发财",
+  "style": "red",
+  "ai_style": "flat",
+  "top_hint": "恭喜发财！",
+  "bottom_hint": "红包拿来",
+  "texts": [
+    "恭喜发财！|红包拿来",
+    "新春快乐|万事如意",
+    "过年好！|发大财"
+  ],
+  "prompt_hint": "红灯笼、金元宝与鞭炮的喜庆画面，中国红底色，扁平插画",
+  "decoration": "🧧,🏮",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866935",
+  "updated_at": "2026-08-12T08:12:46.866936"
+}

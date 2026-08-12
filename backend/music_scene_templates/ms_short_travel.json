@@ -1,0 +1,25 @@
+{
+  "id": "ms_short_travel",
+  "name": "旅行大片",
+  "category": "短视频",
+  "icon": "🏔️",
+  "desc": "旅行/风光大片 BGM：古典弦乐 + 史诗感，航拍镜头的气场全开",
+  "style": "classical",
+  "mood": "epic",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 78,
+  "instrument": "弦乐组 + 圆号 + 定音鼓 + 竖琴",
+  "structure": "弦乐渐入（大远景）→ 主题进入（航拍穿云）→ 鼓点加入（徒步/冲刺）→ 辉煌收尾",
+  "lyrics_template": "[Verse 1]\n翻过那座山\n穿过那片云\n世界在脚下展开\n远方在召唤\n\n[Chorus]\n去追风 去逐光\n去看没见过的远方\n每一步都算数\n每一程都滚烫",
+  "theme_suggestion": "川西航拍旅行大片",
+  "pro_tips": "航拍穿云对弦乐主题；画面切点对重音；结尾留白给落版字幕",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847163",
+  "updated_at": "2026-08-12T08:08:46.847164"
+}

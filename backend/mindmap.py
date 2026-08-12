@@ -110,6 +110,7 @@ class MindMapRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=200, description="思维导图主题")
     depth: int = Field(3, ge=2, le=4, description="展开深度（2-4层）")
     style: str = Field("professional", description="风格：professional/creative/educational/business")
+    template_id: str = Field("", description="思维导图模板 ID（mindmap-templates，如 mmt_swot）")
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
@@ -154,6 +155,16 @@ async def _mindmap_generate_worker(payload: dict, progress: Callable | None = No
 
     _report(20, "AI 生成结构")
     user_prompt = f"主题：{payload.get('topic', '')}\n展开深度：{payload.get('depth', 2)}层\n风格：{payload.get('style', 'classic')}"
+    # 思维导图模板：按模板分支骨架展开（非法 id 静默忽略，不阻断生成）
+    tpl_id = (payload.get("template_id") or "").strip()
+    if tpl_id:
+        try:
+            from mindmap_templates import _load_one, build_structure_prompt, record_usage
+            tpl = _load_one(tpl_id)
+            user_prompt += build_structure_prompt(tpl)
+            record_usage(tpl_id)
+        except Exception:  # noqa: BLE001
+            pass
     raw = call_llm(MINDMAP_SYSTEM, user_prompt, max_tokens=2000, temperature=0.5, timeout=60)
     raw = raw.strip()
     if raw.startswith("```"):

@@ -1,0 +1,26 @@
+{
+  "id": "mt_speechless",
+  "name": "无语凝噎",
+  "category": "搞笑沙雕",
+  "icon": "🙄",
+  "desc": "槽点太多不知从何吐起，高冷白底适配一切无语瞬间",
+  "style": "white",
+  "ai_style": "flat",
+  "top_hint": "……",
+  "bottom_hint": "你说得对（并不）",
+  "texts": [
+    "……|你说得对（并不）",
+    "我竟无言以对|你赢了",
+    "离谱|但合理"
+  ],
+  "prompt_hint": "极简白底上一只面无表情的白色猫头，扁平插画，留白得当",
+  "decoration": "🙄,🗯️",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:12:46.866930",
+  "updated_at": "2026-08-12T08:12:46.866930"
+}

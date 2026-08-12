@@ -1,0 +1,25 @@
+{
+  "id": "ms_brand_ad",
+  "name": "品牌广告大片",
+  "category": "品牌",
+  "icon": "🏆",
+  "desc": "品牌 TVC/新品发布 BGM：古典史诗交响，质感与气场并重",
+  "style": "classical",
+  "mood": "epic",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 78,
+  "instrument": "交响弦乐 + 铜管 + 定音鼓 + 合唱垫",
+  "structure": "弦乐渐入（品牌理念）→ 铜管主题（产品亮相）→ 定音鼓推进（价值主张）→ 辉煌收尾（Logo）",
+  "lyrics_template": "[Verse 1]\n每一次突破\n都源于初心\n每一个细节\n都值得极致\n\n[Chorus]\n此刻 见证不凡\n让世界 看见我们\n以匠心 致敬时代\n与卓越 并肩同行",
+  "theme_suggestion": "品牌年度宣传片",
+  "pro_tips": "Logo 落版对准定音鼓强收；画面转场对乐句呼吸；30-60 秒版本通用",
+  "pricing": {
+    "mode": "once",
+    "once": 5,
+    "day": 2,
+    "month": 19
+  },
+  "created_at": "2026-08-12T08:08:46.847168",
+  "updated_at": "2026-08-12T08:08:46.847169"
+}

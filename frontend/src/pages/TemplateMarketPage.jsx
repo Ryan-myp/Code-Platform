@@ -20,6 +20,12 @@ import {
   Plus,
   Loader2,
   Store,
+  Image as ImageIcon,
+  Flame,
+  CheckCircle2,
+  Clock,
+  Zap,
+  ExternalLink,
 } from 'lucide-react'
 import { PageHeader, Empty, SkeletonGrid, Modal, Button } from '../components/ui'
 import { useToast } from '../lib/toast'
@@ -52,7 +58,16 @@ export default function TemplateMarketPage() {
   const [data, setData] = useState(null)
   const [cat] = useState('all')
   const [loading, setLoading] = useState(true)
-  const [marketTab, setMarketTab] = useState('builtin') // builtin | c2c | mine | purchases
+  const [marketTab, setMarketTab] = useState('image') // image | builtin | c2c | mine | purchases
+
+  // ── 图片海报商城（商业化核心：分类/排序/热度/定价/购买） ──
+  const [imgStore, setImgStore] = useState(null)
+  const [imgCat, setImgCat] = useState('全部')
+  const [imgSort, setImgSort] = useState('hot') // hot | new | price
+  const [imgLoading, setImgLoading] = useState(false)
+  const [buyTarget, setBuyTarget] = useState(null) // 购买弹窗目标模板
+  const [buyType, setBuyType] = useState('once')
+  const [buying, setBuying] = useState(false)
 
   // ── 搜索 / 收藏（localStorage 持久化） ──
   const [q, setQ] = useState('')
@@ -100,6 +115,18 @@ export default function TemplateMarketPage() {
     )
     return () => clearTimeout(t)
   }, [q, toast])
+
+  // 图片模板商城：分类/搜索/排序变化时拉取
+  useEffect(() => {
+    setImgLoading(true)
+    api
+      .get('/api/image-store/list', {
+        params: { category: imgCat === '全部' ? '' : imgCat, q: q.trim(), sort: imgSort },
+      })
+      .then((res) => setImgStore(res.data))
+      .catch((e) => toast.error(`图片模板加载失败：${e.message}`))
+      .finally(() => setImgLoading(false))
+  }, [imgCat, imgSort, q, toast])
 
   const loadC2C = useCallback(async () => {
     setC2cLoading(true)
@@ -195,6 +222,42 @@ export default function TemplateMarketPage() {
     }
   }
 
+  // ── 图片海报商城操作 ──
+  const priceText = (p) => {
+    if (!p || p.mode === 'free') return '免费'
+    if (p.mode === 'once') return `${p.once} 积分·永久`
+    if (p.mode === 'day') return `${p.day} 积分/天`
+    return `${p.month} 积分/月`
+  }
+
+  const refreshImgStore = async () => {
+    const r = await api.get('/api/image-store/list', {
+      params: { category: imgCat === '全部' ? '' : imgCat, q: q.trim(), sort: imgSort },
+    })
+    setImgStore(r.data)
+  }
+
+  const handleBuyImage = async () => {
+    if (!buyTarget) return
+    setBuying(true)
+    try {
+      const res = await api.post(`/api/image-store/templates/${buyTarget.id}/purchase`, {
+        access_type: buyType,
+      })
+      toast.success(res.data?.message || '购买成功')
+      setBuyTarget(null)
+      refreshImgStore()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '购买失败')
+    } finally {
+      setBuying(false)
+    }
+  }
+
+  const handleUseImage = (t) => {
+    navigate(`/image-factory?template=${t.id}`)
+  }
+
   const groups = data?.groups || {}
   const all = Object.values(groups).flatMap((g) => g.items || [])
   const items = useMemo(() => {
@@ -255,6 +318,12 @@ export default function TemplateMarketPage() {
         actions={
           <div className="flex gap-2 flex-wrap">
             <button
+              onClick={() => setMarketTab('image')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${marketTab === 'image' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:border-amber-300 hover:text-amber-600'}`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" /> 图片海报
+            </button>
+            <button
               onClick={() => setMarketTab('builtin')}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-medium transition-all ${marketTab === 'builtin' ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm' : 'bg-white border border-gray-200 text-gray-600 hover:border-amber-300 hover:text-amber-600'}`}
             >
@@ -288,7 +357,130 @@ export default function TemplateMarketPage() {
         }
       />
 
-      {marketTab === 'builtin' ? (
+      {marketTab === 'image' ? (
+        <>
+          {/* 分类 + 排序 */}
+          <div className="flex flex-col lg:flex-row gap-3 mb-4 items-start lg:items-center">
+            <div className="flex gap-1.5 flex-wrap flex-1">
+              <button
+                onClick={() => setImgCat('全部')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all ${imgCat === '全部' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-300 hover:text-amber-600'}`}
+              >
+                全部
+              </button>
+              {(imgStore?.categories || []).map((c) => (
+                <button
+                  key={c.label}
+                  onClick={() => setImgCat(c.label)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-medium border transition-all ${imgCat === c.label ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-gray-200 text-gray-500 hover:border-amber-300 hover:text-amber-600'}`}
+                >
+                  {c.label}（{c.count}）
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {[
+                ['hot', '🔥 最热'],
+                ['new', '🆕 最新'],
+                ['price', '💰 价格'],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setImgSort(key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${imgSort === key ? 'bg-violet-500 text-white border-violet-500' : 'bg-white border-gray-200 text-gray-500 hover:border-violet-300'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {imgLoading ? (
+            <SkeletonGrid count={8} />
+          ) : !imgStore || imgStore.items.length === 0 ? (
+            <Empty
+              icon={ImageIcon}
+              title="暂无图片模板"
+              description="在图片工厂中创建模板后，可设置定价上架到市场"
+            />
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+              {imgStore.items.map((t) => (
+                <div
+                  key={t.id}
+                  className="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-0.5 hover:border-amber-300 transition-all flex flex-col"
+                >
+                  {/* 预览图 */}
+                  <div
+                    className="relative h-44 bg-gray-100 cursor-pointer overflow-hidden"
+                    onClick={() => handleUseImage(t)}
+                  >
+                    <img
+                      src={t.preview}
+                      alt={t.name}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      loading="lazy"
+                    />
+                    <span
+                      className={`absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${t.pricing?.mode === 'free' ? 'bg-green-500/90 text-white' : 'bg-amber-500/95 text-white'}`}
+                    >
+                      <Coins className="w-3 h-3" /> {priceText(t.pricing)}
+                    </span>
+                    {t.access && (
+                      <span className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/95 text-white text-[10px] font-medium">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {t.access === 'once' ? '已购' : '订阅中'}
+                      </span>
+                    )}
+                    <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/50 text-white text-[10px]">
+                      {t.width}×{t.height}
+                    </span>
+                  </div>
+                  <div className="p-3 flex-1 flex flex-col">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <h3 className="text-sm font-semibold text-gray-900 truncate">{t.name}</h3>
+                      <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 text-[10px] font-medium flex-shrink-0">
+                        {t.category}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between mt-auto pt-2">
+                      <span className="flex items-center gap-1 text-[11px] text-gray-400">
+                        <Flame className="w-3.5 h-3.5 text-orange-400" />
+                        使用 {t.usage || 0} 次
+                      </span>
+                      {t.pricing?.mode === 'free' ? (
+                        <button
+                          onClick={() => handleUseImage(t)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white text-xs font-medium hover:opacity-90 transition-all"
+                        >
+                          <Zap className="w-3.5 h-3.5" /> 免费使用
+                        </button>
+                      ) : t.access ? (
+                        <button
+                          onClick={() => handleUseImage(t)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500 to-purple-600 text-white text-xs font-medium hover:opacity-90 transition-all"
+                        >
+                          <Zap className="w-3.5 h-3.5" /> 去使用
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setBuyTarget(t)
+                            setBuyType('once')
+                          }}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium hover:opacity-90 transition-all"
+                        >
+                          <ShoppingCart className="w-3.5 h-3.5" /> 购买
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : marketTab === 'builtin' ? (
         <>
           {/* 搜索 / 只看收藏 */}
           <div className="flex flex-col sm:flex-row gap-3 mb-5">
@@ -638,6 +830,82 @@ export default function TemplateMarketPage() {
             />
           </div>
         </div>
+      </Modal>
+
+      {/* 图片模板购买弹窗（按次/按天/按月） */}
+      <Modal
+        open={!!buyTarget}
+        onClose={() => setBuyTarget(null)}
+        title={`购买模板「${buyTarget?.name || ''}」`}
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setBuyTarget(null)}>
+              取消
+            </Button>
+            <Button
+              variant="gradient"
+              icon={Coins}
+              loading={buying}
+              onClick={handleBuyImage}
+              disabled={!buyTarget || buying}
+            >
+              确认购买（{buyTarget?.pricing?.[buyType] || 0} 积分）
+            </Button>
+          </>
+        }
+      >
+        {buyTarget && (
+          <div className="space-y-4">
+            <div className="flex gap-4">
+              <img
+                src={buyTarget.preview}
+                alt={buyTarget.name}
+                className="w-32 h-32 rounded-xl object-cover border border-gray-200 flex-shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900">{buyTarget.name}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {buyTarget.category} · {buyTarget.width}×{buyTarget.height}
+                </p>
+                <p className="flex items-center gap-1 text-xs text-gray-400 mt-1.5">
+                  <Flame className="w-3.5 h-3.5 text-orange-400" />
+                  已被使用 {buyTarget.usage || 0} 次
+                </p>
+                <p className="mt-2 text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                  当前积分余额：<b>{imgStore?.credits ?? 0}</b>
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                选择购买方式
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  ['once', '按次', '永久可用', 'once'],
+                  ['day', '按天', '24 小时有效', 'day'],
+                  ['month', '按月', '30 天有效', 'month'],
+                ].map(([key, label, desc, field]) => (
+                  <button
+                    key={key}
+                    onClick={() => setBuyType(key)}
+                    className={`rounded-xl border p-3 text-center transition-all ${buyType === key ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-500/20' : 'border-gray-200 hover:border-amber-300'}`}
+                  >
+                    <p className="text-sm font-semibold text-gray-800">{label}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+                    <p className={`text-sm font-bold mt-1.5 ${buyTarget.pricing?.[field] > 0 ? 'text-amber-600' : 'text-gray-300'}`}>
+                      {buyTarget.pricing?.[field] > 0 ? `${buyTarget.pricing[field]} 积分` : '—'}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">
+                购买后可在图片工厂直接渲染使用；按天/按月到期后可续费，订阅期间不限次数。
+              </p>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

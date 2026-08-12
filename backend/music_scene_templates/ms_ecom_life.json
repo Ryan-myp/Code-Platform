@@ -1,0 +1,25 @@
+{
+  "id": "ms_ecom_life",
+  "name": "生活方式轻快",
+  "category": "电商",
+  "icon": "🧺",
+  "desc": "家居/日用好物短视频 BGM：轻快流行，生活感与种草感平衡",
+  "style": "pop",
+  "mood": "happy",
+  "voice": "female",
+  "duration": 30,
+  "bpm": 108,
+  "instrument": "木吉他 + 轻鼓 + 手铃 + 贝斯",
+  "structure": "主歌轻快进入（使用场景）→ 副歌明亮（好物亮点）→ 桥段（小提醒）→ 收尾渐弱",
+  "lyrics_template": "[Verse 1]\n清晨第一杯温水\n厨房飘着面包香\n小物件装点日常\n平凡日子也有光\n\n[Chorus]\n把生活过成想要的模样\n小小改变 大大不同\n好物藏在细节里\n每一天都更爱自己",
+  "theme_suggestion": "家居好物日常种草",
+  "pro_tips": "主歌配生活场景空镜；副歌配产品特写；轻快不喧宾夺主",
+  "pricing": {
+    "mode": "free",
+    "once": 0,
+    "day": 0,
+    "month": 0
+  },
+  "created_at": "2026-08-12T08:08:46.847158",
+  "updated_at": "2026-08-12T08:08:46.847158"
+}
