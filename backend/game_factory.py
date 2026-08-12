@@ -640,7 +640,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
     req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
-        raise HTTPException(400, f"未知模板: {req.template}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -681,7 +681,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
             logger.warning("game LLM exception (attempt %d): %s", _attempt + 1, str(e)[:200])
         await asyncio.sleep(2 * (_attempt + 1))
     if result is None:
-        raise HTTPException(502, f"LLM 服务暂时不可用，已自动重试仍失败，请稍后重试。详情: {last_err}")
+        raise HTTPException(502, "操作失败，请稍后重试")
 
     # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
     for attempt in range(3):
@@ -724,11 +724,11 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
+            raise HTTPException(500, "操作失败，请稍后重试") from e
     if not files or qc is None:
-        raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
+        raise HTTPException(502, "操作失败，请稍后重试")
     if not qc["ok"]:
-        raise HTTPException(502, f"质量门禁未通过（已自动修复重试 3 次）：{last_err}")
+        raise HTTPException(502, "操作失败，请稍后重试")
 
     proj_id = f"game_{uuid.uuid4().hex[:12]}"
     now = datetime.now().isoformat()
@@ -774,7 +774,7 @@ async def generate_game(
     """选模板 + 需求 → AI 生成双版本小游戏（默认异步任务，立即返回 task_id）。"""
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
-        raise HTTPException(400, f"未知模板: {req.template}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
@@ -1110,13 +1110,13 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
         raise
     except Exception as e:
         conn.close()
-        raise HTTPException(500, f"迭代生成失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     try:
         new_files = _validate_files(_extract_json(result))
     except (ValueError, json.JSONDecodeError) as e:
         conn.close()
-        raise HTTPException(502, f"AI 输出格式异常，请重试。详情: {e}") from e
+        raise HTTPException(502, "服务异常，请稍后重试") from e
 
     # 合并保护：AI 输出缺失的版本/文件保留旧代码，避免迭代丢文件
     for ver in ("web", "wx"):
@@ -1337,7 +1337,7 @@ async def game_publish_pack(proj_id: str, current_user: dict = require_auth()):
         req_check = check_text(row.get("requirement") or "", "prompt") if row.get("requirement") else None
         failed = [c for c in (qc or {}).get("checks", []) if not c.get("ok")]
         extra = [
-            f"QC 门禁：{'全部通过 ✓' if (qc or {}).get('ok') else f'{len(failed)} 项未过（{', '.join(c['item'] for c in failed[:3])}）'}",
+            f"QC门禁：{'全部通过' if (qc or {}).get('ok') else f'{len(failed)}项未通过'}",
             "双版本：web（网页版）+ wx（微信小游戏）",
         ]
         entries[f"{root}/质量自检报告.md"] = quality_report(
@@ -1454,7 +1454,7 @@ async def project_history_version(proj_id: str, version: int, current_user: dict
         history = []
     item = next((h for h in history if h.get("version") == version), None)
     if not item:
-        raise HTTPException(404, f"版本 v{version} 不存在")
+        raise HTTPException(404, "资源不存在")
     return {
         "version": item["version"],
         "created_at": item.get("created_at", ""),
@@ -1481,7 +1481,7 @@ async def restore_project(proj_id: str, req: RestoreRequest, current_user: dict 
     target = next((h for h in history if h.get("version") == req.version), None)
     if not target:
         conn.close()
-        raise HTTPException(404, f"版本 v{req.version} 不存在")
+        raise HTTPException(404, "操作失败，请稍后重试")
     current_files = json.loads(row["files"] or "{}")
     if current_files:
         history.append(

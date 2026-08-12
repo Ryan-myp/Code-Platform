@@ -698,7 +698,7 @@ async def register(request: Request, req: RegisterRequest):
     try:
         return register_user(req.username, req.password, req.invite_code, req.share_ref)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -792,7 +792,7 @@ async def assistant_chat(request: Request, req: AssistantChatRequest, current_us
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"助手服务异常: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     elapsed = round(time.time() - start, 2)
     log_usage("assistant_chat", len(user_prompt), len(result), elapsed, user_id=str(current_user.get("user_id", "")))
     return {"result": result, "elapsed": elapsed}
@@ -1744,7 +1744,7 @@ async def create_agent_from_template(template_name: str, current_user: dict = re
                     skill_path = candidate
                     break
     if not skill_path:
-        raise HTTPException(404, f"模板不存在：{template_name}")
+        raise HTTPException(404, "操作失败，请稍后重试")
     tpl = _parse_agent_template_file(skill_path)
     if not tpl:
         raise HTTPException(400, "模板解析失败")
@@ -2063,7 +2063,7 @@ async def get_skill(skill_id: str, current_user: dict = require_auth()):
         d["file_count"] = tree["file_count"]
         d["dir_counts"] = tree["dir_counts"]
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     return d
 
 
@@ -2101,7 +2101,7 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
             ),
         )
     except (ValueError, OSError) as e:
-        raise HTTPException(500, f"初始化 Skill 目录失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     return {"id": skill_id, "name": req.name}
 
 
@@ -2164,7 +2164,7 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
             skill_id, dict(row), {u for u in updates if u in ("name", "description", "content", "references")}
         )
     except (ValueError, OSError) as e:
-        raise HTTPException(500, f"同步 Skill 文件失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     return {"success": True, "id": skill_id}
 
 
@@ -2218,7 +2218,7 @@ async def import_skill_zip(file: UploadFile = File(...), current_user: dict = re
     try:
         parsed = skills_store.parse_skill_zip(content)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     name = (parsed["name"] or "").strip()
     if not name:
         raise HTTPException(400, "SKILL.md 缺少 frontmatter name，无法识别技能名称")
@@ -2264,9 +2264,9 @@ async def export_skill_zip(skill_id: str, current_user: dict = require_auth()):
     try:
         data, filename = skills_store.export_zip(skill_id, row["name"])
     except FileNotFoundError as e:
-        raise HTTPException(404, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     # Content-Disposition 需 latin-1 安全：中文名走 RFC 5987 filename* 编码
     try:
         filename.encode("latin-1")
@@ -2587,7 +2587,7 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
     if kb_type == "db":
         db_conn, cursor, err = _kb_connect(cfg)
         if err:
-            raise HTTPException(400, err)
+            raise HTTPException(400, "操作失败")
         try:
             engine = (cfg.get("engine") or "sqlite").lower()
             table = (cfg.get("table") or "").strip()
@@ -2623,7 +2623,7 @@ async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current
                 hits.append(item)
             return {"ok": True, "hits": hits, "count": len(hits), "table": table}
         except Exception as e:
-            raise HTTPException(400, f"检索失败：{e}") from e
+            raise HTTPException(400, "服务异常，请稍后重试") from e
         finally:
             try:
                 db_conn.close()
@@ -3178,7 +3178,7 @@ def sandbox_redis_command(project_id: str, req: SandboxRedisCommandRequest, curr
         raise HTTPException(400, "命令不能为空")
     verb = cmd.split()[0].upper()
     if verb not in REDIS_SAFE_COMMANDS:
-        raise HTTPException(400, f"命令 {verb} 不在安全白名单内（仅支持数据操作，禁止 FLUSH/CONFIG/SHUTDOWN 等）")
+        raise HTTPException(400, "命令不在安全白名单内")
     # 命令按空白拆分为 argv，避免注入（redis-cli 接收参数数组，无 shell 解释）
     result = process_manager.exec_command(project_id, ["redis-cli", *cmd.split()], timeout=30)
     if result["status"] != "success":
@@ -3200,7 +3200,7 @@ def sandbox_sql_query(project_id: str, req: SandboxSqlQueryRequest, current_user
         raise HTTPException(400, "SQL 不能为空")
     verb = sql.split()[0].upper()
     if verb not in SQL_SAFE_VERBS:
-        raise HTTPException(400, f"仅支持只读查询（SELECT/SHOW/DESC/EXPLAIN），禁止 {verb} 写操作")
+        raise HTTPException(400, "仅支持只读查询，禁止写操作")
     if ";" in sql:
         raise HTTPException(400, "一次只能执行一条 SQL")
 
@@ -3308,7 +3308,7 @@ def sandbox_rabbitmq_command(project_id: str, req: SandboxRedisCommandRequest, c
     parts = cmd.split()
     verb = parts[0]
     if verb not in RABBITMQ_SAFE_VERBS:
-        raise HTTPException(400, f"命令 {verb} 不在安全白名单内（支持 status / list_queues / list_exchanges / list_users 等只读命令）")
+        raise HTTPException(400, "命令不在安全白名单内")
     # 参数仅允许字段名（如 name messages），防止注入
     if len(parts) > 1 and not RABBITMQ_FIELD_RE.match(" ".join(parts[1:])):
         raise HTTPException(400, "参数格式不合法")
@@ -3534,7 +3534,7 @@ def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
     if len(code) > MAX_CODE_LEN:
         raise HTTPException(400, "代码过长（上限 20KB）")
     if language not in ("python", "python3", "py"):
-        raise HTTPException(400, f"暂不支持语言: {language}（当前仅支持 python）")
+        raise HTTPException(400, "仅支持 Python 语言")
 
     # ── 静态安全检查 ──
     blocked = check_sandbox_code(code)

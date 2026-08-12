@@ -192,7 +192,7 @@ async def merge_pdfs(files: list[UploadFile] = File(...), current_user: dict = r
     saved = []
     for f in files:
         if not f.filename or not f.filename.lower().endswith(".pdf"):
-            raise HTTPException(400, f"仅支持PDF文件: {f.filename}")
+            raise HTTPException(400, "操作失败，请稍后重试")
         content = await f.read()
         filepath = os.path.join(PDF_DIR, f"merge_src_{uuid.uuid4().hex[:8]}_{f.filename}")
         with open(filepath, "wb") as wf:
@@ -366,7 +366,7 @@ def contract_review(req: ContractReviewRequest, current_user: dict = require_aut
         raise HTTPException(500, "AI审查结果格式异常") from e
     except Exception as e:
         logger.exception("contract review failed")
-        raise HTTPException(500, f"合同审查失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     # 保存记录
     job_id = f"contract_{uuid.uuid4().hex[:10]}"
@@ -427,7 +427,7 @@ def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_aut
         raise HTTPException(500, "AI简历优化结果格式异常") from e
     except Exception as e:
         logger.exception("resume optimize failed")
-        raise HTTPException(500, f"简历优化失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     # 保存记录
     job_id = f"resume_{uuid.uuid4().hex[:10]}"
@@ -504,7 +504,7 @@ async def compress_pdf(
         doc.close()
     except Exception as e:
         logger.exception("pdf compress failed")
-        raise HTTPException(500, f"压缩失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     finally:
         try:
             os.unlink(src_path)

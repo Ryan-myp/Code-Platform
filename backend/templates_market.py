@@ -307,7 +307,7 @@ async def buy_template(template_id: str, current_user: dict = require_auth()):
         balance = int(quota["credits"]) if quota else 0
         if balance < price:
             conn.close()
-            raise HTTPException(402, f"积分不足（需要 {price}，当前 {balance}），请先充值")
+            raise HTTPException(402, "余额不足，请先充值")
         conn.execute(
             "UPDATE user_quotas SET credits=credits-? WHERE username=?",
             (price, user),

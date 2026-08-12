@@ -426,7 +426,7 @@ async def generate_prd(req: dict):
         return {"result": result}
     except Exception as e:
         logger.error(f"PRD generate failed: {e}")
-        raise HTTPException(500, f"PRD 生成失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 @router.post("/api/prd/review")
@@ -743,7 +743,7 @@ async def save_pipeline_output(req_id: str, req: dict):
     }
     field = field_map.get(stage)
     if not field:
-        raise HTTPException(400, f"未知阶段: {stage}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     conn = get_db()
     conn.execute(
         f"UPDATE requirements SET {field}=?, updated_at=? WHERE id=?", (content, datetime.now().isoformat(), req_id)
@@ -938,7 +938,7 @@ async def add_model(req: dict):
     api_key = (req.get("api_key") or "").strip()
     models = _get_models()
     if any(m.get("name") == name for m in models):
-        raise HTTPException(400, f"模型 {name} 已存在（如需修改请使用更新）")
+        raise HTTPException(400, "需求已存在，请使用更新")
     models.append({"name": name, "note": note, "base_url": base_url, "api_key": api_key})
     _save_models(models)
     return {"models": _mask_models(models)}
@@ -950,7 +950,7 @@ async def update_model(name: str, req: dict):
     models = _get_models()
     target = next((m for m in models if m.get("name") == name), None)
     if not target:
-        raise HTTPException(404, f"模型 {name} 不存在")
+        raise HTTPException(404, "资源不存在")
     if "note" in req:
         target["note"] = (req.get("note") or "").strip()[:50]
     if "base_url" in req:
@@ -988,7 +988,7 @@ async def delete_model(name: str):
     """从模型列表移除；若删除的是当前默认模型则自动回退到列表第一个。"""
     models = _get_models()
     if not any(m.get("name") == name for m in models):
-        raise HTTPException(404, f"模型 {name} 不存在")
+        raise HTTPException(404, "资源不存在")
     models = [m for m in models if m.get("name") != name]
     conn = get_db()
     if models:

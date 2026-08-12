@@ -344,7 +344,7 @@ def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()
         raise HTTPException(500, "AI分析结果格式异常") from e
     except Exception as e:
         logger.exception("competitor analysis failed")
-        raise HTTPException(500, f"竞品分析失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     # 2. 雷达图
     try:

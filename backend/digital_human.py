@@ -2395,7 +2395,7 @@ async def upload_custom_avatar(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in _ALLOWED_IMG_EXT:
-        raise HTTPException(400, f"不支持的图片格式: {ext or '未知'}（支持 jpg/png/webp）")
+        raise HTTPException(400, "操作失败，请稍后重试")
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(400, "图片不能超过 10MB")
@@ -2413,7 +2413,7 @@ async def upload_custom_avatar(
 
         await asyncio.to_thread(_process_avatar)
     except Exception as e:
-        raise HTTPException(400, f"图片解析失败: {e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
     image_url = f"/uploads/dh_avatars/{filename}"
     conn = get_db()
     try:
@@ -2455,7 +2455,7 @@ async def upload_photo_avatar(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in _ALLOWED_IMG_EXT:
-        raise HTTPException(400, f"不支持的图片格式: {ext or '未知'}（支持 jpg/png/webp）")
+        raise HTTPException(400, "操作失败，请稍后重试")
     content = await file.read()
     if len(content) > 15 * 1024 * 1024:
         raise HTTPException(400, "照片不能超过 15MB")
@@ -2468,7 +2468,7 @@ async def upload_photo_avatar(
             img.load()
             w, h = img.size
             if min(w, h) < 512:
-                raise HTTPException(400, f"照片分辨率过低（{w}x{h}），请上传至少 512x512 的清晰正脸照片")
+                raise HTTPException(400, "照片分辨率不足，请上传至少 512x512 的清晰正脸照片")
             if w / h > 3 or h / w > 3:
                 raise HTTPException(400, "照片比例异常，请上传正常的人像照片")
             # 正脸检测：mediapipe 检测不到人脸/关键点 → 视为非真实正脸（漫画/截图/无人像）
@@ -2481,14 +2481,14 @@ async def upload_photo_avatar(
             try:
                 _face_align_params(bgr)
             except Exception as e:  # noqa: BLE001 — 检测失败统一转为友好提示
-                raise HTTPException(400, f"未检测到清晰正脸（{e}），请上传正面免冠、光线充足的真实人像照片") from e
+                raise HTTPException(400, "人像检测失败，请上传正面免冠清晰照片") from e
             img.convert("RGB").save(path, "JPEG", quality=92)
 
         await asyncio.to_thread(_process_photo)
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"图片解析失败: {e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
     image_url = f"/uploads/dh_avatars/{filename}"
     conn = get_db()
     try:
@@ -2565,7 +2565,7 @@ async def upload_custom_voice(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in _ALLOWED_AUDIO_EXT:
-        raise HTTPException(400, f"不支持的音频格式: {ext or '未知'}（支持 mp3/wav/m4a/aac/ogg）")
+        raise HTTPException(400, "操作失败，请稍后重试")
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(400, "音频不能超过 20MB")
@@ -2666,7 +2666,7 @@ async def create_voice_clone(
         raise HTTPException(400, "请先声明「本人声音或已获授权」后再进行声音克隆（合规必选）")
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in _ALLOWED_AUDIO_EXT:
-        raise HTTPException(400, f"不支持的音频格式: {ext or '未知'}（支持 mp3/wav/m4a/aac/ogg）")
+        raise HTTPException(400, "操作失败，请稍后重试")
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(400, "样本音频不能超过 20MB")
@@ -2967,7 +2967,7 @@ async def generate_portrait(avatar_id: str, current_user: dict = require_auth())
     """
     avatar = next((a for a in AVATARS if a["id"] == avatar_id), None)
     if not avatar:
-        raise HTTPException(404, f"未知数字人形象: {avatar_id}")
+        raise HTTPException(404, "操作失败，请稍后重试")
 
     portrait_path = _get_portrait_path(avatar_id)
     if os.path.exists(portrait_path):
@@ -3067,7 +3067,7 @@ def _generate_one(  # noqa: C901
     lower_text = req.text.lower()
     hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
     if hard_hits:
-        raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
+        raise HTTPException(400, "操作失败，请稍后重试")
     risk_hits = list(dict.fromkeys(h["word"] for h in hits))  # 去重保序
 
     # 验证形象/声音/背景/场景（内置 + 用户自定义 + 克隆）
@@ -3076,12 +3076,12 @@ def _generate_one(  # noqa: C901
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
     if not avatar:
-        raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if not voice:
-        raise HTTPException(400, f"未知声音: {req.voice_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
     if not bg:
-        raise HTTPException(400, f"未知背景: {req.background_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
     if req.engine in ("live_portrait", "sadtalker"):
         if not (
@@ -3092,7 +3092,7 @@ def _generate_one(  # noqa: C901
     # 行业模板：提供 template_id 时取字幕样式/片头片尾（场景背景由前端按模板一键填充）
     template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
     if req.template_id and not template:
-        raise HTTPException(400, f"未知行业模板: {req.template_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     subtitle_style = template.get("subtitle") if template else None
     opening_text = template.get("opening", "") if template else ""
     closing_text = template.get("closing", "") if template else ""
@@ -3374,7 +3374,7 @@ def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:  # no
     lower_text = req.text.lower()
     hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
     if hard_hits:
-        raise HTTPException(400, f"文案含违规词（{', '.join(hard_hits[:6])}），已拦截生成，请修改后重试")
+        raise HTTPException(400, "操作失败，请稍后重试")
     from common.auth import get_quota_info
 
     qi = get_quota_info(uid) or {}
@@ -3386,11 +3386,11 @@ def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:  # no
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
     if not avatar:
-        raise HTTPException(400, f"未知数字人形象: {req.avatar_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if not voice:
-        raise HTTPException(400, f"未知声音: {req.voice_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if not next((b for b in BACKGROUNDS if b["id"] == req.background_id), None):
-        raise HTTPException(400, f"未知背景: {req.background_id}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
     if req.engine == "live_portrait":
         if not (avatar.get("is_custom") and avatar.get("local_image_path")):

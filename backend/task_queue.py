@@ -183,7 +183,7 @@ def create_task(
     BEGIN IMMEDIATE 串行化「检查活跃数 + 插入」，保证并发提交下不超限（超出抛 429）。
     """
     if task_type not in _handlers:
-        raise HTTPException(404, f"未注册的任务类型: {task_type}")
+        raise HTTPException(404, "操作失败，请稍后重试")
     raw_payload = json.dumps(payload, ensure_ascii=False)
     if len(raw_payload) > 256 * 1024:
         raise HTTPException(400, "任务参数过大（>256KB），请精简参数后重试")

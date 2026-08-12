@@ -227,7 +227,7 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str =
                 logger.warning(f"CosyVoice 合成失败: {e}")
         else:
             logger.warning("CosyVoice 引擎不可用（voice_engine 服务未启动）")
-        raise HTTPException(500, f"CosyVoice 本地引擎不可用（音色 {voice}），请先启动 voice_engine 服务")
+        raise HTTPException(500, "请先启动语音引擎服务")
 
     def _edge_with_retry(rounds: int = 2) -> bytes:
         """带 1s 间隔的 edge-tts 重试；全部失败抛最后一个异常。
@@ -279,7 +279,7 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str =
         try:
             return _edge_with_retry(2)
         except Exception as e:
-            raise HTTPException(500, f"TTS 通道均不可用，请稍后重试")
+            raise HTTPException(500, "操作失败，请稍后重试")
 
 
 def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> bytes:
@@ -484,13 +484,13 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     if not text:
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
-        raise HTTPException(400, f"文本过长（{MAX_TEXT_CHARS} 字以内），请分段生成")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if format not in ("mp3", "wav"):
         raise HTTPException(400, "format 仅支持 mp3 / wav")
     pitch = max(-20, min(20, pitch))
     scene_cfg = next((s for s in SCENES if s["id"] == scene), None)
     if scene and scene != "custom" and not scene_cfg:
-        raise HTTPException(400, f"未知场景: {scene}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     tts_voice = voice or (scene_cfg["voice"] if scene_cfg else "zh-CN-XiaoxiaoNeural")
     tts_speed = speed if scene == "custom" else (scene_cfg["speed"] if scene_cfg else speed)
     tts_speed = max(0.5, min(2.0, float(tts_speed)))
@@ -532,7 +532,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
         raise
     except Exception as e:
         logger.error(f"TTS 生成失败: {e}")
-        raise HTTPException(500, f"配音生成失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -632,7 +632,7 @@ async def get_audio(filename: str):
 async def preview_voice(voice: str = Form(...), text: str = Form("")):
     """音色试听：合成短示例片段（≤80 字），快速对比不同音色的商用效果。"""
     if voice not in {v["id"] for v in VOICES}:
-        raise HTTPException(400, f"未知音色: {voice}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     sample = (text or "").strip()[:80]
     if not sample:
         sample = "你好，这是智能语音试听，可以用来挑选喜欢的音色。"

@@ -209,7 +209,7 @@ def test_email(current_user: dict = Depends(require_auth)):
     except smtplib.SMTPConnectError as e:
         raise HTTPException(400, "无法连接 SMTP 服务器，请检查地址和端口") from e
     except Exception as e:
-        raise HTTPException(500, f"发送失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 async def send_webhook_message(user_id, title: str, content: str) -> bool:
@@ -279,4 +279,4 @@ async def test_webhook(current_user: dict = Depends(require_auth)):
     except httpx.ConnectError as e:
         raise HTTPException(400, "无法连接 Webhook URL，请检查地址") from e
     except Exception as e:
-        raise HTTPException(500, f"发送失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e

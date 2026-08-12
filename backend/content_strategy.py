@@ -197,7 +197,7 @@ class TopicSuggestRequest(BaseModel):
 def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_auth()):
     """选中热点 → AI 生成选题角度建议。"""
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     platform_name = PLATFORM_LABELS[req.platform]
     source_note = f"（来源：{req.source}）" if req.source else ""

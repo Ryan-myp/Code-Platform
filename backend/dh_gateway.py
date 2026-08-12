@@ -381,7 +381,7 @@ async def admin_recharge(req: RechargeRequest, current_user: dict = require_auth
         _ensure_billing_tables(conn)
         row = conn.execute("SELECT balance FROM users WHERE id=?", (req.user_id,)).fetchone()
         if not row:
-            raise HTTPException(404, f"用户不存在: {req.user_id}")
+            raise HTTPException(404, "操作失败，请稍后重试")
         new_balance = round(float(row["balance"] or 0) + req.amount, 2)
         conn.execute("UPDATE users SET balance=? WHERE id=?", (new_balance, req.user_id))
     logger.info("数字人余额充值: user=%s +%.2f -> %.2f（%s）", req.user_id, req.amount, new_balance, req.remark)

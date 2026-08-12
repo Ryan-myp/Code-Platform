@@ -354,7 +354,7 @@ def create_job(payload: dict, current_user: dict = Depends(require_auth)):
     cron = (payload.get("cron_expression") or "0 9 * * *").strip()
     next_run = _parse_cron(cron)
     if not next_run:
-        raise HTTPException(400, f"cron 表达式非法：{cron}（格式：分 时 日 月 周）")
+        raise HTTPException(400, "Cron 格式不正确")
     now = datetime.now().isoformat()
 
     conn = get_db()
@@ -404,7 +404,7 @@ def update_job(job_id: int, payload: dict, current_user: dict = Depends(require_
         if "cron_expression" in updates:
             next_run = _parse_cron(updates["cron_expression"])
             if not next_run:
-                raise HTTPException(400, f"cron 表达式非法：{updates['cron_expression']}")
+                raise HTTPException(400, "操作失败，请稍后重试")
             updates["next_run"] = next_run
         elif updates.get("enabled") == 1 and not job["next_run"]:
             updates["next_run"] = _parse_cron(job["cron_expression"])

@@ -166,7 +166,7 @@ async def get_stock_data(symbol: str, period: str = "3mo") -> dict:
     except HTTPException:
         raise  # 不要吞掉 HTTPException
     except Exception as e:
-        raise HTTPException(503, f"行情数据服务暂时不可用（网络或上游限制），请稍后重试。详情: {str(e)[:150]}") from e
+        raise HTTPException(503, "操作失败，请稍后重试") from e
 
 
 # ── 风险指标计算（确定性纯函数，可单测）──
@@ -938,7 +938,7 @@ async def run_stock_analysis(symbol: str, period: str = "3mo", analysis_type: st
     try:
         result = await call_llm_async(_ANALYST_ROLE, prompt)
     except Exception as e:
-        raise HTTPException(500, f"分析失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
     if not result or not str(result).strip():
         raise HTTPException(502, "AI 未返回分析内容，请重试")
     result = str(result)
@@ -1112,7 +1112,7 @@ async def execute_trade(req: TradeRequest, current_user: dict = require_auth()):
         if req.action == "buy":
             # 买入检查
             if account["cash"] < trade_amount:
-                raise HTTPException(400, f"现金不足，需要 {trade_amount}，当前 {account['cash']}")
+                raise HTTPException(400, "账户余额不足")
 
             # 更新现金
             conn.execute(

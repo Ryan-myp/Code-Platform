@@ -193,7 +193,7 @@ async def upload_doc(file: UploadFile = File(...), background: BackgroundTasks =
     ext = os.path.splitext(file.filename)[1].lower()
     allowed = {".txt", ".pdf", ".docx", ".doc", ".md", ".csv"}
     if ext not in allowed:
-        raise HTTPException(400, f"不支持的文件格式：{ext}，支持 {', '.join(allowed)}")
+        raise HTTPException(400, "不支持的文件格式")
 
     did = f"doc_{int(datetime.now().timestamp() * 1000)}"
     save_path = os.path.join(UPLOAD_DIR, f"{did}{ext}")
@@ -357,7 +357,7 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
         for did in doc_ids:
             row = conn.execute("SELECT * FROM doc_qa_records WHERE id=?", (did,)).fetchone()
             if not row:
-                raise HTTPException(404, f"文档记录不存在：{did}")
+                raise HTTPException(404, "操作失败，请稍后重试")
             text = row[4] or ""
             if text and not text.startswith("["):
                 docs.append({"doc_id": row[0], "doc_name": row[1], "text": text})

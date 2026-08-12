@@ -474,10 +474,10 @@ def _ai_bg(prompt: str) -> Image.Image:
         exc = requests.HTTPError(f"HTTP {resp.status_code} error", response=resp)
         from common.llm import api_error_detail
 
-        raise HTTPException(500, f"文生图失败: {api_error_detail(exc)}")
+        raise HTTPException(500, "操作失败，请稍后重试")
     data = resp.json()
     if not data.get("data"):
-        raise HTTPException(500, f"文生图失败: {_safe_exc_msg(e)}")
+        raise HTTPException(500, "操作失败，请稍后重试")
     item = data["data"][0]
     url = item.get("url")
     if url:
@@ -586,7 +586,7 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
     if not top_text and not bottom_text:
         raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
     if style not in {s["id"] for s in STYLES}:
-        raise HTTPException(400, f"未知风格: {style}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if style == "upload" and not bg_upload:
         raise HTTPException(400, "上传背景模式需要提供 bg_upload 图片（base64）")
 
@@ -596,7 +596,7 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
             continue
         res = check_text(t, "表情包")
         if not res["ok"]:
-            raise HTTPException(400, f"{label}：{res['suggestion']}")
+            raise HTTPException(400, "内容审核不通过")
 
     # 背景
     if style == "ai":
@@ -669,7 +669,7 @@ async def generate_meme(
     if not top_text and not bottom_text:
         raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
     if style not in {s["id"] for s in STYLES}:
-        raise HTTPException(400, f"未知风格: {style}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
@@ -731,7 +731,7 @@ async def generate_meme_set(
                 continue
             res = check_text(t, "表情包")
             if not res["ok"]:
-                raise HTTPException(400, f"第 {parsed.index((top, bottom)) + 1} 条{label}：{res['suggestion']}")
+                raise HTTPException(400, "内容审核不通过")
 
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
@@ -811,7 +811,7 @@ async def get_image(filename: str, size: int = 1080):
                 with Image.open(path) as im:
                     im.resize((size, size), Image.LANCZOS).save(cached, "PNG")
             except Exception as e:
-                raise HTTPException(500, f"尺寸导出失败: {_safe_exc_msg(e)}") from e
+                raise HTTPException(500, "操作失败，请稍后重试") from e
         return FileResponse(cached, media_type="image/png")
     return FileResponse(path, media_type="image/png")
 

@@ -675,7 +675,7 @@ async def execute_plugin(plugin_name: str, req: dict):
         "music-factory": None,
     }
     if plugin_name not in mapping:
-        raise HTTPException(404, f"插件不存在: {plugin_name}")
+        raise HTTPException(404, "操作失败，请稍后重试")
 
     target = mapping[plugin_name]
     if target is None:

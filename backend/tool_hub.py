@@ -7509,7 +7509,7 @@ async def enhance_prompt(req: EnhancePromptRequest, current_user: dict = require
         raise
     except Exception as e:
         logger.error(f"[enhance_prompt] {traceback.format_exc()}")
-        raise HTTPException(500, f"智能补充失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 @router.get("/api/tools")
@@ -7817,7 +7817,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
 
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in allowed_types:
-        raise HTTPException(400, f"不支持的文件类型: {ext}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     # 保存临时文件
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:

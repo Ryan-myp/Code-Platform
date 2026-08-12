@@ -116,7 +116,7 @@ class BatchScheduleRequest(BaseModel):
 def batch_generate(req: BatchGenerateRequest, current_user: dict = require_auth()):
     """主题 → LLM 批量生成 N 组内容变体（标题/正文/话题/封面风格）。"""
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     platform_name = PLATFORM_LABELS[req.platform]
     user_prompt = (
@@ -139,7 +139,7 @@ def batch_generate(req: BatchGenerateRequest, current_user: dict = require_auth(
             raise ValueError("LLM 返回的不是数组")
     except Exception as e:
         logger.exception("batch generate LLM failed")
-        raise HTTPException(502, f"变体生成失败（AI 服务可能暂时不可用）：{e}") from e
+        raise HTTPException(502, "服务异常，请稍后重试") from e
 
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     conn = get_db()

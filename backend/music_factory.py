@@ -187,7 +187,7 @@ async def music_publish_pack(
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(400, f"封面图片处理失败：{e}") from e
+            raise HTTPException(400, "服务异常，请稍后重试") from e
 
     # 从 artifacts 表取歌词与元数据（生成时已落库）
     lyrics = ""
@@ -389,7 +389,7 @@ async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) 
     # 生产级内容保障：歌词主题生成前安全审核（歌词需过平台内容审核）
     res = check_text(theme, "歌词")
     if not res["ok"]:
-        raise HTTPException(400, f"歌词主题：{res['suggestion']}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     style_prompts = {
         "pop": "流行歌曲",
@@ -479,7 +479,7 @@ v20 内容丰富度要求（必须全部满足）：
         raise
     except Exception as e:
         logger.error(f"生成歌词异常: {e}")
-        raise HTTPException(500, f"生成歌词失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     # 保存生成的歌词
     lyrics_filename = f"{generate_music_id()}.txt"
@@ -659,7 +659,7 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
             continue
         res = check_text(t, "歌词")
         if not res["ok"]:
-            raise HTTPException(400, f"{label}：{res['suggestion']}")
+            raise HTTPException(400, "内容审核不通过")
 
     # ACE-Step 大模型引擎优先（auto 模式可用时；失败自动回退本地链路）
     use_acestep = MUSIC_ENGINE_MODE != "local" and _acestep_ok()
@@ -671,7 +671,7 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
             raise
         except Exception as e:
             if MUSIC_ENGINE_MODE == "acestep":
-                raise HTTPException(502, f"ACE-Step 音乐生成失败: {e}") from e
+                raise HTTPException(502, "服务异常，请稍后重试") from e
             logger.warning("ACE-Step 生成失败，回退本地引擎: %s", e)
             _report(4, "ACE-Step 引擎异常，切换本地合成…")
 

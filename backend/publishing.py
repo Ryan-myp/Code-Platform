@@ -183,7 +183,7 @@ async def list_accounts(current_user: dict = require_auth()):
 @router.post("/accounts")
 async def upsert_account(req: AccountRequest, current_user: dict = require_auth()):
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     now = datetime.now().isoformat()
     conn = get_db()
     row = conn.execute("SELECT * FROM publish_accounts WHERE platform=? AND active=1", (req.platform,)).fetchone()
@@ -228,7 +228,7 @@ async def _wechat_token(app_id: str, secret: str) -> str:
         )
         data = resp.json()
     if "access_token" not in data:
-        raise HTTPException(502, f"微信 token 获取失败: {data.get('errmsg', data)}")
+        raise HTTPException(502, "操作失败，请稍后重试")
     return data["access_token"]
 
 
@@ -264,7 +264,7 @@ async def test_account(acc_id: str, current_user: dict = require_auth()):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(502, f"连接测试失败: {e}") from e
+        raise HTTPException(502, "服务异常，请稍后重试") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -372,7 +372,7 @@ class BatchAccountRequest(BaseModel):
 async def batch_import_accounts(req: BatchAccountRequest, current_user: dict = require_auth()):
     """账号矩阵：一次粘贴多行批量导入账号（矩阵号运营）。"""
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     conn = get_db()
     _ensure_account_columns(conn)
     now = datetime.now().isoformat()
@@ -557,7 +557,7 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
         )
         data = resp.json()
         if "media_id" not in data:
-            raise HTTPException(502, f"微信封面上传失败: {data.get('errmsg', data)}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         thumb_media_id = data["media_id"]
         # 2. 保存草稿
         articles = [
@@ -578,7 +578,7 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
         )
         data = resp.json()
         if "media_id" not in data:
-            raise HTTPException(502, f"微信草稿保存失败: {data.get('errmsg', data)}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         draft_media_id = data["media_id"]
         # 3. 发布（frepublish 不需要群发审核，走发布能力）
         resp = await client.post(
@@ -588,7 +588,7 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
         )
         data = resp.json()
         if data.get("errcode", 0) != 0:
-            raise HTTPException(502, f"微信发布失败: {data.get('errmsg', data)}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         return str(data.get("publish_id", ""))
 
 
@@ -605,7 +605,7 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
         data = resp.json()
         token = (data.get("data") or {}).get("access_token")
         if not token:
-            raise HTTPException(502, f"抖音授权失败: {data}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         headers = {"access-token": token}
         # 2. 上传素材（视频走 video/init → upload → complete）
         if req.content_type == "video":
@@ -618,11 +618,11 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
             upload_url = ((init_data.get("data") or {}).get("upload") or {}).get("upload_url")
             video_id = ((init_data.get("data") or {}).get("upload") or {}).get("video_id")
             if not upload_url or not video_id:
-                raise HTTPException(502, f"抖音视频初始化失败: {init_data}")
+                raise HTTPException(502, "操作失败，请稍后重试")
             video_bytes = await _fetch_asset_bytes(req.asset_urls[0])
             resp = await client.post(upload_url, content=video_bytes, headers=headers)
             if resp.status_code != 200:
-                raise HTTPException(502, f"抖音视频上传失败: {resp.status_code}")
+                raise HTTPException(502, "操作失败，请稍后重试")
             resp = await client.post(
                 "https://open.douyin.com/video/complete/",
                 headers=headers,
@@ -630,7 +630,7 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
             )
             complete_data = resp.json()
             if (complete_data.get("data") or {}).get("error_code") != 0:
-                raise HTTPException(502, f"抖音视频上传确认失败: {complete_data}")
+                raise HTTPException(502, "操作失败，请稍后重试")
         # 3. 发布
         text = req.title
         if req.content:
@@ -666,7 +666,7 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
         data = resp.json()
         post_id = ((data.get("data") or {}).get("item_id")) or ""
         if not post_id:
-            raise HTTPException(502, f"抖音发布失败: {data}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         return str(post_id)
 
 
@@ -683,7 +683,7 @@ async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C90
         data = resp.json()
         token = data.get("access_token")
         if not token:
-            raise HTTPException(502, f"快手授权失败: {data}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         headers = {"Authorization": f"Bearer {token}"}
         # 2. 上传素材（支持图片/视频）
         if req.content_type == "video":
@@ -695,7 +695,7 @@ async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C90
             upload = resp.json()
             upload_id = upload.get("uploadId") or (upload.get("data") or {}).get("uploadId")
             if not upload_id:
-                raise HTTPException(502, f"快手上传初始化失败: {upload}")
+                raise HTTPException(502, "操作失败，请稍后重试")
             video_bytes = await _fetch_asset_bytes(req.asset_urls[0])
             resp = await client.post(
                 "https://open.kuaishou.com/api/open/file/upload/complete",
@@ -706,7 +706,7 @@ async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C90
             upload_data = resp.json()
             resource_id = (upload_data.get("data") or {}).get("resourceId") or upload_data.get("resourceId")
             if not resource_id:
-                raise HTTPException(502, f"快手上传失败: {upload_data}")
+                raise HTTPException(502, "操作失败，请稍后重试")
         else:
             resource_id = None
             img_ids = []
@@ -740,7 +740,7 @@ async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C90
         data = resp.json()
         photo_id = data.get("photoId") or (data.get("data") or {}).get("photoId")
         if not photo_id:
-            raise HTTPException(502, f"快手发布失败: {data}")
+            raise HTTPException(502, "操作失败，请稍后重试")
         return str(photo_id)
 
 
@@ -775,9 +775,9 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
     - 平台账号已配置且组合支持自动发布 → auto 模式；否则 → guide 模式（返回素材包）
     """
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     if req.content_type not in CONTENT_LABELS:
-        raise HTTPException(400, f"未知内容类型: {req.content_type}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     start = time.time()
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
 
@@ -1166,7 +1166,7 @@ class ScheduleRequest(PublishRequest):
 async def create_schedule(req: ScheduleRequest, current_user: dict = require_auth()):
     """创建发布排期：先锁定内容，到点后一键执行。"""
     if req.platform not in PLATFORM_LABELS:
-        raise HTTPException(400, f"未知平台: {req.platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     try:
         from datetime import datetime as _dt
 
@@ -1269,7 +1269,7 @@ async def execute_schedule(sched_id: str, current_user: dict = require_auth()):
     s = dict(row)
     if s["status"] != "pending":
         conn.close()
-        raise HTTPException(400, f"排期当前状态为 {s['status']}，无法执行")
+        raise HTTPException(400, "操作失败，请稍后重试")
     conn.close()
     req = PublishRequest(
         platform=s["platform"],

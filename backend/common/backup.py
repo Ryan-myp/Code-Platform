@@ -244,4 +244,4 @@ async def admin_restore_backup(name: str, current_user: dict = require_auth()):
     try:
         return restore_backup(name)
     except ValueError as e:
-        raise HTTPException(404, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e

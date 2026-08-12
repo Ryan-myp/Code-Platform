@@ -679,7 +679,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
     req = GenerateRequest(**payload)
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
-        raise HTTPException(400, f"未知模板: {req.template}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     def _report(pct: float, stage: str) -> None:
         if progress:
@@ -716,7 +716,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     files = None
     qc = None
@@ -779,11 +779,11 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"生成失败: {_safe_exc_msg(e)}") from e
+            raise HTTPException(500, "操作失败，请稍后重试") from e
     if not files or qc is None:
-        raise HTTPException(502, f"AI 输出格式异常（已自动重试仍失败），请重试或更换模型。详情: {last_err}")
+        raise HTTPException(502, "操作失败，请稍后重试")
     if not qc["ok"]:
-        raise HTTPException(502, f"质量门禁未通过（已自动修复重试 3 次）：{last_err}")
+        raise HTTPException(502, "操作失败，请稍后重试")
 
     proj_id = f"mp_{uuid.uuid4().hex[:12]}"
     conn = get_db()
@@ -826,7 +826,7 @@ async def generate_project(
     """选模板 + 需求 → AI 生成完整小程序项目（默认异步任务，立即返回 task_id）。"""
     tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
     if req.template != "custom" and not tpl:
-        raise HTTPException(400, f"未知模板: {req.template}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""

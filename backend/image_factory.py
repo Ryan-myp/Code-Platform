@@ -509,7 +509,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
     # 生产级内容保障：文生图描述生成前安全审核（平台发布红线）
     res = check_text(prompt, "prompt")
     if not res["ok"]:
-        raise HTTPException(400, f"图片描述：{res['suggestion']}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     url = f"{AGNES_API_BASE}/images/generations"
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
@@ -636,7 +636,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     # 生产级内容保障：图生图描述生成前安全审核
     res = check_text(prompt, "prompt")
     if not res["ok"]:
-        raise HTTPException(400, f"图片描述：{res['suggestion']}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     url = f"{AGNES_API_BASE}/images/generations"
     # 中转站 images/generations 仅支持 JSON body：图片以 base64 Data URI 传入（与短剧插画一致）
@@ -685,7 +685,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
         raise
     except Exception as e:
         logger.error(f"图生图失败：{api_error_detail(e)}")
-        raise HTTPException(500, f"生成失败：{api_error_detail(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 @router.post("/generate/image-to-image")
@@ -1623,7 +1623,7 @@ async def person_segmentation(
         return {"id": filename, "url": f"/api/image-factory/images/{filename}"}
 
     except Exception as e:
-        raise HTTPException(500, f"人像分割失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
@@ -1808,7 +1808,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"虚拟试衣失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 @router.post("/try-on/generate")
@@ -1925,7 +1925,7 @@ async def replace_background(
         }
 
     except Exception as e:
-        raise HTTPException(500, f"背景替换失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 # ── 预置电商模板 ──────────────────────────────────────────────
@@ -2544,7 +2544,7 @@ async def image_publish_pack(
     """图片发布包：选中图片按平台规格输出成品 + 高清版 + 上架文案 + 质量报告，一键下载。"""
     preset = next((p for p in PLATFORM_PRESETS if p["id"] == platform), None)
     if not preset:
-        raise HTTPException(400, f"未知平台规格: {platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     pack_title = (pack_title or "AI 原创插画集").strip()[:60]
     picked = [f for f in ids if os.path.exists(os.path.join(IMAGE_DIR, f))][:50]
     if not picked:

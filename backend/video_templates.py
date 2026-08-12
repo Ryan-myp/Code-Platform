@@ -694,7 +694,7 @@ async def render_video_template(template: dict, overrides: dict | None = None,
             shot = tmpd / f"shot_{i}.mp4"
             motion = scenes[i].get("motion", "zoom_in")
             if not _render_shot(fp, shot, motion, w, h, fps, secs):
-                raise HTTPException(500, f"镜头 {i + 1} 渲染失败")
+                raise HTTPException(500, "操作失败，请稍后重试")
             shot_paths.append(shot)
 
         total_secs = sum(secs_list) - 0.4 * (len(secs_list) - 1)
@@ -816,7 +816,7 @@ async def purchase_video_template(template_id: str = Form(...), access_type: str
     balance = int(quota["credits"]) if quota else 0
     if balance < amount:
         conn.close()
-        raise HTTPException(402, f"积分不足（需要 {amount}，当前 {balance}），请先充值")
+        raise HTTPException(402, "余额不足，请先充值")
     conn.execute("UPDATE user_quotas SET credits=credits-? WHERE username=?", (amount, user))
     expires = ""
     if access_type in ("day", "month"):
@@ -850,7 +850,7 @@ async def render_video_template_api(template_id: str = Form(...),
         ov = json.loads(overrides or "{}")
         imgs = json.loads(images or "[]")
     except json.JSONDecodeError as e:
-        raise HTTPException(400, f"参数格式错误: {e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
     if not isinstance(ov, dict) or not (isinstance(imgs, dict) or isinstance(imgs, list)):
         raise HTTPException(400, "overrides 需为 JSON 对象，images 需为 JSON 对象（按图层 key）或数组（批量）")
     result = await render_video_template(t, ov, imgs)

@@ -141,7 +141,7 @@ def nl_query(req: NLQueryRequest, current_user: dict = require_auth()):
         raise HTTPException(500, "LLM返回格式异常，无法解析为JSON") from e
     except Exception as e:
         logger.exception("nl-query failed")
-        raise HTTPException(500, f"查询失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
     log_usage("dashboard_nl_query", len(req.query), len(raw), elapsed)

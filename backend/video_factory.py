@@ -505,7 +505,7 @@ async def _create_video_task(api_payload: dict, report: Callable, channel: str =
         raise
     except Exception as e:
         logger.error(f"创建视频任务异常: {e}")
-        raise HTTPException(500, f"创建视频任务失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
@@ -536,7 +536,7 @@ async def _dashscope_poll_result(task_id: str, report: Callable) -> dict:
             raise
         except Exception as e:
             logger.error(f"获取百炼任务异常: {e}")
-            raise HTTPException(500, f"获取百炼任务失败: {_safe_exc_msg(e)}") from e
+            raise HTTPException(500, "操作失败，请稍后重试") from e
     raise HTTPException(504, "百炼视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
@@ -569,7 +569,7 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
             raise
         except Exception as e:
             logger.error(f"获取视频结果异常: {e}")
-            raise HTTPException(500, f"获取视频结果失败: {_safe_exc_msg(e)}") from e
+            raise HTTPException(500, "操作失败，请稍后重试") from e
     raise HTTPException(504, "视频渲染超时（>15 分钟），请稍后在任务中心重试")
 
 
@@ -635,7 +635,7 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     # 生产级内容保障：视频描述生成前安全审核（视频发布平台内容红线）
     res = check_text(api_payload["prompt"], "prompt")
     if not res["ok"]:
-        raise HTTPException(400, f"视频描述：{res['suggestion']}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     errors: list[str] = []
     for idx, channel in enumerate(channels):
@@ -812,7 +812,7 @@ async def get_video_result(video_id: str, project_id: str = ""):
         raise
     except Exception as e:
         logger.error(f"获取视频结果异常: {e}")
-        raise HTTPException(500, f"获取视频结果失败: {_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
 
 @router.get("/videos/{filename}")
@@ -987,7 +987,7 @@ async def video_publish_pack(
     """视频发布包：按平台规格转码成片 + 抽帧封面 + 发布文案 + 质量报告，一键下载。"""
     preset = next((p for p in VIDEO_PRESETS if p["id"] == platform), None)
     if not preset:
-        raise HTTPException(400, f"未知平台规格: {platform}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     src = (filename or "").strip()
     if not src.endswith(".mp4") or Path(src).name != src:
         raise HTTPException(400, "非法的视频文件名")
@@ -1093,7 +1093,7 @@ def _safe_video_name(filename: str) -> str:
         raise HTTPException(400, "非法的文件名")
     p = VIDEO_DIR / name
     if not p.exists():
-        raise HTTPException(404, f"视频不存在: {name}")
+        raise HTTPException(404, "操作失败，请稍后重试")
     return name
 
 
@@ -1179,7 +1179,7 @@ async def concat_videos(
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     except Exception as e:
-        raise HTTPException(500, f"拼接失败，请稍后重试")
+        raise HTTPException(500, "操作失败，请稍后重试")
     if r.returncode != 0 or not out.exists():
         raise HTTPException(500, "拼接失败，请稍后重试")
     return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "width": w, "height": h}
@@ -1207,7 +1207,7 @@ async def add_music(
         else:
             src = Path(music)
             if not src.exists():
-                raise HTTPException(404, f"BGM 文件不存在: {music}")
+                raise HTTPException(404, "操作失败，请稍后重试")
             bgm_path.write_bytes(src.read_bytes())
         if not bgm_path.stat().st_size:
             raise HTTPException(400, "BGM 文件为空")
@@ -1232,7 +1232,7 @@ async def add_music(
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         except Exception as e:
-            raise HTTPException(500, f"配乐失败，请稍后重试")
+            raise HTTPException(500, "操作失败，请稍后重试")
         if r.returncode != 0 or not out.exists():
             raise HTTPException(500, "配乐失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "bg_volume": vol}
@@ -1268,7 +1268,7 @@ async def burn_subtitle(
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         except Exception as e:
-            raise HTTPException(500, f"字幕烧录失败，请稍后重试")
+            raise HTTPException(500, "操作失败，请稍后重试")
         if r.returncode != 0 or not out.exists():
             raise HTTPException(500, "字幕烧录失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name}
@@ -1348,7 +1348,7 @@ async def transcode_videos(
     try:
         plan = build_transcode_plan(names, width or None, height or None, crf)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from None
+        raise HTTPException(400, "请求参数错误") from None
 
     ffmpeg = _pick_ffmpeg()
     enc = _pick_video_encoder()

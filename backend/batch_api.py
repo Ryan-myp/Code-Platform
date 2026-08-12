@@ -509,7 +509,7 @@ async def batch_retry(req: BatchRetryRequest, sync: bool = Query(False), current
     请重新上传失败文件；文本类任务（translate）可直接重试。
     """
     if req.task_type != "translate":
-        raise HTTPException(400, f"暂不支持 {req.task_type} 失败项重试（文件类任务请重新上传失败文件）")
+        raise HTTPException(400, "操作失败，请稍后重试")
     payload = {
         "task_type": req.task_type,
         "items": [item.model_dump() for item in req.items],

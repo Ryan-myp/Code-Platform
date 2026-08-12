@@ -69,7 +69,7 @@ async def create_checkout_session(req: dict, current_user: dict = require_auth()
 
     plan = req.get("plan", "pro")
     if plan not in _PRICING:
-        raise HTTPException(400, f"不支持的套餐: {plan}")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     success_url = req.get("success_url", "http://localhost:5173/membership?paid=1")
     cancel_url = req.get("cancel_url", "http://localhost:5173/membership")

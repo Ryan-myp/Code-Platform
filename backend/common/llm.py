@@ -83,7 +83,7 @@ def _extract_content(resp_json: dict) -> str:
         pass
     if isinstance(resp_json.get("content"), str):
         return resp_json["content"]
-    raise HTTPException(502, f"LLM 响应格式异常: {str(resp_json)[:200]}")
+    raise HTTPException(502, "操作失败，请稍后重试")
 
 
 def _retry_delay(attempt: int) -> float:
@@ -177,7 +177,7 @@ def call_llm(
 
     if isinstance(last_error, HTTPException):
         raise last_error
-    raise HTTPException(502, f"LLM 调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
+    raise HTTPException(502, "操作失败，请稍后重试")
 
 
 def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
@@ -201,7 +201,7 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
                     time.sleep(_retry_delay(attempt))
                     continue
                 logger.error(f"LLM call failed: {resp.status_code} {body}")
-                raise HTTPException(502, f"LLM 调用失败: {resp.status_code} {body}")
+                raise HTTPException(502, "操作失败，请稍后重试")
             return _extract_content(resp.json())
         except HTTPException:
             raise
@@ -211,7 +211,7 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
                 time.sleep(_retry_delay(attempt))
                 continue
             logger.error(f"LLM call exception: {e}", exc_info=True)
-            raise HTTPException(502, f"LLM 调用异常: {_readable_error(e)}") from e
+            raise HTTPException(502, "操作失败，请稍后重试") from e
 
 
 # 同步版本的别名（向后兼容）
@@ -263,7 +263,7 @@ async def call_llm_async(
 
     if isinstance(last_error, HTTPException):
         raise last_error
-    raise HTTPException(502, f"LLM 调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
+    raise HTTPException(502, "操作失败，请稍后重试")
 
 
 async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
@@ -288,7 +288,7 @@ async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperat
                         await asyncio.sleep(_retry_delay(attempt))
                         continue
                     logger.error(f"LLM async call failed: {resp.status_code} {body}")
-                    raise HTTPException(502, f"LLM 调用失败: {resp.status_code} {body}")
+                    raise HTTPException(502, "操作失败，请稍后重试")
                 return _extract_content(resp.json())
             except HTTPException:
                 raise
@@ -298,7 +298,7 @@ async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperat
                     await asyncio.sleep(_retry_delay(attempt))
                     continue
                 logger.error(f"LLM async call exception: {e}", exc_info=True)
-                raise HTTPException(502, f"LLM 调用异常: {_readable_error(e)}") from e
+                raise HTTPException(502, "操作失败，请稍后重试") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -350,7 +350,7 @@ async def stream_llm_async(  # noqa: C901
 
     if isinstance(last_error, HTTPException):
         raise last_error
-    raise HTTPException(502, f"LLM 流式调用失败（已重试并降级仍失败）: {_readable_error(last_error)}")
+    raise HTTPException(502, "操作失败，请稍后重试")
 
 
 async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int):  # noqa: C901
@@ -375,7 +375,7 @@ async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature:
                             attempt += 1
                             await asyncio.sleep(_retry_delay(attempt))
                             continue
-                        raise HTTPException(502, f"LLM 流式调用失败: {resp.status_code} {body}")
+                        raise HTTPException(502, "操作失败，请稍后重试")
                     full_parts: list[str] = []
                     async for line in resp.aiter_lines():
                         line = line.strip()

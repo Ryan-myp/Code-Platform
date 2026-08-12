@@ -305,7 +305,7 @@ async def upload_csv(file: UploadFile = File(...), current_user: dict = require_
         preview = parse_csv(save_path)
     except Exception as e:
         os.remove(save_path)
-        raise HTTPException(400, f"CSV解析失败：{e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
 
     with get_db_context() as conn:
         conn.execute(
@@ -391,7 +391,7 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
                 )
             else:
                 logger.exception("forecast analyze failed")
-                raise HTTPException(500, f"数据预测失败：{_safe_exc_msg(e)}") from e
+                raise HTTPException(500, "操作失败，请稍后重试") from e
 
     _report(70, "生成预测图表")
     log_usage("data_forecast", len(user_prompt), len(raw), 0)

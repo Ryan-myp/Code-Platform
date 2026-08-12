@@ -202,7 +202,7 @@ def _deduct_credits(conn, username: str, amount: int) -> None:
     ).fetchone()
     balance = int(quota["credits"]) if quota else 0
     if balance < amount:
-        raise HTTPException(402, f"积分不足（需要 {amount}，当前 {balance}），请先充值")
+        raise HTTPException(402, "余额不足，请先充值")
     conn.execute(
         "UPDATE user_quotas SET credits=credits-?, updated_at=? WHERE username=?",
         (amount, datetime.now().isoformat(), username),
@@ -346,7 +346,7 @@ async def purchase_template(
 
     price = pricing[req.access_type]
     if price <= 0:
-        raise HTTPException(400, f"该模板不支持「{MODE_LABELS[req.access_type]}」方式购买")
+        raise HTTPException(400, "操作失败，请稍后重试")
 
     conn = get_db()
     _ensure_tables(conn)
@@ -489,10 +489,10 @@ async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) ->
     layer_types = _layer_types(template)
     unknown = [k for k in field_map.values() if k and k not in layer_types]
     if unknown:
-        raise HTTPException(400, f"字段映射指向不存在的图层变量：{', '.join(unknown)}")
+        raise HTTPException(400, "操作失败，请稍后重试")
     total = len(rows)
     if total > 500:
-        raise HTTPException(400, f"单次最多 500 行，当前 {total} 行（请分批导入）")
+        raise HTTPException(400, "单次导入最多500行，请分批导入")
 
     # 按次模板：批量视为 N 次使用，逐行扣费（余额不足中止）
     if pricing["mode"] == "once" and pricing["once"] > 0:
@@ -531,7 +531,7 @@ async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) ->
             imgs = await render_template_image(template, overrides)
         except Exception as e:
             logger.warning(f"批量渲染第 {i + 1} 行失败: {e}")
-            raise HTTPException(500, f"第 {i + 1} 行渲染失败，请稍后重试")
+            raise HTTPException(500, "操作失败，请稍后重试")
         fname = save_image(imgs[0])
         results.append(f"/api/image-factory/images/{fname}")
         record_usage(template_id)
@@ -611,7 +611,7 @@ async def batch_generate(
         if not isinstance(fmap, dict):
             raise HTTPException(400, "field_map 必须是 JSON 对象")
     except json.JSONDecodeError as e:
-        raise HTTPException(400, f"field_map 不是合法 JSON：{e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
 
     # 预检：模板存在 + 当前用户有权限（收费模板）
     template = load_template(template_id)

@@ -168,7 +168,7 @@ async def get_skill_file_tree(skill_id: str):
     try:
         return skills_store.list_tree(skill_id)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
 
 
 @router.get("/api/skills/{skill_id}/file")
@@ -177,9 +177,9 @@ async def read_skill_file(skill_id: str, path: str = ""):
     try:
         return skills_store.read_file(skill_id, path)
     except FileNotFoundError as e:
-        raise HTTPException(404, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
 
 
 @router.get("/api/skills/{skill_id}/file/raw")
@@ -188,10 +188,10 @@ async def read_skill_file_raw(skill_id: str, path: str = ""):
     try:
         target = skills_store.resolve_path(skill_id, path)
         if not target.is_file():
-            raise HTTPException(404, f"文件不存在: {path}")
+            raise HTTPException(404, "操作失败，请稍后重试")
         data = target.read_bytes()
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     return Response(content=data, media_type=media_type)
 
@@ -207,14 +207,14 @@ async def write_skill_file(skill_id: str, path: str, req: SkillFileWriteRequest)
             result = skills_store.write_file(skill_id, rel, req.content)
             skills_store.sync_db_from_skill_md(skill_id, req.content)
         except FileNotFoundError as e:
-            raise HTTPException(404, str(e)) from e
+            raise HTTPException(400, "请求参数错误") from e
         except ValueError as e:
-            raise HTTPException(400, str(e)) from e
+            raise HTTPException(400, "请求参数错误") from e
         return {**result, "synced_db": True}
     try:
         return skills_store.write_file(skill_id, rel, req.content)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
 
 
 @router.delete("/api/skills/{skill_id}/file")
@@ -224,9 +224,9 @@ async def delete_skill_file(skill_id: str, path: str = ""):
     try:
         skills_store.delete_path(skill_id, rel)
     except FileNotFoundError as e:
-        raise HTTPException(404, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     return {"success": True}
 
 
@@ -237,7 +237,7 @@ async def create_skill_folder(skill_id: str, path: str = ""):
     try:
         skills_store.mkdir(skill_id, rel)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e
     return {"success": True}
 
 
@@ -262,4 +262,4 @@ async def upload_skill_file(
     try:
         return skills_store.write_file(skill_id, rel, content)
     except ValueError as e:
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(400, "请求参数错误") from e

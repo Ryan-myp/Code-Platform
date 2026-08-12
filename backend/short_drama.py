@@ -214,7 +214,7 @@ async def _generate_script(theme: str, duration_hint: int, template: dict | None
             last_err = str(e)
             logger.warning(f"剧本解析失败（第 {attempt + 1} 次）: {e}")
     else:
-        raise HTTPException(502, f"剧本生成失败：{last_err}，请重试")
+        raise HTTPException(502, "剧本生成失败，请稍后重试")
     scenes = _enforce_duration(script["scenes"], duration_hint)
     script["scenes"] = scenes
     return script
@@ -1145,13 +1145,13 @@ async def export_shot_sheet(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
     characters = []
     if characters_json:
         try:
             characters = json.loads(characters_json)
         except json.JSONDecodeError as e:
-            raise HTTPException(400, f"角色表 JSON 格式错误: {e}") from e
+            raise HTTPException(400, "服务异常，请稍后重试") from e
     data = build_shot_sheet(scenes, title.strip(), characters)
     from urllib.parse import quote
 
@@ -1179,7 +1179,7 @@ async def material_manifest(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+        raise HTTPException(400, "服务异常，请稍后重试") from e
     return build_material_manifest(scenes)
 
 
@@ -1245,7 +1245,7 @@ async def generate_drama(
         try:
             scenes = json.loads(scenes_json)
         except json.JSONDecodeError as e:
-            raise HTTPException(400, f"分镜 JSON 格式错误: {e}") from e
+            raise HTTPException(400, "服务异常，请稍后重试") from e
     characters = []
     if characters_json:
         try:
@@ -1253,7 +1253,7 @@ async def generate_drama(
             if not isinstance(characters, list):
                 raise ValueError("characters 必须是数组")
         except (json.JSONDecodeError, ValueError) as e:
-            raise HTTPException(400, f"角色表 JSON 格式错误: {e}") from e
+            raise HTTPException(400, "服务异常，请稍后重试") from e
     if not theme.strip() and not scenes:
         raise HTTPException(400, "请输入短剧主题或提供自定义分镜")
     if avatar_mode and dh_engine not in ("2d", "live_portrait"):

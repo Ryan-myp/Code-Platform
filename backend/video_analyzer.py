@@ -205,7 +205,7 @@ async def upload_video(file: UploadFile = File(...), current_user: dict = requir
     ext = os.path.splitext(file.filename)[1].lower()
     allowed = {".mp4", ".mov", ".avi", ".webm", ".mkv", ".flv", ".wmv"}
     if ext not in allowed:
-        raise HTTPException(400, f"不支持的视频格式：{ext}，支持 {', '.join(allowed)}")
+        raise HTTPException(400, "不支持的文件格式")
 
     vid = f"vid_{int(datetime.now().timestamp() * 1000)}"
     save_path = os.path.join(UPLOAD_DIR, f"{vid}{ext}")
@@ -423,7 +423,7 @@ async def _video_analyze_worker(payload: dict, progress: Callable | None = None)
         result = parse_llm_json(raw)
     except Exception as e:
         logger.exception("video analyze failed")
-        raise HTTPException(500, f"视频分析失败：{_safe_exc_msg(e)}") from e
+        raise HTTPException(500, "操作失败，请稍后重试") from e
 
     _report(70, "提炼关键场景")
     log_usage("video_analyze", len(description), len(raw), 0)

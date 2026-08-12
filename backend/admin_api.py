@@ -431,7 +431,7 @@ async def admin_create_coupon(req: CouponCreateRequest, current_user: dict = req
     try:
         dup = conn.execute("SELECT id FROM coupons WHERE code=?", (code,)).fetchone()
         if dup:
-            raise HTTPException(400, f"优惠码已存在: {code}")
+            raise HTTPException(400, "操作失败，请稍后重试")
         cid = f"coupon_{_uuid.uuid4().hex[:12]}"
         conn.execute(
             """INSERT INTO coupons (id, code, discount_type, value, max_uses, active, expires_at, created_at, created_by)

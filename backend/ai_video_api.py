@@ -200,7 +200,7 @@ def _charge_for(auth: dict, billing_id: str, price: float, task_id: str = "") ->
         row = conn.execute("SELECT balance FROM users WHERE id=?", (auth["user_id"],)).fetchone()
         balance = float(row["balance"] or 0) if row else 0.0
     if balance < price:
-        raise HTTPException(402, f"余额不足（本条需 {price:.2f} 元，当前余额 {balance:.2f} 元），请联系平台充值")
+        raise HTTPException(402, "操作失败，请稍后重试")
     return _charge(auth, billing_id, price, task_id)
 
 
@@ -288,9 +288,9 @@ def _validate_upload_refs(req: VideoGenerateRequest) -> None:
         if val.startswith("/uploads/"):
             local = _resolve_local_upload(val)
             if not os.path.exists(local):
-                raise HTTPException(400, f"{field} 引用的文件不存在（{val}）")
+                raise HTTPException(400, "引用的文件不存在")
         elif not val.startswith(("http://", "https://")):
-            raise HTTPException(400, f"{field} 必须是 /uploads 平台路径或 http(s) URL")
+            raise HTTPException(400, "路径格式不正确")
 
 
 # ── 异步任务处理器 ─────────────────────────────────────────────
