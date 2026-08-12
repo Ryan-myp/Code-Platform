@@ -799,8 +799,13 @@ export default function AdminPage() {
                 </div>
               </div>
             ) : (
-              <div className="border-2 border-dashed border-ink-200 rounded-xl p-8 text-center text-sm text-ink-400">
-                尚未配置收款码，上传后用户即可在会员中心扫码支付
+              <div className="bg-ink-50/60 rounded-xl p-4 text-xs text-ink-500 space-y-2">
+                <p className="font-medium text-ink-700">如何获取个人收款码？</p>
+                <p>1. 微信：我 → 服务 → 收付款 → 二维码收款 → 保存收款码</p>
+                <p>2. 支付宝：首页 → 收钱 → 保存收款码图片</p>
+                <p className="text-ink-400">
+                  上传后，用户在会员中心下单 → 扫码转账 → 上传凭证 → 你在「订单管理」审核通过后自动开通会员（30 天）
+                </p>
               </div>
             )}
           </div>
