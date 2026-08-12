@@ -203,6 +203,8 @@ const DEFAULT_NAV_ITEMS = [
       { path: '/ab-testing', label: 'AB 测试', icon: FlaskConical },
       { path: '/usage-analytics', label: '用量分析', icon: Activity },
       { path: '/usage-detail', label: '用量明细', icon: Clock },
+      { path: '/invite-history', label: '邀请历史', icon: Users },
+      { path: '/creator-center', label: '创作者中心', icon: Star },
     ],
   },
   {

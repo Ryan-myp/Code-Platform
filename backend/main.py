@@ -1448,9 +1448,23 @@ async def invite_leaderboard(limit: int = 10, current_user: dict = require_auth(
                     "invites": invites,
                 }
             )
-    # 若我的排名在榜单外，附带返回（前端展示“我的排名”）
+    # 若我的排名在榜单外，附带返回（前端展示"我的排名"）
     my_invites = next((int(r["invites"]) for r in rows if str(r["id"]) == me_id), 0)
     return {"board": board, "my_rank": my_rank, "my_invites": my_invites}
+
+
+@app.get("/api/invite/history")
+async def invite_history(limit: int = 50, current_user: dict = require_auth()):
+    """邀请历史列表。"""
+    from common.auth import get_invite_history
+    return get_invite_history(current_user.get("user_id"), limit)
+
+
+@app.get("/api/invite/rewards")
+async def invite_rewards(limit: int = 50, current_user: dict = require_auth()):
+    """奖励流水列表。"""
+    from common.auth import get_invite_rewards
+    return get_invite_rewards(current_user.get("user_id"), limit)
 
 
 # ── 内容权限（v9.3：页面可见性 / 灰度发布） ─────────────────

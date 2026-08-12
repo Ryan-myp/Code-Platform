@@ -197,7 +197,14 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
             # 双方各奖励一次性额度
             conn.execute("UPDATE users SET bonus_quota=bonus_quota+? WHERE id=?", (INVITE_REWARD, uid))
             conn.execute("UPDATE users SET bonus_quota=bonus_quota+? WHERE id=?", (INVITE_REWARD, inviter["id"]))
-        conn.commit()
+            conn.commit()
+            # 记录邀请历史和奖励流水
+            from common.auth import record_invite_history, record_invite_reward
+            record_invite_history(inviter["id"], uid, invite_code.strip().upper())
+            record_invite_reward(uid, INVITE_REWARD, "invite", f"邀请码 {invite_code} 注册奖励")
+            record_invite_reward(inviter["id"], INVITE_REWARD, "invite", f"邀请 {username} 注册奖励")
+        else:
+            conn.commit()
     finally:
         conn.close()
     # v17.0：新注册用户自动授予 7 天 Pro 试用
@@ -894,6 +901,76 @@ def get_invite_info(user_id: str) -> dict:
         "reward_per_invite": INVITE_REWARD,
         "invited_users": invited,
     }
+
+
+def record_invite_history(inviter_id: str, invitee_id: str, invite_code: str) -> None:
+    """记录邀请历史。"""
+    from common.db import get_db
+    import uuid
+    hid = f"ih_{uuid.uuid4().hex[:12]}"
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO invite_history (id, inviter_id, invitee_id, invite_code, reward_type, reward_amount, status, created_at) VALUES (?, ?, ?, ?, 'invite', ?, 'completed', ?)",
+            (hid, inviter_id, invitee_id, invite_code, INVITE_REWARD, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_invite_reward(user_id: str, amount: int, source: str, description: str) -> None:
+    """记录奖励流水。"""
+    from common.db import get_db
+    import uuid
+    rid = f"ir_{uuid.uuid4().hex[:12]}"
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO invite_rewards (id, user_id, reward_type, amount, source, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (rid, user_id, 'invite', amount, source, description, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_invite_history(user_id: str, limit: int = 50) -> dict:
+    """获取邀请历史列表。"""
+    from common.db import get_db
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT ih.id, ih.invitee_id, u.username AS invitee_name, u.created_at AS joined_at, ih.reward_amount, ih.status
+               FROM invite_history ih
+               LEFT JOIN users u ON u.id = ih.invitee_id
+               WHERE ih.inviter_id = ?
+               ORDER BY ih.created_at DESC
+               LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+        history = [dict(r) for r in rows]
+        total = len(history)
+    finally:
+        conn.close()
+    return {"history": history, "total": total}
+
+
+def get_invite_rewards(user_id: str, limit: int = 50) -> dict:
+    """获取奖励流水列表。"""
+    from common.db import get_db
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, reward_type, amount, source, description, created_at FROM invite_rewards WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        rewards = [dict(r) for r in rows]
+        total = len(rewards)
+        total_amount = sum(r["amount"] for r in rewards)
+    finally:
+        conn.close()
+    return {"rewards": rewards, "total": total, "total_amount": total_amount}
 
 
 def ensure_admin_user() -> None:
