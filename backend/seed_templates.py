@@ -61,6 +61,23 @@ def seed_templates() -> int:
     """幂等填充种子模板，返回插入条数。"""
     conn = get_db()
     try:
+        # 确保表存在（v17.4 仅建表于生产环境，测试库/新库需幂等建表）
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                category TEXT DEFAULT '',
+                tool_id TEXT DEFAULT '',
+                price REAL DEFAULT 0,
+                usage_count INTEGER DEFAULT 0,
+                sales INTEGER DEFAULT 0,
+                creator_id TEXT DEFAULT '',
+                active INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT
+            )"""
+        )
         count = conn.execute("SELECT COUNT(*) FROM templates").fetchone()[0]
         if count > 0:
             return 0
