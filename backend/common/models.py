@@ -36,6 +36,7 @@ class AssistantChatRequest(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=20, pattern=r"^[\w\u4e00-\u9fa5-]+$", description="用户名")
     password: str = Field(..., min_length=6, max_length=64, description="密码")
+    email: str = Field("", max_length=120, description="邮箱（可选，用于密码重置/试用提醒）")
     invite_code: str = Field("", description="邀请码（可选）")
     share_ref: str = Field("", description="分享来源码（可选，用于渠道转化统计）")
 
@@ -49,6 +50,7 @@ class OrderCreateRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     nickname: str | None = Field(None, max_length=30, description="昵称")
     avatar: str | None = Field(None, max_length=500, description="头像 URL")
+    email: str | None = Field(None, max_length=120, description="邮箱（用于密码重置/试用提醒）")
 
 
 class ChangePasswordRequest(BaseModel):

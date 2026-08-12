@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notify", tags=["通知渠道"])
 
 
+def _test_to() -> str:
+    """测试邮件收件人：优先 SMTP_USER（163 邮箱即发件人），避免未配置收件人时失败。"""
+    import os
+
+    return os.environ.get("SMTP_TEST_TO", "") or os.environ.get("SMTP_USER", "")
+
+
 def _ensure_table():
     conn = get_db()
     try:
@@ -170,7 +177,27 @@ def update_config(payload: dict, current_user: dict = Depends(require_auth)):
 
 @router.post("/test-email")
 def test_email(current_user: dict = Depends(require_auth)):
-    """发送测试邮件。"""
+    """发送测试邮件（优先使用平台全局 SMTP，其次用户自定义配置）。"""
+    from common.mailer import is_smtp_configured, send_email as global_send
+
+    # 优先：平台全局 SMTP（backend/.env 配置）
+    if is_smtp_configured():
+        to = _test_to()
+        res = global_send(
+            to=to,
+            subject="[小团智能平台] 测试邮件",
+            html=f"""<html><body>
+            <h2>小团智能平台 - 通知测试</h2>
+            <p>这是一封测试邮件，用于验证 SMTP 配置是否正确。</p>
+            <p>发送时间：{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+            <hr><p style='color:#999;font-size:12px'>小团智能平台 · AI赋能智效未来</p>
+            </body></html>""",
+        )
+        if res.get("ok"):
+            return {"message": "测试邮件发送成功", "to": to}
+        raise HTTPException(400, res.get("reason", "邮件发送失败"))
+
+    # 回退：用户自定义 SMTP 配置
     conn = get_db()
     try:
         cfg = conn.execute(

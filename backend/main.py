@@ -710,9 +710,9 @@ async def login(request: Request, req: LoginRequest):
 @app.post("/api/auth/register")
 @limiter.limit(_rl("3 per minute"))
 async def register(request: Request, req: RegisterRequest):
-    """注册新用户（可选邀请码/分享来源，各自触发奖励或转化统计）。"""
+    """注册新用户（可选邀请码/分享来源/邮箱）。"""
     try:
-        return register_user(req.username, req.password, req.invite_code, req.share_ref)
+        return register_user(req.username, req.password, req.invite_code, req.share_ref, req.email)
     except ValueError as e:
         raise HTTPException(400, "请求参数错误") from e
 
@@ -868,8 +868,8 @@ async def get_me(current_user: dict = require_auth()):
 
 @app.put("/api/auth/me")
 async def update_me(req: ProfileUpdateRequest, current_user: dict = require_auth()):
-    """更新昵称/头像。"""
-    return update_user_profile(current_user.get("user_id"), nickname=req.nickname, avatar=req.avatar)
+    """更新昵称/头像/邮箱。"""
+    return update_user_profile(current_user.get("user_id"), nickname=req.nickname, avatar=req.avatar, email=req.email)
 
 
 @app.put("/api/auth/password")
@@ -891,11 +891,26 @@ async def quota(current_user: dict = require_auth()):
 @app.post("/api/auth/forgot-password")
 @limiter.limit(_rl("3 per minute"))
 async def forgot_password(request: Request, req: ForgotPasswordRequest):
-    """生成密码重置令牌（30 分钟有效）。"""
+    """生成密码重置令牌（30 分钟有效）并发送邮件。"""
     result = send_password_reset_token(req.username)
     if result.get("sent"):
-        # 生产环境应发送邮件；开发环境返回 token 便于测试
-        return {"sent": True, "message": "重置令牌已生成，请查收邮件（开发模式：查看日志）"}
+        from common.mailer import is_smtp_configured, send_password_reset_email
+        # 若 SMTP 已配置，尝试真实发送邮件；未配置时返回 token 便于开发测试
+        if is_smtp_configured():
+            from common.db import get_db
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT id, email FROM users WHERE username=? AND active=1",
+                    (req.username,),
+                ).fetchone()
+            finally:
+                conn.close()
+            to_email = row["email"] if row else ""
+            if to_email and result.get("token"):
+                reset_link = f"{os.environ.get('APP_BASE_URL', 'http://localhost:5173')}/reset-password?token={result['token']}"
+                send_password_reset_email(to_email, req.username, reset_link)
+        return {"sent": True, "message": "重置令牌已生成，请查收邮件"}
     raise HTTPException(400, result.get("reason", "操作失败"))
 
 

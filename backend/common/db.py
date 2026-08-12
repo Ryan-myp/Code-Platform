@@ -635,6 +635,8 @@ def migrate() -> None:
         _add_column_if_missing(conn, "users", "reset_token", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "users", "reset_token_expires", "TEXT")
         _add_column_if_missing(conn, "users", "trial_expires", "TEXT")
+        # v17.6 邮件系统：用户邮箱（密码重置 / 试用提醒）
+        _add_column_if_missing(conn, "users", "email", "TEXT DEFAULT ''")
         # v17.0 usage_logs 增强：按功能/模型/来源拆分记录
         _add_column_if_missing(conn, "usage_logs", "feature", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "usage_logs", "model", "TEXT DEFAULT ''")

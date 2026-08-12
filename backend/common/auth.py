@@ -164,8 +164,8 @@ def login_user(username: str, password: str) -> dict:
             conn.close()
 
 
-def register_user(username: str, password: str, invite_code: str = "", share_from: str = "") -> dict:
-    """注册新用户（可选邀请码，双方各奖励一次性额度；可选分享来源用于转化统计）。"""
+def register_user(username: str, password: str, invite_code: str = "", share_from: str = "", email: str = "") -> dict:
+    """注册新用户（可选邀请码，双方各奖励一次性额度；可选分享来源用于转化统计；可选邮箱用于密码重置/试用提醒）。"""
     from common.db import get_db
 
     conn = get_db()
@@ -186,8 +186,8 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
         if share_ref and not conn.execute("SELECT id FROM shares WHERE share_code=?", (share_ref,)).fetchone():
             share_ref = ""
         conn.execute(
-            """INSERT INTO users (id, username, password_hash, role, active, created_at, invite_code, invited_by, share_from)
-               VALUES (?, ?, ?, 'user', 1, ?, ?, ?, ?)""",
+            """INSERT INTO users (id, username, password_hash, role, active, created_at, invite_code, invited_by, share_from, email)
+               VALUES (?, ?, ?, 'user', 1, ?, ?, ?, ?, ?)""",
             (
                 uid,
                 username,
@@ -196,6 +196,7 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
                 _gen_invite_code(),
                 inviter["id"] if inviter else "",
                 share_ref,
+                (email or "").strip(),
             ),
         )
         if inviter:
@@ -313,6 +314,7 @@ def get_user_profile(user_id: str) -> dict:
         "username": row["username"],
         "nickname": row.get("nickname") or "",
         "avatar": row.get("avatar") or "",
+        "email": row.get("email") or "",
         "role": row["role"],
         "membership": membership,
         "membership_expires": row.get("membership_expires"),
@@ -327,8 +329,8 @@ def get_user_profile(user_id: str) -> dict:
     }
 
 
-def update_user_profile(user_id: str, nickname: str = None, avatar: str = None) -> dict:
-    """更新昵称/头像，返回最新资料。"""
+def update_user_profile(user_id: str, nickname: str = None, avatar: str = None, email: str = None) -> dict:
+    """更新昵称/头像/邮箱，返回最新资料。"""
     from common.db import get_db
 
     conn = get_db()
@@ -340,6 +342,9 @@ def update_user_profile(user_id: str, nickname: str = None, avatar: str = None) 
         if avatar is not None:
             sets.append("avatar=?")
             params.append(avatar[:500])
+        if email is not None:
+            sets.append("email=?")
+            params.append((email or "").strip()[:120])
         if sets:
             params.append(user_id)
             conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", params)

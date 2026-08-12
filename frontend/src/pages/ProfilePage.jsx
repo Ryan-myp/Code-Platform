@@ -10,6 +10,7 @@ import {
   Gift,
   Loader2,
   Lock,
+  Mail,
   Save,
   Sparkles,
   TrendingUp,
@@ -54,6 +55,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
   // 资料表单
   const [nickname, setNickname] = useState('')
   const [avatar, setAvatar] = useState('')
+  const [email, setEmail] = useState('')
   const [saving, setSaving] = useState(false)
 
   // 密码表单
@@ -98,6 +100,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
       setProfile(data)
       setNickname(data.nickname || '')
       setAvatar(data.avatar || '')
+      setEmail(data.email || '')
     } catch (err) {
       toast.error(err.message || '加载个人资料失败')
     } finally {
@@ -112,6 +115,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
       const res = await api.put('/api/auth/me', {
         nickname: nickname.trim(),
         avatar: avatar.trim(),
+        email: email.trim(),
       })
       setProfile(res.data)
       // 同步全局用户信息
@@ -379,6 +383,21 @@ export default function ProfilePage({ user, onUserUpdate }) {
                     className={`${inputCls} bg-ink-50 text-ink-400`}
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">邮箱</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-400" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className={`${inputCls} pl-10`}
+                    placeholder="用于密码重置与试用提醒（如 xx@163.com）"
+                    maxLength={120}
+                  />
+                </div>
+                <p className="text-xs text-ink-400 mt-1.5">填写后可接收密码重置、试用到期等邮件通知</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-ink-700 mb-1.5">头像 URL</label>
