@@ -1364,9 +1364,7 @@ async def _generate_script(scene_data: dict) -> str:
     characters = scene_data.get("characters", [])
     
     # 简化的剧本生成逻辑
-    script = f"场景：{scene}
-
-"
+    script = f"场景：{scene}"
     
     for char in characters:
         name = char.get("name", "角色")
