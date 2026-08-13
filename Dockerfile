@@ -32,8 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV LANG=zh_CN.UTF-8 LANGUAGE=zh_CN:en LC_ALL=zh_CN.UTF-8
 
-# 复制依赖文件
-COPY requirements.txt .
+# 复制依赖文件（使用 backend/requirements.txt——根目录旧版含 Apple 内部路径不可用）
+COPY backend/requirements.txt requirements.txt
 COPY pyproject.toml .
 
 # 创建虚拟环境并安装所有Python依赖
@@ -67,7 +67,7 @@ RUN mkdir -p backend/.optimizer_reports \
 ENV PYTHONUNBUFFERED=1 \
     APP_ENV=production \
     DATABASE_URL=sqlite:///./backend/platform.db \
-    PYTHONPATH="/app:$PYTHONPATH"
+    PYTHONPATH="/app/backend:$PYTHONPATH"
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
@@ -76,5 +76,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # 暴露端口
 EXPOSE 8888
 
-# 启动命令
+# 启动命令（backend 代码在 /app/backend，切换工作目录后 uvicorn main:app 才能找到）
+WORKDIR /app/backend
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8888", "--log-level", "info"]

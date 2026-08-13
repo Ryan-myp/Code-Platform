@@ -73,7 +73,8 @@ ENV LANG=zh_CN.UTF-8 \
     LC_ALL=zh_CN.UTF-8
 
 # ===== 复制依赖文件 =====
-COPY requirements.txt .
+# 使用 backend/requirements.txt（根目录旧版含 Apple 内部路径不可用）
+COPY backend/requirements.txt requirements.txt
 COPY pyproject.toml .
 
 # ===== 创建虚拟环境并安装所有Python依赖 =====
