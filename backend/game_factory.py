@@ -1266,6 +1266,80 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
 
 
 @router.get("/{proj_id}/publish-pack")
+
+def _game_pack_entries(root: str, files: dict, row: dict) -> dict:
+    """游戏发布包文件条目（web/wx 双版本 + 封面）。"""
+    entries: dict = {}
+    for version in ("web", "wx"):
+        if version not in files:
+            continue
+        for path in sorted(files[version].keys()):
+            entries[root + "/" + version + "/" + path.lstrip("/")] = files[version][path]
+    cover_src = None
+    for ext in ("png", "jpg"):
+        p = os.path.join(COVER_DIR, row["id"] + "." + ext)
+        if os.path.exists(p):
+            cover_src = p
+            break
+    if cover_src:
+        entries[root + "/封面." + cover_src.rsplit(".", 1)[-1]] = cover_src
+    return entries
+
+
+def _game_pack_readme(row: dict) -> str:
+    """游戏发布包 README 内容。"""
+    NL = "\n"
+    return (
+        "# 《" + row["name"] + "》AI 小游戏" + NL + NL + "- 模板：" + row.get("template", "自定义") + NL
+        + "- 说明：" + str(row.get("requirement", ""))[:200] + NL + NL
+        + "## 目录" + NL
+        + "- `web/`：网页版，index.html 双击即玩，也可部署到 GitHub Pages/云托管等任意静态站点" + NL
+        + "- `wx/`：微信小游戏原生项目，用微信开发者工具导入即可编译" + NL
+        + "- `封面`：游戏封面图（平台审核与商店展示用）" + NL + NL
+        + "## 发布方式" + NL
+        + "1. 网页版：静态托管（GitHub Pages / 腾讯云 / 自有服务器），分享链接即可传播；" + NL
+        + "2. 微信小游戏：mp.weixin.qq.com 注册小游戏账号 → 开发者工具上传 → 提交审核 → 发布。"
+    )
+
+
+def _game_pack_guide(guide: dict) -> str:
+    """游戏上线清单内容。"""
+    NL = "\n"
+    return (
+        "# 上线清单（发布前逐项核对）" + NL + NL + "## 部署步骤" + NL
+        + NL.join(f"{i + 1}. {s}" for i, s in enumerate(guide.get("steps", [])))
+        + NL + NL + "## 备注" + NL + str(guide.get("note", "")) + NL + NL
+        + "## 提交审核物料" + NL
+        + "- 游戏名称、简介（取自项目名，可在公众平台修改）" + NL
+        + "- 封面图（本包已附带，建议 ≥800×800）" + NL
+        + "- 截图：试玩页面截图 1-5 张（微信审核必填，需含主要玩法画面）" + NL
+        + "- 类目：选择「游戏」类目，个人主体支持大部分休闲游戏" + NL
+        + "- 隐私声明：如涉及用户信息需在后台填写（本项目默认不采集）"
+    )
+
+
+def _game_pack_qc_report(row: dict) -> str | None:
+    """游戏质量自检报告（失败返回 None）。"""
+    try:
+        qc = json.loads(row.get("qc") or "null")
+        name_check = check_text(row["name"], "文案")
+        req_check = check_text(row.get("requirement") or "", "prompt") if row.get("requirement") else None
+        failed = [c for c in (qc or {}).get("checks", []) if not c.get("ok")]
+        extra = [
+            f"QC门禁：{'全部通过' if (qc or {}).get('ok') else f'{len(failed)}项未通过'}",
+            "双版本：web（网页版）+ wx（微信小游戏）",
+        ]
+        return quality_report(
+            f"小游戏《{row['name']}》",
+            text_check=name_check if name_check and not name_check["ok"] else (req_check if req_check and not req_check["ok"] else None),
+            image_quality=None,
+            extra=extra,
+        )
+    except Exception as e:
+        logger.debug(f"游戏质量自检报告生成失败: {e}")
+        return None
+
+
 async def game_publish_pack(proj_id: str, current_user: dict = require_auth()):
     """游戏发布包：网页成品 + 微信小游戏包 + 封面 + 上线清单 + 质量报告，一键交付可发布。"""
     conn = get_db()
@@ -1279,65 +1353,16 @@ async def game_publish_pack(proj_id: str, current_user: dict = require_auth()):
         raise HTTPException(400, "项目没有文件")
 
     root = pack_dir_name("game_release")
-    entries: dict = {}
-    for version in ("web", "wx"):
-        if version not in files:
-            continue
-        for path in sorted(files[version].keys()):
-            entries[f"{root}/{version}/{path.lstrip('/')}"] = files[version][path]
-    # 封面（AI 封面或用户上传，存在则附带）
-    cover_src = None
-    for ext in ("png", "jpg"):
-        p = os.path.join(COVER_DIR, f"{proj_id}.{ext}")
-        if os.path.exists(p):
-            cover_src = p
-            break
-    if cover_src:
-        entries[f"{root}/封面.{cover_src.rsplit('.', 1)[-1]}"] = cover_src  # key=zip 路径, value=磁盘路径
-
-    entries[f"{root}/README.md"] = (
-        f"# 《{row['name']}》AI 小游戏\n\n- 模板：{row.get('template', '自定义')}\n"
-        f"- 说明：{row.get('requirement', '')[:200]}\n\n"
-        "## 目录\n"
-        "- `web/`：网页版，index.html 双击即玩，也可部署到 GitHub Pages/云托管等任意静态站点\n"
-        "- `wx/`：微信小游戏原生项目，用微信开发者工具导入即可编译\n"
-        "- `封面`：游戏封面图（平台审核与商店展示用）\n\n"
-        "## 发布方式\n"
-        "1. 网页版：静态托管（GitHub Pages / 腾讯云 / 自有服务器），分享链接即可传播；\n"
-        "2. 微信小游戏：mp.weixin.qq.com 注册小游戏账号 → 开发者工具上传 → 提交审核 → 发布。"
-    )
+    entries = _game_pack_entries(root, files, row)
+    entries[f"{root}/README.md"] = _game_pack_readme(row)
     guide = await deploy_guide(current_user=current_user)
-    entries[f"{root}/上线清单.md"] = (
-        "# 上线清单（发布前逐项核对）\n\n## 部署步骤\n"
-        + "\n".join(f"{i + 1}. {s}" for i, s in enumerate(guide.get("steps", [])))
-        + f"\n\n## 备注\n{guide.get('note', '')}\n\n"
-        "## 提交审核物料\n"
-        "- 游戏名称、简介（取自项目名，可在公众平台修改）\n"
-        "- 封面图（本包已附带，建议 ≥800×800）\n"
-        "- 截图：试玩页面截图 1-5 张（微信审核必填，需含主要玩法画面）\n"
-        "- 类目：选择「游戏」类目，个人主体支持大部分休闲游戏\n"
-        "- 隐私声明：如涉及用户信息需在后台填写（本项目默认不采集）"
-    )
+    entries[f"{root}/上线清单.md"] = _game_pack_guide(guide)
     entries[f"{root}/LICENSE.txt"] = license_text(f"小游戏《{row['name']}》")
 
     # 生产级内容保障：质量自检报告（QC 门禁 + 名称/需求安全审核）
-    try:
-        qc = json.loads(row.get("qc") or "null")
-        name_check = check_text(row["name"], "文案")
-        req_check = check_text(row.get("requirement") or "", "prompt") if row.get("requirement") else None
-        failed = [c for c in (qc or {}).get("checks", []) if not c.get("ok")]
-        extra = [
-            f"QC门禁：{'全部通过' if (qc or {}).get('ok') else f'{len(failed)}项未通过'}",
-            "双版本：web（网页版）+ wx（微信小游戏）",
-        ]
-        entries[f"{root}/质量自检报告.md"] = quality_report(
-            f"小游戏《{row['name']}》",
-            text_check=name_check if name_check and not name_check["ok"] else (req_check if req_check and not req_check["ok"] else None),
-            image_quality=None,
-            extra=extra,
-        )
-    except Exception as e:
-        logger.debug(f"游戏质量自检报告生成失败: {e}")
+    qc_report = _game_pack_qc_report(row)
+    if qc_report:
+        entries[f"{root}/质量自检报告.md"] = qc_report
 
     buf = build_publish_zip(entries, "game_release")
     publish = publish_registry.publish("game_platform", {"proj": proj_id, "name": row["name"]})
