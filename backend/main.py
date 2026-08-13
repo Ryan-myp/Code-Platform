@@ -1,4 +1,21 @@
 #!/usr/bin/env python3
+
+def _search_kb_simple(query: str, kb: list, limit: int) -> list:
+    """简化版知识库搜索。"""
+    results = []
+    for item in kb:
+        if query.lower() in str(item).lower():
+            results.append(item)
+            if len(results) >= limit:
+                break
+    return results
+
+def _prepare_kb_query(request_data: dict) -> dict:
+    """简化版准备知识库查询。"""
+    return {
+        "query": request_data.get("query", ""),
+        "limit": request_data.get("limit", 10)
+    }
 """小团智能平台 v8.0 — AI 赋能各行各业，智能解决工作难题。
 
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。

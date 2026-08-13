@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
 
+def _compute_five_dim_simple(stock_data: dict) -> dict:
+    """简化版五维信号计算。"""
+    # 简化的五维信号计算
+    return {
+        "trend": "up" if stock_data.get("price_change", 0) > 0 else "down",
+        "momentum": "strong" if abs(stock_data.get("volume_change", 0)) > 0.1 else "weak",
+        "volatility": "high" if stock_data.get("volatility", 0) > 0.3 else "low",
+        "liquidity": "good" if stock_data.get("volume", 0) > 1000000 else "poor",
+        "sentiment": "positive" if stock_data.get("news_score", 0) > 0 else "negative"
+    }
+
+def _prepare_five_dim_params(request_data: dict) -> dict:
+    """简化版准备五维信号参数。"""
+    return {
+        "symbol": request_data.get("symbol", ""),
+        "period": request_data.get("period", "1d"),
+        "indicators": request_data.get("indicators", [])
+    }
+
 def _calculate_returns_simple(closes: list) -> list:
     """简化版计算收益率。"""
     returns = []

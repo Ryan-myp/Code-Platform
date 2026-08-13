@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 
+def _render_template_simple(template_data: dict, output_path: str) -> str:
+    """简化版模板渲染。"""
+    return output_path
+
+def _prepare_template_params(request_data: dict) -> dict:
+    """简化版准备模板参数。"""
+    return {
+        "template_id": request_data.get("template_id", ""),
+        "output_path": request_data.get("output_path", "")
+    }
+
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field

@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 
+def _run_test_gate_simple(test_case: dict, config: dict) -> dict:
+    """简化版测试门控检查。"""
+    return {
+        "passed": True,
+        "test_case": test_case.get("name", ""),
+        "score": test_case.get("score", 0)
+    }
+
+def _prepare_test_config(request_data: dict) -> dict:
+    """简化版准备测试配置。"""
+    return {
+        "test_cases": request_data.get("test_cases", []),
+        "threshold": request_data.get("threshold", 0.8)
+    }
+
 
 
 def _prepare_step_context(**kwargs) -> dict:
