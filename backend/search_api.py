@@ -72,6 +72,154 @@ def _score_result(doc: dict, keywords: list) -> int:
 
 
 @router.get("/quick")
+
+def _qs_search_tools(keywords: list) -> list:
+    """搜索内置工具。"""
+    results = []
+    for tool in TOOLS:
+        text = f"{tool['name']} {tool['desc']}"
+        if any(kw in text.lower() for kw in keywords):
+            tool_copy = dict(tool)
+            tool_copy["score"] = _score_result(tool_copy, keywords)
+            results.append(tool_copy)
+    return results
+
+
+def _qs_search_templates(conn, q: str, keywords: list) -> list:
+    """搜索内置模板 + 用户自定义模板。"""
+    results = []
+    try:
+        rows = conn.execute(
+            """SELECT id, name, description, category, tool_id, usage_count
+               FROM templates
+               WHERE (name LIKE ? OR description LIKE ?)
+               ORDER BY usage_count DESC
+               LIMIT 10""",
+            (f"%{q}%", f"%{q}%"),
+        ).fetchall()
+        for r in rows:
+            doc = {
+                "id": r["id"], "name": r["name"], "description": r["description"] or "",
+                "category": r["category"], "tool_id": r["tool_id"],
+                "usage_count": r["usage_count"], "type": "template", "source": "builtin",
+            }
+            doc["score"] = _score_result(doc, keywords)
+            results.append(doc)
+    except Exception as e:
+        logger.debug(f"Builtin template search error: {e}")
+    try:
+        rows = conn.execute(
+            """SELECT id, name, description, created_at
+               FROM user_templates
+               WHERE (name LIKE ? OR description LIKE ?)
+               ORDER BY created_at DESC
+               LIMIT 10""",
+            (f"%{q}%", f"%{q}%"),
+        ).fetchall()
+        for r in rows:
+            doc = {
+                "id": r["id"], "name": r["name"], "description": r["description"] or "",
+                "type": "template", "source": "user_template", "created_at": r["created_at"],
+            }
+            doc["score"] = _score_result(doc, keywords)
+            results.append(doc)
+    except Exception as e:
+        logger.debug(f"Template search error: {e}")
+    return results
+
+
+def _qs_search_work(conn, q: str, keywords: list) -> list:
+    """搜索对话/需求/项目。"""
+    results = []
+    try:
+        conv_rows = conn.execute(
+            """SELECT id, title as name, agent_id as source_id, created_at
+               FROM conversations
+               WHERE title LIKE ?
+               ORDER BY created_at DESC
+               LIMIT 5""",
+            (f"%{q}%",),
+        ).fetchall()
+        for r in conv_rows:
+            doc = {"id": r["id"], "name": r["name"], "type": "conversation",
+                   "source": "chat", "created_at": r["created_at"]}
+            doc["score"] = _score_result(doc, keywords)
+            results.append(doc)
+        req_rows = conn.execute(
+            """SELECT id, name, description, status
+               FROM requirements
+               WHERE name LIKE ? OR description LIKE ?
+               ORDER BY created_at DESC
+               LIMIT 5""",
+            (f"%{q}%", f"%{q}%"),
+        ).fetchall()
+        for r in req_rows:
+            doc = {"id": r["id"], "name": r["name"], "description": r["description"] or "",
+                   "type": "requirement", "source": "task", "status": r["status"]}
+            doc["score"] = _score_result(doc, keywords)
+            results.append(doc)
+        proj_rows = conn.execute(
+            """SELECT id, name, description, status
+               FROM projects
+               WHERE name LIKE ? OR description LIKE ?
+               ORDER BY created_at DESC
+               LIMIT 5""",
+            (f"%{q}%", f"%{q}%"),
+        ).fetchall()
+        for r in proj_rows:
+            doc = {"id": r["id"], "name": r["name"], "description": r["description"] or "",
+                   "type": "project", "source": "project", "status": r["status"]}
+            doc["score"] = _score_result(doc, keywords)
+            results.append(doc)
+    except Exception as e:
+        logger.debug(f"Work search error: {e}")
+    return results
+
+
+def _qs_search_recent(conn, user_id: str) -> list:
+    """搜索最近使用的工具。"""
+    results = []
+    try:
+        recent_rows = conn.execute(
+            """SELECT DISTINCT feature as name, model, created_at
+               FROM usage_logs
+               WHERE user_id = ?
+               ORDER BY created_at DESC
+               LIMIT 5""",
+            (user_id,),
+        ).fetchall()
+        for r in recent_rows:
+            doc = {"id": r["name"], "name": r["name"], "type": "recent",
+                   "score": 1, "created_at": r["created_at"]}
+            results.append(doc)
+    except Exception:
+        pass
+    return results
+
+
+def _qs_finalize(results: list, keywords: list, q: str, limit: int) -> dict:
+    """排序去重 + 搜索建议。"""
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    seen = set()
+    unique_results = []
+    for r in results:
+        key = f"{r.get('type', 'unknown')}:{r.get('id', '')}"
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(r)
+    suggestions = []
+    if len(keywords) == 1:
+        kw = keywords[0]
+        suggest_queries = [f"{kw} 模板", f"{kw} 工具", f"{kw} AI生成", f"如何使用 {kw}"]
+        suggestions = [s for s in suggest_queries if kw in s][:5]
+    return {
+        "query": q,
+        "results": unique_results[:limit],
+        "total": len(unique_results),
+        "suggestions": suggestions,
+        "time_ms": 50,
+    }
+
 async def quick_search(
     q: str = Query(..., min_length=1, description="搜索关键词"),
     limit: int = Query(20, ge=1, le=50, description="返回数量"),
@@ -88,182 +236,19 @@ async def quick_search(
     conn = get_db()
     try:
         results = []
+        user_id = current_user.get("user_id", "")
         
         # 1. 搜索工具
-        for tool in TOOLS:
-            text = f"{tool['name']} {tool['desc']}"
-            if any(kw in text.lower() for kw in keywords):
-                tool_copy = dict(tool)
-                tool_copy["score"] = _score_result(tool_copy, keywords)
-                results.append(tool_copy)
-        
-        # 2. 搜索模板（内置 templates 表 + 用户自定义 user_templates）
-        try:
-            rows = conn.execute(
-                """SELECT id, name, description, category, tool_id, usage_count
-                   FROM templates
-                   WHERE (name LIKE ? OR description LIKE ?)
-                   ORDER BY usage_count DESC
-                   LIMIT 10""",
-                (f"%{q}%", f"%{q}%")
-            ).fetchall()
-            for r in rows:
-                doc = {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "description": r["description"] or "",
-                    "category": r["category"],
-                    "tool_id": r["tool_id"],
-                    "usage_count": r["usage_count"],
-                    "type": "template",
-                    "source": "builtin",
-                }
-                doc["score"] = _score_result(doc, keywords)
-                results.append(doc)
-        except Exception as e:
-            logger.debug(f"Builtin template search error: {e}")
-
-        try:
-            rows = conn.execute(
-                """SELECT id, name, description, created_at
-                   FROM user_templates 
-                   WHERE (name LIKE ? OR description LIKE ?)
-                   ORDER BY created_at DESC
-                   LIMIT 10""",
-                (f"%{q}%", f"%{q}%")
-            ).fetchall()
-            for r in rows:
-                doc = {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "description": r["description"] or "",
-                    "type": "template",
-                    "source": "user_template",
-                    "created_at": r["created_at"],
-                }
-                doc["score"] = _score_result(doc, keywords)
-                results.append(doc)
-        except Exception as e:
-            logger.debug(f"Template search error: {e}")
-        
-        # 3. 搜索任务/项目 (recent work)
-        try:
-            user_id = current_user.get("user_id", "")
-            # 搜索conversations
-            conv_rows = conn.execute(
-                """SELECT id, title as name, agent_id as source_id, created_at
-                   FROM conversations 
-                   WHERE title LIKE ?
-                   ORDER BY created_at DESC
-                   LIMIT 5""",
-                (f"%{q}%",)
-            ).fetchall()
-            for r in conv_rows:
-                doc = {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "type": "conversation",
-                    "source": "chat",
-                    "created_at": r["created_at"],
-                }
-                doc["score"] = _score_result(doc, keywords)
-                results.append(doc)
-            
-            # 搜索requirements
-            req_rows = conn.execute(
-                """SELECT id, name, description, status
-                   FROM requirements 
-                   WHERE name LIKE ? OR description LIKE ?
-                   ORDER BY created_at DESC
-                   LIMIT 5""",
-                (f"%{q}%", f"%{q}%")
-            ).fetchall()
-            for r in req_rows:
-                doc = {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "description": r["description"] or "",
-                    "type": "requirement",
-                    "source": "task",
-                    "status": r["status"],
-                }
-                doc["score"] = _score_result(doc, keywords)
-                results.append(doc)
-            
-            # 搜索projects
-            proj_rows = conn.execute(
-                """SELECT id, name, description, status
-                   FROM projects 
-                   WHERE name LIKE ? OR description LIKE ?
-                   ORDER BY created_at DESC
-                   LIMIT 5""",
-                (f"%{q}%", f"%{q}%")
-            ).fetchall()
-            for r in proj_rows:
-                doc = {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "description": r["description"] or "",
-                    "type": "project",
-                    "source": "project",
-                    "status": r["status"],
-                }
-                doc["score"] = _score_result(doc, keywords)
-                results.append(doc)
-        except Exception as e:
-            logger.debug(f"Work search error: {e}")
-        
+        results += _qs_search_tools(keywords)
+        # 2. 搜索模板
+        results += _qs_search_templates(conn, q, keywords)
+        # 3. 搜索工作（对话/需求/项目）
+        results += _qs_search_work(conn, q, keywords)
         # 4. 搜索最近使用的工具
-        try:
-            recent_rows = conn.execute(
-                """SELECT DISTINCT feature as name, model, created_at
-                   FROM usage_logs 
-                   WHERE user_id = ?
-                   ORDER BY created_at DESC
-                   LIMIT 5""",
-                (user_id,)
-            ).fetchall()
-            for r in recent_rows:
-                doc = {
-                    "id": r["name"],
-                    "name": r["name"],
-                    "type": "recent",
-                    "score": 1,
-                    "created_at": r["created_at"],
-                }
-                results.append(doc)
-        except Exception:
-            pass
+        results += _qs_search_recent(conn, user_id)
         
-        # 排序并去重
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        seen = set()
-        unique_results = []
-        for r in results:
-            key = f"{r.get('type', 'unknown')}:{r.get('id', '')}"
-            if key not in seen:
-                seen.add(key)
-                unique_results.append(r)
-        
-        # 搜索建议
-        suggestions = []
-        if len(keywords) == 1:
-            kw = keywords[0]
-            suggest_queries = [
-                f"{kw} 模板",
-                f"{kw} 工具",
-                f"{kw} AI生成",
-                f"如何使用 {kw}",
-            ]
-            suggestions = [s for s in suggest_queries if kw in s][:5]
-        
-        return {
-            "query": q,
-            "results": unique_results[:limit],
-            "total": len(unique_results),
-            "suggestions": suggestions,
-            "time_ms": 50,
-        }
+        # 排序去重 + 搜索建议
+        return _qs_finalize(results, keywords, q, limit)
     finally:
         conn.close()
 

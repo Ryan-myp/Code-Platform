@@ -767,6 +767,82 @@ def _ensure_publish_columns(conn) -> None:
 
 
 @router.post("/submit")
+
+def _publish_pick_candidates(acc: dict | None, platform: str) -> list:
+    """配额感知选号：指定账号 + 同平台有配额账号（最多3个候选）。"""
+    candidates = []
+    if acc:
+        candidates.append(acc)
+    conn2 = get_db()
+    for r in conn2.execute(
+        "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at",
+        (platform,),
+    ).fetchall():
+        if all(c["id"] != r["id"] for c in candidates) and _count_today_published(conn2, r["id"]) < int(
+            r.get("daily_limit") or 10
+        ):
+            candidates.append(dict(r))
+    conn2.close()
+    return candidates[:3]
+
+
+async def _publish_auto_try(candidates: list, req: PublishRequest, adapted_json: str, record_id: str, acc) -> tuple:
+    """自动发布 + 账号矩阵换号重试。成功返回结果 dict，全部失败返回 None。"""
+    last_err = ""
+    for acc_try in candidates:
+        try:
+            post_id = await _auto_publish(acc_try, req)
+            conn = get_db()
+            _ensure_publish_columns(conn)
+            conn.execute(
+                """UPDATE publish_records SET status='success', mode='auto', account_id=?, platform_post_id=?,
+                   adapted=? WHERE id=?""",
+                (acc_try["id"], post_id, adapted_json, record_id),
+            )
+            conn.commit()
+            conn.close()
+            return {
+                "record_id": record_id,
+                "mode": "auto",
+                "status": "success",
+                "platform": req.platform,
+                "platform_post_id": post_id,
+                "account_id": acc_try["id"],
+                "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功（账号：{acc_try.get('name') or '默认'}"
+                + ("，已换号重试" if acc_try["id"] != (acc or {}).get("id") else "")
+                + "）",
+            }, ""
+        except HTTPException as e:
+            last_err = str(e.detail)
+            logger.warning("auto publish failed with account %s: %s", acc_try["id"], last_err)
+            continue
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("auto publish unexpected error with account %s: %s", acc_try["id"], last_err)
+            continue
+    return None, last_err
+
+
+def _publish_guide_response(record_id: str, req: PublishRequest, adapted: dict, user: str, last_err: str = "") -> dict:
+    """引导式素材包响应（未配置账号或自动发布失败时）。"""
+    return {
+        "record_id": record_id,
+        "mode": "guide_fallback",
+        "status": "failed",
+        "error": last_err,
+        "platform": req.platform,
+        "content_type": req.content_type,
+        "title": adapted["title"],
+        "content": adapted["content"],
+        "topics": adapted["topics"],
+        "cover_url": adapted.get("cover_url", ""),
+        "adapted": adapted,
+        "asset_urls": req.asset_urls,
+        "steps": GUIDE_STEPS[req.platform][req.content_type],
+        "platform_label": PLATFORM_LABELS[req.platform],
+        "message": f"自动发布未成功（{last_err}），已生成素材包可手动发布",
+    }
+
 async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):  # noqa: C901
     """一键发布（增长引擎版）。
 
@@ -829,95 +905,26 @@ async def submit_publish(req: PublishRequest, current_user: dict = require_auth(
         save_record("pending", "guide")
         elapsed = round(time.time() - start, 2)
         log_usage("publish_guide", len(req.content or ""), len(GUIDE_STEPS[req.platform][req.content_type]), elapsed)
-        return {
-            "record_id": record_id,
-            "mode": "guide",
-            "status": "pending",
-            "platform": req.platform,
-            "content_type": req.content_type,
-            "title": adapted["title"],
-            "content": adapted["content"],
-            "topics": adapted["topics"],
-            "cover_url": adapted.get("cover_url", ""),
-            "adapted": adapted,
-            "asset_urls": req.asset_urls,
-            "steps": GUIDE_STEPS[req.platform][req.content_type],
-            "platform_label": PLATFORM_LABELS[req.platform],
-            "message": "未配置自动发布账号，已生成引导式素材包（到官方 App 粘贴即可发布）",
-        }
+        resp = _publish_guide_response(record_id, req, adapted, user)
+        resp["mode"] = "guide"
+        resp["status"] = "pending"
+        resp["message"] = "未配置自动发布账号，已生成引导式素材包（到官方 App 粘贴即可发布）"
+        return resp
 
     # 3. 自动发布 + 账号矩阵换号重试（同平台有配额账号逐个尝试）
-    candidates = []
-    if acc:
-        candidates.append(acc)
-    conn2 = get_db()
-    for r in conn2.execute(
-        "SELECT * FROM publish_accounts WHERE platform=? AND active=1 AND configured=1 ORDER BY created_at",
-        (req.platform,),
-    ).fetchall():
-        if all(c["id"] != r["id"] for c in candidates) and _count_today_published(conn2, r["id"]) < int(
-            r.get("daily_limit") or 10
-        ):
-            candidates.append(dict(r))
-    conn2.close()
-
-    last_err = ""
-    for acc_try in candidates[:3]:
-        try:
-            post_id = await _auto_publish(acc_try, req)
-            conn = get_db()
-            _ensure_publish_columns(conn)
-            conn.execute(
-                """UPDATE publish_records SET status='success', mode='auto', account_id=?, platform_post_id=?,
-                   adapted=? WHERE id=?""",
-                (acc_try["id"], post_id, adapted_json, record_id),
-            )
-            conn.commit()
-            conn.close()
-            elapsed = round(time.time() - start, 2)
-            log_usage("publish_auto", len(req.content or ""), len(post_id), elapsed)
-            return {
-                "record_id": record_id,
-                "mode": "auto",
-                "status": "success",
-                "platform": req.platform,
-                "platform_post_id": post_id,
-                "account_id": acc_try["id"],
-                "message": f"已通过{PLATFORM_LABELS[req.platform]}开放接口发布成功（账号：{acc_try.get('name') or '默认'}"
-                + ("，已换号重试" if acc_try["id"] != (acc or {}).get("id") else "")
-                + "）",
-            }
-        except HTTPException as e:
-            last_err = str(e.detail)
-            logger.warning("auto publish failed with account %s: %s", acc_try["id"], last_err)
-            continue
-        except Exception as e:
-            last_err = str(e)
-            logger.warning("auto publish unexpected error with account %s: %s", acc_try["id"], last_err)
-            continue
+    candidates = _publish_pick_candidates(acc, req.platform)
+    result, last_err = await _publish_auto_try(candidates, req, adapted_json, record_id, acc)
+    if result:
+        elapsed = round(time.time() - start, 2)
+        log_usage("publish_auto", len(req.content or ""), len(result.get("platform_post_id", "")), elapsed)
+        return result
 
     # 全部账号失败 → 回退引导式素材包（不阻断用户）
     save_record("failed", "guide_fallback", error=last_err)
     elapsed = round(time.time() - start, 2)
     log_usage("publish_auto", len(req.content or ""), 0, elapsed, success=False)
     conn.close()
-    return {
-        "record_id": record_id,
-        "mode": "guide_fallback",
-        "status": "failed",
-        "error": last_err,
-        "platform": req.platform,
-        "content_type": req.content_type,
-        "title": adapted["title"],
-        "content": adapted["content"],
-        "topics": adapted["topics"],
-        "cover_url": adapted.get("cover_url", ""),
-        "adapted": adapted,
-        "asset_urls": req.asset_urls,
-        "steps": GUIDE_STEPS[req.platform][req.content_type],
-        "platform_label": PLATFORM_LABELS[req.platform],
-        "message": f"自动发布未成功（{last_err}），已生成素材包可手动发布",
-    }
+    return _publish_guide_response(record_id, req, adapted, user, last_err)
 
 
 class CrossPostRequest(BaseModel):
