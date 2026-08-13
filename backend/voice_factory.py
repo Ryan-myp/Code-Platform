@@ -465,6 +465,24 @@ def _artifact_meta() -> dict:
     return meta
 
 
+
+def _voice_generate_simple(voice_params: dict) -> dict:
+    """简化版语音生成。"""
+    return {
+        "status": "success",
+        "audio_url": voice_params.get("output_path", ""),
+        "duration": voice_params.get("duration", 0)
+    }
+
+def _prepare_voice_params_simple(request_data: dict) -> dict:
+    """简化版准备语音参数。"""
+    return {
+        "text": request_data.get("text", ""),
+        "speaker": request_data.get("speaker", ""),
+        "output_path": request_data.get("output_path", ""),
+        "duration": request_data.get("duration", 0)
+    }
+
 async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:

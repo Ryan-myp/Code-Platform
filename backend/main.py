@@ -2740,6 +2740,22 @@ def _build_kb_context_simple(context_docs: list) -> str:
         return ""
     return "\n".join([doc.get("content", "") for doc in context_docs[:5]])
 
+
+def _search_kb_simple_v2(query: str, kb_store=None, max_results: int = 10) -> list:
+    """简化版知识库搜索。"""
+    if kb_store is None:
+        try:
+            from backend.memory.kb.memory_store import get_memory_store
+            kb_store = get_memory_store()
+        except Exception:
+            return []
+    
+    try:
+        results = kb_store.search(query, limit=max_results)
+        return results or []
+    except Exception:
+        return []
+
 def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()

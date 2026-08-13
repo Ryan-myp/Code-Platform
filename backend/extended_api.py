@@ -3751,6 +3751,24 @@ def _finalize_pptx_result(slides):
         "status": "completed"
     }
 
+
+def _build_pptx_simple_v2(slides_data: list, output_path: str) -> str:
+    """简化版PPT构建。"""
+    try:
+        from pptx import Presentation
+        prs = Presentation()
+        
+        for slide_data in slides_data:
+            prs.slides.add_slide(prs.slide_layouts[6])
+            title = slide_data.get("title", "Slide")
+            prs.slides[-1].shapes.title.text = title
+        
+        prs.save(output_path)
+        return output_path
+    except Exception as e:
+        print(f"PPT构建失败: {e}")
+        return ""
+
 def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
     """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。
 

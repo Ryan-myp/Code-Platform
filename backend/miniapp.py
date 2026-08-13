@@ -582,6 +582,15 @@ def _finalize_review_results(materials):
         "status": "completed"
     }
 
+
+def _build_review_simple(review_data: dict) -> dict:
+    """简化版评测材料构建。"""
+    return {
+        "title": review_data.get("title", ""),
+        "content": review_data.get("content", ""),
+        "status": "completed"
+    }
+
 def build_review_material(files: dict, name: str, template: str = "") -> dict:
     """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。
 
