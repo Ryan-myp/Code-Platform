@@ -454,10 +454,8 @@ def _artifact_meta() -> dict:
     return meta
 
 
-async def _internal_helper():
-    pass
-
-async def _prepare_voice_task(task_config: dict) -> dict:
+async 
+def _prepare_voice_task(task_config: dict) -> dict:
     """准备语音生成任务配置。"""
     return {
         "text": task_config.get("text", ""),
