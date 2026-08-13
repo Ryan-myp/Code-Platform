@@ -34,7 +34,8 @@ import {
   GitCompare,
   ArrowRight,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList, Pagination,
+} from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
@@ -930,12 +931,14 @@ export default function GameFactoryPage() {
                 }
               />
             ) : (
-              <div className="space-y-2">
-                {filteredProjects.map((p) => {
+              <Pagination
+                items={filteredProjects}
+                pageSize={8}
+                label={`共 ${filteredProjects.length} 个小游戏`}
+                renderItem={(p) => {
                   const t = templates.find((x) => x.id === p.template)
                   return (
                     <div
-                      key={p.id}
                       onClick={() => openProject(p)}
                       className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-fuchsia-200 hover:bg-fuchsia-50/30 transition-all cursor-pointer"
                     >
@@ -1019,8 +1022,8 @@ export default function GameFactoryPage() {
                       </button>
                     </div>
                   )
-                })}
-              </div>
+                }}
+              />
             )}
           </Card>
 
