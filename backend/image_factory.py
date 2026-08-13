@@ -1351,6 +1351,68 @@ def _render_line_layer(canvas, draw, layer, overrides) -> None:
     draw = ImageDraw.Draw(canvas)
 
 
+
+def _text_layout(text: str, font_size: int, line_height: float, max_width: int, draw, font) -> tuple:
+    """文本自动换行 + 排版尺寸。返回 (text_lines, line_h, block_w, block_h)。"""
+    if max_width > 0:
+        lines, cur = [], ""
+        for ch in text:
+            if ch == "\n":
+                lines.append(cur)
+                cur = ""
+            elif draw.textlength(cur + ch, font=font) > max_width:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur += ch
+        if cur:
+            lines.append(cur)
+        text_lines = lines or [""]
+    else:
+        text_lines = text.split("\n") or [""]
+    line_h = int(font_size * line_height)
+    block_w = max_width or max(int(draw.textlength(ln, font=font)) for ln in text_lines)
+    block_h = line_h * len(text_lines)
+    return text_lines, line_h, block_w, block_h
+
+
+def _shadow_params(shadow: str) -> tuple:
+    """解析阴影参数（offset_x, offset_y, blur）。"""
+    sx, sy, shadow_blur = 2, 2, 0
+    if shadow:
+        try:
+            parts = [int(v) for v in shadow.split(",")]
+            sx, sy = parts[0], parts[1]
+            shadow_blur = parts[2] if len(parts) > 2 else 0
+        except Exception:
+            pass
+    return sx, sy, shadow_blur
+
+
+def _text_shadow_layer(txt_img, text_lines: list, font, letter_spacing: float, stroke_total: int, shadow_color: str, sx: int, sy: int, shadow_blur: int, line_h: int, block_w: int, pad: int, align: str) -> Image.Image:
+    """绘制软阴影层并合成到底层。"""
+    sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sh_img)
+    for i, ln in enumerate(text_lines):
+        lx = pad
+        if align == "center":
+            lx = pad + (block_w - int(sd.textlength(ln, font=font))) // 2
+        elif align == "right":
+            lx = pad + block_w - int(sd.textlength(ln, font=font))
+        _draw_text_run(sd, lx + sx, pad + i * line_h + sy, ln, font, shadow_color, letter_spacing, stroke_total, shadow_color)
+    if shadow_blur > 0:
+        sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
+    return Image.alpha_composite(txt_img, sh_img)
+
+
+def _text_gradient_overlay(txt_img, grad_fill: str) -> Image.Image:
+    """渐变文字覆盖：按文字 alpha 填充垂直渐变。"""
+    from image_edit_engine import make_gradient
+
+    top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
+    grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+    return Image.composite(grad, txt_img, txt_img.split()[3])
+
 async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key) -> None:
     """渲染 text 图层。"""
     # 文字排版：字体族/粗体/斜体/字间距/行高/描边/阴影色/旋转
@@ -1376,46 +1438,17 @@ async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map
 
     font = get_font(font_size, family, bold, italic, text)
 
-    # 自动换行（max_width>0 时按像素宽度折行；显式 \n 优先断行）
-    if max_width > 0:
-        lines, cur = [], ""
-        for ch in text:
-            if ch == "\n":
-                lines.append(cur)
-                cur = ""
-            elif draw.textlength(cur + ch, font=font) > max_width:
-                lines.append(cur)
-                cur = ch
-            else:
-                cur += ch
-        if cur:
-            lines.append(cur)
-        text_lines = lines or [""]
-    else:
-        text_lines = text.split("\n") or [""]
-
-    line_h = int(font_size * line_height)
-    block_w = max_width or max(int(draw.textlength(ln, font=font)) for ln in text_lines)
-    block_h = line_h * len(text_lines)
-    # 粗体模拟：同色描边加粗（PIL 无可靠粗体变体）
+    # 自动换行 + 排版参数
+    text_lines, line_h, block_w, block_h = _text_layout(text, font_size, line_height, max_width, draw, font)
     sim_bold = max(1, round(font_size * 0.055)) if bold else 0
-    sx, sy = 2, 2
-    shadow_blur = 0
-    if shadow:
-        try:
-            parts = [int(v) for v in shadow.split(",")]
-            sx, sy = parts[0], parts[1]
-            shadow_blur = parts[2] if len(parts) > 2 else 0
-        except Exception:
-            pass
+    sx, sy, shadow_blur = _shadow_params(shadow)
     pad = 8 + (stroke_w + sim_bold) * 2 + shadow_blur
     txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
     td = ImageDraw.Draw(txt_img)
-    # v24：渐变文字（color 支持 #A→#B，垂直渐变——商业海报标题标配）
     grad_fill = ""
     if isinstance(font_color, str) and "→" in font_color:
         grad_fill = font_color
-        font_color = "#FFFFFF"  # 文字本体先画白色，渐变最后按 alpha 覆盖
+        font_color = "#FFFFFF"
     stroke_total = stroke_w + sim_bold
 
     def _line_pos(i, ln):
@@ -1426,34 +1459,17 @@ async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map
             lx = pad + block_w - int(td.textlength(ln, font=font))
         return lx, pad + i * line_h
 
-    # 阴影层：先单独绘制并模糊（软阴影），再合成到底层，避免模糊糊住正字
+    # 阴影层
     if shadow:
-        sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
-        sd = ImageDraw.Draw(sh_img)
-        for i, ln in enumerate(text_lines):
-            lx, ly = _line_pos(i, ln)
-            _draw_text_run(
-                sd, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing,
-                stroke_total, shadow_color,
-            )
-        if shadow_blur > 0:
-            sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
-        txt_img = Image.alpha_composite(txt_img, sh_img)
+        txt_img = _text_shadow_layer(txt_img, text_lines, font, letter_spacing, stroke_total, shadow_color, sx, sy, shadow_blur, line_h, block_w, pad, align)
         td = ImageDraw.Draw(txt_img)
     # 正字层
     for i, ln in enumerate(text_lines):
         lx, ly = _line_pos(i, ln)
-        _draw_text_run(
-            td, lx, ly, ln, font, font_color, letter_spacing, stroke_total,
-            stroke_color if stroke_w else font_color,
-        )
-    # 渐变覆盖：按文字 alpha 填充垂直渐变（描边/阴影保留原色，只染字身）
+        _draw_text_run(td, lx, ly, ln, font, font_color, letter_spacing, stroke_total, stroke_color if stroke_w else font_color)
+    # 渐变覆盖
     if grad_fill:
-        from image_edit_engine import make_gradient
-
-        top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
-        grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
-        txt_img = Image.composite(grad, txt_img, txt_img.split()[3])
+        txt_img = _text_gradient_overlay(txt_img, grad_fill)
     if rotation:
         txt_img = txt_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
         nw, nh = txt_img.size
