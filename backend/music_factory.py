@@ -2069,8 +2069,9 @@ async def _synthesize_audio(melody: list, chords: list, output_format: str = "mp
         output_path = "/tmp/music_output.mp3"
         # 实际应该调用音频合成引擎
     except Exception as e:
-logger.info(f"音频合成失败: {e}")
+        logger.info(f"音频合成失败: {e}")
         output_path = ""
+        pass
     
     return output_path
 
