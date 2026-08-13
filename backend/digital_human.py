@@ -3047,6 +3047,163 @@ async def generate_all_portraits(current_user: dict = require_auth()):
 
 
 
+def _dh_render_with_chain(
+    req, avatar, bg, audio_path, video_path, optimized_text, use_watermark, subtitle_style,
+    opening_text, closing_text, emotion, progress, record_id,
+) -> tuple:
+    """引擎选择链渲染（sadtalker → live_portrait → 2d），返回 (engine_used, render_size)。"""
+    sadtalker_render_size: int | None = None
+    engine_chain = {
+        "sadtalker": ["sadtalker", "live_portrait", "2d"],
+        "live_portrait": ["live_portrait", "2d"],
+        "2d": ["2d"],
+    }[req.engine]
+    render_err: Exception | None = None
+    for eng in engine_chain:
+        try:
+            if eng == "sadtalker":
+                from digital_human_sadtalker import generate_with_sadtalker
+
+                sad_result = generate_with_sadtalker(
+                    photo_path=avatar["local_image_path"],
+                    audio_path=audio_path,
+                    output_path=video_path,
+                    resolution=req.resolution,
+                    watermark=use_watermark,
+                    progress=progress,
+                    emotion=emotion,
+                )
+                sadtalker_render_size = sad_result.get("render_size")
+            elif eng == "live_portrait":
+                from live_portrait_engine import generate_from_photo
+
+                generate_from_photo(
+                    photo_path=avatar["local_image_path"],
+                    audio_path=audio_path,
+                    output_path=video_path,
+                    resolution=req.resolution,
+                    watermark=use_watermark,
+                    progress=progress,
+                )
+            else:
+                _render_video(
+                    text=optimized_text[:200],
+                    avatar=avatar,
+                    bg=bg,
+                    audio_path=audio_path,
+                    output_path=video_path,
+                    resolution=req.resolution,
+                    fps=req.fps,
+                    watermark=use_watermark,
+                    subtitle_style=subtitle_style,
+                    opening=opening_text,
+                    closing=closing_text,
+                    emotion=emotion,
+                )
+            render_err = None
+            return eng, sadtalker_render_size
+        except Exception as e:  # noqa: BLE001 — 引擎失败尝试降级
+            render_err = e
+            logger.warning(f"数字人渲染失败（engine={eng}），准备降级: {e}")
+    raise render_err if render_err else RuntimeError("渲染失败")
+
+
+def _dh_save_record(conn, record_id: str, user: str, req, avatar, voice, bg, optimized_text: str, status: str, audio_url: str, video_url: str, error_msg: str, use_watermark: bool, engine_used: str, emotion: str) -> None:
+    """保存数字人生成记录。"""
+    conn.execute(
+        """INSERT INTO digital_human_records
+           (id, user_id, avatar_id, avatar_name, voice_id, voice_name,
+            background_id, scene_id, template_id, text, text_length, status,
+            audio_url, video_url, error, resolution, fps, watermark, engine, emotion, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
+        (
+            record_id,
+            user,
+            req.avatar_id,
+            avatar["name"],
+            req.voice_id,
+            voice["name"],
+            req.background_id,
+            req.scene_id,
+            req.template_id,
+            optimized_text,
+            len(optimized_text),
+            status,
+            audio_url,
+            video_url,
+            error_msg,
+            req.resolution,
+            req.fps,
+            1 if use_watermark else 0,
+            engine_used,
+            emotion,
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.commit()
+
+
+
+def _dh_content_scan(text: str) -> list:
+    """内容安全扫描：返回风险词列表（硬违规词直接抛 400）。"""
+    try:
+        from content_strategy import _scan_text
+
+        hits = _scan_text(text)
+    except Exception:
+        hits = []
+    lower_text = text.lower()
+    hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
+    if hard_hits:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    return list(dict.fromkeys(h["word"] for h in hits))
+
+
+def _dh_validate_resources(req, user: str) -> tuple:
+    """验证形象/声音/背景/场景（内置 + 用户自定义 + 克隆）+ 行业模板。"""
+    avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
+    voice = _lookup_voice(user, req.voice_id)
+    if not avatar and req.avatar_id.startswith("custom_"):
+        avatar = _load_custom_avatars(user).get(req.avatar_id)
+    if not avatar:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    if not voice:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
+    if not bg:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    if req.engine in ("live_portrait", "sadtalker"):
+        if not (avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])):
+            raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
+    template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
+    if req.template_id and not template:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    return avatar, voice, bg, template
+
+
+def _dh_generate_audio(voice: dict, req, optimized_text: str, emotion: str, _report) -> tuple:
+    """TTS 配音：自定义声音直接用上传音频；克隆/内置走 AI 合成。返回 (audio_path, audio_url)。"""
+    audio_path, audio_url = "", ""
+    if voice.get("is_custom") and not voice.get("is_clone"):
+        audio_path = voice.get("local_audio_path") or ""
+        if audio_path and os.path.exists(audio_path):
+            audio_url = voice["audio_url"]
+        else:
+            raise RuntimeError("自定义声音文件缺失，请重新上传")
+    if not audio_url:
+        _report(20, "正在合成配音…")
+        tts_voice = req.voice_id
+        tts_pitch = 0
+        if voice.get("is_clone"):
+            tts_voice = voice.get("edge_voice") or req.voice_id
+            tts_pitch = int(voice.get("pitch_hz") or 0)
+        tts_emotion = EMOTION_TTS_STYLE.get(emotion, "")
+        audio_path, audio_url = _tts_cached(optimized_text, tts_voice, req.speed, tts_pitch, tts_emotion)
+        if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) < 512:
+            audio_path = ""
+            raise RuntimeError("TTS 生成的音频无效（文件过小）")
+    return audio_path, audio_url
+
 def _generate_one(  # noqa: C901
     req: GenerateRequest,
     user: str,
@@ -3075,41 +3232,9 @@ def _generate_one(  # noqa: C901
         _notify_progress(progress, pct, stage)
 
     # 0.5 内容安全：硬违规词直接拒绝生成；广告法极限词/中风险词放行但提示
-    try:
-        from content_strategy import _scan_text
-
-        hits = _scan_text(req.text)
-    except Exception:
-        hits = []
-    lower_text = req.text.lower()
-    hard_hits = [w for w in _HARD_BLOCK_WORDS if w.lower() in lower_text]
-    if hard_hits:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    risk_hits = list(dict.fromkeys(h["word"] for h in hits))  # 去重保序
-
-    # 验证形象/声音/背景/场景（内置 + 用户自定义 + 克隆）
-    avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
-    voice = _lookup_voice(user, req.voice_id)
-    if not avatar and req.avatar_id.startswith("custom_"):
-        avatar = _load_custom_avatars(user).get(req.avatar_id)
-    if not avatar:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    if not voice:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
-    if not bg:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
-    if req.engine in ("live_portrait", "sadtalker"):
-        if not (
-            avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])
-        ):
-            raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
-
-    # 行业模板：提供 template_id 时取字幕样式/片头片尾（场景背景由前端按模板一键填充）
-    template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
-    if req.template_id and not template:
-        raise HTTPException(400, "操作失败，请稍后重试")
+    risk_hits = _dh_content_scan(req.text)
+    # 验证形象/声音/背景/场景 + 行业模板
+    avatar, voice, bg, template = _dh_validate_resources(req, user)
     subtitle_style = template.get("subtitle") if template else None
     opening_text = template.get("opening", "") if template else ""
     closing_text = template.get("closing", "") if template else ""
@@ -3149,31 +3274,8 @@ def _generate_one(  # noqa: C901
     for attempt in (1, 2):
         stage = "tts"
         try:
-            # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频作为配音；
-            #    克隆声音用匹配音色 + 音调补偿合成（样本仅作分析，不直接使用）
-            if voice.get("is_custom") and not voice.get("is_clone"):
-                audio_path = voice.get("local_audio_path") or ""
-                if audio_path and os.path.exists(audio_path):
-                    audio_url = voice["audio_url"]
-                else:
-                    raise RuntimeError("自定义声音文件缺失，请重新上传")
-            if not audio_url:
-                _report(20, "正在合成配音…")
-
-                # 克隆声音：透传匹配音色 + 基频补偿（pitch），模拟样本音色气质
-                tts_voice = req.voice_id
-                tts_pitch = 0
-                if voice.get("is_clone"):
-                    tts_voice = voice.get("edge_voice") or req.voice_id
-                    tts_pitch = int(voice.get("pitch_hz") or 0)
-                # v14.0 音频缓存：同文案+同音色+同速度复用 TTS 结果（命中零等待 ，批量预热依赖）
-                # v13.24 情绪风格：同文案不同情绪使用不同缓存 key，风格失败自动降级无风格
-                tts_emotion = EMOTION_TTS_STYLE.get(emotion, "")
-                audio_path, audio_url = _tts_cached(optimized_text, tts_voice, req.speed, tts_pitch, tts_emotion)
-                # 极小/空文件视为生成失败：避免前端误显“音频已生成”、下游 ffmpeg 报错
-                if not audio_path or not os.path.exists(audio_path) or os.path.getsize(audio_path) < 512:
-                    audio_path = ""
-                    raise RuntimeError("TTS 生成的音频无效（文件过小）")
+            # 2. TTS 配音 — 内置音色走 AI 合成；自定义声音直接用上传音频；克隆声音用匹配音色
+            audio_path, audio_url = _dh_generate_audio(voice, req, optimized_text, emotion, _report)
 
             # 3. 视频合成 — ffmpeg 将背景图+音频合成为 MP4
             # 渲染为 CPU 密集操作，受全局并发池保护（同批次多任务串行，跨批次限并发数）
@@ -3185,62 +3287,11 @@ def _generate_one(  # noqa: C901
                 try:
                     video_filename = f"{record_id}.mp4"
                     video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
-                    # v13.20 引擎选择链：sadtalker（开源 3D 数字人）→ live_portrait（Wav2Lip）→ 2d
-                    engine_chain = {
-                        "sadtalker": ["sadtalker", "live_portrait", "2d"],
-                        "live_portrait": ["live_portrait", "2d"],
-                        "2d": ["2d"],
-                    }[req.engine]
-                    render_err: Exception | None = None
-                    for eng in engine_chain:
-                        try:
-                            if eng == "sadtalker":
-                                from digital_human_sadtalker import generate_with_sadtalker
-
-                                sad_result = generate_with_sadtalker(
-                                    photo_path=avatar["local_image_path"],
-                                    audio_path=audio_path,
-                                    output_path=video_path,
-                                    resolution=req.resolution,
-                                    watermark=use_watermark,
-                                    progress=progress,
-                                    emotion=emotion,
-                                )
-                                sadtalker_render_size = sad_result.get("render_size")
-                            elif eng == "live_portrait":
-                                from live_portrait_engine import generate_from_photo
-
-                                generate_from_photo(
-                                    photo_path=avatar["local_image_path"],
-                                    audio_path=audio_path,
-                                    output_path=video_path,
-                                    resolution=req.resolution,
-                                    watermark=use_watermark,
-                                    progress=progress,
-                                )
-                            else:
-                                _render_video(
-                                    text=optimized_text[:200],
-                                    avatar=avatar,
-                                    bg=bg,
-                                    audio_path=audio_path,
-                                    output_path=video_path,
-                                    resolution=req.resolution,
-                                    fps=req.fps,
-                                    watermark=use_watermark,
-                                    subtitle_style=subtitle_style,
-                                    opening=opening_text,
-                                    closing=closing_text,
-                                    emotion=emotion,
-                                )
-                            engine_used = eng
-                            render_err = None
-                            break
-                        except Exception as e:  # noqa: BLE001 — 引擎失败尝试降级
-                            render_err = e
-                            logger.warning(f"数字人渲染失败（engine={eng}），准备降级: {e}")
-                    if render_err:
-                        raise render_err
+                    engine_used, sadtalker_render_size = _dh_render_with_chain(
+                        req, avatar, bg, audio_path, video_path, optimized_text,
+                        use_watermark, subtitle_style, opening_text, closing_text,
+                        emotion, progress, record_id,
+                    )
                 finally:
                     _RENDER_SLOT.release()
                 # 视频有效性校验：防止渲染引擎产出 0KB/损坏文件被误标记成功
@@ -3270,37 +3321,8 @@ def _generate_one(  # noqa: C901
                 error_msg = audio_error or "配音生成失败"
 
     # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板/情绪）
-    conn.execute(
-        """INSERT INTO digital_human_records
-           (id, user_id, avatar_id, avatar_name, voice_id, voice_name,
-            background_id, scene_id, template_id, text, text_length, status,
-            audio_url, video_url, error, resolution, fps, watermark, engine, emotion, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) """,
-        (
-            record_id,
-            user,
-            req.avatar_id,
-            avatar["name"],
-            req.voice_id,
-            voice["name"],
-            req.background_id,
-            req.scene_id,
-            req.template_id,
-            optimized_text,
-            len(optimized_text),
-            status,
-            audio_url,
-            video_url,
-            error_msg,
-            req.resolution,
-            req.fps,
-            1 if use_watermark else 0,
-            engine_used,
-            emotion,
-            datetime.now().isoformat(),
-        ),
-    )
-    conn.commit()
+    _dh_save_record(conn, record_id, user, req, avatar, voice, bg, optimized_text,
+                    status, audio_url, video_url, error_msg, use_watermark, engine_used, emotion)
     conn.close()
     _report(95, "记录已保存")
 
