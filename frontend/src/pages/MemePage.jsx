@@ -94,6 +94,12 @@ const AI_STYLES = [
   { id: 'oil', name: '油画质感', desc: '笔触厚重' },
   { id: 'anime', name: '赛璐璐动漫', desc: '日漫赛璐璐' },
   { id: 'film', name: '电影写实', desc: '胶片质感' },
+  { id: 'watercolor', name: '水彩手绘', desc: '清新晕染' },
+  { id: 'retro', name: '复古海报', desc: '美式复古' },
+  { id: 'cute3d', name: '粘土手办', desc: '可爱立体' },
+  { id: 'graffiti', name: '街头涂鸦', desc: '潮酷喷绘' },
+  { id: 'chibi', name: 'Q版大头', desc: '呆萌比例' },
+  { id: 'doodle', name: '手绘涂鸦', desc: '随意线稿' },
 ]
 
 const SUGGESTS = [
@@ -109,6 +115,17 @@ const SUGGESTS = [
   { top: '体检报告', bottom: '主打一个不敢看' },
   { top: '早起失败', bottom: '床绑架了我' },
   { top: '开会两小时', bottom: '结论下次再说' },
+  { top: '打工人', bottom: '今天也是元气满满的一天呢' },
+  { top: '老板画的饼', bottom: '够吃一辈子' },
+  { top: '周一', bottom: '重开吧这周' },
+  { top: '同事的锅', bottom: '我来背，我谢谢你' },
+  { top: '下班', bottom: '以迅雷不及掩耳之势跑路' },
+  { top: '咖啡续命', bottom: '三分糖谢谢' },
+  { top: '减肥第一天', bottom: '从明天开始' },
+  { top: 'AI 写代码', bottom: 'bug 与我无关' },
+  { top: '需求评审', bottom: '场景丰富，建议砍掉一半' },
+  { top: '周末计划', bottom: '躺平 + 外卖 + 追剧' },
+  { top: '年度目标', bottom: '活着就好' },
 ]
 
 export default function MemePage() {

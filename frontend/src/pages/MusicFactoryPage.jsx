@@ -223,6 +223,16 @@ const INSTRUMENTS = [
   { value: 'violin', label: '小提琴' },
   { value: 'drums', label: '鼓' },
   { value: 'synth', label: '合成器' },
+  { value: 'erhu', label: '二胡' },
+  { value: 'pipa', label: '琵琶' },
+  { value: 'guqin', label: '古琴' },
+  { value: 'bamboo_flute', label: '竹笛' },
+  { value: 'saxophone', label: '萨克斯' },
+  { value: 'trumpet', label: '小号' },
+  { value: 'cello', label: '大提琴' },
+  { value: 'harp', label: '竖琴' },
+  { value: 'accordion', label: '手风琴' },
+  { value: 'ukulele', label: '尤克里里' },
 ]
 
 const MOODS = [
@@ -231,6 +241,13 @@ const MOODS = [
   { value: 'energetic', label: '激昂' },
   { value: 'calm', label: '平静' },
   { value: 'romantic', label: '浪漫' },
+  { value: 'nostalgic', label: '怀旧' },
+  { value: 'epic', label: '史诗' },
+  { value: 'dreamy', label: '梦幻' },
+  { value: 'mysterious', label: '神秘' },
+  { value: 'warm', label: '温馨' },
+  { value: 'hopeful', label: '希望' },
+  { value: 'playful', label: '俏皮' },
 ]
 
 const LENGTHS = [

@@ -111,6 +111,51 @@ const PROMPT_TEMPLATES = [
     prompt:
       'Promotional poster for [EVENT], dynamic composition, bold colors, typography space, professional design',
   },
+  {
+    name: '电商主图',
+    prompt:
+      'E-commerce product main image of [PRODUCT], clean white background, dramatic lighting, high-resolution commercial photography, space for promotional text',
+  },
+  {
+    name: '头像插画',
+    prompt:
+      'Stylish avatar illustration of [SUBJECT], [STYLE] style, centered composition, vibrant colors, social media profile picture',
+  },
+  {
+    name: '室内设计',
+    prompt:
+      'Interior design render of [ROOM], [STYLE] style, natural lighting, photorealistic, architectural visualization, cozy atmosphere',
+  },
+  {
+    name: '美食摄影',
+    prompt:
+      'Appetizing food photography of [DISH], overhead shot, rustic table setting, warm lighting, steam details, professional food styling',
+  },
+  {
+    name: '风景大片',
+    prompt:
+      'Breathtaking landscape of [LOCATION], [SEASON], dramatic sky, golden hour, ultra-wide composition, National Geographic style',
+  },
+  {
+    name: '时尚大片',
+    prompt:
+      'Fashion editorial photo of [SUBJECT], [OCCASION], studio lighting, editorial magazine style, high-fashion pose, sharp details',
+  },
+  {
+    name: '建筑外观',
+    prompt:
+      'Architectural photography of [BUILDING], [STYLE] architecture, symmetry composition, blue hour, cityscape background',
+  },
+  {
+    name: '宠物摄影',
+    prompt:
+      'Adorable pet photo of [PET], [BREED], playful moment, shallow depth of field, natural light, heartwarming expression',
+  },
+  {
+    name: '汽车海报',
+    prompt:
+      'Automotive advertising shot of [CAR], [ENVIRONMENT], dramatic lighting, motion blur, professional car photography, glossy reflections',
+  },
 ]
 
 // 艺术风格预设（选择后自动追加英文风格关键词到提示词，可再次点击取消）
