@@ -1,0 +1,478 @@
+{
+  "analysis": {
+    "total_functions": 3449,
+    "high_complexity_funcs": [
+      {
+        "name": "render_template_image",
+        "file": "backend/image_factory.py",
+        "line": 1184,
+        "complexity": 89,
+        "length": 323
+      },
+      {
+        "name": "compute_five_dim_signals",
+        "file": "backend/stock_tools.py",
+        "line": 383,
+        "complexity": 68,
+        "length": 211
+      },
+      {
+        "name": "_run_test_gate",
+        "file": "backend/extended_api.py",
+        "line": 1149,
+        "complexity": 66,
+        "length": 295
+      },
+      {
+        "name": "_render_once",
+        "file": "backend/image_factory.py",
+        "line": 1246,
+        "complexity": 64,
+        "length": 248
+      },
+      {
+        "name": "_generate_one",
+        "file": "backend/digital_human.py",
+        "line": 3037,
+        "complexity": 59,
+        "length": 293
+      },
+      {
+        "name": "_drama_generate_worker",
+        "file": "backend/short_drama.py",
+        "line": 792,
+        "complexity": 48,
+        "length": 199
+      },
+      {
+        "name": "_compose_music_worker",
+        "file": "backend/music_factory.py",
+        "line": 626,
+        "complexity": 41,
+        "length": 180
+      },
+      {
+        "name": "_build_pptx_file",
+        "file": "backend/extended_api.py",
+        "line": 3564,
+        "complexity": 40,
+        "length": 196
+      },
+      {
+        "name": "search_knowledge_base",
+        "file": "backend/main.py",
+        "line": 2675,
+        "complexity": 40,
+        "length": 93
+      },
+      {
+        "name": "run_workflow",
+        "file": "backend/chat_engine.py",
+        "line": 445,
+        "complexity": 38,
+        "length": 106
+      },
+      {
+        "name": "_render_frame",
+        "file": "backend/digital_human.py",
+        "line": 1518,
+        "complexity": 36,
+        "length": 368
+      },
+      {
+        "name": "main",
+        "file": "backend/.hermes/smoke_all.py",
+        "line": 39,
+        "complexity": 36,
+        "length": 87
+      },
+      {
+        "name": "_render_video",
+        "file": "backend/digital_human.py",
+        "line": 1888,
+        "complexity": 34,
+        "length": 218
+      },
+      {
+        "name": "build_review_material",
+        "file": "backend/miniapp.py",
+        "line": 501,
+        "complexity": 34,
+        "length": 159
+      },
+      {
+        "name": "music_publish_pack",
+        "file": "backend/music_factory.py",
+        "line": 144,
+        "complexity": 32,
+        "length": 155
+      },
+      {
+        "name": "_vocalize_phrase",
+        "file": "backend/music_factory.py",
+        "line": 1187,
+        "complexity": 32,
+        "length": 106
+      },
+      {
+        "name": "compute_risk_metrics",
+        "file": "backend/stock_tools.py",
+        "line": 208,
+        "complexity": 32,
+        "length": 88
+      },
+      {
+        "name": "_voice_generate_worker",
+        "file": "backend/voice_factory.py",
+        "line": 457,
+        "complexity": 31,
+        "length": 114
+      },
+      {
+        "name": "create_dh_video",
+        "file": "backend/dh_gateway.py",
+        "line": 202,
+        "complexity": 30,
+        "length": 103
+      },
+      {
+        "name": "main",
+        "file": "scripts/smoke_v12.py",
+        "line": 67,
+        "complexity": 30,
+        "length": 108
+      },
+      {
+        "name": "_batch_worker",
+        "file": "backend/digital_human.py",
+        "line": 3657,
+        "complexity": 29,
+        "length": 150
+      },
+      {
+        "name": "_meme_generate_worker",
+        "file": "backend/meme_factory.py",
+        "line": 559,
+        "complexity": 28,
+        "length": 92
+      },
+      {
+        "name": "upload_file",
+        "file": "backend/tool_hub.py",
+        "line": 7802,
+        "complexity": 28,
+        "length": 118
+      },
+      {
+        "name": "_place_drums",
+        "file": "backend/music_factory.py",
+        "line": 894,
+        "complexity": 27,
+        "length": 52
+      },
+      {
+        "name": "test_mcp_server",
+        "file": "backend/main.py",
+        "line": 3071,
+        "complexity": 27,
+        "length": 81
+      },
+      {
+        "name": "normalize_ab_result",
+        "file": "backend/extended_api.py",
+        "line": 3116,
+        "complexity": 26,
+        "length": 76
+      },
+      {
+        "name": "_publish_douyin",
+        "file": "backend/publishing.py",
+        "line": 596,
+        "complexity": 26,
+        "length": 75
+      },
+      {
+        "name": "get_font",
+        "file": "backend/image_factory.py",
+        "line": 211,
+        "complexity": 26,
+        "length": 53
+      },
+      {
+        "name": "execute",
+        "file": "backend/workflows/executor.py",
+        "line": 255,
+        "complexity": 26,
+        "length": 137
+      },
+      {
+        "name": "market_list",
+        "file": "backend/template_store.py",
+        "line": 222,
+        "complexity": 25,
+        "length": 94
+      },
+      {
+        "name": "_ensure_test_file",
+        "file": "backend/extended_api.py",
+        "line": 836,
+        "complexity": 24,
+        "length": 81
+      },
+      {
+        "name": "build_ab_report_md",
+        "file": "backend/extended_api.py",
+        "line": 3194,
+        "complexity": 24,
+        "length": 46
+      },
+      {
+        "name": "video_publish_pack",
+        "file": "backend/video_factory.py",
+        "line": 1023,
+        "complexity": 24,
+        "length": 106
+      },
+      {
+        "name": "global_search",
+        "file": "backend/search_api.py",
+        "line": 422,
+        "complexity": 24,
+        "length": 101
+      },
+      {
+        "name": "_extract_failed_functions",
+        "file": "backend/extended_api.py",
+        "line": 1057,
+        "complexity": 23,
+        "length": 70
+      },
+      {
+        "name": "_try_tts_dub",
+        "file": "backend/ai_video_api.py",
+        "line": 421,
+        "complexity": 23,
+        "length": 82
+      },
+      {
+        "name": "build_calendar",
+        "file": "backend/content_strategy.py",
+        "line": 779,
+        "complexity": 23,
+        "length": 72
+      },
+      {
+        "name": "_image_batch_worker",
+        "file": "backend/template_store.py",
+        "line": 472,
+        "complexity": 23,
+        "length": 91
+      },
+      {
+        "name": "build_report_md",
+        "file": "backend/video_analyzer.py",
+        "line": 330,
+        "complexity": 23,
+        "length": 51
+      },
+      {
+        "name": "quick_search",
+        "file": "backend/search_api.py",
+        "line": 72,
+        "complexity": 23,
+        "length": 194
+      },
+      {
+        "name": "generate_with_sadtalker",
+        "file": "backend/digital_human_sadtalker.py",
+        "line": 146,
+        "complexity": 22,
+        "length": 90
+      },
+      {
+        "name": "_miniapp_generate_worker",
+        "file": "backend/miniapp.py",
+        "line": 677,
+        "complexity": 22,
+        "length": 141
+      },
+      {
+        "name": "_game_generate_worker",
+        "file": "backend/game_factory.py",
+        "line": 638,
+        "complexity": 22,
+        "length": 128
+      },
+      {
+        "name": "_game_evolve_worker",
+        "file": "backend/game_factory.py",
+        "line": 1061,
+        "complexity": 22,
+        "length": 119
+      },
+      {
+        "name": "quality_check_image",
+        "file": "backend/content_safety.py",
+        "line": 105,
+        "complexity": 22,
+        "length": 67
+      },
+      {
+        "name": "_game_generate_worker",
+        "file": "backend/.hermes/game_factory.bak.py",
+        "line": 393,
+        "complexity": 22,
+        "length": 111
+      },
+      {
+        "name": "_publish_kuaishou",
+        "file": "backend/publishing.py",
+        "line": 674,
+        "complexity": 21,
+        "length": 71
+      },
+      {
+        "name": "_generate_melody",
+        "file": "backend/music_factory.py",
+        "line": 1295,
+        "complexity": 21,
+        "length": 65
+      },
+      {
+        "name": "game_publish_pack",
+        "file": "backend/game_factory.py",
+        "line": 1279,
+        "complexity": 21,
+        "length": 83
+      },
+      {
+        "name": "get_workflow",
+        "file": "backend/main.py",
+        "line": 1900,
+        "complexity": 21,
+        "length": 60
+      },
+      {
+        "name": "_kb_connect",
+        "file": "backend/main.py",
+        "line": 2397,
+        "complexity": 21,
+        "length": 44
+      },
+      {
+        "name": "normalize_segments",
+        "file": "backend/video_analyzer.py",
+        "line": 259,
+        "complexity": 21,
+        "length": 69
+      },
+      {
+        "name": "_prepare_dependencies",
+        "file": "backend/extended_api.py",
+        "line": 320,
+        "complexity": 20,
+        "length": 99
+      },
+      {
+        "name": "_extract_cover",
+        "file": "backend/video_factory.py",
+        "line": 299,
+        "complexity": 20,
+        "length": 78
+      },
+      {
+        "name": "submit_publish",
+        "file": "backend/publishing.py",
+        "line": 770,
+        "complexity": 20,
+        "length": 151
+      },
+      {
+        "name": "list_audios",
+        "file": "backend/music_factory.py",
+        "line": 1926,
+        "complexity": 20,
+        "length": 72
+      },
+      {
+        "name": "normalize_forecast_ranges",
+        "file": "backend/data_forecast.py",
+        "line": 233,
+        "complexity": 20,
+        "length": 52
+      },
+      {
+        "name": "image_publish_pack",
+        "file": "backend/image_factory.py",
+        "line": 2575,
+        "complexity": 20,
+        "length": 104
+      },
+      {
+        "name": "list_knowledge_bases",
+        "file": "backend/main.py",
+        "line": 2462,
+        "complexity": 20,
+        "length": 48
+      },
+      {
+        "name": "list_kb_documents",
+        "file": "backend/main.py",
+        "line": 2829,
+        "complexity": 20,
+        "length": 52
+      },
+      {
+        "name": "smoke",
+        "file": "scripts/verify_all_factories.py",
+        "line": 111,
+        "complexity": 20,
+        "length": 82
+      },
+      {
+        "name": "_meme_generate_worker",
+        "file": "backend/.hermes/meme_factory.bak.py",
+        "line": 375,
+        "complexity": 20,
+        "length": 67
+      },
+      {
+        "name": "_game_evolve_worker",
+        "file": "backend/.hermes/game_factory.bak.py",
+        "line": 683,
+        "complexity": 20,
+        "length": 98
+      },
+      {
+        "name": "execute",
+        "file": "backend/nodes/types/file_node.py",
+        "line": 146,
+        "complexity": 20,
+        "length": 76
+      }
+    ],
+    "files_analyzed": 225,
+    "total_lines": 92967
+  },
+  "optimizations": [
+    {
+      "file": "backend/image_factory.py",
+      "target_func": "render_template_image",
+      "extracted": [
+        "_parse_template_config",
+        "_resolve_layer_img",
+        "_render_rect_layer",
+        "_render_circle_layer",
+        "_render_line_layer",
+        "_render_text_layer"
+      ]
+    }
+  ],
+  "complexity_score": 94,
+  "summary": {
+    "total_functions": 3449,
+    "high_complexity_count": 64,
+    "avg_lines_per_func": 26.95,
+    "complexity_score": 94
+  }
+}
