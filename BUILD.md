@@ -5,7 +5,7 @@
 ### 方式一：基础镜像 + 应用镜像（推荐生产环境）
 
 ```bash
-# 1. 构建基础镜像（包含所有Python依赖）
+# 1. 构建基础镜像（包含所有Python依赖和系统工具）
 docker build -t code-platform-base:latest -f Dockerfile.base .
 
 # 2. 构建应用镜像
@@ -57,13 +57,31 @@ docker run -d --name code-platform -p 8888:8888 code-platform:latest
 | `APP_ENV` | 环境 | `production` | ❌ |
 | `DATABASE_URL` | 数据库URL | `sqlite:///./backend/platform.db` | ❌ |
 
+## 📦 依赖清单
+
+### Python依赖（289个）
+- **Web框架**: FastAPI, Uvicorn, Starlette
+- **TTS语音**: edge-tts, pyttsx3, gTTS
+- **视频处理**: imageio-ffmpeg, ffmpeg-python
+- **AI/ML**: openai, torch, transformers
+- **数据处理**: pandas, numpy, sqlalchemy
+- **图像处理**: pillow, opencv-python
+- **其他**: pydantic, httpx, requests
+
+### 系统依赖
+- **FFmpeg**: 视频编解码（核心依赖）
+- **SoX**: 音频处理
+- **eSpeak**: 语音合成
+- **SQLite**: 数据库
+- **中文字体**: fonts-noto-cjk, fonts-wqy-zenhei
+
 ## 🔄 构建优化
 
 ### 使用缓存加速构建
 
 ```bash
-# 首次构建（较慢）
-docker build -t code-platform:latest .
+# 首次构建（较慢，约10-15分钟）
+docker build -t code-platform-base:latest -f Dockerfile.base .
 
 # 后续构建（使用缓存，更快）
 docker build --cache-from code-platform-base:latest -t code-platform:latest .
@@ -129,6 +147,10 @@ curl http://localhost:8888/api/health
 
 # 进入容器调试
 docker exec -it code-platform bash
+
+# 检查依赖
+docker exec code-platform python -c "import edge_tts; print(edge_tts.__version__)"
+docker exec code-platform ffmpeg -version | head -1
 ```
 
 ## 🔧 故障排除
@@ -160,6 +182,15 @@ chmod 644 backend/platform.db
 docker build --no-cache -t code-platform:latest .
 ```
 
+### 问题：FFmpeg未找到
+```bash
+# 检查ffmpeg是否安装
+docker exec code-platform which ffmpeg
+
+# 如果没有，重新构建基础镜像
+docker build -t code-platform-base:latest -f Dockerfile.base . --no-cache
+```
+
 ## 📈 性能优化
 
 ### 减小镜像大小
@@ -170,6 +201,9 @@ docker build --no-cache -t code-platform:latest .
 
 # 查看镜像大小
 docker images | grep code-platform
+
+# 清理悬空镜像
+docker image prune -a
 ```
 
 ### 使用BuildKit加速
@@ -220,11 +254,11 @@ spec:
               key: secret-key
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
             memory: "512Mi"
             cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
 ---
 apiVersion: v1
 kind: Service
@@ -254,6 +288,26 @@ server {
         proxy_set_header Host $host;
         proxy_cache_bypass $http_upgrade;
     }
+
+    # 静态文件
+    location /static/ {
+        alias /app/frontend/dist/;
+        expires 1y;
+    }
 }
 ```
+
+## 📝 常见问题
+
+### Q: 为什么需要基础镜像？
+A: 基础镜像包含所有Python依赖（289个）和系统工具（ffmpeg、TTS等），构建一次后可以被多个应用镜像复用，大幅加速构建过程。
+
+### Q: 镜像大小是多少？
+A: 基础镜像约2-3GB（包含所有依赖），应用镜像在此基础上增加约500MB代码。
+
+### Q: 如何在ARM架构（如树莓派）上运行？
+A: 需要修改Dockerfile中的ffmpeg安装命令，使用ARM版本的预编译包。
+
+### Q: 如何处理大文件上传？
+A: 建议在docker-compose.yml中配置volume挂载，或使用对象存储（如S3）。
 
