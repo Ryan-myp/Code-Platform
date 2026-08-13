@@ -33,6 +33,7 @@ import {
   ConfirmDialog,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
@@ -1390,6 +1391,14 @@ export default function VideoFactoryPage() {
                       content={`# 视频作品：${video.title || video.filename}\n\n- 文件：${video.filename}\n- 大小：${formatBytes(video.size)}\n\n> 由小团智能平台 AI 视频工坊生成 · ${new Date().toLocaleString()}`}
                       title={`视频作品：${video.title || video.filename}`}
                       contentType="video"
+                      className="!p-2 !bg-white !rounded-full"
+                    />
+                  </span>
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <FavoriteButton
+                      favType="record"
+                      targetId={video.filename}
+                      label={video.title || video.filename}
                       className="!p-2 !bg-white !rounded-full"
                     />
                   </span>

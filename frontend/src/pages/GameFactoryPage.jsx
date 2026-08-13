@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, SkeletonList } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
 import { useToast } from '../lib/toast'
@@ -1061,6 +1062,14 @@ export default function GameFactoryPage() {
             <Button variant="secondary" icon={Download} onClick={downloadZip}>
               下载 ZIP
             </Button>
+            {viewing && (
+              <FavoriteButton
+                favType="record"
+                targetId={viewing.id}
+                label={viewing.name}
+                className="!border !border-gray-200 !rounded-lg !px-3 !py-2"
+              />
+            )}
             <Button
               variant="primary"
               icon={Package}

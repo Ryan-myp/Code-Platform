@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -1150,6 +1151,14 @@ export default function ShortDramaPage() {
                         <Download className="w-3 h-3" />
                         MP4
                       </a>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <FavoriteButton
+                          favType="record"
+                          targetId={it.id}
+                          label={it.title}
+                          className="!p-0.5 !text-gray-400"
+                        />
+                      </span>
                     </div>
                   </div>
                 </div>
