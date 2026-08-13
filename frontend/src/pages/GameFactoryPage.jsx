@@ -41,6 +41,8 @@ import RandomPromptButton from '../components/RandomPromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 
 const RANDOM_REQUIREMENTS = [
   '加入道具系统，吃金色苹果可以加速，每 50 分关卡加速一次',
@@ -253,6 +255,8 @@ function fileIcon(path) {
 
 export default function GameFactoryPage() {
   const toast = useToast()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('game_factory_history_v1', 30)
   const [templates, setTemplates] = useState(TEMPLATES)
   const [template, setTemplate] = useState('snake')
   const [name, setName] = useState('')
@@ -355,6 +359,7 @@ export default function GameFactoryPage() {
           const firstFile = Object.keys((data.files || {})[firstVer] || {})[0] || ''
           setSelectedFile(firstFile)
           loadProjects()
+          addGenHistory({ type: '小游戏', name: name.trim(), template, requirement, content: requirement.trim() })
           setGenerating(false)
           toast.success(
             `生成成功：${data.versions?.length || 1} 个版本，${data.file_count} 个文件${data.qc?.ok ? ' · 商用 QC 全通过' : ''}`
@@ -796,6 +801,27 @@ export default function GameFactoryPage() {
               >
                 {generating ? '生成任务执行中（后台）…' : '生成小游戏（网页 + 微信版）'}
               </Button>
+              {genHistory.length > 0 && (
+                <div className="mt-3">
+                  <HistoryPanel
+                    history={genHistory}
+                    onReuse={(item) => {
+                      if (item.name) setName(item.name)
+                      if (item.requirement) setRequirement(item.requirement)
+                      if (item.template) setTemplate(item.template)
+                      toast.info('已恢复游戏需求，可重新生成')
+                    }}
+                    onRemove={removeGenHistory}
+                    onClear={clearGenHistory}
+                    title="生成历史"
+                    renderSummary={(item) => (
+                      <span className="text-gray-700">
+                        {item.name} · {item.requirement?.slice(0, 40)}
+                      </span>
+                    )}
+                  />
+                </div>
+              )}
               {generating && genTask && (
                 <div className="rounded-lg bg-fuchsia-50 border border-fuchsia-100 px-3 py-2">
                   <div className="flex items-center gap-2 text-xs text-fuchsia-600">

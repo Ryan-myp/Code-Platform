@@ -60,6 +60,8 @@ import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -818,6 +820,9 @@ export default function ImageFactoryPage() {
   // 生成
   const [generating, setGenerating] = useState(false)
   const [generatedImages, setGeneratedImages] = useState([])
+  // 生成历史（localStorage 持久化，一键复用/删除/清空）
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('image_factory_gen_history_v1', 30)
   const [generationError, setGenerationError] = useState(null)
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
@@ -1032,6 +1037,17 @@ export default function ImageFactoryPage() {
         setGeneratedImages(
           success.map((r) => ({ ...r, url: absUrl(r.url), prompt: r.prompt || prompt }))
         )
+        if (success.length > 0) {
+          success.forEach((r) =>
+            addGenHistory({
+              type: '文生图',
+              prompt: r.prompt || prompt,
+              style: artStyle || '自由',
+              size: selectedSize,
+              url: r.url,
+            })
+          )
+        }
         if (errors.length > 0) {
           setGenerationError(errors[0].error)
         } else if (success.length > 0) {
@@ -1950,6 +1966,30 @@ export default function ImageFactoryPage() {
               >
                 {generating ? '生成任务执行中（后台）…' : '生成图片'}
               </Button>
+              {genHistory.length > 0 && (
+                <div className="mt-3">
+                  <HistoryPanel
+                    history={genHistory}
+                    onReuse={(item) => {
+                      setPrompt(item.prompt)
+                      if (item.style && item.style !== '自由') {
+                        const found = ART_STYLES.find((s) => s.label === item.style)
+                        if (found) setArtStyle(found.id)
+                      }
+                      toast.info('已恢复提示词，可重新生成')
+                    }}
+                    onRemove={removeGenHistory}
+                    onClear={clearGenHistory}
+                    title="生成历史"
+                    renderSummary={(item) => (
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-700">{item.prompt?.slice(0, 40) || '未命名'}</span>
+                        <span className="text-gray-400">{item.style}</span>
+                      </div>
+                    )}
+                  />
+                </div>
+              )}
               {generating && genTask && (
                 <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2 mt-2">
                   <div className="flex items-center gap-2 text-xs text-violet-700">

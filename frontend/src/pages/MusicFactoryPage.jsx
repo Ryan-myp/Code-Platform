@@ -34,6 +34,8 @@ import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -375,6 +377,8 @@ export default function MusicFactoryPage() {
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('music_factory_history_v1', 30)
 
   const fetchStats = useCallback(async () => {
     try {
@@ -474,6 +478,13 @@ export default function MusicFactoryPage() {
       onSuccess: (data) => {
         setMusicResult(data)
         if (data.url) {
+          addGenHistory({
+            type: '音乐',
+            theme: theme || 'AI 音乐作品',
+            style,
+            mood,
+            content: `${(theme || 'AI 音乐作品').slice(0, 40)} · ${style} · ${mood}`,
+          })
           toast.success('歌曲生成完成，可以听了！')
           fetchAudios()
         }
@@ -1096,6 +1107,22 @@ export default function MusicFactoryPage() {
           >
             {generatingMusic ? 'AI 歌手演唱合成中…' : '生成音乐'}
           </Button>
+          {genHistory.length > 0 && (
+            <div className="mt-3">
+              <HistoryPanel
+                history={genHistory}
+                onReuse={(item) => {
+                  if (item.theme) setTheme(item.theme)
+                  if (item.style) setStyle(item.style)
+                  if (item.mood) setMood(item.mood)
+                  toast.info('已恢复音乐参数，可重新生成')
+                }}
+                onRemove={removeGenHistory}
+                onClear={clearGenHistory}
+                title="生成历史"
+              />
+            </div>
+          )}
           {generatingMusic && genTask && (
             <div className="rounded-lg bg-purple-50 border border-purple-100 px-3 py-2">
               <div className="flex items-center gap-2 text-xs text-purple-700">

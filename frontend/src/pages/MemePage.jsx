@@ -27,6 +27,8 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 
 const STYLES = [
   { id: 'yellow', name: '经典黄底', desc: 'Doge 经典黄', swatch: 'bg-[#FFD84D]', text: '#000000' },
@@ -150,6 +152,8 @@ export default function MemePage() {
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('meme_gen_history_v1', 30)
   // ── 商业化发布 v14：微信发布包（勾选成套打包）+ 成套生成（16 张统一风格/角色）──
   const [packOpen, setPackOpen] = useState(false)
   const [packTitle, setPackTitle] = useState('')
@@ -269,6 +273,13 @@ export default function MemePage() {
     await submitTask('/api/meme/generate', fd, {
       onUpdate: (t) => setGenTask(t),
       onSuccess: async () => {
+        addGenHistory({
+          type: '表情包',
+          top: topText.trim(),
+          bottom: bottomText.trim(),
+          style,
+          content: `${topText.trim()} / ${bottomText.trim()}`,
+        })
         toast.success(style === 'ai' ? 'AI 表情包生成完成' : '表情包已生成')
         setGenerating(false)
         setBgUpload('')
@@ -899,6 +910,24 @@ export default function MemePage() {
                 >
                   {generating ? '生成任务执行中（后台）…' : '生成表情包'}
                 </Button>
+                {genHistory.length > 0 && (
+                  <div className="mt-3">
+                    <HistoryPanel
+                      history={genHistory}
+                      onReuse={(item) => {
+                        if (item.top) {
+                          setTopText(item.top)
+                          setBottomText(item.bottom || '')
+                          setStyle(item.style || 'yellow')
+                        }
+                        toast.info('已恢复文案，可重新生成')
+                      }}
+                      onRemove={removeGenHistory}
+                      onClear={clearGenHistory}
+                      title="生成历史"
+                    />
+                  </div>
+                )}
                 {generating && genTask && (
                   <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
                     <div className="flex items-center gap-2 text-xs text-amber-700">
