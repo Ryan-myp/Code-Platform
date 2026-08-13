@@ -1181,6 +1181,243 @@ def _finalize_test_results(results):
         "status": "completed"
     }
 
+def _pick_fix_target(out: str, test_file: str, entry: str) -> str:
+    """智能选择修复目标：测试文件问题 vs 实现缺陷。"""
+    low = out.lower()
+    if (
+        "syntax" in low
+        or "collection" in low
+        or "unresolved import" in low
+        or "assert 422" in low
+        or "assert 400" in low
+    ):
+        return test_file
+    if (
+        "internal server error" in low
+        or " 500 " in out
+        or "status_code == 500" in low
+        or "keyerror" in low
+        or "typeerror" in low
+        or "attributeerror" in low
+        or "valueerror" in low
+    ):
+        return entry
+    return test_file
+
+
+def _fix_functions_batch(target_path: str, funcs: list, entry: str, diag: str, append, backup_path: str) -> int:
+    """函数级批量修复：定位失败路由函数，逐个 LLM 重写。返回修复成功数。"""
+    import ast
+    import shutil
+
+    fixed_count = 0
+    for fname, fstart, fend, test_segs in sorted(funcs, key=lambda x: -x[1]):
+        cur = open(target_path, encoding="utf-8").read()
+        func_code = "\n".join(cur.splitlines()[fstart - 1 : fend])
+        cur_lines = cur.splitlines()
+        deco_start = fstart - 1
+        while deco_start > 0 and cur_lines[deco_start - 1].lstrip().startswith("@"):
+            deco_start -= 1
+        deco_lines = cur_lines[deco_start : fstart - 1]
+        ctx_extra = ""
+        if deco_lines:
+            ctx_extra += "\n\n【路由装饰器（response_model 约束，可修改）】\n" + "\n".join(deco_lines)
+        if test_segs:
+            ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + "\n---\n".join(
+                s[:600] for s in test_segs[:3]
+            )
+        try:
+            fix = call_llm(
+                FUNCTION_FIX_SYSTEM,
+                f"【失败输出】\n{diag}\n\n【函数 {fname}（{entry} {fstart}-{fend} 行）】\n{func_code}{ctx_extra}",
+                max_tokens=4000,
+                timeout=180,
+            )
+        except Exception:
+            fix = ""
+        fixed = _extract_code_block(fix)
+        fstart_new = fstart
+        if fixed:
+            fstrip = fixed.strip()
+            if fstrip.startswith("@"):
+                fstart_new = deco_start + 1
+            elif deco_lines and re.match(r"^(async\s+)?def ", fstrip):
+                fixed = "\n".join(deco_lines) + "\n" + fixed
+        if fixed and (re.match(r"^(async\s+)?def ", fixed.strip()) or fixed.strip().startswith("@")):
+            try:
+                ast.parse(fixed)
+                shutil.copy2(target_path, backup_path)
+                _replace_function(target_path, fixed, fstart_new, fend)
+                ast.parse(open(target_path, encoding="utf-8").read())
+                os.remove(backup_path)
+                fixed_count += 1
+                append(f"  - AI 函数级修复 {fname} 成功")
+            except Exception as e:
+                append(f"  - ⚠ 函数级修复 {fname} 校验失败: {e}，恢复该函数")
+                shutil.copy2(backup_path, target_path)
+        else:
+            append(f"  - ⚠ 函数级修复 {fname} 未产出有效函数，跳过")
+    return fixed_count
+
+
+def _apply_llm_patch(lang: str, target: str, content: str, diag: str, target_path: str, backup_path: str, append, project_dir: str) -> bool:
+    """unified diff 补丁修复（含一次 LLM 重试）。成功返回 True。"""
+    import ast
+    import shutil
+
+    patch_text = ""
+    try:
+        fix = call_llm(
+            _fix_system(lang, "patch"),
+            f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}",
+            timeout=180,
+        )
+        m = re.search(r"```diff\s*\n(.*?)```", fix or "", re.DOTALL)
+        patch_text = m.group(1).strip() if m else _extract_code_block(fix)
+    except Exception:
+        patch_text = ""
+
+    def _apply(patch: str):
+        return subprocess.run(
+            ["patch", "-p1", "--forward", "--batch"],
+            input=patch,
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+            timeout=30,
+        )
+
+    if not patch_text:
+        return False
+    shutil.copy2(target_path, backup_path)
+    pr = _apply(patch_text)
+    if pr.returncode != 0:
+        append(
+            f"  - ⚠ diff 补丁应用失败（{pr.stderr.strip().splitlines()[-1][:80] if pr.stderr else '未知原因'}），要求 LLM 重新生成补丁…"
+        )
+        try:
+            fix2 = call_llm(
+                _fix_system(lang, "patch"),
+                f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}\n\n"
+                f"（你上一次的 diff 应用失败：{pr.stderr.strip()[:300]}。请重新输出 diff 块，"
+                f"确保 hunk 的上下文行数与 @@ 行号一致，只输出一个合法的 unified diff）",
+                timeout=180,
+            )
+            m2 = re.search(r"```diff\s*\n(.*?)```", fix2 or "", re.DOTALL)
+            patch_text = m2.group(1).strip() if m2 else _extract_code_block(fix2)
+        except Exception:
+            patch_text = ""
+        if patch_text:
+            shutil.copy2(target_path, backup_path)
+            pr = _apply(patch_text)
+    if pr.returncode != 0:
+        append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，改用全量重写…")
+        shutil.copy2(backup_path, target_path)
+        return False
+    try:
+        ast.parse(open(target_path, encoding="utf-8").read())
+    except Exception:
+        pr = _apply(patch_text)
+    if pr.returncode == 0:
+        try:
+            ast.parse(open(target_path, encoding="utf-8").read())
+            os.remove(backup_path)
+            append("  - AI 生成 diff 补丁并应用成功，重新构建并复跑测试…")
+            return True
+        except Exception as e:
+            append(f"  - ⚠ 补丁后语法校验失败: {e}，恢复原文件并改用全量重写…")
+            shutil.copy2(backup_path, target_path)
+            return False
+    append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，恢复原文件并改用全量重写…")
+    shutil.copy2(backup_path, target_path)
+    return False
+
+
+
+def _apply_full_rewrite(lang: str, target: str, test_file: str, content: str, diag: str, target_path: str, backup_path: str, append) -> str:
+    """全量重写策略（仅小文件）：返回修复后代码，无效返回空串。"""
+    import shutil
+
+    if len(content) > 20000:
+        append("  - ⚠ 文件超过 20KB，跳过全量重写（避免 LLM 输出截断破坏文件）")
+        return ""
+    if target == test_file:
+        append("  - ⚠ 测试文件断言问题不做全量重写（避免丢失既有用例覆盖），本轮跳过")
+        return ""
+    brief = content if len(content) <= 15000 else content[:9000] + "\n# ……（代码过长已截断）……\n" + content[-6000:]
+    try:
+        fix = call_llm(
+            _fix_system(lang, "test_file" if target == test_file else "main"),
+            f"【构建/测试失败输出】\n{diag}\n\n【当前 {target}】\n{brief}",
+            max_tokens=6000,
+            timeout=180,
+        )
+    except Exception as e:
+        append(f"  - ❌ LLM 调用失败: {e}（可在系统配置-模型中设置模型 API Key）")
+        return ""
+    fixed = _extract_code_block(fix)
+    if fixed:
+        ok_v, err_v = _validate_test_file(lang, fixed)
+        if not ok_v:
+            append(f"  - ⚠ 全量重写产物语法错误（{err_v}），本轮修复无效")
+            return ""
+    return fixed
+
+
+def _verify_test_run(append, test_file: str, image_tag: str, project_dir: str, lang: str, test_cmd: list, net: str, env_flags: list, step_run) -> tuple:
+    """构建测试镜像并执行测试。返回 (ok, out)。"""
+    append(f"  - 构建测试镜像（含测试运行环境 + {test_file}）…")
+    ok, out = step_run(["podman", "build", "-f", "Dockerfile.test", "-t", image_tag, project_dir], timeout=900)
+    if not ok:
+        return False, f"测试镜像构建失败: {out[-600:]}"
+    append(f"  - 容器内执行测试（{lang}）…")
+    exec_cmd = list(test_cmd)
+    if lang == "python" and exec_cmd and "pytest" in exec_cmd[0].lower() and not any("-rA" in c for c in exec_cmd):
+        exec_cmd.insert(1, "-rA")
+    cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag] + exec_cmd
+    ok, out = step_run(cmd, timeout=300)
+    return ok, out or ""
+
+
+def _run_test_fix_round(out: str, lang: str, entry: str, test_file: str, project_dir: str, append) -> str:
+    """AI 修复单轮：函数级 → diff 补丁 → 全量重写。返回 'continue'/'skip'/'rewritten'。"""
+    import shutil
+
+    target = _pick_fix_target(out, test_file, entry)
+    target_path = os.path.join(project_dir, target)
+    backup_path = target_path + ".bak"
+    try:
+        with open(target_path, encoding="utf-8") as f:
+            content = f.read()
+        diag = (out[:2500] + "\n……\n" + out[-1000:]) if len(out) > 4000 else out
+        if lang == "python":
+            try:
+                funcs = _extract_failed_functions(project_dir, out)
+            except Exception:
+                funcs = []
+            fixed_count = _fix_functions_batch(target_path, funcs, entry, diag, append, backup_path)
+            if fixed_count:
+                append(f"  - 本轮批量修复 {fixed_count} 个函数，重新构建并复跑测试…")
+                return "continue"
+            append("  - 函数级修复未产出任何有效修复，改用补丁/全量重写…")
+        patched = _apply_llm_patch(lang, target, content, diag, target_path, backup_path, append, project_dir)
+        if patched:
+            return "continue"
+        fixed = _apply_full_rewrite(lang, target, test_file, content, diag, target_path, backup_path, append)
+        if not fixed:
+            return "skip"
+    except Exception as e:
+        append(f"  - ❌ LLM 修复调用失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
+        return "skip"
+    if not fixed:
+        append("  - ⚠ LLM 未输出修复代码，本轮跳过")
+        return "skip"
+    shutil.copy2(target_path, backup_path)
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write(fixed)
+    append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
+    return "rewritten"
+
 def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     """自动化测试门禁：按技术栈生成测试文件 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
 
@@ -1207,25 +1444,12 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     with open(os.path.join(project_dir, "Dockerfile.test"), "w", encoding="utf-8") as f:
         f.write(_gen_dockerfile(lang, include_tests=True, entry=entry))
 
-    def verify() -> tuple:
-        """构建测试镜像并执行测试（python→pytest / node→npm test / go→go test）。返回 (ok, out)。"""
-        append(f"  - 构建测试镜像（含测试运行环境 + {test_file}）…")
-        ok, out = step_run(["podman", "build", "-f", "Dockerfile.test", "-t", image_tag, project_dir], timeout=900)
-        if not ok:
-            return False, f"测试镜像构建失败: {out[-600:]}"
-        append(f"  - 容器内执行测试（{lang}）…")
-        exec_cmd = list(test_cmd)
-        # python/pytest：追加 -rA 输出逐条用例摘要（PASSED/FAILED/SKIPPED 行），供按 case 展示结果与失败原因
-        if lang == "python" and exec_cmd and "pytest" in exec_cmd[0].lower() and not any("-rA" in c for c in exec_cmd):
-            exec_cmd.insert(1, "-rA")
-        cmd = ["podman", "run", "--rm", "--network", net] + env_flags + [image_tag] + exec_cmd
-        ok, out = step_run(cmd, timeout=300)
-        return ok, out or ""
-
     # 3. 初始验证 + 失败修复循环（最多 5 轮 AI 修复）
     last_out = ""
     for round_no in range(6):
-        ok, out = verify()
+        ok, out = _verify_test_run(
+            append, test_file, image_tag, project_dir, lang, test_cmd, net, env_flags, step_run
+        )
         last_out = out
         cases = _attach_case_meta(_parse_pytest_cases(out), project_dir) if lang == "python" else []
         if ok:
@@ -1249,224 +1473,13 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
         if round_no >= 3:
             break
         append(f"  - ⚠ 测试未通过（第 {round_no + 1} 次验证），AI 诊断修复中…")
-        # 智能选择修复目标：
-        # - 语法/收集/断言预期错误（422 vs 400 等）→ 测试文件自身问题 → 修测试文件
-        # - 服务端错误（500/Internal Server Error）→ 实现缺陷/外部依赖 → 修入口文件
-        low = out.lower()
-        if (
-            "syntax" in low
-            or "collection" in low
-            or "unresolved import" in low
-            or "assert 422" in low
-            or "assert 400" in low
-        ):
-            target = test_file
-        elif (
-            "internal server error" in low
-            or " 500 " in out
-            or "status_code == 500" in low
-            or "keyerror" in low
-            or "typeerror" in low
-            or "attributeerror" in low
-            or "valueerror" in low
-        ):
-            # 服务端错误/响应数据结构异常（KeyError 等）→ 实现缺陷 → 修入口文件
-            target = entry
-        else:
-            target = test_file  # 其余断言类问题默认测试文件（断言预期与实现不符）
-        target_path = os.path.join(project_dir, target)
-        backup_path = target_path + ".bak"
-        import shutil
-
-        try:
-            with open(target_path, encoding="utf-8") as f:
-                content = f.read()
-            # 失败输出取头部（traceback 细节）+ 尾部（summary），避免超长
-            diag = (out[:2500] + "\n……\n" + out[-1000:]) if len(out) > 4000 else out
-            # 修复策略一（main.py 专属）：函数级批量修复。大文件全文喂 LLM 易超上下文返回空，
-            # 从 pytest 输出定位全部失败路由函数，逐个只让 LLM 重写该函数（小输入、修复率高）。
-            # 不依赖 target 判定：只要失败测试能映射到路由函数就优先修复（带断言上下文）；
-            # 避免 "assert 400" 等关键字把批次误判为测试文件问题而跳过 main.py 修复。
-            # ast 校验 + .bak 备份保证安全，修复无效会被拒绝。
-            funcs = []
-            if lang == "python":  # 函数级批量修复目前仅支持 python（AST 定位路由函数）
-                try:
-                    funcs = _extract_failed_functions(project_dir, out)
-                except Exception:
-                    funcs = []
-            if funcs:
-                fixed_count = 0
-                # 自下而上替换（行号高的先替换，避免低行号区间的行号偏移）
-                for fname, fstart, fend, test_segs in sorted(funcs, key=lambda x: -x[1]):
-                    cur = open(target_path, encoding="utf-8").read()
-                    func_code = "\n".join(cur.splitlines()[fstart - 1 : fend])
-                    # 定位函数上方连续的路由装饰器块（response_model 约束，允许 LLM 修改）
-                    cur_lines = cur.splitlines()
-                    deco_start = fstart - 1
-                    while deco_start > 0 and cur_lines[deco_start - 1].lstrip().startswith("@"):
-                        deco_start -= 1
-                    deco_lines = cur_lines[deco_start : fstart - 1]
-                    ctx_extra = ""
-                    if deco_lines:
-                        ctx_extra += "\n\n【路由装饰器（response_model 约束，可修改）】\n" + "\n".join(deco_lines)
-                    if test_segs:
-                        ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + "\n---\n".join(
-                            s[:600] for s in test_segs[:3]
-                        )
-                    try:
-                        fix = call_llm(
-                            FUNCTION_FIX_SYSTEM,
-                            f"【失败输出】\n{diag}\n\n【函数 {fname}（{entry} {fstart}-{fend} 行）】\n{func_code}{ctx_extra}",
-                            max_tokens=4000,
-                            timeout=180,
-                        )
-                    except Exception:
-                        fix = ""
-                    fixed = _extract_code_block(fix)
-                    fstart_new = fstart
-                    if fixed:
-                        fstrip = fixed.strip()
-                        if fstrip.startswith("@"):
-                            # LLM 输出含修改后的装饰器：替换区间上扩到装饰器块起点
-                            fstart_new = deco_start + 1
-                        elif deco_lines and re.match(r"^(async\s+)?def ", fstrip):
-                            # LLM 仅输出 def：自动拼接原装饰器行，保留路由不丢失
-                            fixed = "\n".join(deco_lines) + "\n" + fixed
-                    if fixed and (re.match(r"^(async\s+)?def ", fixed.strip()) or fixed.strip().startswith("@")):
-                        import ast
-
-                        try:
-                            ast.parse(fixed)
-                            shutil.copy2(target_path, backup_path)
-                            _replace_function(target_path, fixed, fstart_new, fend)
-                            ast.parse(open(target_path, encoding="utf-8").read())
-                            os.remove(backup_path)
-                            fixed_count += 1
-                            append(f"  - AI 函数级修复 {fname} 成功")
-                        except Exception as e:
-                            append(f"  - ⚠ 函数级修复 {fname} 校验失败: {e}，恢复该函数")
-                            shutil.copy2(backup_path, target_path)
-                    else:
-                        append(f"  - ⚠ 函数级修复 {fname} 未产出有效函数，跳过")
-                if fixed_count:
-                    append(f"  - 本轮批量修复 {fixed_count} 个函数，重新构建并复跑测试…")
-                    continue
-                append("  - 函数级修复未产出任何有效修复，改用补丁/全量重写…")
-            # 修复策略二：unified diff 补丁（大文件全量重写易被 token 截断，优先最小补丁）
-            patch_text = ""
-            try:
-                fix = call_llm(
-                    _fix_system(lang, "patch"),
-                    f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}",
-                    timeout=180,
-                )
-                m = re.search(r"```diff\s*\n(.*?)```", fix or "", re.DOTALL)
-                patch_text = m.group(1).strip() if m else _extract_code_block(fix)
-            except Exception:
-                patch_text = ""
-            if patch_text:
-                shutil.copy2(target_path, backup_path)
-                pr = subprocess.run(
-                    ["patch", "-p1", "--forward", "--batch"],
-                    input=patch_text,
-                    capture_output=True,
-                    text=True,
-                    cwd=project_dir,
-                    timeout=30,
-                )
-                if pr.returncode != 0:
-                    # diff 质量不稳：携带 patch 错误让 LLM 重新生成一次合法 diff
-                    append(
-                        f"  - ⚠ diff 补丁应用失败（{pr.stderr.strip().splitlines()[-1][:80] if pr.stderr else '未知原因'}），要求 LLM 重新生成补丁…"
-                    )
-                    try:
-                        fix2 = call_llm(
-                            _fix_system(lang, "patch"),
-                            f"【失败输出】\n{diag}\n\n【文件 {target} 全文】\n{content}\n\n"
-                            f"（你上一次的 diff 应用失败：{pr.stderr.strip()[:300]}。请重新输出 diff 块，"
-                            f"确保 hunk 的上下文行数与 @@ 行号一致，只输出一个合法的 unified diff）",
-                            timeout=180,
-                        )
-                        m2 = re.search(r"```diff\s*\n(.*?)```", fix2 or "", re.DOTALL)
-                        patch_text = m2.group(1).strip() if m2 else _extract_code_block(fix2)
-                    except Exception:
-                        patch_text = ""
-                    if patch_text:
-                        shutil.copy2(target_path, backup_path)
-                        pr = subprocess.run(
-                            ["patch", "-p1", "--forward", "--batch"],
-                            input=patch_text,
-                            capture_output=True,
-                            text=True,
-                            cwd=project_dir,
-                            timeout=30,
-                        )
-                if pr.returncode == 0:
-                    try:
-                        import ast
-
-                        ast.parse(open(target_path, encoding="utf-8").read())
-                    except Exception:
-                        pr = subprocess.run(
-                            ["patch", "-p1", "--batch"],
-                            input=patch_text,
-                            capture_output=True,
-                            text=True,
-                            cwd=project_dir,
-                            timeout=30,
-                        )  # 首次可能部分应用，重试
-                    if pr.returncode == 0:
-                        try:
-                            import ast
-
-                            ast.parse(open(target_path, encoding="utf-8").read())
-                            os.remove(backup_path)
-                            append("  - AI 生成 diff 补丁并应用成功，重新构建并复跑测试…")
-                            continue
-                        except Exception as e:
-                            append(f"  - ⚠ 补丁后语法校验失败: {e}，恢复原文件并改用全量重写…")
-                            shutil.copy2(backup_path, target_path)
-                    else:
-                        append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，恢复原文件并改用全量重写…")
-                        shutil.copy2(backup_path, target_path)
-                else:
-                    append(f"  - ⚠ diff 补丁应用失败: {pr.stderr[-200:]}，改用全量重写…")
-            # 修复策略三：全量重写（仅小文件兜底；大文件易被 token 截断破坏，测试文件重写会丢失既有用例）
-            if len(content) > 20000:
-                append("  - ⚠ 文件超过 20KB，跳过全量重写（避免 LLM 输出截断破坏文件）")
-                break
-            if target == test_file:
-                append("  - ⚠ 测试文件断言问题不做全量重写（避免丢失既有用例覆盖），本轮跳过")
-                break
-            brief = (
-                content if len(content) <= 15000 else content[:9000] + "\n# ……（代码过长已截断）……\n" + content[-6000:]
-            )
-            try:
-                fix = call_llm(
-                    _fix_system(lang, "test_file" if target == test_file else "main"),
-                    f"【构建/测试失败输出】\n{diag}\n\n【当前 {target}】\n{brief}",
-                    max_tokens=6000,
-                    timeout=180,
-                )
-            except Exception as e:
-                append(f"  - ❌ LLM 调用失败: {e}（可在系统配置-模型中设置模型 API Key）")
-                break
-            fixed = _extract_code_block(fix)
-            if fixed:
-                ok_v, err_v = _validate_test_file(lang, fixed)
-                if not ok_v:
-                    append(f"  - ⚠ 全量重写产物语法错误（{err_v}），本轮修复无效")
-                    break
-        except Exception as e:
-            append(f"  - ❌ LLM 修复调用失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
+        action = _run_test_fix_round(
+            out, lang, entry, test_file, project_dir, append
+        )
+        if action == "continue":
+            continue
+        if action == "skip":
             break
-        if not fixed:
-            append("  - ⚠ LLM 未输出修复代码，本轮跳过")
-            break
-        shutil.copy2(target_path, backup_path)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(fixed)
-        append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
     _record_test_run(
         cfg.get("requirement_id"),
         pid,
