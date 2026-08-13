@@ -143,73 +143,73 @@ class FileOperationNode(BusinessNode):
 
         return resolved
 
-    def execute(self, context: dict[str, Any]) -> NodeResult:  # noqa: C901
+    def _op_read(self, resolved_path: str) -> NodeResult:
+        """读文件操作。"""
+        if not os.path.exists(resolved_path):
+            raise FileNotFoundError(f"文件不存在: {resolved_path}")
+        with open(resolved_path, encoding="utf-8") as f:
+            content = f.read()
+        logger.info(f"成功读取文件: {resolved_path} ({len(content)}字符)")
+        return NodeResult.success(output={"content": content, "file_path": resolved_path}, messages=["已读取文件"])
+
+    def _op_write(self, resolved_path: str, context: dict[str, Any]) -> NodeResult:
+        """写文件操作。"""
+        resolved_content = self.resolve_content(self.content or "", context)
+        dir_path = os.path.dirname(resolved_path)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
+        with open(resolved_path, "w", encoding="utf-8") as f:
+            f.write(resolved_content)
+        logger.info(f"成功写入文件: {resolved_path}")
+        return NodeResult.success(
+            output={"written_to": resolved_path, "content_length": len(resolved_content)},
+            messages=[f"已保存到 {resolved_path}"],
+        )
+
+    def _op_create_dir(self, resolved_path: str) -> NodeResult:
+        """创建目录操作。"""
+        os.makedirs(resolved_path, exist_ok=True)
+        logger.info(f"已创建目录: {resolved_path}")
+        return NodeResult.success(output={"created_directory": resolved_path}, messages=["已创建目录"])
+
+    def _op_delete(self, resolved_path: str) -> NodeResult:
+        """删除文件/目录操作。"""
+        if os.path.isfile(resolved_path):
+            os.remove(resolved_path)
+        elif os.path.isdir(resolved_path):
+            shutil.rmtree(resolved_path)
+        else:
+            raise FileNotFoundError(f"文件/目录不存在: {resolved_path}")
+        logger.info(f"已删除: {resolved_path}")
+        return NodeResult.success(output={"deleted": resolved_path}, messages=["已删除文件"])
+
+    def _op_move(self, resolved_path: str, context: dict[str, Any]) -> NodeResult:
+        """移动文件操作。"""
+        resolved_dest = self._resolve_path_vars(self.dest, context)
+        dest_dir = os.path.dirname(resolved_dest) or "."
+        if dest_dir and not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+        shutil.move(resolved_path, resolved_dest)
+        logger.info(f"已移动: {resolved_path} -> {resolved_dest}")
+        return NodeResult.success(
+            output={"moved_from": resolved_path, "moved_to": resolved_dest},
+            messages=[f"已移动到 {resolved_dest}"],
+        )
+
+    def execute(self, context: dict[str, Any]) -> NodeResult:
         try:
-            # 解析带有变量的路径
             resolved_path = self._resolve_path_vars(self.path, context)
-
-            if self.operation_type == "read":
-                if not os.path.exists(resolved_path):
-                    raise FileNotFoundError(f"文件不存在: {resolved_path}")
-                with open(resolved_path, encoding="utf-8") as f:
-                    content = f.read()
-                logger.info(f"成功读取文件: {resolved_path} ({len(content)}字符)")
-                return NodeResult.success(
-                    output={"content": content, "file_path": resolved_path}, messages=["已读取文件"]
-                )
-
-            elif self.operation_type == "write":
-                # 解析内容中的变量
-                resolved_content = self.resolve_content(self.content or "", context)
-
-                # 确保目录存在
-                dir_path = os.path.dirname(resolved_path)
-                if dir_path and not os.path.exists(dir_path):
-                    os.makedirs(dir_path, exist_ok=True)
-
-                with open(resolved_path, "w", encoding="utf-8") as f:
-                    f.write(resolved_content)
-
-                logger.info(f"成功写入文件: {resolved_path}")
-                return NodeResult.success(
-                    output={"written_to": resolved_path, "content_length": len(resolved_content)},
-                    messages=[f"已保存到 {resolved_path}"],
-                )
-
-            elif self.operation_type == "create_dir":
-                os.makedirs(resolved_path, exist_ok=True)
-                logger.info(f"已创建目录: {resolved_path}")
-                return NodeResult.success(output={"created_directory": resolved_path}, messages=["已创建目录"])
-
-            elif self.operation_type == "delete":
-                if os.path.isfile(resolved_path):
-                    os.remove(resolved_path)
-                elif os.path.isdir(resolved_path):
-                    shutil.rmtree(resolved_path)
-                else:
-                    raise FileNotFoundError(f"文件/目录不存在: {resolved_path}")
-
-                logger.info(f"已删除: {resolved_path}")
-                return NodeResult.success(output={"deleted": resolved_path}, messages=["已删除文件"])
-
-            elif self.operation_type == "move":
-                resolved_dest = self._resolve_path_vars(self.dest, context)
-
-                # 确保目标目录存在
-                dest_dir = os.path.dirname(resolved_dest) or "."
-                if dest_dir and not os.path.exists(dest_dir):
-                    os.makedirs(dest_dir, exist_ok=True)
-
-                shutil.move(resolved_path, resolved_dest)
-                logger.info(f"已移动: {resolved_path} -> {resolved_dest}")
-                return NodeResult.success(
-                    output={"moved_from": resolved_path, "moved_to": resolved_dest},
-                    messages=[f"已移动到 {resolved_dest}"],
-                )
-
-            else:
+            ops = {
+                "read": self._op_read,
+                "write": self._op_write,
+                "create_dir": self._op_create_dir,
+                "delete": self._op_delete,
+                "move": self._op_move,
+            }
+            handler = ops.get(self.operation_type)
+            if not handler:
                 raise ValueError(f"不支持的操作类型: {self.operation_type}")
-
+            return handler(resolved_path, context) if self.operation_type in ("write", "move") else handler(resolved_path)
         except FileNotFoundError as e:
             logger.error(f"文件操作失败: {e}")
             return NodeResult.failed(f"文件不存在: {str(e)}")

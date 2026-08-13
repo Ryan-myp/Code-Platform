@@ -346,6 +346,68 @@ def _is_infra_error(msg: str) -> bool:
     return any(m in low for m in _INFRA_ERROR_MARKERS)
 
 
+
+def _ensure_dep_redis(cfg: dict, container_name: str, net: str, append, step_run) -> tuple:
+    """确保 Redis 依赖容器运行（幂等复用）。返回 (env_flags, ok, err)。"""
+    env_flags: list = []
+    dep = f"{container_name}-redis"
+    ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
+    if ok and out.strip() == "true":
+        append(f"  - 依赖: Redis 容器 {dep} 已运行，复用 ✓")
+    else:
+        step_run(["podman", "rm", "-f", dep], timeout=30)
+        append(f"  - 依赖: 启动 Redis 容器 {dep} …")
+        ok, out = step_run(
+            ["podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
+             "docker.io/library/redis:7-alpine"],
+            timeout=300,
+        )
+        if not ok:
+            return [], False, f"Redis 依赖容器启动失败: {out[-300:]}"
+    env_flags += ["-e", "REDIS_URL=redis://redis:6379/0"]
+    return env_flags, True, ""
+
+
+def _ensure_dep_mysql(cfg: dict, container_name: str, net: str, append, step_run) -> tuple:
+    """确保 MySQL 依赖容器运行并就绪（幂等复用）。返回 (env_flags, ok, err)。"""
+    env_flags: list = []
+    dep = f"{container_name}-mysql"
+    pw = cfg.get("mysql_password", "platform123")
+    db = cfg.get("mysql_database", "platform")
+    img = cfg.get("mysql_image", "docker.io/library/mysql:8")
+    ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
+    if ok and out.strip() == "true":
+        ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+        if ok2:
+            append(f"  - 依赖: MySQL 容器 {dep} 已运行且就绪，复用 ✓")
+        else:
+            append(f"  - 依赖: MySQL 容器 {dep} 未就绪，重建 …")
+            ok = False
+    else:
+        ok = False
+    if not ok:
+        step_run(["podman", "rm", "-f", dep], timeout=30)
+        append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
+        ok, out = step_run(
+            ["podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
+             "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}", img],
+            timeout=600,
+        )
+        if not ok:
+            return [], False, f"MySQL 依赖容器启动失败: {out[-300:]}"
+        append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
+        ready = False
+        for _ in range(60):
+            time.sleep(2)
+            ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+            if ok2:
+                ready = True
+                break
+        if not ready:
+            return [], False, "MySQL 依赖容器初始化超时"
+    env_flags += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{pw}@mysql:3306/{db}?charset=utf8mb4"]
+    return env_flags, True, ""
+
 def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:  # noqa: C901
     """准备自定义网络 + 依赖容器（Redis/MySQL），已存在且健康则复用（幂等）。
 
@@ -364,86 +426,15 @@ def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:  # no
             return "", [], False, f"创建网络失败: {out[-300:]}"
     if deps:
         if deps.get("redis"):
-            dep = f"{container_name}-redis"
-            ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
-            if ok and out.strip() == "true":
-                append(f"  - 依赖: Redis 容器 {dep} 已运行，复用 ✓")
-            else:
-                step_run(["podman", "rm", "-f", dep], timeout=30)
-                append(f"  - 依赖: 启动 Redis 容器 {dep} …")
-                ok, out = step_run(
-                    [
-                        "podman",
-                        "run",
-                        "-d",
-                        "--name",
-                        dep,
-                        "--network",
-                        net,
-                        "--network-alias",
-                        "redis",
-                        "docker.io/library/redis:7-alpine",
-                    ],
-                    timeout=300,
-                )
-                if not ok:
-                    return "", [], False, f"Redis 依赖容器启动失败: {out[-300:]}"
-            env_flags += ["-e", "REDIS_URL=redis://redis:6379/0"]
-        if deps.get("mysql"):
-            dep = f"{container_name}-mysql"
-            pw = deps.get("mysql_password", "platform123")
-            db = deps.get("mysql_database", "platform")
-            img = deps.get("mysql_image", "docker.io/library/mysql:8")  # 国内网络可配置 mirror 源
-            ok, out = step_run(["podman", "inspect", "--format", "{{.State.Running}}", dep], timeout=30)
-            if ok and out.strip() == "true":
-                # 已运行：仍校验 MySQL 可 ping（避免复用坏实例）
-                ok2, _ = step_run(
-                    ["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10
-                )
-                if ok2:
-                    append(f"  - 依赖: MySQL 容器 {dep} 已运行且就绪，复用 ✓")
-                else:
-                    append(f"  - 依赖: MySQL 容器 {dep} 未就绪，重建 …")
-                    ok, out = (False, "")
-            else:
-                ok, out = (False, "")
+            flags, ok, err = _ensure_dep_redis(deps, container_name, net, append, step_run)
             if not ok:
-                step_run(["podman", "rm", "-f", dep], timeout=30)
-                append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
-                ok, out = step_run(
-                    [
-                        "podman",
-                        "run",
-                        "-d",
-                        "--name",
-                        dep,
-                        "--network",
-                        net,
-                        "--network-alias",
-                        "mysql",
-                        "-e",
-                        f"MYSQL_ROOT_PASSWORD={pw}",
-                        "-e",
-                        f"MYSQL_DATABASE={db}",
-                        img,
-                    ],
-                    timeout=600,
-                )
-                if not ok:
-                    return "", [], False, f"MySQL 依赖容器启动失败: {out[-300:]}"
-                append("  - 依赖: 等待 MySQL 初始化（约 20-40s）…")
-                ready = False
-                for _ in range(60):
-                    time.sleep(2)
-                    ok2, _ = step_run(
-                        ["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10
-                    )
-                    if ok2:
-                        ready = True
-                        break
-                if not ready:
-                    return "", [], False, "MySQL 依赖容器初始化超时"
-            env_flags += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{pw}@mysql:3306/{db}?charset=utf8mb4"]
+                return "", [], False, err
+            env_flags += flags
+        if deps.get("mysql"):
+            flags, ok, err = _ensure_dep_mysql(deps, container_name, net, append, step_run)
+            if not ok:
+                return "", [], False, err
+            env_flags += flags
     return net, env_flags, True, ""
 
 
