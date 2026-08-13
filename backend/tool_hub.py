@@ -7798,6 +7798,89 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
 
 
 @router.post("/api/tools/upload")
+
+def _extract_excel(tmp_path: str, filename: str) -> str:
+    """Excel 内容提取为 Markdown 表格。"""
+    NL = "\n"
+    import openpyxl
+
+    wb = openpyxl.load_workbook(tmp_path)
+    sheets_data = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+            rows.append([str(cell) if cell is not None else "" for cell in row])
+        sheets_data.append({"name": sheet_name, "data": rows[:50]})
+    out = "Excel 文件: " + filename + NL + "包含 " + str(len(wb.sheetnames)) + " 个工作表" + NL + NL
+    for sheet in sheets_data:
+        out += "## 工作表: " + sheet["name"] + NL + "行数: " + str(len(sheet["data"])) + NL
+        if sheet["data"]:
+            headers = sheet["data"][0]
+            out += "| " + " | ".join(headers) + " |" + NL
+            out += "| " + " | ".join(["---"] * len(headers)) + " |" + NL
+            for row in sheet["data"][1:20]:
+                out += "| " + " | ".join(row) + " |" + NL
+        out += NL
+    return out
+
+
+def _extract_csv(tmp_path: str, filename: str) -> str:
+    """CSV 内容提取为 Markdown 表格。"""
+    NL = "\n"
+    import csv
+
+    with open(tmp_path, encoding="utf-8") as fh:
+        reader = csv.reader(fh)
+        rows = list(reader)[:50]
+    out = "CSV 文件: " + filename + NL + "总行数: " + str(len(rows)) + NL + NL
+    if rows:
+        headers = rows[0]
+        out += "| " + " | ".join(headers) + " |" + NL
+        out += "| " + " | ".join(["---"] * len(headers)) + " |" + NL
+        for row in rows[1:30]:
+            out += "| " + " | ".join(row) + " |" + NL
+    return out
+
+
+def _extract_pdf(tmp_path: str, filename: str) -> str:
+    """PDF 内容提取（前10页）。"""
+    NL = "\n"
+    import PyPDF2
+
+    with open(tmp_path, "rb") as fh:
+        reader = PyPDF2.PdfReader(fh)
+        out = "PDF 文件: " + filename + NL + "总页数: " + str(len(reader.pages)) + NL + NL
+        for i, page in enumerate(reader.pages[:10]):
+            text = page.extract_text()
+            if text:
+                out += "## 第 " + str(i + 1) + " 页" + NL + text + NL + NL
+    return out
+
+
+def _extract_text(tmp_path: str) -> str:
+    """文本内容提取（限 50KB）。"""
+    NL = "\n"
+    with open(tmp_path, encoding="utf-8") as fh:
+        content = fh.read()
+    if len(content) > 50000:
+        content = content[:50000] + NL + "...(内容已截断)"
+    return content
+
+
+def _extract_word(tmp_path: str, filename: str) -> str:
+    """Word 内容提取（前100段）。"""
+    NL = "\n"
+    from docx import Document
+
+    doc = Document(tmp_path)
+    out = "Word 文档: " + filename + NL + NL
+    for para in doc.paragraphs[:100]:
+        if para.text.strip():
+            out += para.text + NL
+    return out
+
+
 async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):  # noqa: C901
     """上传文件并提取内容"""
     import tempfile
@@ -7826,89 +7909,14 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
 
     try:
         file_type = allowed_types[ext]
-        extracted_content = ""
-
-        if file_type == "excel":
-            try:
-                import openpyxl
-
-                wb = await asyncio.to_thread(openpyxl.load_workbook, tmp_path)
-                sheets_data = []
-                for sheet_name in wb.sheetnames:
-                    ws = wb[sheet_name]
-                    rows = []
-                    for row in ws.iter_rows(values_only=True):
-                        rows.append([str(cell) if cell is not None else "" for cell in row])
-                    sheets_data.append(
-                        {
-                            "name": sheet_name,
-                            "data": rows[:50],  # 限制行数
-                        }
-                    )
-                extracted_content = f"Excel 文件: {file.filename}\n"
-                extracted_content += f"包含 {len(wb.sheetnames)} 个工作表\n\n"
-                for sheet in sheets_data:
-                    extracted_content += f"## 工作表: {sheet['name']}\n"
-                    extracted_content += f"行数: {len(sheet['data'])}\n"
-                    # 转为 Markdown 表格
-                    if sheet["data"]:
-                        headers = sheet["data"][0]
-                        extracted_content += "| " + " | ".join(headers) + " |\n"
-                        extracted_content += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                        for row in sheet["data"][1:20]:  # 显示前20行
-                            extracted_content += "| " + " | ".join(row) + " |\n"
-                    extracted_content += "\n"
-            except ImportError as e:
-                raise HTTPException(500, "需要安装 openpyxl 库来读取 Excel 文件") from e
-
-        elif file_type == "csv":
-            import csv
-
-            with open(tmp_path, encoding="utf-8") as f:
-                reader = csv.reader(f)
-                rows = list(reader)[:50]
-                extracted_content = f"CSV 文件: {file.filename}\n"
-                extracted_content += f"总行数: {len(rows)}\n\n"
-                if rows:
-                    headers = rows[0]
-                    extracted_content += "| " + " | ".join(headers) + " |\n"
-                    extracted_content += "| " + " | ".join(["---"] * len(headers)) + " |\n"
-                    for row in rows[1:30]:
-                        extracted_content += "| " + " | ".join(row) + " |\n"
-
-        elif file_type == "pdf":
-            try:
-                import PyPDF2
-
-                with open(tmp_path, "rb") as f:
-                    reader = PyPDF2.PdfReader(f)
-                    extracted_content = f"PDF 文件: {file.filename}\n"
-                    extracted_content += f"总页数: {len(reader.pages)}\n\n"
-                    for i, page in enumerate(reader.pages[:10]):  # 前10页
-                        text = page.extract_text()
-                        if text:
-                            extracted_content += f"## 第 {i + 1} 页\n{text}\n\n"
-            except ImportError as e:
-                raise HTTPException(500, "需要安装 PyPDF2 库来读取 PDF 文件") from e
-
-        elif file_type == "text":
-            with open(tmp_path, encoding="utf-8") as f:
-                extracted_content = f.read()
-                if len(extracted_content) > 50000:
-                    extracted_content = extracted_content[:50000] + "\n...(内容已截断)"
-
-        elif file_type == "word":
-            try:
-                from docx import Document
-
-                doc = Document(tmp_path)
-                extracted_content = f"Word 文档: {file.filename}\n\n"
-                for para in doc.paragraphs[:100]:
-                    if para.text.strip():
-                        extracted_content += para.text + "\n"
-            except ImportError as e:
-                raise HTTPException(500, "需要安装 python-docx 库来读取 Word 文件") from e
-
+        extractors = {
+            "excel": lambda: _extract_excel(tmp_path, file.filename),
+            "csv": lambda: _extract_csv(tmp_path, file.filename),
+            "pdf": lambda: _extract_pdf(tmp_path, file.filename),
+            "text": lambda: _extract_text(tmp_path),
+            "word": lambda: _extract_word(tmp_path, file.filename),
+        }
+        extracted_content = await asyncio.to_thread(extractors[file_type]) if file_type == "excel" else extractors[file_type]()
         return {"ok": True, "filename": file.filename, "content": extracted_content, "file_type": file_type}
     finally:
         # 清理临时文件
