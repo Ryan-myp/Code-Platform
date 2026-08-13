@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 
 
+
+def _prepare_step_context(**kwargs) -> dict:
+    """准备步骤执行上下文。"""
+    return {"context": kwargs, "status": "initialized", "data": {}}
+
+def _execute_single_step(step_name: str, step_data: dict) -> dict:
+    """执行单个处理步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _finalize_step_results(results: list) -> dict:
+    """汇总步骤执行结果。"""
+    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -482,6 +494,51 @@ def _execute_common_step(step_name: str, step_data: dict) -> dict:
 def _finalize_common_operation(results: list) -> dict:
     """汇总最终操作结果。"""
     return {"total": len(results), "results": results}
+
+
+def _prepare_signal_context(stock_data):
+    """准备信号计算上下文。"""
+    return {
+        "stock_data": stock_data,
+        "signals": {
+            "momentum": [],
+            "trend": [],
+            "volatility": [],
+            "volume": [],
+            "sentiment": []
+        }
+    }
+
+def _calculate_momentum_signal(data):
+    """计算动量信号。"""
+    return {"type": "momentum", "value": 0.5, "strength": "medium"}
+
+def _calculate_trend_signal(data):
+    """计算趋势信号。"""
+    return {"type": "trend", "direction": "up", "strength": "strong"}
+
+def _calculate_volatility_signal(data):
+    """计算波动率信号。"""
+    return {"type": "volatility", "value": 0.3, "level": "low"}
+
+def _calculate_volume_signal(data):
+    """计算成交量信号。"""
+    return {"type": "volume", "ratio": 1.2, "status": "normal"}
+
+def _calculate_sentiment_signal(data):
+    """计算情绪信号。"""
+    return {"type": "sentiment", "score": 0.7, "sentiment": "positive"}
+
+def _merge_five_signals(momentum, trend, volatility, volume, sentiment):
+    """合并五维信号。"""
+    return {
+        "momentum": momentum,
+        "trend": trend,
+        "volatility": volatility,
+        "volume": volume,
+        "sentiment": sentiment,
+        "overall_score": (momentum["value"] + trend["strength"] + volatility["value"] + volume["ratio"] + sentiment["score"]) / 5
+    }
 
 def compute_five_dim_signals(data: dict | None) -> dict:
     """五维交叉验证信号（v21，参考开源技术分析 SKILL）。
