@@ -597,17 +597,10 @@ def _build_review_simple(review_data: dict) -> dict:
         "status": "completed"
     }
 
-def build_review_material(files: dict, name: str, template: str = "") -> dict:
-    """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。
 
-    纯函数（不碰 DB/网络），供端点与单测复用。
-    返回 {"ok": bool, "checks": [{item, ok, level, detail}], "material": md}。
-    """
-    files = files or {}
-    checks: list[dict] = []
+def _review_check_appjson(files: dict, checks: list) -> dict:
+    """检查 app.json 可解析 + 页面注册 + 四件套齐全。返回 app_cfg。"""
     app_cfg: dict = {}
-
-    # 1. app.json 可解析 + 页面注册交叉核对
     raw_app = files.get("app.json")
     if raw_app is None or not str(raw_app).strip():
         checks.append({"item": "app.json 可解析", "ok": False, "level": "error", "detail": "app.json 缺失（小程序运行必需）"})
@@ -620,60 +613,60 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
     registered = set(app_cfg.get("pages") or [])
     generated = {p.rsplit(".", 1)[0] for p in files if p.startswith("pages/")}
     unregistered = sorted(generated - registered)
-    checks.append(
-        {
-            "item": "app.json 注册全部页面",
-            "ok": not unregistered,
-            "level": "error" if unregistered else "ok",
-            "detail": "OK" if not unregistered else f"未注册: {unregistered}",
-        }
-    )
+    checks.append({
+        "item": "app.json 注册全部页面",
+        "ok": not unregistered,
+        "level": "error" if unregistered else "ok",
+        "detail": "OK" if not unregistered else f"未注册: {unregistered}",
+    })
     missing_quartet = sorted(
         {f"{rp}.{ext}" for rp in registered for ext in ("js", "wxml", "wxss", "json") if f"{rp}.{ext}" not in files}
     )
-    checks.append(
-        {
-            "item": "注册页面四件套齐全",
-            "ok": not missing_quartet,
-            "level": "error" if missing_quartet else "ok",
-            "detail": "OK" if not missing_quartet else f"缺失: {missing_quartet}",
-        }
-    )
+    checks.append({
+        "item": "注册页面四件套齐全",
+        "ok": not missing_quartet,
+        "level": "error" if missing_quartet else "ok",
+        "detail": "OK" if not missing_quartet else f"缺失: {missing_quartet}",
+    })
+    return app_cfg
 
-    # 2. 导航栏标题（审核界面展示依赖）
+
+def _review_check_meta(app_cfg: dict, files: dict, checks: list) -> None:
+    """导航栏标题 + tabBar 图标 + sitemap。"""
     title = ((app_cfg.get("window") or {}).get("navigationBarTitleText") or "").strip()
-    checks.append(
-        {
-            "item": "导航栏标题已设置",
-            "ok": bool(title),
-            "level": "warn" if not title else "ok",
-            "detail": f"「{title}」" if title else "window.navigationBarTitleText 缺失，审核截图展示异常",
-        }
-    )
-
-    # 3. tabBar 图标资源核对（图标缺失会导致编译警告/审核驳回）
+    checks.append({
+        "item": "导航栏标题已设置",
+        "ok": bool(title),
+        "level": "warn" if not title else "ok",
+        "detail": f"「{title}」" if title else "window.navigationBarTitleText 缺失，审核截图展示异常",
+    })
     tabbar = app_cfg.get("tabBar")
     if isinstance(tabbar, dict) and tabbar.get("list"):
-        missing_icons = sorted(
-            {
-                p.lstrip("/")
-                for it in tabbar["list"]
-                for p in (it.get("iconPath"), it.get("selectedIconPath"))
-                if p and p.lstrip("/") not in files
-            }
-        )
-        checks.append(
-            {
-                "item": "tabBar 图标资源齐全",
-                "ok": not missing_icons,
-                "level": "warn" if missing_icons else "ok",
-                "detail": "OK" if not missing_icons else f"图标缺失: {missing_icons}",
-            }
-        )
+        missing_icons = sorted({
+            p.lstrip("/")
+            for it in tabbar["list"]
+            for p in (it.get("iconPath"), it.get("selectedIconPath"))
+            if p and p.lstrip("/") not in files
+        })
+        checks.append({
+            "item": "tabBar 图标资源齐全",
+            "ok": not missing_icons,
+            "level": "warn" if missing_icons else "ok",
+            "detail": "OK" if not missing_icons else f"图标缺失: {missing_icons}",
+        })
     else:
         checks.append({"item": "tabBar 配置", "ok": True, "level": "ok", "detail": "未使用 tabBar（无需图标资源）"})
+    has_sitemap = "sitemap.json" in files
+    checks.append({
+        "item": "sitemap.json 存在",
+        "ok": has_sitemap,
+        "level": "warn" if not has_sitemap else "ok",
+        "detail": "存在（页面收录规则）" if has_sitemap else "缺失：建议保留 sitemap.json 以控制搜索收录范围",
+    })
 
-    # 4. 权限声明扫描：代码用到的隐私 API 必须已在 app.json 声明
+
+def _review_check_permissions(app_cfg: dict, files: dict, checks: list) -> list:
+    """权限声明扫描：代码用到的隐私 API 必须已在 app.json 声明。返回 used_apis。"""
     used_apis = _scan_used_apis(files)
     permission = app_cfg.get("permission") or {}
     private_declared = set(app_cfg.get("requiredPrivateInfos") or [])
@@ -684,37 +677,26 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
         elif rule["key"] == "private":
             declared = rule["private"] in private_declared
             need = f"requiredPrivateInfos: [\"{rule['private']}\"]"
-        else:  # console：后台配置类，代码无法核对，仅提示
+        else:
             declared = True
             need = rule["desc"]
-        checks.append(
-            {
-                "item": f"权限声明：{rule['name']}（{rule['api']}）",
-                "ok": declared,
-                "level": rule["level"] if not declared else "ok",
-                "detail": "已声明" if declared else f"代码使用 wx.{rule['api'][3:]} 但未声明，需在 app.json 配置 {need}",
-            }
-        )
+        checks.append({
+            "item": f"权限声明：{rule['name']}（{rule['api']}）",
+            "ok": declared,
+            "level": rule["level"] if not declared else "ok",
+            "detail": "已声明" if declared else f"代码使用 wx.{rule['api'][3:]} 但未声明，需在 app.json 配置 {need}",
+        })
+    return used_apis
 
-    # 5. sitemap（搜索收录规则，缺失仅提示）
-    has_sitemap = "sitemap.json" in files
-    checks.append(
-        {
-            "item": "sitemap.json 存在",
-            "ok": has_sitemap,
-            "level": "warn" if not has_sitemap else "ok",
-            "detail": "存在（页面收录规则）" if has_sitemap else "缺失：建议保留 sitemap.json 以控制搜索收录范围",
-        }
-    )
 
+def _review_material_md(files: dict, name: str, template: str, app_cfg: dict, checks: list, used_apis: list) -> str:
+    """生成提审材料 Markdown。"""
+    tpl_name = next((t["name"] for t in TEMPLATES if t["id"] == template), template or "自定义")
+    category = _CATEGORY_SUGGEST.get(template, "按业务功能选择对应服务类目")
+    pages = sorted(set(app_cfg.get("pages") or []))
     failed = [c for c in checks if c["level"] == "error"]
     warns = [c for c in checks if c["level"] == "warn"]
     ok = not failed
-
-    # ── 提审材料 Markdown ──
-    tpl_name = next((t["name"] for t in TEMPLATES if t["id"] == template), template or "自定义")
-    category = _CATEGORY_SUGGEST.get(template, "按业务功能选择对应服务类目")
-    pages = sorted(registered)
     lines = [
         f"# 《{name}》微信小程序提审材料",
         "",
@@ -737,11 +719,7 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
         lines += [f"- {r['name']}（{r['api']}）：{r['desc']}" for r in used_apis]
     else:
         lines += ["- 未扫描到隐私接口调用（本项目默认不采集用户信息）"]
-    lines += [
-        "",
-        "## 四、提审前核对清单",
-        "",
-    ]
+    lines += ["", "## 四、提审前核对清单", ""]
     lines += [f"- [{'x' if c['ok'] else ' '}] {c['item']}：{c['detail']}" for c in checks]
     lines += [
         "",
@@ -755,13 +733,28 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
         f"- {'✅ 全部核对通过，可提交审核' if ok else f'❌ {len(failed)} 项不通过，请先修复后再提交（附 {len(warns)} 项提醒）'}",
         "",
     ]
-    return {"ok": ok, "checks": checks, "material": "\n".join(lines)}
+    return "\n".join(lines)
 
+def build_review_material(files: dict, name: str, template: str = "") -> dict:
+    """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。"""
+    files = files or {}
+    checks: list[dict] = []
 
-@router.get("/templates")
+    # 1. app.json 可解析 + 页面注册 + 四件套
+    app_cfg = _review_check_appjson(files, checks)
+    # 2. 导航栏标题 + tabBar 图标 + sitemap
+    _review_check_meta(app_cfg, files, checks)
+    # 3. 权限声明扫描
+    used_apis = _review_check_permissions(app_cfg, files, checks)
 
+    failed = [c for c in checks if c["level"] == "error"]
+    warns = [c for c in checks if c["level"] == "warn"]
+    ok = not failed
 
-@router.get("/projects")
+    # ── 提审材料 Markdown ──
+    material = _review_material_md(files, name, template, app_cfg, checks, used_apis)
+    return {"ok": ok, "checks": checks, "material": material}
+
 async def list_projects(current_user: dict = require_auth()):
     conn = get_db()
     rows = conn.execute(
