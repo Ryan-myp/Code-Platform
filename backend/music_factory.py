@@ -141,38 +141,7 @@ def _text_to_lrc(lyrics: str, duration: float, title: str = "", artist: str = ""
 
 
 @router.post("/publish-pack")
-async def _music_internal():
-    pass
-
-async def _prepare_music_upload_data(music_data: dict) -> dict:
-    """准备音乐上传数据。"""
-    return {
-        "title": music_data.get("title", "未命名"),
-        "artist": music_data.get("artist", "未知艺术家"),
-        "audio_url": music_data.get("audio_url", ""),
-        "cover_url": music_data.get("cover_url", "")
-    }
-
-def _select_publish_platform(platform: str) -> str:
-    """选择发布平台。"""
-    platforms = {
-        "netease": "网易云音乐",
-        "qq": "QQ音乐",
-        "kugou": "酷狗音乐",
-        "kuwo": "酷我音乐"
-    }
-    return platforms.get(platform, "网易云音乐")
-
-def _format_publish_result(upload_result: dict, platform: str) -> dict:
-    """格式化发布结果。"""
-    return {
-        "platform": platform,
-        "success": upload_result.get("success", False),
-        "music_id": upload_result.get("music_id", ""),
-        "publish_url": upload_result.get("publish_url", "")
-    }
-
-def music_publish_pack(
+async def music_publish_pack(
     audio_id: str = Form(...),
     song_title: str = Form(""),
     artist: str = Form(""),
@@ -1214,22 +1183,6 @@ def _vocalize_word(cut: np.ndarray, f1: float, target_dur: float, ref_f0: float 
         env[-e:] = np.linspace(1, 0, e) ** 0.8
     return shifted * env, f0
 
-
-
-def _convert_text_to_phonemes(text: str) -> list:
-    """将文本转换为音素序列。"""
-    # 简化的音素转换
-    return [{"phoneme": c, "duration": 0.1} for c in text if c.isalnum()]
-
-def _synthesize_voice_segment(phonemes: list, voice_config: dict) -> bytes:
-    """合成语音片段。"""
-    # 简化的语音合成
-    return b"dummy_audio_data"
-
-def _apply_audio_effects(audio_data: bytes, effects: dict) -> bytes:
-    """应用音频效果。"""
-    # 简化的效果处理
-    return audio_data
 
 def _vocalize_phrase(  # noqa: C901
     mp3_path: str, json_path: str, melody: list[dict], seg_start: float, seg_dur: float, sr: int = _SR
