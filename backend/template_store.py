@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from backend.template_base import TemplateBase, create_template
 """图片模板商城 — 图片创意平台的商业化核心。
 
 能力：

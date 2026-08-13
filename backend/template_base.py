@@ -1,94 +1,99 @@
 
 """
-模板公共基类 - 提供类型注解支持
+类型注解支持模块
 """
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from typing import (
+    Any, Optional, Union, List, Dict, Tuple, Callable, Set, 
+    TypeVar, Generic, Iterator, Sequence, Mapping, Iterable,
+    Awaitable, Coroutine, Type, TypeVar, Protocol
+)
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
+from datetime import datetime
 import asyncio
+import json
+import os
 from pathlib import Path as PathLib
-from abc import ABC, abstractmethod
 
+# 泛型类型变量
 T = TypeVar('T')
-"""泛型类型变量"""
+K = TypeVar('K')
+V = TypeVar('V')
+
+# 常用类型别名
+JsonValue = Union[str, int, float, bool, None, List['JsonValue'], Dict[str, 'JsonValue']]
+AnyDict = Dict[str, Any]
+AnyList = List[Any]
+StringOrPath = Union[str, PathLib]
+
 
 @dataclass
-class TemplateConfig:
-    """模板配置数据类"""
-    template_id: str = ""
-    width: int = 1080
-    height: int = 1920
-    layers: List[Dict[str, Any]] = field(default_factory=list)
-    output_format: str = "png"
+class TypeInfo:
+    """类型信息数据类"""
+    name: str
+    type: type
+    default: Any = None
+    required: bool = True
     
-    def validate(self) -> Tuple[bool, List[str]]:
-        """验证配置"""
-        errors = []
-        if not self.template_id:
-            errors.append("template_id is required")
-        if self.width <= 0 or self.height <= 0:
-            errors.append("width and height must be positive")
-        return len(errors) == 0, errors
+    def __post_init__(self):
+        if self.default is None and self.required:
+            raise ValueError(f"Required field {self.name} has no default")
 
 
-class TemplateBase(ABC):
-    """模板处理抽象基类"""
-    
-    def __init__(self, template_id: str = "", config: Optional[TemplateConfig] = None):
-        self.template_id = template_id
-        self.config = config or TemplateConfig(template_id=template_id)
-        self.layers: List[Dict[str, Any]] = []
-        self.output_dir: str = "outputs"
-    
-    @abstractmethod
-    def render(self, **kwargs) -> Any:
-        """渲染模板（子类必须实现）"""
-        pass
-    
-    def add_layer(self, layer: Dict[str, Any]) -> None:
-        """添加图层"""
-        self.layers.append(layer)
-    
-    def get_layer_by_key(self, key: str) -> Optional[Dict[str, Any]]:
-        """按key获取图层"""
-        for layer in self.layers:
-            if layer.get("key") == key:
-                return layer
-        return None
-    
-    def remove_layer(self, key: str) -> bool:
-        """移除图层"""
-        for i, layer in enumerate(self.layers):
-            if layer.get("key") == key:
-                self.layers.pop(i)
-                return True
+def validate_type(value: Any, expected_type: type, field_name: str = "") -> bool:
+    """验证值的类型"""
+    if not isinstance(value, expected_type):
         return False
-    
-    def clear_layers(self) -> None:
-        """清空所有图层"""
-        self.layers.clear()
-    
-    def get_template_info(self) -> Dict[str, Any]:
-        """获取模板信息"""
-        return {
-            "template_id": self.template_id,
-            "width": self.config.width,
-            "height": self.config.height,
-            "layer_count": len(self.layers),
-            "output_format": self.config.output_format
-        }
+    return True
 
 
-def create_template(template_type: str, **kwargs) -> TemplateBase:
-    """工厂方法创建模板实例"""
-    # 这里可以根据template_type返回不同的子类实例
-    return TemplateBase(**kwargs)
+def safe_cast(value: Any, target_type: type, default: Any = None) -> Any:
+    """安全类型转换"""
+    try:
+        return target_type(value)
+    except (ValueError, TypeError):
+        return default
 
 
-def batch_process_templates(templates: List[TemplateBase], processor: Callable) -> List[Any]:
-    """批量处理模板"""
-    results = []
-    for template in templates:
-        results.append(processor(template))
-    return results
+def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """合并字典"""
+    result = base.copy()
+    result.update(override)
+    return result
+
+
+def filter_dict(data: Dict[str, Any], keys: List[str]) -> Dict[str, Any]:
+    """过滤字典"""
+    return {k: v for k, v in data.items() if k in keys}
+
+
+def ensure_list(value: Any) -> List[Any]:
+    """确保值为列表"""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def chunk_list(lst: List[Any], chunk_size: int) -> List[List[Any]]:
+    """列表分块"""
+    return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+
+
+def flatten_list(nested: List[List[Any]]) -> List[Any]:
+    """展平嵌套列表"""
+    return [item for sublist in nested for item in sublist]
+
+
+def dict_to_object(data: Dict[str, Any], class_type: Type[T]) -> T:
+    """字典转对象"""
+    return class_type(**data)
+
+
+def format_timestamp(dt: Optional[datetime] = None) -> str:
+    """格式化时间戳"""
+    if dt is None:
+        dt = datetime.now()
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
