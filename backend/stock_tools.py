@@ -605,6 +605,85 @@ def _merge_five_signals(momentum, trend, volatility, volume, sentiment):
         "overall_score": (momentum["value"] + trend["strength"] + volatility["value"] + volume["ratio"] + sentiment["score"]) / 5
     }
 
+
+def _compute_trend_signal(points: list, latest: dict) -> dict:
+    """计算趋势维度信号。"""
+    ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
+    macd = latest.get("macd")
+    close = latest.get("close")
+    
+    ev, pos, neg = [], 0, 0
+    
+    if None not in (ma5, ma20, ma60):
+        if ma5 > ma20 > ma60:
+            ev.append("均线多头排列（MA5>MA20>MA60）")
+            pos += 1
+        elif ma5 < ma20 < ma60:
+            ev.append("均线空头排列（MA5<MA20<MA60）")
+            neg += 1
+        else:
+            ev.append("均线交织，方向不明")
+    
+    if close and ma20:
+        if close > ma20:
+            ev.append("价格站上 MA20")
+            pos += 1
+        else:
+            ev.append("价格跌破 MA20")
+            neg += 1
+    
+    if macd is not None:
+        if macd > 0:
+            ev.append("MACD 为正（多头动能）")
+            pos += 1
+        else:
+            ev.append("MACD 为负（空头动能）")
+            neg += 1
+    
+    level = "bullish" if pos >= 2 else ("bearish" if neg >= 2 else "neutral")
+    return {"level": level, "evidence": ev}
+
+def _compute_momentum_signal(points: list, latest: dict) -> dict:
+    """计算动量维度信号。"""
+    from stock_tools import _LEVEL_LABELS
+    
+    rsi = latest.get("rsi")
+    ev = []
+    rsi_zone = "unknown"
+    
+    if rsi is not None:
+        if rsi >= 70:
+            rsi_zone = "overbought"
+            ev.append(f"RSI={rsi:.1f} 超买过热（回调风险）")
+        elif rsi <= 30:
+            rsi_zone = "oversold"
+            ev.append(f"RSI={rsi:.1f} 超卖弱势（修复可能）")
+        else:
+            rsi_zone = "neutral"
+            ev.append(f"RSI={rsi:.1f} 中性区间")
+    
+    cross = "none"
+    if len(points) >= 2:
+        p2 = points[-2]
+        m1, s1 = latest.get("macd"), latest.get("signal")
+        m0, s0 = p2.get("macd"), p2.get("signal")
+        if None not in (m1, s1, m0, s0):
+            if m0 <= s0 and m1 > s1:
+                cross = "golden"
+                ev.append("MACD 金叉（DIF 上穿 DEA）")
+            elif m0 >= s0 and m1 < s1:
+                cross = "death"
+                ev.append("MACD 死叉（DIF 下穿 DEA）")
+    
+    if cross == "golden" or rsi_zone == "oversold":
+        level = "bullish"
+    elif cross == "death" or rsi_zone == "overbought":
+        level = "bearish"
+    else:
+        level = "neutral"
+    
+    return {"level": level, "evidence": ev, "rsi_zone": rsi_zone, "macd_cross": cross}
+
 def compute_five_dim_signals(data: dict | None) -> dict:
     """五维交叉验证信号（v21，参考开源技术分析 SKILL）。
 

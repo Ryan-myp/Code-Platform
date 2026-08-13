@@ -1218,6 +1218,63 @@ def _resolve_layer_img(layer: dict, slot_map: dict, batch_url: str, main_slot_ke
         return batch_url
     return layer.get("url", "")
 
+
+def _render_template_image_prepare(template: dict, overrides: dict) -> dict:
+    """准备模板渲染上下文。"""
+    overrides = overrides or {}
+    width = int(overrides.get("width", template.get("width", 1080)))
+    height = int(overrides.get("height", template.get("height", 1920)))
+    
+    raw_images = overrides.get("images") or []
+    slot_map = raw_images if isinstance(raw_images, dict) else {}
+    batch_urls = [] if isinstance(raw_images, dict) else list(raw_images)
+    
+    return {
+        "width": width,
+        "height": height,
+        "slot_map": slot_map,
+        "batch_urls": batch_urls,
+        "template": template,
+        "overrides": overrides,
+        "status": "prepared"
+    }
+
+def _render_template_image_resolve_layer(layer: dict, slot_map: dict, batch_urls: list, main_slot_key: str) -> str:
+    """解析图层图片来源。"""
+    key = layer.get("key", "")
+    if key and key in slot_map:
+        return slot_map[key]
+    if batch_urls and key == main_slot_key:
+        return batch_urls[0]
+    return layer.get("url", "")
+
+def _render_template_image_create_background(width: int, height: int, overrides: dict, template: dict):
+    """创建背景图层。"""
+    from PIL import Image
+    
+    bg_src = overrides.get("background_image", template.get("background_image", ""))
+    if bg_src:
+        from image_edit_engine import load_template_image
+        bg = load_template_image(bg_src)
+        if bg is not None:
+            blur = float(overrides.get("background_blur", template.get("background_blur", 0)) or 0)
+            darken = float(overrides.get("background_darken", template.get("background_darken", 0)) or 0)
+            bg = _cover_resize(bg, width, height)
+            if blur > 0:
+                bg = bg.filter(ImageFilter.GaussianBlur(blur))
+            if darken > 0:
+                shade = Image.new("RGBA", (width, height), (0, 0, 0, int(255 * min(1.0, darken))))
+                bg = Image.alpha_composite(bg, shade)
+            return bg.convert("RGB")
+    
+    bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
+    if isinstance(bg_color, str) and "→" in bg_color:
+        from image_edit_engine import make_gradient
+        top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
+        return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
+    
+    return Image.new("RGB", (width, height), bg_color)
+
 async def render_template_image(template: dict, overrides: dict | None = None,  # noqa: C901, PLR0912
                                 progress: Callable | None = None) -> list[Image.Image]:
     """按模板渲染出 PIL 图像列表（不保存，供渲染任务/封面缩略图复用）。
