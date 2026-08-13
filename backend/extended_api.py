@@ -1222,6 +1222,35 @@ def _finalize_common_operation(results: list) -> dict:
     """汇总最终操作结果。"""
     return {"total": len(results), "results": results}
 
+
+def _prepare_test_context(pid, run_id, cfg):
+    """准备测试门禁上下文。"""
+    return {
+        "pid": pid,
+        "run_id": run_id,
+        "service_name": cfg.get("service_name", ""),
+        "slug": cfg.get("slug", ""),
+        "project_dir": cfg.get("project_dir", ""),
+        "lang": cfg.get("language") or "python",
+        "status": "initialized"
+    }
+
+def _execute_test_step(test_context, step_name, step_data):
+    """执行测试步骤。"""
+    return {
+        "step": step_name,
+        "data": step_data,
+        "status": "completed"
+    }
+
+def _finalize_test_results(results):
+    """汇总测试结果。"""
+    return {
+        "total_steps": len(results),
+        "results": results,
+        "status": "completed"
+    }
+
 def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     """自动化测试门禁：按技术栈生成测试文件 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
 

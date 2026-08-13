@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 
 
-
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
