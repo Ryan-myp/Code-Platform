@@ -549,16 +549,26 @@ class DependencyChecker:
             "recommendations": [],
         }
 
-        # 7a. 获取已安装依赖
-        cmd = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-               "-m", "pip", "list", "--format=json", "--outdated"]
-        rc, stdout, stderr = run_cmd(cmd, timeout=60)
-        
-        if rc == 0:
+        # 7a. 获取已安装依赖总数
+        cmd_total = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+                     "-m", "pip", "list", "--format=json"]
+        rc_total, stdout_total, _ = run_cmd(cmd_total, timeout=60)
+        if rc_total == 0:
             try:
-                deps = json.loads(stdout)
-                results["total_deps"] = len(deps)
-                for dep in deps[:10]:
+                all_deps = json.loads(stdout_total)
+                results["total_deps"] = len(all_deps)
+            except json.JSONDecodeError:
+                pass
+        
+        # 7b. 获取过时依赖
+        cmd_old = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+                   "-m", "pip", "list", "--format=json", "--outdated"]
+        rc_old, stdout_old, _ = run_cmd(cmd_old, timeout=60)
+        
+        if rc_old == 0:
+            try:
+                deps = json.loads(stdout_old)
+                for dep in deps:
                     name = dep.get("name", "")
                     current = dep.get("version", "")
                     latest = dep.get("latest_version", "")
