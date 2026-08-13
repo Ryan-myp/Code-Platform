@@ -215,21 +215,58 @@ export default function ApiDocsPage() {
 
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <Shield className="w-4 h-4 text-gray-500" /> 使用说明
+              <Shield className="w-4 h-4 text-gray-500" /> 中转站接入指南
             </h3>
-            <div className="space-y-2 text-xs text-gray-600">
-              <div>1. 创建API Key</div>
-              <div>
-                2. 在请求头中添加：
-                <code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">
-                  Authorization: Bearer YOUR_KEY
-                </code>
+            <div className="space-y-3 text-xs text-gray-600">
+              {/* 快速步骤 */}
+              <div className="rounded-lg bg-violet-50 border border-violet-100 p-3 space-y-1">
+                <p className="font-medium text-violet-700">三步接入（OpenAI 兼容）</p>
+                <p>1. 左侧创建 API Key（<code className="px-1 bg-white rounded">xt-</code> 前缀）</p>
+                <p>2. 将 base_url 指向：<code className="px-1 bg-white rounded">/v1</code></p>
+                <p>3. 模型名选任意已配置模型（如 agnes-2.5-flash）</p>
               </div>
+
+              {/* curl 示例 */}
               <div>
-                3. 发送请求到{' '}
-                <code className="px-1.5 py-0.5 bg-gray-100 rounded text-violet-600">
-                  https://platform.xiaotuan.ai/api/...
-                </code>
+                <p className="font-medium text-gray-700 mb-1">curl 调用</p>
+                <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto text-[11px] leading-relaxed">{`curl https://platform.xiaotuan.ai/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agnes-2.5-flash", "messages": [{"role": "user", "content": "你好"}]}'`}</pre>
+              </div>
+
+              {/* Python 示例 */}
+              <div>
+                <p className="font-medium text-gray-700 mb-1">Python (OpenAI SDK)</p>
+                <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto text-[11px] leading-relaxed">{`from openai import OpenAI
+
+client = OpenAI(
+    api_key="YOUR_KEY",
+    base_url="https://platform.xiaotuan.ai/v1",
+)
+resp = client.chat.completions.create(
+    model="agnes-2.5-flash",
+    messages=[{"role": "user", "content": "你好"}],
+)
+print(resp.choices[0].message.content)`}</pre>
+              </div>
+
+              {/* 流式说明 */}
+              <div>
+                <p className="font-medium text-gray-700 mb-1">流式输出</p>
+                <pre className="bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto text-[11px] leading-relaxed">{`// 请求体加 stream: true
+// 返回 SSE 格式（OpenAI chunk），以 data: [DONE] 结束
+{
+  "model": "agnes-2.5-flash",
+  "messages": [...],
+  "stream": true
+}`}</pre>
+              </div>
+
+              <div className="text-gray-400 space-y-0.5">
+                <p>• 支持模型：/v1/models 可查（8+ 模型，含多供应商）</p>
+                <p>• 配额：消耗你账号的每日额度，可在报表中查看</p>
+                <p>• 兼容：任意 OpenAI SDK / LangChain / 客户端</p>
               </div>
             </div>
           </Card>
