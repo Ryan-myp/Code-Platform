@@ -3663,6 +3663,110 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
     }
 
 
+
+def _batch_process_one(batch_id: str, i: int, text: str, req, user: str, uid: str, role: str, task: dict, item: dict) -> None:
+    """批量单条处理：校验 → 生成 → 落库。"""
+    if len(text) < 5:
+        item["status"] = "failed"
+        item["error"] = "文案太短（至少 5 字）"
+    elif any(w.lower() in text.lower() for w in _HARD_BLOCK_WORDS):
+        item["status"] = "failed"
+        item["error"] = "文案含违规词，已拦截"
+    else:
+        try:
+            sub = GenerateRequest(
+                text=text,
+                avatar_id=req.avatar_id,
+                voice_id=req.voice_id,
+                background_id=req.background_id,
+                scene_id=req.scene_id,
+                template_id=req.template_id,
+                speed=req.speed,
+                resolution=req.resolution,
+                fps=req.fps,
+                watermark=req.watermark,
+                engine=req.engine,
+                emotion=req.emotion,
+            )
+            res = _generate_one(sub, user, uid, role)
+            if res["status"] == "done":
+                item.update(
+                    status="success",
+                    record_id=res["record_id"],
+                    audio_url=res["audio_url"],
+                    video_url=res["video_url"],
+                    watermark=res["watermark"],
+                    sensitive_warning=res.get("sensitive_warning", ""),
+                )
+            else:
+                item["status"] = "failed"
+                item["error"] = (res.get("error") or "生成失败")[:120]
+                from common.auth import refund_quota
+
+                refund_quota(uid)
+        except HTTPException as e:
+            item["status"] = "skipped" if e.status_code == 402 else "failed"
+            item["error"] = str(e.detail)[:120]
+        except Exception as e:
+            logger.exception("batch item failed %s", batch_id)
+            item["status"] = "failed"
+            item["error"] = str(e)[:120]
+            from common.auth import refund_quota
+
+            refund_quota(uid)
+    task["done"] += 1
+    task[item["status"]] += 1
+    with get_db_context() as conn:
+        conn.execute(
+            """UPDATE digital_human_batch_items
+               SET status=?, error=?, record_id=?, audio_url=?, video_url=?,
+                   watermark=?, sensitive_warning=?
+               WHERE batch_id=? AND idx=?""",
+            (
+                item["status"],
+                item["error"],
+                item.get("record_id", ""),
+                item.get("audio_url", ""),
+                item.get("video_url", ""),
+                1 if item.get("watermark") else 0,
+                item.get("sensitive_warning", ""),
+                batch_id,
+                i,
+            ),
+        )
+
+
+def _prefetch_tts(texts: list, indexes: list | None, req, user: str) -> None:
+    """并行 TTS 预热：合法文案写入音频缓存，供主循环渲染时命中。"""
+    try:
+        voice_info = _lookup_voice(user, req.voice_id)
+    except Exception:  # noqa: BLE001 — 预热失败不影响主流程
+        return
+    if not voice_info:
+        return
+    if voice_info.get("is_custom") and not voice_info.get("is_clone"):
+        return
+    tts_voice = voice_info.get("edge_voice") or req.voice_id if voice_info.get("is_clone") else req.voice_id
+    tts_pitch = int(voice_info.get("pitch_hz") or 0) if voice_info.get("is_clone") else 0
+    warm = [
+        i
+        for i in (indexes if indexes is not None else range(len(texts)))
+        if 5 <= len(texts[i].strip()) <= 10000
+        and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
+    ]
+    if not warm:
+        return
+
+    def _warm(i: int) -> None:
+        try:
+            emo = req.emotion if req.emotion != "auto" else _detect_emotion(texts[i].strip())
+            _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch, EMOTION_TTS_STYLE.get(emo, ""))
+        except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再合成
+            logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
+
+    with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
+        list(pool.map(_warm, warm))
+
 def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试多分支，逐段可读
     batch_id: str,
     texts: list[str],
@@ -3680,119 +3784,13 @@ def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试�
     """
     task = _BATCH_TASKS[batch_id]
 
-    def _prefetch_tts() -> None:
-        """并行 TTS 预热：合法文案写入音频缓存，供主循环渲染时命中。"""
-        try:
-            voice_info = _lookup_voice(user, req.voice_id)
-        except Exception:  # noqa: BLE001 — 预热失败不影响主流程
-            return
-        if not voice_info:
-            return
-        if voice_info.get("is_custom") and not voice_info.get("is_clone"):
-            return  # 自定义上传声音无 TTS 环节
-        tts_voice = voice_info.get("edge_voice") or req.voice_id if voice_info.get("is_clone") else req.voice_id
-        tts_pitch = int(voice_info.get("pitch_hz") or 0) if voice_info.get("is_clone") else 0
-        warm = [
-            i
-            for i in (indexes if indexes is not None else range(len(texts)))
-            if 5 <= len(texts[i].strip()) <= 10000
-            and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
-        ]
-        if not warm:
-            return
-
-        def _warm(i: int) -> None:
-            try:
-                emo = (
-                    req.emotion
-                    if req.emotion != "auto"
-                    else _detect_emotion(texts[i].strip())
-                )
-                _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch, EMOTION_TTS_STYLE.get(emo, ""))
-            except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再 合成
-                logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
-
-        with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
-            list(pool.map(_warm, warm))
-
-    prefetch = threading.Thread(target=_prefetch_tts, daemon=True)
+    prefetch = threading.Thread(target=_prefetch_tts, args=(texts, indexes, req, user), daemon=True)
     prefetch.start()
     try:
         for i in indexes if indexes is not None else range(len(texts)):
             item = task["items"][i]
             text = texts[i].strip()
-            if len(text) < 5:
-                item["status"] = "failed"
-                item["error"] = "文案太短（至少 5 字）"
-            elif any(w.lower() in text.lower() for w in _HARD_BLOCK_WORDS):
-                item["status"] = "failed"
-                item["error"] = "文案含违规词，已拦截"
-            else:
-                try:
-                    sub = GenerateRequest(
-                        text=text,
-                        avatar_id=req.avatar_id,
-                        voice_id=req.voice_id,
-                        background_id=req.background_id,
-                        scene_id=req.scene_id,
-                        template_id=req.template_id,
-                        speed=req.speed,
-                        resolution=req.resolution,
-                        fps=req.fps,
-                        watermark=req.watermark,
-                        engine=req.engine,
-                        emotion=req.emotion,
-                    )
-                    res = _generate_one(sub, user, uid, role)
-                    if res["status"] == "done":
-                        item.update(
-                            status="success",
-                            record_id=res["record_id"],
-                            audio_url=res["audio_url"],
-                            video_url=res["video_url"],
-                            watermark=res["watermark"],
-                            sensitive_warning=res.get("sensitive_warning", ""),
-                        )
-                    else:
-                        # audio_only/failed：未产出视频一律算失败（可重试），已扣额度退回
-                        item["status"] = "failed"
-                        item["error"] = (res.get("error") or "生成失败")[:120]
-                        from common.auth import refund_quota
-
-                        refund_quota(uid)
-                except HTTPException as e:
-                    # 402 未扣费标 skipped；400 校验失败发生在扣费前，均不退费
-                    item["status"] = "skipped" if e.status_code == 402 else "failed"
-                    item["error"] = str(e.detail)[:120]
-                except Exception as e:
-                    # 校验通过后发生意外（已扣费）：退费
-                    logger.exception("batch item failed %s", batch_id)
-                    item["status"] = "failed"
-                    item["error"] = str(e)[:120]
-                    from common.auth import refund_quota
-
-                    refund_quota(uid)
-            task["done"] += 1
-            task[item["status"]] += 1
-            # 逐条落库：重启后可恢复进度/结果
-            with get_db_context() as conn:
-                conn.execute(
-                    """UPDATE digital_human_batch_items
-                       SET status=?, error=?, record_id=?, audio_url=?, video_url=?,
-                           watermark=?, sensitive_warning=?
-                       WHERE batch_id=? AND idx=?""",
-                    (
-                        item["status"],
-                        item["error"],
-                        item.get("record_id", ""),
-                        item.get("audio_url", ""),
-                        item.get("video_url", ""),
-                        1 if item.get("watermark") else 0,
-                        item.get("sensitive_warning", ""),
-                        batch_id,
-                        i,
-                    ),
-                )
+            _batch_process_one(batch_id, i, text, req, user, uid, role, task, item)
     except Exception:
         logger.exception("batch worker crashed %s", batch_id)
         with get_db_context() as conn:
