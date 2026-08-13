@@ -77,6 +77,22 @@ async def chat_completions(request: Request, body: dict):  # noqa: C901
     if isinstance(auth, JSONResponse):
         return auth
 
+    # 中转站计费：按绑定用户配额校验（API Key 调用同样受配额约束）
+    if auth.get("auth_mode") == "api_key" or auth.get("user_id"):
+        from common.auth import consume_quota
+
+        quota = consume_quota(auth.get("user_id"))
+        if not quota.get("allowed"):
+            return JSONResponse(
+                status_code=402,
+                content={
+                    "error": {
+                        "message": "今日 AI 调用额度已用完，请升级会员或明日再试",
+                        "type": "insufficient_quota",
+                    }
+                },
+            )
+
     messages = body.get("messages") or []
     if not isinstance(messages, list) or not messages:
         return JSONResponse(
@@ -167,3 +183,10 @@ async def chat_completions(request: Request, body: dict):  # noqa: C901
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         "usage": _estimate_tokens(messages, content),
     }
+
+
+def _auth(request: Request):
+    """Bearer API Key 认证（OpenAI 兼容网关）。"""
+    from common.helpers import _auth_bearer
+
+    return _auth_bearer(request, _auth_by_api_key)
