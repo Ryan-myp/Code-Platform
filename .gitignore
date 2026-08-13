@@ -102,3 +102,25 @@ backend/music_factory/*.mp3
 backend/music_factory/*.wav
 backend/music_factory/*.flac
 backend/video_templates/renders/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+share/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Docker
+.docker/
+
+# 依赖
+requirements.txt
+!requirements.txt  # 保留这个文件
