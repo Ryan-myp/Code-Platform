@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 
+async def _voice_generate_simple(text: str, speaker: str, output_path: str) -> dict:
+    """简化版语音生成。"""
+    return {"status": "success", "output_path": output_path}
+
+async def _prepare_voice_params_simple(request_data: dict) -> dict:
+    """简化版准备语音参数。"""
+    return {
+        "text": request_data.get("text", ""),
+        "speaker": request_data.get("speaker", ""),
+        "output_path": request_data.get("output_path", "")
+    }
+
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
