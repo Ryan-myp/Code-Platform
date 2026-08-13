@@ -143,6 +143,58 @@ EMOTION_EXPRESSION_SCALE = {
 }
 
 
+
+def _sadtalker_submit(photo_path: str, audio_path: str, render_size: int, expression_scale: float) -> str:
+    """提交 SadTalker 任务，返回 task_id。"""
+    with open(photo_path, "rb") as imf, open(audio_path, "rb") as auf:
+        r = requests.post(
+            f"{AVATAR_API_BASE}/release_task",
+            files={"image": ("face.png", imf, "image/png"), "audio": ("voice.wav", auf, "audio/wav")},
+            data={"pose_style": 0, "size": render_size, "still": "true", "expression_scale": expression_scale},
+            timeout=_AVATAR_TIMEOUT,
+        )
+    r.raise_for_status()
+    return r.json()["data"]["task_id"]
+
+
+def _sadtalker_poll(task_id: str, _report) -> str:
+    """轮询任务直到成功，返回文件 URL。"""
+    t0 = time.monotonic()
+    last_pct, last_stage = 55, "已提交"
+    while time.monotonic() - t0 < _AVATAR_MAX_WAIT:
+        time.sleep(_AVATAR_POLL_INTERVAL)
+        try:
+            q = requests.get(f"{AVATAR_API_BASE}/query_result", params={"task_id": task_id}, timeout=10)
+            item = next((x for x in (q.json().get("data") or []) if x.get("task_id") == task_id), None)
+        except Exception as e:
+            logger.warning(f"SadTalker 任务 {task_id} 查询失败: {e}")
+            continue
+        if not item:
+            continue
+        status = item.get("status", "")
+        if status == "success":
+            result = json.loads(item.get("result") or "[]")
+            return result[0].get("file", "") if result else ""
+        if status == "failed":
+            raise RuntimeError(f"SadTalker 推理失败: {item.get('error') or '未知错误'}")
+        if status in ("pending", "running"):
+            pct, hint = _stage_pct(item.get("stage", ""))
+            if pct != last_pct or hint != last_stage:
+                _report(pct, hint)
+                last_pct, last_stage = pct, hint
+    raise TimeoutError(f"SadTalker 推理超时（>{_AVATAR_MAX_WAIT}s），请重试")
+
+
+def _sadtalker_download(file_url: str, output_path: str) -> None:
+    """下载产物视频到目标路径。"""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    dl = requests.get(f"{AVATAR_API_BASE}/v1/video", params={"path": file_url}, timeout=120)
+    dl.raise_for_status()
+    with open(output_path, "wb") as f:
+        f.write(dl.content)
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+        raise RuntimeError("SadTalker 视频回传失败（文件无效）")
+
 def generate_with_sadtalker(  # noqa: C901
     photo_path: str,
     audio_path: str,
@@ -167,57 +219,19 @@ def generate_with_sadtalker(  # noqa: C901
     _avatar_ok()
     render_size = _pick_render_size()
     expression_scale = EMOTION_EXPRESSION_SCALE.get(emotion, 1.5)
-    with open(photo_path, "rb") as imf, open(audio_path, "rb") as auf:
-        r = requests.post(
-            f"{AVATAR_API_BASE}/release_task",
-            files={"image": ("face.png", imf, "image/png"), "audio": ("voice.wav", auf, "audio/wav")},
-            data={"pose_style": 0, "size": render_size, "still": "true", "expression_scale": expression_scale},
-            timeout=_AVATAR_TIMEOUT,
-        )
-    r.raise_for_status()
-    task_id = r.json()["data"]["task_id"]
+    task_id = _sadtalker_submit(photo_path, audio_path, render_size, expression_scale)
     if _avatar_cache.get("busy"):
         _report(55, f"SadTalker 引擎繁忙（{_avatar_cache['busy']} 个任务排队），已提交，预计等待较长…")
     else:
         _report(55, "SadTalker 任务已提交，正在排队…")
 
-    # 2. 轮询任务状态（stage → 进度映射）
+    # 2. 轮询任务状态
     t0 = time.monotonic()
-    last_pct, last_stage = 55, "已提交"
-    while time.monotonic() - t0 < _AVATAR_MAX_WAIT:
-        time.sleep(_AVATAR_POLL_INTERVAL)
-        try:
-            q = requests.get(f"{AVATAR_API_BASE}/query_result", params={"task_id": task_id}, timeout=10)
-            item = next((x for x in (q.json().get("data") or []) if x.get("task_id") == task_id), None)
-        except Exception as e:
-            logger.warning(f"SadTalker 任务 {task_id} 查询失败: {e}")
-            continue
-        if not item:
-            continue
-        status = item.get("status", "")
-        if status == "success":
-            result = json.loads(item.get("result") or "[]")
-            file_url = result[0].get("file", "") if result else ""
-            break
-        if status == "failed":
-            raise RuntimeError(f"SadTalker 推理失败: {item.get('error') or '未知错误'}")
-        if status in ("pending", "running"):
-            pct, hint = _stage_pct(item.get("stage", ""))
-            if pct != last_pct or hint != last_stage:
-                _report(pct, hint)
-                last_pct, last_stage = pct, hint
-    else:
-        raise TimeoutError(f"SadTalker 推理超时（>{_AVATAR_MAX_WAIT}s），请重试")
+    file_url = _sadtalker_poll(task_id, _report)
 
     # 3. 下载产物
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     _report(96, "推理完成，正在回传视频…")
-    dl = requests.get(f"{AVATAR_API_BASE}/v1/video", params={"path": file_url}, timeout=120)
-    dl.raise_for_status()
-    with open(output_path, "wb") as f:
-        f.write(dl.content)
-    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
-        raise RuntimeError("SadTalker 视频回传失败（文件无效）")
+    _sadtalker_download(file_url, output_path)
 
     # 4. 分辨率统一：原生 256x256 → 平台目标分辨率（720p/1080p）
     _scale_to_resolution(output_path, resolution)
