@@ -763,29 +763,8 @@ def _compute_simple(points: list, latest: dict) -> dict:
     
     return {"trend": trend, "momentum": momentum}
 
-def compute_five_dim_signals(data: dict | None) -> dict:
-    """五维交叉验证信号（v21，参考开源技术分析 SKILL）。
-
-    五个维度：趋势 / 动量 / 波动 / 量价 / 位置风险，每维输出
-    level（bullish/bearish/neutral）+ label + evidence 证据列表；
-    summary 汇总共振情况（看多/看空维度数、信号强度、总判定）。
-    纯函数（输入 get_stock_data 输出），确定性可单测。
-    """
-    # 使用简化版本
-    return _compute_simple(points, latest)
-    points = (data or {}).get("data_points") or []
-    ind = (data or {}).get("indicators") or {}
-    empty = {
-        "dimensions": {},
-        "summary": {"bullish_dims": 0, "bearish_dims": 0, "verdict": "数据不足", "signal_strength": "弱"},
-    }
-    if not points:
-        return empty
-    latest = points[-1]
-    close = latest.get("close")
-    dims: dict = {}
-
-    # ── 趋势维度：均线排列 + 价格 vs MA20 + MACD 方向 ──
+def _dim_trend(points: list, latest: dict) -> dict:
+    """趋势维度：均线排列 + 价格 vs MA20 + MACD 方向。"""
     ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
     macd = latest.get("macd")
     ev, pos, neg = [], 0, 0
@@ -798,8 +777,8 @@ def compute_five_dim_signals(data: dict | None) -> dict:
             neg += 1
         else:
             ev.append("均线交织，方向不明")
-    if close and ma20:
-        if close > ma20:
+    if latest.get("close") and ma20:
+        if latest.get("close") > ma20:
             ev.append("价格站上 MA20")
             pos += 1
         else:
@@ -813,9 +792,11 @@ def compute_five_dim_signals(data: dict | None) -> dict:
             ev.append("MACD 为负（空头动能）")
             neg += 1
     level = "bullish" if pos >= 2 else ("bearish" if neg >= 2 else "neutral")
-    dims["trend"] = {"level": level, "label": _LEVEL_LABELS[level], "evidence": ev}
+    return {"level": level, "label": _LEVEL_LABELS[level], "evidence": ev}
 
-    # ── 动量维度：RSI 分区 + MACD 金叉/死叉 ──
+
+def _dim_momentum(points: list, latest: dict, ind: dict) -> dict:
+    """动量维度：RSI 分区 + MACD 金叉/死叉。"""
     rsi = ind.get("rsi")
     ev = []
     rsi_zone = "unknown"
@@ -847,18 +828,17 @@ def compute_five_dim_signals(data: dict | None) -> dict:
         level = "bearish"
     else:
         level = "neutral"
-    dims["momentum"] = {
-        "level": level,
-        "label": _LEVEL_LABELS[level],
-        "evidence": ev,
-        "rsi_zone": rsi_zone,
-        "macd_cross": cross,
+    return {
+        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
+        "rsi_zone": rsi_zone, "macd_cross": cross,
     }
 
-    # ── 波动维度：布林带位置 + 波动率等级 ──
+
+def _dim_volatility(points: list, latest: dict, data: dict) -> dict:
+    """波动维度：布林带位置 + 波动率等级。"""
+    close = latest.get("close")
     bb_upper, bb_lower = latest.get("bb_upper"), latest.get("bb_lower")
-    rm = compute_risk_metrics(data)
-    vol_level = rm.get("volatility_level")
+    vol_level = compute_risk_metrics(data).get("volatility_level")
     ev = []
     boll_pos = "middle"
     if close and bb_upper is not None and bb_lower is not None:
@@ -873,15 +853,15 @@ def compute_five_dim_signals(data: dict | None) -> dict:
     if vol_level:
         ev.append(f"年化波动率等级：{vol_level}")
     level = "bullish" if boll_pos == "lower" else ("bearish" if boll_pos == "upper" else "neutral")
-    dims["volatility"] = {
-        "level": level,
-        "label": _LEVEL_LABELS[level],
-        "evidence": ev,
-        "boll_position": boll_pos,
-        "volatility_level": vol_level,
+    return {
+        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
+        "boll_position": boll_pos, "volatility_level": vol_level,
     }
 
-    # ── 量价维度：近5日 vs 前20日均量 + 价格方向配合 ──
+
+def _dim_volume_price(points: list, latest: dict) -> dict:
+    """量价维度：近5日 vs 前20日均量 + 价格方向配合。"""
+    close = latest.get("close")
     volumes = [p.get("volume") or 0 for p in points]
     recent5 = volumes[-5:]
     prev20 = volumes[-25:-5]
@@ -908,21 +888,16 @@ def compute_five_dim_signals(data: dict | None) -> dict:
                 ev.append("缩量回调，抛压有限（健康整理）")
         else:
             ev.append("量能数据不足")
-    level = {
-        "confirmed": "bullish",
-        "shakeout": "bullish",
-        "weak": "bearish",
-        "divergence": "bearish",
-    }.get(pattern, "neutral")
-    dims["volume_price"] = {
-        "level": level,
-        "label": _LEVEL_LABELS[level],
-        "evidence": ev,
-        "volume_ratio": vol_ratio,
-        "pattern": pattern,
+    level = {"confirmed": "bullish", "shakeout": "bullish", "weak": "bearish", "divergence": "bearish"}.get(pattern, "neutral")
+    return {
+        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
+        "volume_ratio": vol_ratio, "pattern": pattern,
     }
 
-    # ── 位置风险维度：52 周区间百分位 ──
+
+def _dim_position(points: list, latest: dict, data: dict) -> dict:
+    """位置风险维度：52 周区间百分位。"""
+    close = latest.get("close")
     hi52, lo52 = (data or {}).get("52w_high"), (data or {}).get("52w_low")
     pct_52w = None
     zone = "unknown"
@@ -939,15 +914,14 @@ def compute_five_dim_signals(data: dict | None) -> dict:
             zone = "middle"
             ev.append(f"价格处于 52 周区间 {pct_52w}% 分位")
     level = {"high": "bearish", "low": "bullish"}.get(zone, "neutral")
-    dims["position"] = {
-        "level": level,
-        "label": _LEVEL_LABELS[level],
-        "evidence": ev,
-        "pct_52w": pct_52w,
-        "zone": zone,
+    return {
+        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
+        "pct_52w": pct_52w, "zone": zone,
     }
 
-    # ── 汇总：共振判定 ──
+
+def _dim_summary(dims: dict) -> dict:
+    """五维共振汇总。"""
     bullish_dims = sum(1 for d in dims.values() if d["level"] == "bullish")
     bearish_dims = sum(1 for d in dims.values() if d["level"] == "bearish")
     if bullish_dims >= 4:
@@ -962,21 +936,34 @@ def compute_five_dim_signals(data: dict | None) -> dict:
         verdict = "多空分歧"
     else:
         verdict = "信号分歧，方向待确认"
-    strength = (
-        "强"
-        if bullish_dims >= 4 or bearish_dims >= 4
-        else ("中" if bullish_dims >= 2 or bearish_dims >= 2 else "弱")
-    )
+    strength = "强" if bullish_dims >= 4 or bearish_dims >= 4 else ("中" if bullish_dims >= 2 or bearish_dims >= 2 else "弱")
     return {
-        "dimensions": dims,
-        "summary": {
-            "bullish_dims": bullish_dims,
-            "bearish_dims": bearish_dims,
-            "verdict": verdict,
-            "signal_strength": strength,
-        },
+        "bullish_dims": bullish_dims,
+        "bearish_dims": bearish_dims,
+        "verdict": verdict,
+        "signal_strength": strength,
     }
 
+
+def compute_five_dim_signals(data: dict | None) -> dict:
+    """五维交叉验证信号（v21）：趋势/动量/波动/量价/位置风险。"""
+    points = (data or {}).get("data_points") or []
+    ind = (data or {}).get("indicators") or {}
+    empty = {
+        "dimensions": {},
+        "summary": {"bullish_dims": 0, "bearish_dims": 0, "verdict": "数据不足", "signal_strength": "弱"},
+    }
+    if not points:
+        return empty
+    latest = points[-1]
+    dims = {
+        "trend": _dim_trend(points, latest),
+        "momentum": _dim_momentum(points, latest, ind),
+        "volatility": _dim_volatility(points, latest, data),
+        "volume_price": _dim_volume_price(points, latest),
+        "position": _dim_position(points, latest, data),
+    }
+    return {"dimensions": dims, "summary": _dim_summary(dims)}
 
 # ══════════════════════════════════════════════════════════════
 # 热门股票表（v22：搜索兜底 + 前端一键直达）
