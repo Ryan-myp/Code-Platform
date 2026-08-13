@@ -910,58 +910,48 @@ def _place_arpeggio(place, chord: list[int], t0: float, beat: float, pattern: st
                 place(_synth_note(_note_freq(ci + 12), beat * 0.28, "strum", 0.32), t0 + b_i * beat + k * 0.045)
 
 
-def _place_drums(place, drums: str, t0: float, beat: float) -> None:  # noqa: C901
-    """按鼓模式铺鼓点（4/4 拍）。"""
-    if drums == "none":
-        return
-    kick, snare, hat, hat_open = _synth_kick(), _synth_snare(), _synth_hat(), _synth_hat(open_=True)
-    if drums == "pop":
-        for b_i in (0, 2):
-            place(kick, t0 + b_i * beat)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat)
-        for i in range(8):
-            place(hat, t0 + i * beat * 0.5, 0.35)
-    elif drums == "rock":
-        for b_i in (0, 1):
-            place(kick, t0 + b_i * beat)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat)
-        for i in range(8):
-            place(hat, t0 + i * beat * 0.5, 0.45)
-    elif drums == "rap":
-        for b_i in range(4):
-            place(kick, t0 + b_i * beat)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat)
-        for i in range(16):
-            place(hat, t0 + i * beat * 0.25, 0.3)
-    elif drums == "ballad":
-        place(kick, t0)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat, 0.5)
-        for i in range(8):
-            place(hat, t0 + i * beat * 0.5, 0.22)
-    elif drums == "jazz":
-        place(kick, t0)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat, 0.45)
-        for i in range(8):
-            swing = 0.5 if i % 2 == 0 else 0.55  # 摇摆 8 分
-            place(hat, t0 + (i + swing - 0.5) * beat * 0.5, 0.25)
-    elif drums == "folk":
-        place(kick, t0)
-        for b_i in (1, 3):
-            place(snare, t0 + b_i * beat, 0.4)
-        for i in range(4):
-            place(hat, t0 + i * beat, 0.2)
-    else:  # electronic：四拍底鼓 + 反拍踩镲
-        for b_i in range(4):
-            place(kick, t0 + b_i * beat)
+
+# 鼓模式定义：k=底鼓(s), s=军鼓, h=踩镲, o=开踩镲, 每个元组 (乐器, 节拍位置, 力度)
+_DRUM_PATTERNS = {
+    "pop": [("k", 0, 1.0), ("k", 2, 1.0), ("s", 1, 1.0), ("s", 3, 1.0)],
+    "rock": [("k", 0, 1.0), ("k", 1, 1.0), ("s", 1, 1.0), ("s", 3, 1.0)],
+    "rap": [("k", i, 1.0) for i in range(4)] + [("s", 1, 1.0), ("s", 3, 1.0)],
+    "ballad": [("k", 0, 1.0), ("s", 1, 0.5), ("s", 3, 0.5)],
+    "jazz": [("k", 0, 1.0), ("s", 1, 0.45), ("s", 3, 0.45)],
+    "folk": [("k", 0, 1.0), ("s", 1, 0.4), ("s", 3, 0.4)],
+    "electronic": [("k", i, 1.0) for i in range(4)],
+}
+_DRUM_HAT_STEPS = {"pop": 8, "rock": 8, "rap": 16, "ballad": 8, "jazz": 8, "folk": 4}
+_DRUM_HAT_VOL = {"pop": 0.35, "rock": 0.45, "rap": 0.3, "ballad": 0.22, "jazz": 0.25, "folk": 0.2}
+
+
+def _place_drum_hits(place, pattern: list, t0: float, beat: float, kit: dict) -> None:
+    """按模式铺底鼓/军鼓。"""
+    for inst, b_i, vol in pattern:
+        place(kit[inst], t0 + b_i * beat, vol)
+
+
+def _place_drum_hats(place, drums: str, t0: float, beat: float, kit: dict) -> None:
+    """按模式铺踩镲（jazz 带摇摆）。"""
+    steps = _DRUM_HAT_STEPS.get(drums, 8)
+    vol = _DRUM_HAT_VOL.get(drums, 0.3)
+    if drums == "electronic":
         for i in range(16):
             if i % 2 == 1:
-                place(hat, t0 + i * beat * 0.25, 0.3)
-        place(hat_open, t0 + 3.5 * beat, 0.35)
+                place(kit["h"], t0 + i * beat * 0.25, 0.3)
+        place(kit["o"], t0 + 3.5 * beat, 0.35)
+        return
+    for i in range(steps):
+        swing = 0.5 if drums != "jazz" or i % 2 == 0 else 0.55
+        place(kit["h"], t0 + (i + swing - 0.5) * beat * 0.5, vol)
+
+def _place_drums(place, drums: str, t0: float, beat: float) -> None:
+    """按鼓模式铺鼓点（4/4 拍，数据驱动）。"""
+    if drums == "none":
+        return
+    kit = {"k": _synth_kick(), "s": _synth_snare(), "h": _synth_hat(), "o": _synth_hat(open_=True)}
+    _place_drum_hits(place, _DRUM_PATTERNS.get(drums, []), t0, beat, kit)
+    _place_drum_hats(place, drums, t0, beat, kit)
 
 
 def _place_bass(place, bass_mode: str, root: int, t0: float, beat: float, bar: float) -> None:

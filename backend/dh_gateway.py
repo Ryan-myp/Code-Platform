@@ -274,6 +274,36 @@ def _prepare_dh_params_simple(request_data: dict) -> dict:
     }
 
 
+
+def _build_dh_request(body: dict) -> tuple:
+    """构建 GenerateRequest，校验文案与行业模板白名单。返回 (req, err_response|None)。"""
+    from digital_human import INDUSTRY_TEMPLATES, GenerateRequest
+
+    text = str(body.get("text") or "").strip()
+    if len(text) < 5:
+        return None, _err(400, "文案至少 5 个字", "invalid_text")
+    if len(text) > 10000:
+        return None, _err(400, "文案最多 10000 字", "invalid_text")
+    try:
+        req = GenerateRequest(
+            text=text,
+            avatar_id=str(body.get("avatar_id") or "business-female"),
+            voice_id=str(body.get("voice_id") or "zh-CN-XiaoxiaoNeural"),
+            background_id=str(body.get("background_id") or "tech"),
+            scene_id=str(body.get("scene_id") or "product"),
+            template_id=str(body.get("template_id") or ""),
+            speed=float(body.get("speed") or 1.0),
+            resolution=str(body.get("resolution") or "720p"),
+            fps=int(body.get("fps") or 15),
+            watermark=bool(body.get("watermark")),
+            engine=str(body.get("engine") or "2d"),
+        )
+    except ValueError as e:
+        return None, _err(400, f"参数不合法: {e}", "invalid_params")
+    if req.template_id and req.template_id not in {t["id"] for t in INDUSTRY_TEMPLATES}:
+        return None, _err(400, f"未知行业模板: {req.template_id}", "invalid_template")
+    return req, None
+
 def _apply_free_tier_downgrade(req, auth: dict) -> tuple:
     """免费档降级：非 admin 免费 Key 的高级引擎/分辨率静默降级为 2D+720p。"""
     qi = get_quota_info(auth["user_id"]) or {}
@@ -300,6 +330,27 @@ def _check_and_charge(auth: dict, price: float, billing_id: str) -> float | None
     _charge(auth, billing_id, price)
     return balance - price
 
+
+def _create_billing_task(req, auth: dict, billing_id: str, price: float) -> dict:
+    """创建数字人生成任务并关联账单；失败自动退款。"""
+    try:
+        task = create_task(
+            "dh_generate",
+            req.model_dump(),
+            username=auth["username"],
+            user_id=auth["user_id"],
+            role=auth.get("role", ""),
+        )
+    except HTTPException as e:
+        _refund(billing_id)
+        raise
+    with get_db_context() as conn:
+        conn.execute(
+            "UPDATE dh_billing_records SET task_id=?, engine=?, resolution=? WHERE id=?",
+            (task["id"], req.engine, req.resolution, billing_id),
+        )
+    return task
+
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。
 
@@ -315,33 +366,11 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
     if isinstance(auth, JSONResponse):
         return auth
 
-    text = str(body.get("text") or "").strip()
-    if len(text) < 5:
-        return _err(400, "文案至少 5 个字", "invalid_text")
-    if len(text) > 10000:
-        return _err(400, "文案最多 10000 字", "invalid_text")
+    from digital_human import GenerateRequest, _precheck_generate
 
-    from digital_human import INDUSTRY_TEMPLATES, GenerateRequest, _precheck_generate
-
-    try:
-        req = GenerateRequest(
-            text=text,
-            avatar_id=str(body.get("avatar_id") or "business-female"),
-            voice_id=str(body.get("voice_id") or "zh-CN-XiaoxiaoNeural"),
-            background_id=str(body.get("background_id") or "tech"),
-            scene_id=str(body.get("scene_id") or "product"),
-            template_id=str(body.get("template_id") or ""),
-            speed=float(body.get("speed") or 1.0),
-            resolution=str(body.get("resolution") or "720p"),
-            fps=int(body.get("fps") or 15),
-            watermark=bool(body.get("watermark")),
-            engine=str(body.get("engine") or "2d"),
-        )
-    except ValueError as e:
-        return _err(400, f"参数不合法: {e}", "invalid_params")
-    # 行业模板白名单校验（网关层；内部生成对未知模板宽容，计费入口必须精确）
-    if req.template_id and req.template_id not in {t["id"] for t in INDUSTRY_TEMPLATES}:
-        return _err(400, f"未知行业模板: {req.template_id}", "invalid_template")
+    req, param_err = _build_dh_request(body)
+    if param_err:
+        return param_err
 
     # 免费/付费分层（5.2）：免费 Key 高级引擎静默降级为 2D+720p
     req, forced = _apply_free_tier_downgrade(req, auth)
@@ -370,18 +399,9 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
             balance=balance,
         )
     try:
-        task = create_task(
-            "dh_generate",
-            req.model_dump(),
-            username=auth["username"],
-            user_id=auth["user_id"],
-            role=auth.get("role", ""),
-        )
+        task = _create_billing_task(req, auth, billing_id, price)
     except HTTPException as e:
-        _refund(billing_id)
         return _err(e.status_code, str(e.detail), "task_create_failed")
-    with get_db_context() as conn:
-        conn.execute("UPDATE dh_billing_records SET task_id=?, engine=?, resolution=? WHERE id=?", (task["id"], req.engine, req.resolution, billing_id))
     return {
         "task_id": task["id"],
         "status": "pending",

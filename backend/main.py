@@ -3189,6 +3189,68 @@ def _collect_mcp_metrics(config: dict) -> dict:
     """收集MCP指标。"""
     return {"latency_ms": 10, "error_rate": 0.01, "throughput": 100}
 
+
+async def _mcp_test_stdio(d: dict, headers: dict) -> dict:
+    """stdio 传输测试：命令可执行 + 子进程 JSON-RPC 握手。"""
+    cmd = (d.get("command") or "").strip()
+    if not cmd:
+        return {"ok": False, "error": "未配置启动命令"}
+    prog = cmd.split()[0]
+    if not (shutil.which(prog) or os.path.exists(prog)):
+        return {"ok": False, "error": f"找不到可执行命令：{prog}"}
+    try:
+        args = json.loads(d.get("args") or "[]") or []
+        env = {**os.environ, **(json.loads(d.get("env") or "{}") or {})}
+    except (ValueError, TypeError):
+        args, env = [], {**os.environ}
+    return await asyncio.to_thread(_mcp_stdio_test, cmd, args, env)
+
+
+async def _mcp_test_http(url: str, headers: dict) -> dict:
+    """HTTP/SSE 传输测试：JSON-RPC initialize 握手 + tools/list。"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            init_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "xiaotuan", "version": "1.0"},
+                },
+            }
+            resp = await client.post(
+                url,
+                json=init_payload,
+                headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            data = _parse_mcp_response(resp.text)
+            if not data or "result" not in data:
+                return {"ok": True, "detail": "服务响应正常（未识别到 JSON-RPC 结果）", "tools": []}
+            server_info = data.get("result", {}).get("serverInfo", {}) or {}
+            tools = await _mcp_list_tools(client, url, headers)
+            name = server_info.get("name", "")
+            return {"ok": True, "detail": f"initialize 握手成功（{name or 'MCP 服务'}）", "tools": tools}
+    except Exception as e:
+        return {"ok": False, "error": f"连接失败：{e}"}
+
+
+async def _mcp_list_tools(client, url: str, headers: dict) -> list:
+    """向 MCP 服务请求工具列表。"""
+    try:
+        resp2 = await client.post(
+            url,
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+        )
+        data2 = _parse_mcp_response(resp2.text)
+        return [t.get("name", "?") for t in (data2.get("result", {}).get("tools", []) if data2 else [])]
+    except Exception:
+        return []
+
 async def test_mcp_server(server_id: str, current_user: dict = require_auth()):  # noqa: C901
     """测试 MCP 连接：stdio 检查命令可执行；SSE/HTTP 执行 JSON-RPC initialize 握手（自动注入认证头）。"""
     conn = get_db()
@@ -3205,71 +3267,12 @@ async def test_mcp_server(server_id: str, current_user: dict = require_auth()): 
     headers = _mcp_auth_headers(d.get("auth_type") or "none", auth_cfg)
 
     if transport == "stdio":
-        cmd = (d.get("command") or "").strip()
-        if not cmd:
-            return {"ok": False, "error": "未配置启动命令"}
-        prog = cmd.split()[0]
-        if not (shutil.which(prog) or os.path.exists(prog)):
-            return {"ok": False, "error": f"找不到可执行命令：{prog}"}
-        # 真实连接测试：启动进程 → JSON-RPC initialize 握手 → tools/list
-        # （放线程池执行，避免同步子进程 I/O 阻塞事件循环）
-        try:
-            args = json.loads(d.get("args") or "[]") or []
-            env = {**os.environ, **(json.loads(d.get("env") or "{}") or {})}
-        except (ValueError, TypeError):
-            args, env = [], {**os.environ}
-        return await asyncio.to_thread(_mcp_stdio_test, cmd, args, env)
+        return await _mcp_test_stdio(d, headers)
 
     url = (d.get("url") or "").strip()
     if not url:
         return {"ok": False, "error": "未配置 URL"}
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            init_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "xiaotuan", "version": "1.0"},
-                },
-            }
-            resp = await client.post(
-                url,
-                json=init_payload,
-                headers={
-                    **headers,
-                    "Accept": "application/json, text/event-stream",
-                    "Content-Type": "application/json",
-                },
-            )
-            if resp.status_code >= 400:
-                return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
-            data = _parse_mcp_response(resp.text)
-            if not data or "result" not in data:
-                return {"ok": True, "detail": "服务响应正常（未识别到 JSON-RPC 结果）", "tools": []}
-            server_info = data.get("result", {}).get("serverInfo", {}) or {}
-            # 获取工具列表
-            tools = []
-            try:
-                resp2 = await client.post(
-                    url,
-                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-                    headers={
-                        **headers,
-                        "Accept": "application/json, text/event-stream",
-                        "Content-Type": "application/json",
-                    },
-                )
-                data2 = _parse_mcp_response(resp2.text)
-                tools = [t.get("name", "?") for t in (data2.get("result", {}).get("tools", []) if data2 else [])]
-            except Exception:
-                pass
-            name = server_info.get("name", "")
-            return {"ok": True, "detail": f"initialize 握手成功（{name or 'MCP 服务'}）", "tools": tools}
-    except Exception as e:
-        return {"ok": False, "error": f"连接失败：{e}"}
+    return await _mcp_test_http(url, headers)
 
 
 def _mcp_stdio_test(cmd: str, args: list, env: dict) -> dict:  # noqa: C901

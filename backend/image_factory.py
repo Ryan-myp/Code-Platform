@@ -234,6 +234,38 @@ def _has_cjk(text: str) -> bool:
 
 
 
+
+def _resolve_font_path(fam: str, prefer_cjk: bool) -> tuple:
+    """三级兜底解析字体路径：指定family → 可用字体池 → 常见目录。返回 (path, face_idx)。"""
+    entry = next((e for e in FONT_FAMILIES if e[0] == fam), None)
+    if entry and (not prefer_cjk or entry[2]):
+        for fp, ii in entry[1]:
+            if os.path.exists(fp):
+                return fp, ii
+    if prefer_cjk:
+        pool = [e for e in FONT_FAMILIES if e[2]]
+        for name, paths, _, _ in pool:
+            for fp, ii in paths:
+                if os.path.exists(fp):
+                    return fp, ii
+    for name, paths, _, _ in FONT_FAMILIES:
+        for fp, ii in paths:
+            if os.path.exists(fp):
+                return fp, ii
+    for fp, ii in _FALLBACK_FONTS:
+        if os.path.exists(fp):
+            return fp, ii
+    return None, 0
+
+
+def _font_face_index(path: str, bold: bool, italic: bool) -> int:
+    """计算字体 face index：粗体优先真实粗体 face，italic 用 face 1。"""
+    if bold:
+        for e in FONT_FAMILIES:
+            if any(fp == path for fp, _ in e[1]) and len(e) > 3 and e[3] is not None:
+                return e[3]
+    return 1 if italic else 0
+
 def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False,
              text: str = "") -> ImageFont.FreeTypeFont:
     """获取字体：按 family 选择，多平台兜底；文本含中文时强制使用支持中文的字体（避免【】方块）。
@@ -243,44 +275,11 @@ def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool 
     """
     prefer_cjk = _has_cjk(text)
     fam = (family or "").strip().lower()
-    path, face_idx = None, 0
-    # 1) 指定 family（文本含中文时，仅接受本身支持中文的 family，避免 Helvetica 等渲染中文变方块）
-    entry = next((e for e in FONT_FAMILIES if e[0] == fam), None)
-    if entry and (not prefer_cjk or entry[2]):
-        for fp, ii in entry[1]:
-            if os.path.exists(fp):
-                path, face_idx = fp, ii
-                break
-    # 2) 兜底：按序找可用字体（中文文本优先中文字体）
-    if path is None:
-        pool = FONT_FAMILIES if not prefer_cjk else [e for e in FONT_FAMILIES if e[2]]
-        for name, paths, _, _ in pool:
-            for fp, ii in paths:
-                if os.path.exists(fp):
-                    path, face_idx = fp, ii
-                    break
-            if path:
-                break
-    # 3) 最后兜底：常见中文字体目录（覆盖 mac/win/linux）
-    if path is None:
-        for fp, ii in _FALLBACK_FONTS:
-            if os.path.exists(fp):
-                path, face_idx = fp, ii
-                break
+    path, face_idx = _resolve_font_path(fam, prefer_cjk)
     if path:
-        # 粗体优先真实粗体 face：按【实际解析到的字体路径】匹配 family 的 bold face（
-        # 避免指定 family 无真实粗体但兜底落到 Hiragino 时仍走描边模拟）
-        bold_idx = None
-        if bold:
-            for e in FONT_FAMILIES:
-                if any(fp == path for fp, _ in e[1]) and len(e) > 3 and e[3] is not None:
-                    bold_idx = e[3]
-                    break
         try:
-            kwargs = dict(index=face_idx if italic else 0)
-            if bold and bold_idx is not None:
-                kwargs['index'] = bold_idx
-            return ImageFont.truetype(path, size, **kwargs)
+            idx = _font_face_index(path, bold, italic)
+            return ImageFont.truetype(path, size, index=idx)
         except Exception:
             try:
                 return ImageFont.truetype(path, size)
