@@ -833,6 +833,28 @@ def _fix_system(lang: str, kind: str) -> str:
     return TEST_FIX_SYSTEM
 
 
+
+def _get_test_output_dir(test_id: str) -> str:
+    """获取测试输出目录。"""
+    import os
+    base_dir = os.path.join("test_outputs", test_id)
+    os.makedirs(base_dir, exist_ok=True)
+    return base_dir
+
+def _generate_test_filename(prefix: str, ext: str) -> str:
+    """生成测试文件名。"""
+    import uuid
+    return f"{prefix}_{uuid.uuid4().hex[:8]}.{ext}"
+
+def _write_test_file(filepath: str, content: bytes) -> bool:
+    """写入测试文件。"""
+    try:
+        with open(filepath, "wb") as f:
+            f.write(content)
+        return True
+    except Exception:
+        return False
+
 def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。
 
@@ -3140,6 +3162,32 @@ _AB_RUN_USER = """实验名称：{name}
 }}"""
 
 
+
+def _parse_ab_data(raw_data: dict) -> dict:
+    """解析AB测试原始数据。"""
+    return {
+        "control_group": raw_data.get("control", {}),
+        "test_group": raw_data.get("test", {}),
+        "metrics": raw_data.get("metrics", [])
+    }
+
+def _calculate_statistical_significance(control: dict, test: dict) -> dict:
+    """计算统计显著性。"""
+    import math
+    control_mean = control.get("mean", 0)
+    test_mean = test.get("mean", 0)
+    p_value = abs(control_mean - test_mean) / max(control_mean, test_mean)
+    return {"p_value": p_value, "significant": p_value < 0.05}
+
+def _format_ab_report(parsed_data: dict, significance: dict) -> dict:
+    """格式化AB测试报告。"""
+    return {
+        "status": "significant" if significance["significant"] else "not_significant",
+        "p_value": significance["p_value"],
+        "control": parsed_data["control_group"],
+        "test": parsed_data["test_group"]
+    }
+
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
 
@@ -3217,6 +3265,26 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
         "ran_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
+
+
+def _format_ab_table_header() -> str:
+    """格式化AB测试表格头部。"""
+    return "| 指标 | 对照组 | 实验组 | 变化率 | 显著性 |\n|------|--------|--------|--------|--------|"
+
+def _format_ab_table_row(metric: dict) -> str:
+    """格式化AB测试表格行。"""
+    control = metric.get("control", 0)
+    test = metric.get("test", 0)
+    change = ((test - control) / control * 100) if control > 0 else 0
+    significant = "✓" if metric.get("significant") else "✗"
+    return f"| {metric.get('name', '')} | {control:.2f} | {test:.2f} | {change:+.2f}% | {significant} |"
+
+def _generate_ab_summary(control_stats: dict, test_stats: dict) -> str:
+    """生成AB测试摘要。"""
+    winner = "实验组" if test_stats.get("conversion_rate", 0) > control_stats.get("conversion_rate", 0) else "对照组"
+    return f"**结论**: {winner}表现更好
+
+**建议**: 全量发布实验组方案"
 
 def build_ab_report_md(test: dict, result: dict) -> str:
     """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""

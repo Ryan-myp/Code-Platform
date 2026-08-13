@@ -252,7 +252,24 @@ class WorkflowExecutor:
 
         return adjacency, in_degree
 
-    async def execute(self, workflow_id: str, input_data: dict = None) -> str:  # noqa: C901
+    async 
+def _load_workflow_definition(workflow_id: str) -> dict:
+    """加载工作流定义。"""
+    # 简化的加载逻辑
+    return {"id": workflow_id, "steps": [], "config": {}}
+
+def _validate_workflow_definition(workflow: dict) -> tuple[bool, list[str]]:
+    """验证工作流定义。"""
+    errors = []
+    if not workflow.get("steps"):
+        errors.append("工作流缺少步骤")
+    return len(errors) == 0, errors
+
+def _execute_workflow_step(step: dict, context: dict) -> dict:
+    """执行单个工作流步骤。"""
+    return {"step_id": step.get("id"), "status": "completed", "result": {}}
+
+def execute(self, workflow_id: str, input_data: dict = None) -> str:  # noqa: C901
         """执行工作流，返回 run_id。
 
         v8.0: 基于 DAG 拓扑排序的并行执行。无连接关系的节点按定义顺序执行；

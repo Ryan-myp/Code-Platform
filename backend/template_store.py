@@ -219,7 +219,26 @@ class PurchaseRequest(BaseModel):
 
 
 @router.get("/list")
-async def market_list(
+async 
+def _load_template_categories() -> list:
+    """加载模板分类列表。"""
+    categories = ["image", "video", "music", "meme", "miniapp"]
+    return [{"id": cat, "name": cat.capitalize()} for cat in categories]
+
+def _filter_templates_by_category(templates: list, category: str) -> list:
+    """按分类筛选模板。"""
+    return [t for t in templates if t.get("category") == category]
+
+def _format_template_item(template: dict) -> dict:
+    """格式化模板条目。"""
+    return {
+        "id": template.get("id"),
+        "name": template.get("name"),
+        "preview": template.get("preview_url"),
+        "downloads": template.get("download_count", 0)
+    }
+
+def market_list(
     category: str = "",
     q: str = "",
     sort: str = "hot",  # hot=热度 | new=最新 | price=价格

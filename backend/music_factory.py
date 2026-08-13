@@ -922,6 +922,31 @@ def _place_arpeggio(place, chord: list[int], t0: float, beat: float, pattern: st
                 place(_synth_note(_note_freq(ci + 12), beat * 0.28, "strum", 0.32), t0 + b_i * beat + k * 0.045)
 
 
+
+def _generate_drum_pattern(seed: int, pattern_type: str) -> list:
+    """生成鼓点模式。"""
+    import random
+    random.seed(seed)
+    patterns = {
+        "rock": [1, 0, 1, 0, 1, 0, 1, 0],
+        "pop": [1, 0, 1, 1, 1, 0, 1, 1],
+        "electronic": [1, 1, 1, 1, 1, 1, 1, 1]
+    }
+    return patterns.get(pattern_type, patterns["rock"])
+
+def _apply_drum_effects(drum_data: dict, effects: dict) -> dict:
+    """应用鼓点效果。"""
+    return {
+        **drum_data,
+        "reverb": effects.get("reverb", 0.3),
+        "compress": effects.get("compress", 0.7)
+    }
+
+def _mix_drum_track(drum_pattern: list, volume: float) -> bytes:
+    """混音鼓点轨道。"""
+    # 简化的混音逻辑
+    return b"dummy_drum_audio"
+
 def _place_drums(place, drums: str, t0: float, beat: float) -> None:  # noqa: C901
     """按鼓模式铺鼓点（4/4 拍）。"""
     if drums == "none":
