@@ -1356,3 +1356,91 @@ async def list_dramas(current_user: dict = require_auth()):
                 }
             )
     return {"items": items}
+
+
+async def _generate_script(scene_data: dict) -> str:
+    """生成剧本台词。"""
+    scene = scene_data.get("scene", "")
+    characters = scene_data.get("characters", [])
+    
+    # 简化的剧本生成逻辑
+    script = f"场景：{scene}
+
+"
+    
+    for char in characters:
+        name = char.get("name", "角色")
+        script += f"{name}：（台词待生成）
+"
+    
+    return script
+
+
+async def _generate_scene_image(prompt: str, style: str = "cinematic") -> str:
+    """生成场景图片。"""
+    # 调用图片生成 API
+    try:
+        from common.image_gen import generate_image
+        result = await generate_image(prompt, style=style)
+        return result.get("url", "")
+    except Exception as e:
+        print(f"场景图片生成失败: {e}")
+        return ""
+
+
+async def _generate_character_audio(text: str, voice_id: str = "default") -> str:
+    """生成角色配音。"""
+    # 调用 TTS 引擎
+    try:
+        import edge_tts
+        import asyncio
+        
+        voice_map = {
+            "default": "zh-CN-XiaoxiaoNeural",
+            "male": "zh-CN-YunxiNeural",
+            "female": "zh-CN-XiaoxiaoNeural"
+        }
+        
+        voice = voice_map.get(voice_id, "zh-CN-XiaoxiaoNeural")
+        communicate = edge_tts.Communicate(text, voice)
+        output_file = f"/tmp/audio_{id(asyncio.get_event_loop())}.mp3"
+        
+        await communicate.save(output_file)
+        return output_file
+    except Exception as e:
+        print(f"配音生成失败: {e}")
+        return ""
+
+
+async def _assemble_drama_video(scenes: list[dict]) -> str:
+    """组装剧情视频。"""
+    import subprocess
+    import os
+    
+    output_path = f"/tmp/drama_{id(asyncio.get_event_loop())}.mp4"
+    
+    # 使用 ffmpeg 拼接视频片段
+    list_file = f"/tmp/scenes_{id(asyncio.get_event_loop())}.txt"
+    with open(list_file, 'w') as f:
+        for scene in scenes:
+            video = scene.get("video", "")
+            audio = scene.get("audio", "")
+            if video:
+                f.write(f"file '{video}'
+")
+                if audio:
+                    f.write(f"file '{audio}'
+")
+    
+    cmd = [
+        "ffmpeg", "-f", "concat", "-safe", "0",
+        "-i", list_file,
+        "-c", "copy",
+        output_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, timeout=300)
+    if result.returncode == 0:
+        return output_path
+    
+    return ""
