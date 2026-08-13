@@ -2581,24 +2581,8 @@ def _upscale2x(img: Image.Image) -> Image.Image:
 
 
 @router.post("/publish-pack")
-async def image_publish_pack(
-    ids: list[str] = Form(...),
-    platform: str = Form("xiaohongshu"),
-    pack_title: str = Form("AI 原创插画集"),
-    upscale: bool = Form(True, description="是否附带 2 倍高清版"),
-    current_user: dict = require_auth(),
-):
-    """图片发布包：选中图片按平台规格输出成品 + 高清版 + 上架文案 + 质量报告，一键下载。"""
-    preset = next((p for p in PLATFORM_PRESETS if p["id"] == platform), None)
-    if not preset:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    pack_title = (pack_title or "AI 原创插画集").strip()[:60]
-    picked = [f for f in ids if os.path.exists(os.path.join(IMAGE_DIR, f))][:50]
-    if not picked:
-        raise HTTPException(400, "没有可打包的图片（请先勾选已生成的图片）")
-
-    w, h = preset["w"], preset["h"]
-    root = pack_dir_name("image_release")
+def _ip_process_images(picked: list, w: int, h: int, root: str, upscale: bool) -> tuple:
+    """处理图片：规格适配 + 高清版，返回 (entries, img_checks)。"""
     entries: dict = {}
     img_checks = []
     for i, fname in enumerate(picked, 1):
@@ -2614,21 +2598,28 @@ async def image_publish_pack(
                 b2 = io.BytesIO()
                 hi.save(b2, "JPEG", quality=95)
                 entries[f"{root}/高清版/{stem}@2x.jpg"] = b2.getvalue()
+    return entries, img_checks
 
-    # 上架文案：标题/描述/标签（模板 + 平台建议标签，可直接复制发布）
+
+def _ip_copy_entries(root: str, pack_title: str, picked: list, platform: str, w: int, h: int, preset: dict) -> dict:
+    """上架文案 + 规格说明 + LICENSE。"""
     tags = " ".join(_PLATFORM_TAGS.get(platform, []))
-    entries[f"{root}/上架文案.md"] = (
-        f"# {pack_title}\n\n## 标题\n{pack_title}\n\n"
-        f"## 描述\n{pack_title}，AI 原创数字插画，可用于壁纸/头像/自媒体配图/电商主图等场景。\n"
-        f"## 标签\n{tags}\n\n## 使用建议\n"
-        "- 发布后 1 小时内回复评论可提升流量；\n"
-        "- 同一组图可拆分为多篇笔记/图文发布，增加曝光；\n"
-        f"- 本包共 {len(picked)} 张，规格 {preset['ratio']}（{w}×{h}）。"
-    )
-    entries[f"{root}/规格说明.md"] = platform_spec_text(preset["name"], _PLATFORM_SPECS.get(platform, []))
-    entries[f"{root}/LICENSE.txt"] = license_text(f"图片发布包《{pack_title}》")
+    return {
+        f"{root}/上架文案.md": (
+            f"# {pack_title}\n\n## 标题\n{pack_title}\n\n"
+            f"## 描述\n{pack_title}，AI 原创数字插画，可用于壁纸/头像/自媒体配图/电商主图等场景。\n"
+            f"## 标签\n{tags}\n\n## 使用建议\n"
+            "- 发布后 1 小时内回复评论可提升流量；\n"
+            "- 同一组图可拆分为多篇笔记/图文发布，增加曝光；\n"
+            f"- 本包共 {len(picked)} 张，规格 {preset['ratio']}（{w}×{h}）。"
+        ),
+        f"{root}/规格说明.md": platform_spec_text(preset["name"], _PLATFORM_SPECS.get(platform, [])),
+        f"{root}/LICENSE.txt": license_text(f"图片发布包《{pack_title}》"),
+    }
 
-    # 生产级内容保障：质量自检报告（规格合规 + 美观度评分）
+
+def _ip_qc_report(picked: list, img_checks: list, upscale: bool, w: int, h: int, pack_title: str, preset: dict) -> str | None:
+    """图片质量自检报告（失败返回 None）。"""
     try:
         avg = int(sum(q.get("score", 0) for q in img_checks) / max(len(img_checks), 1))
         prompts = []
@@ -2661,7 +2652,7 @@ async def image_publish_pack(
             f"高清版：{'已附带 2× 高清版' if upscale else '未附带'}",
             f"平均美观度：{avg}/100",
         ]
-        entries[f"{root}/质量自检报告.md"] = quality_report(
+        return quality_report(
             f"图片发布包《{pack_title}》",
             text_check=text_check,
             image_quality={
@@ -2674,6 +2665,36 @@ async def image_publish_pack(
         )
     except Exception as e:
         logger.debug(f"图片质量自检报告生成失败: {e}")
+        return None
+
+
+async def image_publish_pack(
+    ids: list[str] = Form(...),
+    platform: str = Form("xiaohongshu"),
+    pack_title: str = Form("AI 原创插画集"),
+    upscale: bool = Form(True, description="是否附带 2 倍高清版"),
+    current_user: dict = require_auth(),
+):
+    """图片发布包：选中图片按平台规格输出成品 + 高清版 + 上架文案 + 质量报告，一键下载。"""
+    preset = next((p for p in PLATFORM_PRESETS if p["id"] == platform), None)
+    if not preset:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    pack_title = (pack_title or "AI 原创插画集").strip()[:60]
+    picked = [f for f in ids if os.path.exists(os.path.join(IMAGE_DIR, f))][:50]
+    if not picked:
+        raise HTTPException(400, "没有可打包的图片（请先勾选已生成的图片）")
+
+    w, h = preset["w"], preset["h"]
+    root = pack_dir_name("image_release")
+    entries, img_checks = _ip_process_images(picked, w, h, root, upscale)
+
+    # 上架文案 + 规格说明 + LICENSE
+    entries.update(_ip_copy_entries(root, pack_title, picked, platform, w, h, preset))
+
+    # 生产级内容保障：质量自检报告（规格合规 + 美观度评分）
+    qc_report = _ip_qc_report(picked, img_checks, upscale, w, h, pack_title, preset)
+    if qc_report:
+        entries[f"{root}/质量自检报告.md"] = qc_report
 
     buf = build_publish_zip(entries, "image_release")
     publish = publish_registry.publish("image_platform", {"platform": platform, "count": len(picked)})

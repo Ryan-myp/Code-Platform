@@ -771,6 +771,54 @@ _EVOLVE_SYSTEM = """你是一位资深游戏开发工程师，正在对一个已
    全部文件总字符数必须控制在 50000 以内
 7. 所有状态变量声明时必须初始化，事件回调触发的绘制/更新函数开头必须先判空，严禁运行时错误"""
 
+
+def _merge_game_files(files: dict, new_files: dict) -> dict:
+    """合并保护：AI 输出缺失的版本/文件保留旧代码。"""
+    for ver in ("web", "wx"):
+        if ver not in new_files and ver in files:
+            new_files[ver] = files[ver]
+        elif ver in new_files and ver in files:
+            for path, file_content in files[ver].items():
+                if path not in new_files[ver]:
+                    new_files[ver][path] = file_content
+    return new_files
+
+
+def _evolve_history(row: dict, req, files: dict, result: str) -> tuple:
+    """构建迭代日志与版本快照。返回 (log, history)。"""
+    try:
+        log = json.loads(row["iteration_log"] or "[]")
+    except Exception:
+        log = []
+    log.append({"requirement": req.requirement, "created_at": datetime.now().isoformat(), "chars": len(result)})
+    try:
+        history = json.loads(row["version_history"] or "[]")
+    except Exception:
+        history = []
+    history.append({
+        "version": len(history) + 1,
+        "created_at": datetime.now().isoformat(),
+        "requirement": f"迭代前快照：{req.requirement[:60]}",
+        "files": files,
+    })
+    return log, history
+
+
+def _save_evolved_game(conn, proj_id: str, new_files: dict, log: list, history: list) -> None:
+    """保存迭代后的项目（更新 files/iterations/log/history）。"""
+    conn.execute(
+        """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, version_history=?, updated_at=?
+           WHERE id=?""",
+        (
+            json.dumps(new_files, ensure_ascii=False),
+            json.dumps(log[-20:], ensure_ascii=False),
+            json.dumps(history[-20:], ensure_ascii=False),
+            datetime.now().isoformat(),
+            proj_id,
+        ),
+    )
+    conn.commit()
+
 async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 二次迭代（同步/异步任务共用执行体）。"""
     proj_id = payload.get("proj_id", "")
@@ -827,52 +875,10 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
         conn.close()
         raise HTTPException(502, "服务异常，请稍后重试") from e
 
-    # 合并保护：AI 输出缺失的版本/文件保留旧代码，避免迭代丢文件
-    for ver in ("web", "wx"):
-        if ver not in new_files and ver in files:
-            new_files[ver] = files[ver]
-        elif ver in new_files and ver in files:
-            for path, content in files[ver].items():
-                if path not in new_files[ver]:
-                    new_files[ver][path] = content
-
-    # 迭代日志：保留历史需求，追加本次
-    try:
-        log = json.loads(row["iteration_log"] or "[]")
-    except Exception:
-        log = []
-    log.append(
-        {
-            "requirement": req.requirement,
-            "created_at": datetime.now().isoformat(),
-            "chars": len(result),
-        }
-    )
-    # v15：迭代前保存当前版本快照（用于历史对比与回滚）
-    try:
-        history = json.loads(row["version_history"] or "[]")
-    except Exception:
-        history = []
-    history.append(
-        {
-            "version": len(history) + 1,
-            "created_at": datetime.now().isoformat(),
-            "requirement": f"迭代前快照：{req.requirement[:60]}",
-            "files": files,
-        }
-    )
-    conn.execute(
-        """UPDATE game_projects SET files=?, iterations=iterations+1, iteration_log=?, version_history=?, updated_at=?
-           WHERE id=?""",
-        (
-            json.dumps(new_files, ensure_ascii=False),
-            json.dumps(log[-20:], ensure_ascii=False),
-            json.dumps(history[-20:], ensure_ascii=False),
-            datetime.now().isoformat(),
-            proj_id,
-        ),
-    )
-    conn.commit()
+    # 合并保护 + 迭代日志 + 版本快照 + 保存
+    new_files = _merge_game_files(files, new_files)
+    log, history = _evolve_history(row, req, files, result)
+    _save_evolved_game(conn, proj_id, new_files, log, history)
     conn.close()
     _report(85, "升级版代码已保存")
 
