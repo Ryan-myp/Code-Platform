@@ -1,16 +1,5 @@
 """全局搜索API — 跨工具/模板/内容一键搜索。"""
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 import logging
 import re
 from datetime import datetime
@@ -48,6 +37,8 @@ TOOLS = [
     {"id": "ppt-factory", "name": "PPT工厂", "desc": "AI演示文稿自动生成", "type": "tool", "category": "ppt", "path": "/ppt-factory"},
     {"id": "excel-tools", "name": "Excel工具", "desc": "AI表格处理与分析工具", "type": "tool", "category": "excel", "path": "/excel"},
 ]
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 
 def _clean_text(text: str) -> str:

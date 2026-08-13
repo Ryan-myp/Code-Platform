@@ -7662,8 +7662,7 @@ async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> d
     uid = payload.get("user_id") or "default"
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(10, "解析工具配置")
 

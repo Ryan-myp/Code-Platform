@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 async def _create_dh_simple(dh_params: dict) -> dict:
     """简化版数字人视频创建。"""
@@ -253,30 +255,6 @@ def _parse_dh_response(response: dict) -> dict:
     }
 
 
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
-
-
-def _prepare_context(**kwargs) -> dict:
-    """准备执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_step(step_name: str, step_data: dict) -> dict:
-    """执行处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_results(results: list) -> dict:
-    """汇总最终结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 
 
 def _prepare_dh_video_context(dh_params):

@@ -583,23 +583,22 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
     """文字一键生成表情包（同步/异步任务共用执行体，异步时回报进度）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
-    top_text = (payload.get("top_text") or "").strip()
-    bottom_text = (payload.get("bottom_text") or "").strip()
+    # 简化参数提取
+    def _get_text(key: str) -> str:
+        return (payload.get(key) or "").strip()
+    
+    top_text = _get_text("top_text")
+    bottom_text = _get_text("bottom_text")
     style = payload.get("style") or "yellow"
     # v22 表情包模板热度：按模板生成时记录（失败静默）
     tpl_id = (payload.get("template_id") or "").strip()
     if tpl_id:
         try:
             from meme_templates import record_usage
-
             record_usage(tpl_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     ai_style = payload.get("ai_style") or "flat"
     bg_upload = payload.get("bg_upload") or ""

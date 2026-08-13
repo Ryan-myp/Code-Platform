@@ -340,8 +340,7 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
     """数据预测 worker：解析数据摘要 → AI 趋势分析+预测 → 记录落库。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     data_id = payload.get("data_id", "")
     target_column = payload.get("target_column", "")

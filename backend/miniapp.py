@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 def _build_review_simple(review_data: dict) -> dict:
     """简化版构建评测材料。"""
@@ -17,17 +19,6 @@ def _prepare_review_params(request_data: dict) -> dict:
 
 
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -790,11 +781,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
         raise HTTPException(400, "操作失败，请稍后重试")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     structure_desc = "\n".join(
         f"- {s}"

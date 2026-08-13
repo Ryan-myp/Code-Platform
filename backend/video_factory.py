@@ -3,17 +3,6 @@
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 import asyncio
 import io
 import json
@@ -47,6 +36,8 @@ VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── 视频生成通道（多通道 failover：按配置顺序尝试，未配置 key 的通道自动跳过）──
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 def _available_channels() -> list[str]:
     """返回已配置 key 的视频通道（按 AI_VIDEO_CHANNELS 顺序）。"""
     order = [c.strip() for c in AI_VIDEO_CHANNELS.split(",") if c.strip()]
@@ -660,11 +651,7 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
         raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     api_payload = _parse_video_params(payload)
     project_id = payload.get("project_id") or ""

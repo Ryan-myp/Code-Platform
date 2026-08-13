@@ -325,8 +325,7 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
     """联网搜索 worker：多源搜索 → LLM 整合摘要 → 历史入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     query = payload.get("query", "")
     num_results = int(payload.get("num_results", 5))

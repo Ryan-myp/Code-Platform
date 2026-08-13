@@ -2,17 +2,6 @@
 
 
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -69,6 +58,8 @@ CACHE_DIR = DRAMA_DIR / "cache"  # Pexels 下载缓存（按 URL 哈希去重）
 MUSIC_DIR = DRAMA_DIR / "music"  # 背景音乐目录（*.mp3/wav，可选）
 for _d in (MATERIALS_DIR, CACHE_DIR, MUSIC_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 
 def _ffmpeg_bin() -> str:
@@ -861,11 +852,7 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
     """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     theme = (payload.get("theme") or "").strip()
     scenes_override = payload.get("scenes") or []  # 可选：用户自定义分镜
@@ -907,9 +894,10 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
             tid = payload.get("template_id") or ""
             if tid:
                 try:
-                    from drama_templates import _load_one
+                    from common.template_utils import load_one
+                    from drama_templates import TEMPLATE_DIR
 
-                    tpl = _load_one(tid)
+                    tpl = load_one(TEMPLATE_DIR, tid, "题材模板不存在")
                 except Exception:  # noqa: BLE001
                     logger.warning(f"题材模板加载失败：{tid}")
             script = await _generate_script(theme, duration_hint, tpl)
@@ -1270,9 +1258,10 @@ async def generate_script(
     tpl = None
     if template_id:
         try:
-            from drama_templates import _load_one
+            from common.template_utils import load_one
+            from drama_templates import TEMPLATE_DIR
 
-            tpl = _load_one(template_id)
+            tpl = load_one(TEMPLATE_DIR, template_id, "题材模板不存在")
         except Exception:  # noqa: BLE001
             raise HTTPException(404, "题材模板不存在") from None
     script = await _generate_script(theme, duration_hint, tpl)

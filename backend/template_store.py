@@ -505,11 +505,7 @@ async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) ->
             conn.close()
 
     def _report(pct, stage):
-        if update:
-            try:
-                update(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(update, pct, stage)
 
     results = []
     for i, row in enumerate(rows):

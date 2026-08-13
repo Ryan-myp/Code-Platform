@@ -643,11 +643,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
         raise HTTPException(400, "操作失败，请稍后重试")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     user_prompt = f"""游戏名称：{req.name}
 选择模板：{tpl["name"] if tpl else "自定义"}
@@ -1074,11 +1070,7 @@ async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -
         raise HTTPException(400, "项目没有代码文件，无法迭代")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     # 注入现有代码（截断保护 token 上限）
     web_html = (files.get("web", {}).get("index.html") or "")[:24000]

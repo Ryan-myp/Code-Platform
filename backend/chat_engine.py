@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 def _run_workflow_simple(workflow_data: dict) -> dict:
     """简化版工作流执行。"""
@@ -482,12 +484,6 @@ def _validate_workflow_steps(workflow: dict) -> list:
         if step.get("type") in ["llm", "tool", "condition"]:
             valid_steps.append(step)
     return valid_steps
-
-def _execute_single_step(step: dict, context: dict) -> dict:
-    """执行单个工作流步骤。"""
-    step_type = step.get("type", "llm")
-    result = {"status": "success", "step_id": step.get("id")}
-    return result
 
 def _format_workflow_output(execution_results: list) -> dict:
     """格式化工作流输出。"""

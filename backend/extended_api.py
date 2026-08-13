@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 def _run_test_gate_simple(test_case: dict, config: dict) -> dict:
     """简化版测试门控检查。"""
@@ -17,17 +19,6 @@ def _prepare_test_config(request_data: dict) -> dict:
 
 
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -872,18 +863,6 @@ def _fix_system(lang: str, kind: str) -> str:
 
 
 
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
-
 def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。
 
@@ -1224,18 +1203,6 @@ def _validate_results(test_results: dict, output_path: str) -> bool:
     import os
     return os.path.exists(output_path)
 
-
-def _prepare_common_context(**kwargs) -> dict:
-    """准备通用执行上下文。"""
-    return {"context": kwargs, "status": "initialized"}
-
-def _execute_common_step(step_name: str, step_data: dict) -> dict:
-    """执行通用处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_common_operation(results: list) -> dict:
-    """汇总最终操作结果。"""
-    return {"total": len(results), "results": results}
 
 
 def _prepare_test_context(pid, run_id, cfg):
@@ -2757,8 +2724,7 @@ async def _copywriting_worker(payload: dict, progress: Callable | None = None) -
     """文案生成 worker：LLM 创作 → 记录入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(5, "解析需求")
     system_prompt = _build_copywriting_prompt(
@@ -2892,8 +2858,7 @@ async def _translation_worker(payload: dict, progress: Callable | None = None) -
     """翻译 worker：LLM 翻译（含强制术语表）→ 记录入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(10, "AI 翻译中")
     glossary = []
@@ -3234,30 +3199,6 @@ _AB_RUN_USER = """实验名称：{name}
 
 
 
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
-
-
-def _prepare_context(**kwargs) -> dict:
-    """准备执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_step(step_name: str, step_data: dict) -> dict:
-    """执行处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_results(results: list) -> dict:
-    """汇总最终结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
@@ -3337,18 +3278,6 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     }
 
 
-
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
 
 def build_ab_report_md(test: dict, result: dict) -> str:
     """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""
@@ -3986,8 +3915,7 @@ async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     """PPT worker：LLM 大纲 → 解析 → 生成 PPTX 文件 → 记录入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(5, "规划大纲")
     template = payload.get("template", "business")

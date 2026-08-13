@@ -150,8 +150,7 @@ async def _mindmap_generate_worker(payload: dict, progress: Callable | None = No
     """思维导图 worker：LLM 生成树形结构 → 记录入库（带用户归属）。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(20, "AI 生成结构")
     user_prompt = f"主题：{payload.get('topic', '')}\n展开深度：{payload.get('depth', 2)}层\n风格：{payload.get('style', 'classic')}"
@@ -159,8 +158,9 @@ async def _mindmap_generate_worker(payload: dict, progress: Callable | None = No
     tpl_id = (payload.get("template_id") or "").strip()
     if tpl_id:
         try:
-            from mindmap_templates import _load_one, build_structure_prompt, record_usage
-            tpl = _load_one(tpl_id)
+            from common.template_utils import load_one, record_usage
+            from mindmap_templates import TEMPLATE_DIR, build_structure_prompt
+            tpl = load_one(TEMPLATE_DIR, tpl_id, "思维导图模板不存在")
             user_prompt += build_structure_prompt(tpl)
             record_usage(tpl_id)
         except Exception:  # noqa: BLE001

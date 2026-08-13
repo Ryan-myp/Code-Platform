@@ -161,11 +161,7 @@ def generate_with_sadtalker(  # noqa: C901
         raise RuntimeError("SadTalker 引擎未就绪（avatar_engine 9890 未启动）")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     # 1. 提交任务（提交前再探活一次，更新排队计数）；推理分辨率按内存预算 512/256
     _avatar_ok()

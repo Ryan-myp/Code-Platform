@@ -395,11 +395,7 @@ def generate_from_photo(  # noqa: C901 — 推理主流程，分步注释保持�
     OUT_W, OUT_H = (1920, 1080) if resolution == "1080p" else (1280, 720)
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:  # noqa: BLE001 — 进度回调失败不影响主流程
-                pass
+        _notify_progress(progress, pct, stage)
 
     if not _LIVE_PORTRAIT_SLOT.acquire(timeout=600):
         raise RuntimeError("照片数字人推理繁忙，请稍后重试")

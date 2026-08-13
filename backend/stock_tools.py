@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 def _compute_five_dim_simple(stock_data: dict) -> dict:
     """简化版五维信号计算。"""
@@ -66,17 +68,6 @@ def _prepare_risk_params(request_data: dict) -> dict:
 
 
 
-def _prepare_step_context(**kwargs) -> dict:
-    """准备步骤执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_single_step(step_name: str, step_data: dict) -> dict:
-    """执行单个处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_step_results(results: list) -> dict:
-    """汇总步骤执行结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -326,18 +317,6 @@ def _calculate_max_drawdown(prices: list) -> float:
     return max_dd
 
 
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
-
 
 def _calculate_volatility_metrics(price_data):
     """计算波动率指标。"""
@@ -583,18 +562,6 @@ def _analyze_volume_price(prices: list, volumes: list) -> float:
     volume_change = (volumes[-1] - volumes[-2]) / (volumes[-2] or 1)
     return price_change * volume_change
 
-
-def _prepare_common_context(**kwargs) -> dict:
-    """准备通用执行上下文。"""
-    return {"context": kwargs, "status": "initialized"}
-
-def _execute_common_step(step_name: str, step_data: dict) -> dict:
-    """执行通用处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_common_operation(results: list) -> dict:
-    """汇总最终操作结果。"""
-    return {"total": len(results), "results": results}
 
 
 def _prepare_signal_context(stock_data):

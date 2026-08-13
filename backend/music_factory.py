@@ -396,11 +396,7 @@ async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) 
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     theme = payload.get("theme") or ""
     style = payload.get("style") or "pop"
@@ -654,11 +650,7 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
     """音乐合成执行体（同步/异步任务共用）：numpy 伴奏 + edge-tts 分句人声 + ffmpeg 混音 → mp3 + 封面。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     lyrics = (payload.get("lyrics") or "").strip()
     style = payload.get("style") or "pop"
@@ -1811,11 +1803,7 @@ async def _music_sing_worker(payload: dict, progress: Callable | None = None) ->
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     lyrics = payload.get("lyrics") or ""
     voice = payload.get("voice") or "female"

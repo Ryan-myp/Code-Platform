@@ -271,8 +271,7 @@ async def _batch_translate_worker(payload: dict, progress: Callable | None = Non
     """批量翻译 worker：逐条调用 LLM，按条上报进度。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     texts = payload.get("texts", [])
     target_lang = payload.get("target_lang", "en")
@@ -314,8 +313,7 @@ async def _batch_doc_summary_worker(payload: dict, progress: Callable | None = N
     """批量文档摘要 worker：逐文件提取文本 + LLM 摘要（容错解析），按文件上报进度。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     files = payload.get("files", [])
     user_id = payload.get("user_id", "")
@@ -382,8 +380,7 @@ async def _batch_process_worker(payload: dict, progress: Callable | None = None)
     """通用批量处理 worker：逐文件提取文本 + 统一 LLM 处理，按文件上报进度。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     files = payload.get("files", [])
     user_id = payload.get("user_id", "")
@@ -465,8 +462,7 @@ async def _batch_retry_worker(payload: dict, progress: Callable | None = None) -
     """失败项单独重试 worker：仅重跑失败条目，保留原索引，成功后可原位合并。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     items = payload.get("items", [])
     user_id = payload.get("user_id", "")

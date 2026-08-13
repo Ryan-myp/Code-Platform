@@ -387,8 +387,7 @@ async def _video_analyze_worker(payload: dict, progress: Callable | None = None)
     """视频分析 worker：元数据 → AI 摘要/场景/字幕 → 记录落库。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     video_id = payload.get("video_id", "")
     description = payload.get("description", "")

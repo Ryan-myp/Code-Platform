@@ -341,8 +341,7 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
     """文档问答 worker：RAG 上下文 → LLM 回答。"""
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            progress(pct, stage)
+        _notify_progress(progress, pct, stage)
 
     _report(10, "定位文档")
     doc_ids = payload.get("doc_ids") or []

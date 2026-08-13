@@ -21,6 +21,8 @@ TEMPLATE_DIR = Path(__file__).parent / "meme_templates"
 TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter(prefix="/api/meme-templates", tags=["表情包模板"])
+from common.template_utils import load_all, load_one, get_usage, record_usage
+
 
 
 def _tpl(tid, name, category, icon, desc, style, ai_style, top_hint, bottom_hint,
@@ -239,70 +241,22 @@ def init_meme_templates():
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(t, f, ensure_ascii=False, indent=2)
             logger.info(f"初始化表情包模板：{t['name']}")
-    return _load_all()
+    return load_all(TEMPLATE_DIR)
 
 
-def _load_all() -> list[dict]:
-    items = []
-    for f in sorted(os.listdir(TEMPLATE_DIR)):
-        if not f.endswith(".json"):
-            continue
-        try:
-            with open(TEMPLATE_DIR / f, encoding="utf-8") as fh:
-                items.append(json.load(fh))
-        except Exception:  # noqa: BLE001
-            continue
-    return items
 
 
-def _load_one(tid: str) -> dict:
-    path = TEMPLATE_DIR / f"{tid}.json"
-    if not path.exists():
-        raise HTTPException(404, "表情包模板不存在")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
 
 
-def _get_usage(tid: str) -> int:
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        row = conn.execute(
-            "SELECT usage_count FROM meme_template_usage WHERE template_id=?", (tid,)
-        ).fetchone()
-        conn.close()
-        return int(row["usage_count"]) if row else 0
-    except Exception:  # noqa: BLE001
-        return 0
 
 
-def record_usage(tid: str) -> None:
-    """生成表情包时记录模板热度（worker 调用，失败静默）。"""
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS meme_template_usage "
-            "(template_id TEXT PRIMARY KEY, usage_count INTEGER DEFAULT 0)"
-        )
-        conn.execute(
-            "INSERT INTO meme_template_usage(template_id, usage_count) VALUES(?,1) "
-            "ON CONFLICT(template_id) DO UPDATE SET usage_count=usage_count+1",
-            (tid,),
-        )
-        conn.commit()
-        conn.close()
-    except Exception:  # noqa: BLE001
-        pass
 
 
 @router.get("/list")
 async def meme_templates_list(category: str = "", q: str = ""):
     """表情包模板市场列表（分类/热度/定价）。"""
     items = []
-    for t in _load_all():
+    for t in load_all(TEMPLATE_DIR):
         pricing = t.get("pricing") or {}
         items.append({
             "id": t["id"],
@@ -318,7 +272,7 @@ async def meme_templates_list(category: str = "", q: str = ""):
             "pricing": pricing,
             "pricing_label": {"free": "免费", "once": "按次", "day": "按天", "month": "按月"}
             .get(pricing.get("mode", "free"), "免费"),
-            "usage": _get_usage(t["id"]),
+            "usage": get_usage(t["id"], 'meme_template_usage'),
         })
     if q:
         ql = q.strip().lower()
@@ -335,7 +289,7 @@ async def meme_templates_list(category: str = "", q: str = ""):
 @router.get("/{tid}")
 async def meme_template_detail(tid: str):
     """表情包模板详情（完整配方，前端填充生成表单）。"""
-    t = _load_one(tid)
+    t = load_one(TEMPLATE_DIR, tid, '表情包模板不存在')
     pricing = t.get("pricing") or {}
     data = {k: t[k] for k in ("id", "name", "category", "icon", "desc", "style", "ai_style",
                               "top_hint", "bottom_hint", "texts", "prompt_hint",
@@ -343,7 +297,7 @@ async def meme_template_detail(tid: str):
     labels = {"free": "免费", "once": "按次", "day": "按天", "month": "按月"}
     data["category_label"] = data.get("category", "通用")
     data["pricing_label"] = labels.get(pricing.get("mode", "free"), "免费")
-    data["usage"] = _get_usage(tid)
+    data["usage"] = get_usage(tid, 'meme_template_usage')
     return data
 
 

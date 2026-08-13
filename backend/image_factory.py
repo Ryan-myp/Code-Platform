@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 
 def _render_template_simple(template_data: dict, output_path: str) -> str:
     """简化版模板渲染。"""
@@ -231,30 +233,6 @@ def _has_cjk(text: str) -> bool:
 
 
 
-def _initialize_compute_context(data: dict) -> dict:
-    """初始化计算上下文。"""
-    return {"data": data, "results": {}, "status": "running"}
-
-def _execute_compute_step(step_name: str, step_data: dict) -> dict:
-    """执行计算步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _aggregate_compute_results(results: list) -> dict:
-    """聚合计算结果。"""
-    return {"total_steps": len(results), "aggregated": results}
-
-
-def _prepare_context(**kwargs) -> dict:
-    """准备执行上下文。"""
-    return {"context": kwargs, "status": "initialized", "data": {}}
-
-def _execute_step(step_name: str, step_data: dict) -> dict:
-    """执行处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_results(results: list) -> dict:
-    """汇总最终结果。"""
-    return {"total_steps": len(results), "results": results, "status": "completed"}
 
 def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False,
              text: str = "") -> ImageFont.FreeTypeFont:
@@ -539,11 +517,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or DEFAULT_IMAGE_SIZE
@@ -665,11 +639,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
         raise HTTPException(400, "未配置 AGNES_API_KEY")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or "1024x1024"
@@ -1243,11 +1213,7 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
     height = int(overrides.get("height", template.get("height", 1920)))
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     # ── 槽位图片解析 ──
     raw_images = overrides.get("images") or []
@@ -1719,11 +1685,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
     from common.config import IMAGE_MODEL
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     person_content = _read_file_field(payload, "person_image")
     clothing_content = _read_file_field(payload, "clothing_image")

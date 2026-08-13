@@ -385,6 +385,8 @@ INDUSTRY_TEMPLATES = [
 
 
 # ── AI 写真肖像生成 ─────────────────────────────────────────
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+
 def _get_portrait_path(avatar_id: str) -> str:
     """返回某数字人形象写真图片的本地路径。"""
     return os.path.join(PORTRAIT_DIR, f"{avatar_id}.jpg")
@@ -3045,18 +3047,6 @@ async def generate_all_portraits(current_user: dict = require_auth()):
 
 
 
-def _prepare_common_context(**kwargs) -> dict:
-    """准备通用执行上下文。"""
-    return {"context": kwargs, "status": "initialized"}
-
-def _execute_common_step(step_name: str, step_data: dict) -> dict:
-    """执行通用处理步骤。"""
-    return {"step": step_name, "status": "completed", "data": step_data}
-
-def _finalize_common_operation(results: list) -> dict:
-    """汇总最终操作结果。"""
-    return {"total": len(results), "results": results}
-
 def _generate_one(  # noqa: C901
     req: GenerateRequest,
     user: str,
@@ -3082,11 +3072,7 @@ def _generate_one(  # noqa: C901
         emotion = _detect_emotion(req.text)
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     # 0.5 内容安全：硬违规词直接拒绝生成；广告法极限词/中风险词放行但提示
     try:

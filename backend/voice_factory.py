@@ -501,11 +501,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
         raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
 
     def _report(pct: float, stage: str) -> None:
-        if progress:
-            try:
-                progress(pct, stage)
-            except Exception:
-                pass
+        _notify_progress(progress, pct, stage)
 
     text = (payload.get("text") or "").strip()
     scene = payload.get("scene") or "shortvideo"
