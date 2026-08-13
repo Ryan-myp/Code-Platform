@@ -300,6 +300,66 @@ def _probe_duration(filename: str) -> float:
     return 0.0
 
 
+
+def _probe_duration_ffmpeg(video_path) -> float:
+    """ffprobe 获取视频时长（秒），失败返回 0。"""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video_path)],
+            capture_output=True, timeout=15,
+        )
+        if r.returncode == 0:
+            return float(r.stdout.decode().strip().split(",")[0])
+    except Exception:
+        pass
+    return 0.0
+
+
+def _extract_frame_candidates(video_path, dur: float) -> list:
+    """多点采样抽帧（30%/50%/70% + 首帧兜底），返回候选帧文件列表。"""
+    import subprocess
+
+    frames: list = []
+    positions = [dur * p for p in (0.3, 0.5, 0.7)] if dur > 1 else []
+    positions.append(-1)
+    cover_name = video_path.stem + ".jpg"
+    for idx, pos in enumerate(positions):
+        tmp = video_path.parent / f"{cover_name}.{idx}.tmp.jpg"
+        try:
+            cmd = ["ffmpeg", "-nostdin", "-y"]
+            if pos >= 0:
+                cmd += ["-ss", f"{max(0.5, pos):.2f}"]
+            cmd += ["-i", str(video_path), "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", str(tmp)]
+            r = subprocess.run(cmd, capture_output=True, timeout=60)
+            if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                frames.append(tmp)
+        except Exception:
+            pass
+    return frames
+
+
+def _pick_brightest_frame(frames: list) -> Path:
+    """选最亮帧作封面（PIL 亮度均值；无 PIL 用体积近似）。"""
+    best = frames[0]
+    best_score = -1.0
+    try:
+        from PIL import Image
+
+        for fp in frames:
+            try:
+                img = Image.open(fp).convert("L")
+                px = list(img.getdata())
+                score = sum(px) / len(px)
+                if score > best_score:
+                    best_score, best = score, fp
+            except Exception:
+                continue
+    except ImportError:
+        best = max(frames, key=lambda p: p.stat().st_size)
+    return best
+
 def _extract_cover(filename: str) -> str | None:  # noqa: C901
     """用 ffmpeg 从视频抽帧生成封面图（30%/50%/70% 多点抽帧，自动选最亮帧；全失败回退首帧）。
 
@@ -319,59 +379,15 @@ def _extract_cover(filename: str) -> str | None:  # noqa: C901
         return None
 
     # ffprobe 取视频时长（失败则仅首帧兜底）
-    dur = 0.0
-    try:
-        r = subprocess.run(
-            [
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
-                "-of", "csv=p=0", str(video_path),
-            ],
-            capture_output=True,
-            timeout=15,
-        )
-        if r.returncode == 0:
-            dur = float(r.stdout.decode().strip().split(",")[0])
-    except Exception:
-        pass
+    dur = _probe_duration_ffmpeg(video_path)
 
     # 收集候选帧：多点采样 + 首帧兜底
-    frames: list[Path] = []
-    positions = [dur * p for p in (0.3, 0.5, 0.7)] if dur > 1 else []
-    positions.append(-1)  # -1 = 首帧兜底
-    for idx, pos in enumerate(positions):
-        tmp = VIDEO_DIR / f"{cover_name}.{idx}.tmp.jpg"
-        try:
-            cmd = ["ffmpeg", "-nostdin", "-y"]
-            if pos >= 0:
-                cmd += ["-ss", f"{max(0.5, pos):.2f}"]
-            cmd += ["-i", str(video_path), "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", str(tmp)]
-            r = subprocess.run(cmd, capture_output=True, timeout=60)
-            if r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
-                frames.append(tmp)
-        except Exception:
-            pass
+    frames = _extract_frame_candidates(video_path, dur)
     if not frames:
-        # 抽帧全失败：PIL 兜底渐变封面，保证视频列表永远有封面可展示
         return cover_name if _fallback_cover(filename, cover_path) else None
 
-    # 选最亮帧作为封面（PIL 亮度均值；无 PIL 时用 jpg 体积近似）
-    best = frames[0]
-    best_score = -1.0
-    try:
-        from PIL import Image
-
-        for fp in frames:
-            try:
-                img = Image.open(fp).convert("L")
-                px = list(img.getdata())
-                score = sum(px) / len(px)
-                if score > best_score:
-                    best_score, best = score, fp
-            except Exception:
-                continue
-    except ImportError:
-        best = max(frames, key=lambda p: p.stat().st_size)
-
+    # 选最亮帧作为封面
+    best = _pick_brightest_frame(frames)
     for fp in frames:
         if fp == best:
             fp.rename(cover_path)

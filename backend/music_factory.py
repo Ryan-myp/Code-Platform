@@ -1311,6 +1311,50 @@ def _vocalize_phrase(  # noqa: C901
         return None
 
 
+
+def _melody_pool(chord: list, root: int, penta: tuple, lo: int, hi: int) -> list:
+    """生成可用音池（和弦音 + 五声音阶，限音域）。"""
+    pool: set[int] = set()
+    for off in (0, 12):
+        for c in chord:
+            pool.add(c + off)
+    for octv in (0, 1, 2):
+        for iv in penta:
+            pool.add(root + iv + 12 * octv)
+    usable = sorted(p for p in pool if lo <= p <= hi)
+    return usable or [root + 12]
+
+
+def _note_start(usable: list, prev: int | None, root: int, rng) -> int:
+    """句首音：和弦根/五音，优先衔接前句尾音（≤4 半音）。"""
+    cands = [p for p in usable if (p - root) % 12 in (0, 7)] or usable
+    if prev is not None:
+        joined = [p for p in cands if abs(p - prev) <= 4]
+        if joined:
+            cands = joined
+        else:
+            near = [p for p in usable if abs(p - prev) <= 4]
+            if near:
+                cands = near
+    return rng.choice(cands)
+
+
+def _note_end(usable: list, prev: int | None, root: int, rng) -> int:
+    """句尾音：回落收束（根音/三音，平滑）。"""
+    cands = [
+        p for p in usable
+        if (p - root) % 12 in (0, 4)
+        and (prev is None or prev - 3 <= p <= prev + 2)
+    ]
+    return rng.choice(cands) if cands else (prev or root + 12)
+
+
+def _note_middle(usable: list, prev: int | None, root: int, rng) -> int:
+    """句中音：≤3 半音平滑游走。"""
+    base = prev if prev is not None else root + 12
+    near = [p for p in usable if abs(p - base) <= 3]
+    return rng.choice(near) if near else base
+
 def _generate_melody(style: str, phrases: list[dict], seed: int, voice: str = "female") -> list[dict]:  # noqa: C901
     """为歌词生成主旋律（midi 音符序列）：和弦进行 + 五声音阶随机游走，音域受限。
 
@@ -1331,41 +1375,14 @@ def _generate_melody(style: str, phrases: list[dict], seed: int, voice: str = "f
         bar_idx = int(ph["start"] / bar_dur)
         chord = cfg["chords"][bar_idx % len(cfg["chords"])]
         root = chord[0]
-        pool: set[int] = set()
-        for off in (0, 12):
-            for c in chord:
-                pool.add(c + off)
-        for octv in (0, 1, 2):
-            for iv in penta:
-                pool.add(root + iv + 12 * octv)
-        usable = sorted(p for p in pool if lo <= p <= hi)
-        if not usable:
-            usable = [root + 12]
+        usable = _melody_pool(chord, root, penta, lo, hi)
         for i in range(n):
             if i == 0:
-                cands = [p for p in usable if (p - root) % 12 in (0, 7)] or usable
-                if prev is not None:
-                    # 句首优先衔接前句尾音（≤4 半音），避免跨句跳变
-                    joined = [p for p in cands if abs(p - prev) <= 4]
-                    if joined:
-                        cands = joined
-                    else:
-                        # 无合适和弦连接音：直接用前音附近音，保证旋律连续
-                        near = [p for p in usable if abs(p - prev) <= 4]
-                        if near:
-                            cands = near
-                note = rng.choice(cands)
+                note = _note_start(usable, prev, root, rng)
             elif i == n - 1:
-                cands = [
-                    p for p in usable
-                    if (p - root) % 12 in (0, 4)
-                    and (prev is None or prev - 3 <= p <= prev + 2)  # 收束但平滑回落
-                ]
-                note = rng.choice(cands) if cands else (prev or root + 12)
+                note = _note_end(usable, prev, root, rng)
             else:
-                base = prev if prev is not None else root + 12
-                near = [p for p in usable if abs(p - base) <= 3]
-                note = rng.choice(near) if near else base
+                note = _note_middle(usable, prev, root, rng)
             note = int(np.clip(note, lo, hi))
             melody.append(
                 {
