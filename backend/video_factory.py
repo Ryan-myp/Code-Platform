@@ -1036,6 +1036,61 @@ _VIDEO_PLATFORM_TAGS = {
 
 
 @router.post("/publish-pack")
+def _vp_transcode(src_path, out_name: str, w: int, h: int) -> tuple:
+    """视频规格转码（cover 模式）：等比放大居中裁剪 + aac 重编码。返回 (out_path, has_audio)。"""
+    import subprocess
+
+    ffmpeg = _pick_ffmpeg()
+    out_path = VIDEO_DIR / out_name
+    has_audio = _probe_has_audio(src_path)
+    cmd = [
+        ffmpeg, "-nostdin", "-y", "-i", str(src_path),
+        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+    ]
+    cmd += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]) + [str(out_path)]
+    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 1024:
+        raise HTTPException(500, "规格转码失败，请稍后重试")
+    return out_path, has_audio
+
+
+def _vp_artifact_prompt(src: str) -> str:
+    """从 artifacts 表查询视频生成提示词（用于发布文案）。"""
+    try:
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT content FROM artifacts WHERE media_url=? AND active=1",
+            (f"/api/video-factory/videos/{src}",),
+        ).fetchone()
+        conn.close()
+        if row:
+            try:
+                return (json.loads(row["content"] or "{}") or {}).get("prompt", "") or ""
+            except Exception:
+                return str(row["content"] or "")[:200]
+    except Exception:
+        pass
+    return ""
+
+
+def _vp_qc_report(prompt: str, width: int, height: int, w: int, h: int, duration: float, has_audio: bool, title: str) -> str | None:
+    """视频质量自检报告（失败返回 None）。"""
+    try:
+        prompt_check = check_text(prompt, "prompt") if prompt else None
+        extra = [
+            f"成片规格：{width}×{height}（目标 {w}×{h}）{'✓' if (width, height) == (w, h) else '✗'}",
+            f"时长：{duration:.1f} 秒 / 音轨：{'有' if has_audio else '无'}",
+            f"编码：H.264 + {'AAC' if has_audio else '静音'}（平台兼容）",
+        ]
+        return quality_report(f"视频《{title}》", text_check=prompt_check, image_quality=None, extra=extra)
+    except Exception as e:
+        logger.debug(f"视频质量自检报告生成失败: {e}")
+        return None
+
+
 async def video_publish_pack(
     filename: str = Form(...),
     platform: str = Form("douyin"),
@@ -1054,24 +1109,10 @@ async def video_publish_pack(
     if not src_path.exists():
         raise HTTPException(404, "视频不存在")
 
-    ffmpeg = _pick_ffmpeg()
-    import subprocess
-
     w, h = preset["w"], preset["h"]
     root = pack_dir_name("video_release")
     out_name = f"{Path(src).stem}_{preset['id']}.mp4"
-    out_path = VIDEO_DIR / out_name
-    has_audio = _probe_has_audio(src_path)
-    # cover 模式转码：等比放大至覆盖规格后居中裁剪（不变形）；有音轨则 aac 重编码
-    cmd = [
-        ffmpeg, "-nostdin", "-y", "-i", str(src_path),
-        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-    ]
-    cmd += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]) + [str(out_path)]
-    r = subprocess.run(cmd, capture_output=True, timeout=600)
-    if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 1024:
-        raise HTTPException(500, "规格转码失败，请稍后重试")
+    out_path, has_audio = _vp_transcode(src_path, out_name, w, h)
 
     # 从规格成片抽帧做封面（与成片同规格）
     cover_name = _extract_cover(out_name)
@@ -1079,23 +1120,7 @@ async def video_publish_pack(
     duration = _probe_duration(out_name)
 
     # 发布文案（模板 + 平台标签，可直接复制发布）
-    prompt = ""
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        row = conn.execute(
-            "SELECT content FROM artifacts WHERE media_url=? AND active=1",
-            (f"/api/video-factory/videos/{src}",),
-        ).fetchone()
-        conn.close()
-        if row:
-            try:
-                prompt = (json.loads(row["content"] or "{}") or {}).get("prompt", "") or ""
-            except Exception:
-                prompt = str(row["content"] or "")[:200]
-    except Exception:
-        pass
+    prompt = _vp_artifact_prompt(src)
     title = (video_title or f"AI 创意短片 · {Path(src).stem}").strip()[:60]
     desc = (video_desc or f"AI 生成创意视频，{prompt[:60]}。").strip()[:300]
     tags = " ".join(_VIDEO_PLATFORM_TAGS.get(platform, []))
@@ -1119,18 +1144,9 @@ async def video_publish_pack(
     entries[f"{root}/LICENSE.txt"] = license_text(f"视频《{title}》")
 
     # 生产级内容保障：质量自检报告（描述审核 + 成片规格合规）
-    try:
-        prompt_check = check_text(prompt, "prompt") if prompt else None
-        extra = [
-            f"成片规格：{width}×{height}（目标 {w}×{h}）{'✓' if (width, height) == (w, h) else '✗'}",
-            f"时长：{duration:.1f} 秒 / 音轨：{'有' if has_audio else '无'}",
-            f"编码：H.264 + {'AAC' if has_audio else '静音'}（平台兼容）",
-        ]
-        entries[f"{root}/质量自检报告.md"] = quality_report(
-            f"视频《{title}》", text_check=prompt_check, image_quality=None, extra=extra
-        )
-    except Exception as e:
-        logger.debug(f"视频质量自检报告生成失败: {e}")
+    qc_report = _vp_qc_report(prompt, width, height, w, h, duration, has_audio, title)
+    if qc_report:
+        entries[f"{root}/质量自检报告.md"] = qc_report
 
     buf = build_publish_zip(entries, "video_release")
     publish = publish_registry.publish("video_platform", {"platform": platform, "title": title})
