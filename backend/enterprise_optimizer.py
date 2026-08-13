@@ -726,7 +726,7 @@ class ReportGenerator:
         deps = results.get("deps", {})
         outdated = deps.get("outdated", 0)
         vulnerable = deps.get("vulnerable", 0)
-        dep_score = max(0, 15 - outdated * 2 - vulnerable * 5)
+        dep_score = max(5, 15 - int(outdated * 0.3) - vulnerable * 2)
         scores.append(dep_score)
 
         total_score = int(sum(scores))
