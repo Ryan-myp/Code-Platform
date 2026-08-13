@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """AI 配音工坊 — 文字转语音（TTS）。
 
 - 调用 Agnes 中转站 OpenAI 兼容 /audio/speech（模型 tts-1，Azure Neural 音色）

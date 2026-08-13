@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """短剧工厂模块 - LLM 剧本分镜 + CosyVoice 配音 + ffmpeg 视频组装（本地管线）。
 
 流水线：主题 → LLM 剧本（分幕/分镜/台词/旁白）→ 每镜 CosyVoice 配音 →

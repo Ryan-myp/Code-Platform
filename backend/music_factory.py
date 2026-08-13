@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
 import asyncio

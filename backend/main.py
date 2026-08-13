@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """小团智能平台 v8.0 — AI 赋能各行各业，智能解决工作难题。
 
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
