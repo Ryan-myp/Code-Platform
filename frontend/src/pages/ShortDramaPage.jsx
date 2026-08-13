@@ -29,6 +29,8 @@ import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 import usePersistentToolState from '../hooks/usePersistentToolState'
 
 const DURATIONS = [30, 45, 60, 120, 300, 600]
@@ -127,6 +129,8 @@ export default function ShortDramaPage() {
   const [manifestData, setManifestData] = useState(null)
   const [manifestLoading, setManifestLoading] = useState(false)
   const { submitTask } = useAsyncTask()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('short_drama_history_v1', 30)
   const toast = useToast()
 
   const loadList = () => {
@@ -215,6 +219,13 @@ export default function ShortDramaPage() {
       onUpdate: (t) => setGenTask(t),
       onSuccess: (data) => {
         loadList()
+        addGenHistory({
+          type: '短剧',
+          theme: theme.trim(),
+          title: finalTitle,
+          content: theme.trim().slice(0, 50),
+          duration: durSeconds,
+        })
         setGenerating(false)
         setScriptData(null) // v13.29 生成成功后关闭剧本工作台
         toast.success(`短剧已生成：${data.title}（${data.scenes} 镜 · ${Math.round(data.duration || 0)} 秒）`)
@@ -1013,6 +1024,24 @@ export default function ShortDramaPage() {
             {mode === 'illust' && <Badge color="purple">AI 插画模式 · 角色一致性（同角色全剧同脸同装）</Badge>}
           </div>
 
+          {genHistory.length > 0 && (
+            <div className="mt-3">
+              <HistoryPanel
+                history={genHistory}
+                onReuse={(item) => {
+                  if (item.theme) setTheme(item.theme)
+                  if (item.title) setTitle(item.title)
+                  toast.info('已恢复短剧主题，可重新生成')
+                }}
+                onRemove={removeGenHistory}
+                onClear={clearGenHistory}
+                title="创作历史"
+                renderSummary={(item) => (
+                  <span className="text-gray-700">{item.theme} · {item.duration}s</span>
+                )}
+              />
+            </div>
+          )}
           {generating && genTask && (
             <div className="rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
               <div className="flex items-center gap-2 text-xs text-violet-600">

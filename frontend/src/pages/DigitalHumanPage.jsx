@@ -727,6 +727,9 @@ const fmtDaysLeft = (days) => {
   // 任务完成后：展示结果 + 预览音视频 + 刷新记录/额度
   const handleTaskDone = (result) => {
     setResult(result || {})
+    if (result?.status === 'done' || result?.video_url || result?.audio_url) {
+      addGenHistory({ type: '数字人', content: (text.trim() || '口播视频').slice(0, 50) })
+    }
     loadRecords(true)
     loadQuota()
     loadStorage()
@@ -2215,6 +2218,20 @@ ${batchTexts
               生成+录制
             </Button>
           </div>
+          {genHistory.length > 0 && (
+            <div className="mt-3">
+              <HistoryPanel
+                history={genHistory}
+                onReuse={(item) => {
+                  setText(item.content || '')
+                  toast.info('已恢复口播文案，可重新生成')
+                }}
+                onRemove={removeGenHistory}
+                onClear={clearGenHistory}
+                title="生成历史"
+              />
+            </div>
+          )}
           {generating && (
             <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
               <span className="w-2 h-2 bg-violet-400 rounded-full animate-pulse" />

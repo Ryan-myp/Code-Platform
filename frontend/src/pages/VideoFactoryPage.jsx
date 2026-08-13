@@ -36,6 +36,8 @@ import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 
 const MEDIA_BASE = api.defaults.baseURL
 const absUrl = (u) => (u ? (u.startsWith('http') ? u : `${MEDIA_BASE}${u}`) : '')
@@ -220,6 +222,8 @@ export default function VideoFactoryPage() {
   const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
   const [lastResult, setLastResult] = useState(null)
   const { submitTask, startPolling, stopPolling } = useAsyncTask()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('video_factory_history_v1', 30)
 
   // 播放器
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -398,6 +402,9 @@ export default function VideoFactoryPage() {
     setLastResult((prev) => ({ ...prev, progress: t.progress, stage: t.stage }))
   }
   const handleTaskSuccess = (data) => {
+    if (data && data.url) {
+      addGenHistory({ type: '视频', content: (inputs.prompt || 'AI 视频').slice(0, 50), url: data.url })
+    }
     setLastResult({
       ...data,
       url: data.url ? absUrl(data.url) : null,
@@ -1154,6 +1161,20 @@ export default function VideoFactoryPage() {
           {creating ? '创建任务中...' : '创建视频任务'}
         </Button>
 
+        {genHistory.length > 0 && (
+          <div className="mt-3">
+            <HistoryPanel
+              history={genHistory}
+              onReuse={(item) => {
+                setPrompt(item.content)
+                toast.info('已恢复提示词，可重新生成')
+              }}
+              onRemove={removeGenHistory}
+              onClear={clearGenHistory}
+              title="生成历史"
+            />
+          </div>
+        )}
         {lastResult && (
           <div
             className={`p-4 rounded-xl ${
