@@ -2672,7 +2672,30 @@ async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()): 
 
 
 @app.get("/api/knowledge-bases/{kb_id}/search")
-async def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
+async 
+def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
+    """解析搜索请求参数。"""
+    return {
+        "kb_id": kb_id,
+        "query": q.strip()[:500],
+        "limit": min(limit, 20),
+        "offset": 0
+    }
+
+def _execute_vector_search(params: dict) -> list:
+    """执行向量搜索。"""
+    # 简化的搜索逻辑
+    return []
+
+def _format_search_response(results: list, total: int) -> dict:
+    """格式化搜索结果。"""
+    return {
+        "results": results,
+        "total": total,
+        "limit": len(results)
+    }
+
+def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()
     if not q:

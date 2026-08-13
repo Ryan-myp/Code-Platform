@@ -3588,6 +3588,27 @@ def _parse_ppt_outline(result: str) -> dict:
     return data
 
 
+
+def _add_pptx_slide(slide_layout, title: str, content: list) -> None:
+    """添加幻灯片内容。"""
+    from pptx.util import Inches
+    title_box = slide_layout.shapes.title
+    content_box = slide_layout.shapes.placeholders[1]
+    if title_box:
+        title_box.text = title
+    if content_box:
+        content_box.text = "\n".join(content)
+
+def _format_pptx_content(outline: dict) -> list:
+    """格式化PPTX内容。"""
+    sections = []
+    for section in outline.get("sections", []):
+        sections.append({
+            "title": section.get("title", ""),
+            "content": section.get("content", [])
+        })
+    return sections
+
 def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
     """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。
 
