@@ -7799,31 +7799,7 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
 
 
 @router.post("/api/tools/upload")
-async 
-def _validate_file_upload(file_data: dict) -> bool:
-    """验证文件上传。"""
-    if not file_data.get("filename"):
-        return False
-    if not file_data.get("content"):
-        return False
-    return True
-
-def _save_uploaded_file(file_data: dict, upload_dir: str) -> str:
-    """保存上传的文件。"""
-    import os
-    filename = file_data["filename"]
-    filepath = os.path.join(upload_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(file_data["content"])
-    return filepath
-
-def _generate_file_info(filepath: str, filename: str) -> dict:
-    """生成文件信息。"""
-    import os
-    size = os.path.getsize(filepath)
-    return {"filename": filename, "size": size, "path": filepath}
-
-def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):  # noqa: C901
+async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):  # noqa: C901
     """上传文件并提取内容"""
     import tempfile
 
