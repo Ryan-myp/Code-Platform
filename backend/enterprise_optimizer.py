@@ -183,8 +183,9 @@ class CodeQualityOptimizer:
             except Exception:
                 pass
         avg_lines_per_func = total_lines / max(total_functions, 1)
-        # 简化评分算法（Python 3.9 兼容）
+        # 计算复杂度得分（基于平均每函数行数）
         complexity_score = max(0, min(100, int(100 - avg_lines_per_func / 5)))
+        results["complexity_score"] = complexity_score
 
         logger.info(f"  ✅ 代码质量优化完成，复杂度得分: {results['complexity_score']}/100")
         return results
