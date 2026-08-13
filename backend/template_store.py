@@ -219,17 +219,9 @@ class PurchaseRequest(BaseModel):
 
 
 @router.get("/list")
-async def market_list(
-    category: str = "",
-    q: str = "",
-    sort: str = "hot",  # hot=热度 | new=最新 | price=价格
-    current_user: dict = require_auth(),
-):
-    """图片模板市场列表（内置 + 用户创作模板聚合）。
 
-    每项含：预览图、分类、定价（mode/价格）、热度、销量、我的权限状态。
-    """
-    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+def _market_load_templates() -> list:
+    """加载市场模板列表（跳过隐藏项）。"""
     tdir = _template_dir()
     items = []
     if os.path.exists(tdir):
@@ -245,7 +237,7 @@ async def market_list(
             if not tid or t.get("hidden"):
                 continue
             pricing = get_pricing(t)
-            item = {
+            items.append({
                 "id": tid,
                 "name": t.get("name", "未命名模板"),
                 "category": t.get("category", "通用") or "通用",
@@ -257,10 +249,12 @@ async def market_list(
                 "seller": t.get("seller", "platform"),
                 "usage": _get_usage(tid),
                 "created_at": t.get("created_at", ""),
-            }
-            items.append(item)
+            })
+    return items
 
-    # 我的权限状态（一次查询全量，避免 N+1）
+
+def _market_access_map(user: str) -> dict:
+    """查询用户对模板的访问权限映射。"""
     conn = get_db()
     _ensure_tables(conn)
     access_rows = conn.execute(
@@ -278,39 +272,64 @@ async def market_list(
                     owned.setdefault(a["template_id"], a["access_type"])
             except ValueError:
                 pass
+    return owned
 
-    for it in items:
-        it["access"] = owned.get(it["id"], "")
 
-    # 搜索/分类过滤
+def _market_filter_sort(items: list, q: str, category: str, sort: str) -> list:
+    """市场列表搜索/分类过滤 + 排序。"""
     if q:
         ql = q.strip().lower()
         items = [i for i in items if ql in i["name"].lower() or ql in i["category"].lower()]
     if category and category != "全部":
         items = [i for i in items if i["category"] == category]
-
-    # 排序：热度（使用量）> 最新 > 价格（免费在前，价格升序）
     if sort == "new":
         items.sort(key=lambda i: i.get("created_at", ""), reverse=True)
     elif sort == "price":
         items.sort(key=lambda i: (0 if i["pricing"]["mode"] == "free" else 1, i["pricing"]["once"]))
     else:
         items.sort(key=lambda i: (i["usage"], i["created_at"]), reverse=True)
+    return items
 
-    # 分类聚合（返回市场分类 tab 数据）
+
+def _market_categories(items: list) -> list:
+    """分类聚合（市场分类 tab）。"""
     cats: dict = {}
     for it in items:
         c = it["category"]
         cats.setdefault(c, {"label": c, "count": 0})
         cats[c]["count"] += 1
-    # 用户积分余额（购买弹窗展示）
+    return list(cats.values())
+
+async def market_list(
+    category: str = "",
+    q: str = "",
+    sort: str = "hot",  # hot=热度 | new=最新 | price=价格
+    current_user: dict = require_auth(),
+):
+    """图片模板市场列表（内置 + 用户创作模板聚合）。
+
+    每项含：预览图、分类、定价（mode/价格）、热度、销量、我的权限状态。
+    """
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    items = _market_load_templates()
+
+    # 我的权限状态
+    owned = _market_access_map(user)
+    for it in items:
+        it["access"] = owned.get(it["id"], "")
+
+    # 搜索/分类过滤 + 排序
+    items = _market_filter_sort(items, q, category, sort)
+
+    # 分类聚合 + 用户积分余额
+    cats = _market_categories(items)
     conn = get_db()
     quota = conn.execute("SELECT credits FROM user_quotas WHERE username=?", (user,)).fetchone()
     conn.close()
     return {
         "total": len(items),
         "items": items,
-        "categories": list(cats.values()),
+        "categories": cats,
         "credits": int(quota["credits"]) if quota else 0,
     }
 

@@ -579,19 +579,68 @@ async def _meme_generate_simple(image_url: str, style: str, output_path: str) ->
     }
     return result
 
+
+def _meme_validate(payload: dict) -> dict:
+    """表情包参数提取 + 校验 + 安全审核。返回规范化参数。"""
+    def _get_text(key: str) -> str:
+        return (payload.get(key) or "").strip()
+
+    top_text = _get_text("top_text")
+    bottom_text = _get_text("bottom_text")
+    style = payload.get("style") or "yellow"
+    bg_upload = payload.get("bg_upload") or ""
+    ai_prompt = payload.get("ai_prompt") or ""
+    if not top_text and not bottom_text:
+        raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
+    if style not in {s["id"] for s in STYLES}:
+        raise HTTPException(400, "操作失败，请稍后重试")
+    if style == "upload" and not bg_upload:
+        raise HTTPException(400, "上传背景模式需要提供 bg_upload 图片（base64）")
+    for label, t in (("顶部文字", top_text), ("底部文字", bottom_text), ("AI 画面描述", ai_prompt)):
+        if not t:
+            continue
+        res = check_text(t, "表情包")
+        if not res["ok"]:
+            raise HTTPException(400, "内容审核不通过")
+    return {
+        "top_text": top_text, "bottom_text": bottom_text, "style": style,
+        "bg_upload": bg_upload, "ai_prompt": ai_prompt,
+        "ai_style": payload.get("ai_style") or "flat",
+        "decoration": payload.get("decoration") or "",
+        "character": (payload.get("character") or "").strip(),
+    }
+
+
+async def _meme_render_bg(params: dict, _report) -> tuple:
+    """生成表情包背景。返回 (img, top_fill, top_stroke, bottom_fill, bottom_stroke)。"""
+    if params["style"] == "ai":
+        _report(20, "AI 正在绘制表情包背景…")
+        full_prompt = params["ai_prompt"].strip() or f"{params['top_text']}，{params['bottom_text']}"
+        scene = (
+            f"{AI_STYLES.get(params['ai_style'], AI_STYLES['flat'])}，画面主体居中偏下，"
+            "顶部与底部各预留 20% 高度纯净留白区域用于叠加文字，背景简洁不杂乱"
+        )
+        if params["character"]:
+            scene += f"，角色设定（全套必须完全一致）：{params['character']}；所有画面中的角色形象、服装、画风保持一致"
+        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}")
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        if params["top_text"]:
+            od.rectangle([0, 0, CANVAS, TOP_H], fill=(0, 0, 0, 110))
+        if params["bottom_text"]:
+            od.rectangle([0, CANVAS - BOTTOM_H, CANVAS, CANVAS], fill=(0, 0, 0, 110))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        return img, "#FFFFFF", "#000000", "#FFFFFF", "#000000"
+    img = _style_bg(params["style"])
+    top_fill, top_stroke = _text_color(params["style"])
+    return img, top_fill, top_stroke, top_fill, top_stroke
+
 async def _meme_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字一键生成表情包（同步/异步任务共用执行体，异步时回报进度）。"""
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
 
-    # 简化参数提取
-    def _get_text(key: str) -> str:
-        return (payload.get(key) or "").strip()
-    
-    top_text = _get_text("top_text")
-    bottom_text = _get_text("bottom_text")
-    style = payload.get("style") or "yellow"
     # v22 表情包模板热度：按模板生成时记录（失败静默）
     tpl_id = (payload.get("template_id") or "").strip()
     if tpl_id:
@@ -600,67 +649,27 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
             record_usage(tpl_id)
         except Exception:
             pass
-    ai_style = payload.get("ai_style") or "flat"
-    bg_upload = payload.get("bg_upload") or ""
-    decoration = payload.get("decoration") or ""
-    ai_prompt = payload.get("ai_prompt") or ""
-    character = (payload.get("character") or "").strip()  # 成套生成：角色一致性约束
-    if not top_text and not bottom_text:
-        raise HTTPException(400, "请输入至少一行文字（顶部或底部）")
-    if style not in {s["id"] for s in STYLES}:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    if style == "upload" and not bg_upload:
-        raise HTTPException(400, "上传背景模式需要提供 bg_upload 图片（base64）")
 
-    # 生产级内容保障：生成前全量文本安全审核（表情包文字需过平台审核，违规直接拒绝）
-    for label, t in (("顶部文字", top_text), ("底部文字", bottom_text), ("AI 画面描述", ai_prompt)):
-        if not t:
-            continue
-        res = check_text(t, "表情包")
-        if not res["ok"]:
-            raise HTTPException(400, "内容审核不通过")
+    params = _meme_validate(payload)
+    top_text, bottom_text = params["top_text"], params["bottom_text"]
+    style = params["style"]
+    decoration = params["decoration"]
 
     # 背景
-    if style == "ai":
-        _report(20, "AI 正在绘制表情包背景…")
-        full_prompt = ai_prompt.strip() or f"{top_text}，{bottom_text}"
-        scene = (
-            f"{AI_STYLES.get(ai_style, AI_STYLES['flat'])}，画面主体居中偏下，"
-            "顶部与底部各预留 20% 高度纯净留白区域用于叠加文字，背景简洁不杂乱"
-        )
-        if character:
-            scene += f"，角色设定（全套必须完全一致）：{character}；所有画面中的角色形象、服装、画风保持一致"
-        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}")
-        # 顶部 + 底部半透明底条，保证大字在任何画面上都可读（商用标准）
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        if top_text:
-            od.rectangle([0, 0, CANVAS, TOP_H], fill=(0, 0, 0, 110))
-        if bottom_text:
-            od.rectangle([0, CANVAS - BOTTOM_H, CANVAS, CANVAS], fill=(0, 0, 0, 110))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        top_fill, top_stroke = "#FFFFFF", "#000000"
-        bottom_fill, bottom_stroke = "#FFFFFF", "#000000"
-    else:
-        img = _style_bg(style)
-        top_fill, top_stroke = _text_color(style)
-        bottom_fill, bottom_stroke = _text_color(style)
+    img, top_fill, top_stroke, bottom_fill, bottom_stroke = await _meme_render_bg(params, _report)
 
     _report(70, "正在叠加文字…")
     draw = ImageDraw.Draw(img)
-    # 顶部文字
     _draw_meme_text(draw, top_text, MARGIN, TOP_H, fill=top_fill, stroke=top_stroke, font_size=96)
-    # 底部文字
     _draw_meme_text(
         draw, bottom_text, CANVAS - BOTTOM_H, CANVAS - MARGIN, fill=bottom_fill, stroke=bottom_stroke, font_size=96
     )
-    # 右下角 emoji 装饰（微信表情常见点缀）
     if decoration:
         _draw_decoration(img, decoration)
 
     filename = f"meme_{int(time.time() * 1000)}.png"
     img.save(os.path.join(MEME_DIR, filename), "PNG")
-    art_id = _save_artifact(filename, top_text, bottom_text, style, ai_prompt.strip())
+    art_id = _save_artifact(filename, top_text, bottom_text, style, params["ai_prompt"].strip())
     _report(100, "表情包已生成")
     return {
         "id": filename,
