@@ -2672,8 +2672,11 @@ async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()): 
 
 
 @app.get("/api/knowledge-bases/{kb_id}/search")
-async 
-def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
+async def _search_kb_internal(params: dict) -> dict:
+    """内部搜索函数。"""
+    return {}
+
+async def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
     """解析搜索请求参数。"""
     return {
         "kb_id": kb_id,
