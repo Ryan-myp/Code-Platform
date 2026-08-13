@@ -268,13 +268,13 @@ class APIHealthChecker:
         logger.info("🔍 开始API健康检查...")
         results = {"checked": 0, "healthy": 0, "unhealthy": [], "avg_response_time_ms": 0}
 
-        # 关键 API 端点
+        # 关键 API 端点（只检查公开端点）
         endpoints = [
             ("GET", "/api/health", 1000),
-            ("GET", "/api/quota", 2000),
-            ("POST", "/api/auth/login", 2000),
-            ("GET", "/api/templates", 3000),
-            ("GET", "/api/search", 3000),
+            ("GET", "/api/ops/stats", 2000),
+            ("GET", "/api/showcase", 3000),
+            ("GET", "/api/factory/latest", 3000),
+            ("GET", "/api/membership/plans", 2000),
         ]
 
         base_url = "http://127.0.0.1:8888"
