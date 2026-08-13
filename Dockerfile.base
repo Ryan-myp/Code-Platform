@@ -1,0 +1,54 @@
+# ===== Python依赖基础镜像 =====
+# 用于加速其他服务器的构建过程
+#
+# 使用方式：
+#   docker build -t code-platform-base:latest -f Dockerfile.base .
+#   docker push code-platform-base:latest
+#
+# 然后在其他服务器上使用：
+#   docker pull code-platform-base:latest
+#   docker run -p 8888:8888 code-platform-base:latest
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    ca-certificates \
+    sqlite3 \
+    ffmpeg \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt .
+COPY pyproject.toml .
+
+# 创建虚拟环境并安装所有Python依赖
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 验证安装
+RUN python -c "import fastapi; print(f'FastAPI {fastapi.__version__}')" && \
+    python -c "import uvicorn; print(f'Uvicorn {uvicorn.__version__}')" && \
+    python -c "import pydantic; print(f'Pydantic {pydantic.__version__}')"
+
+# 输出依赖列表
+RUN pip list --format=freeze > /app/requirements_installed.txt && \
+    echo "依赖安装完成:" && head -20 /app/requirements_installed.txt && \
+    echo "..." && wc -l /app/requirements_installed.txt
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8888/api/health || exit 1
+
+# 暴露端口
+EXPOSE 8888
+
+CMD ["python", "--version"]

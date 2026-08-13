@@ -424,7 +424,7 @@ def _insert_mcp_servers(conn):
             "http",
             "",
             json.dumps([]),
-            json.dumps({"GITHUB_TOKEN": "ghp_xxxx"}),
+            json.dumps({"GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", "")}),
             "https://api.githubcopilot.com/mcp/",
             1,
             _NOW,
