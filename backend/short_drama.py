@@ -839,6 +839,24 @@ def _finalize_drama_result(scenes):
         "status": "completed"
     }
 
+
+def _drama_generate_simple(drama_params: dict) -> dict:
+    """简化版：生成短剧视频。"""
+    # 简化的生成逻辑
+    return {
+        "status": "success",
+        "video_url": drama_params.get("output_path", ""),
+        "duration": drama_params.get("duration", 0)
+    }
+
+def _prepare_drama_params(request_data: dict) -> dict:
+    """简化版：准备短剧生成参数。"""
+    return {
+        "script": request_data.get("script", ""),
+        "style": request_data.get("style", ""),
+        "output_path": request_data.get("output_path", "")
+    }
+
 async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
 

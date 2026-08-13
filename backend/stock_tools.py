@@ -684,6 +684,67 @@ def _compute_momentum_signal(points: list, latest: dict) -> dict:
     
     return {"level": level, "evidence": ev, "rsi_zone": rsi_zone, "macd_cross": cross}
 
+
+def _compute_trend_signal_simplified(points: list, latest: dict) -> dict:
+    """简化版：计算趋势信号。"""
+    ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
+    close = latest.get("close")
+    
+    if ma5 and ma20 and ma60:
+        if ma5 > ma20 > ma60:
+            return {"level": "bullish", "evidence": ["均线多头排列"]}
+        elif ma5 < ma20 < ma60:
+            return {"level": "bearish", "evidence": ["均线空头排列"]}
+    
+    if close and ma20:
+        if close > ma20:
+            return {"level": "bullish", "evidence": ["价格站上MA20"]}
+        else:
+            return {"level": "bearish", "evidence": ["价格跌破MA20"]}
+    
+    return {"level": "neutral", "evidence": []}
+
+def _compute_momentum_signal_simplified(points: list, latest: dict) -> dict:
+    """简化版：计算动量信号。"""
+    rsi = latest.get("rsi")
+    
+    if rsi is not None:
+        if rsi >= 70:
+            return {"level": "bearish", "evidence": [f"RSI={rsi:.1f}超买"]}
+        elif rsi <= 30:
+            return {"level": "bullish", "evidence": [f"RSI={rsi:.1f}超卖"]}
+    
+    return {"level": "neutral", "evidence": []}
+
+
+def _compute_trend_simplified(points, latest):
+    """简化版：计算趋势信号。"""
+    ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
+    
+    if ma5 and ma20 and ma60:
+        if ma5 > ma20 > ma60:
+            return {"level": "bullish"}
+        elif ma5 < ma20 < ma60:
+            return {"level": "bearish"}
+    
+    close = latest.get("close")
+    if close and ma20:
+        return {"level": "bullish" if close > ma20 else "bearish"}
+    
+    return {"level": "neutral"}
+
+def _compute_momentum_simplified(points, latest):
+    """简化版：计算动量信号。"""
+    rsi = latest.get("rsi")
+    
+    if rsi is not None:
+        if rsi >= 70:
+            return {"level": "bearish"}
+        elif rsi <= 30:
+            return {"level": "bullish"}
+    
+    return {"level": "neutral"}
+
 def compute_five_dim_signals(data: dict | None) -> dict:
     """五维交叉验证信号（v21，参考开源技术分析 SKILL）。
 

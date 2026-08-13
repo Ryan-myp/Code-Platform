@@ -1275,6 +1275,183 @@ def _render_template_image_create_background(width: int, height: int, overrides:
     
     return Image.new("RGB", (width, height), bg_color)
 
+
+def _resolve_main_slot_key_from_template(template: dict) -> str:
+    """从模板解析主槽位key。"""
+    for layer in template.get("layers", []):
+        if layer.get("type") == "image" and (layer.get("slot") or not layer.get("url")):
+            return layer.get("key") or layer.get("slot") or ""
+    return ""
+
+def _resolve_layer_image_url(layer: dict, slot_map: dict, main_slot_key: str, batch_url: str) -> str:
+    """解析单个图层图片来源。"""
+    key = layer.get("key", "")
+    if key and key in slot_map:
+        return slot_map[key]
+    if batch_url and key == main_slot_key:
+        return batch_url
+    return layer.get("url", "")
+
+def _create_image_background(width: int, height: int, overrides: dict, template: dict):
+    """创建图像背景。"""
+    from PIL import Image, ImageDraw, ImageFilter
+    
+    bg_src = overrides.get("background_image", template.get("background_image", ""))
+    if bg_src:
+        try:
+            from image_edit_engine import load_template_image
+            bg = load_template_image(bg_src)
+            if bg is not None:
+                blur = float(overrides.get("background_blur", template.get("background_blur", 0)) or 0)
+                darken = float(overrides.get("background_darken", template.get("background_darken", 0)) or 0)
+                bg = _cover_resize(bg, width, height)
+                if blur > 0:
+                    bg = bg.filter(ImageFilter.GaussianBlur(blur))
+                if darken > 0:
+                    shade = Image.new("RGBA", (width, height), (0, 0, 0, int(255 * min(1.0, darken))))
+                    bg = Image.alpha_composite(bg, shade)
+                return bg.convert("RGB")
+        except Exception:
+            pass
+    
+    bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
+    if isinstance(bg_color, str) and "→" in bg_color:
+        try:
+            from image_edit_engine import make_gradient
+            top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
+            return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
+        except Exception:
+            pass
+    
+    return Image.new("RGB", (width, height), bg_color)
+
+def _render_rect_layer_to_canvas(canvas: "Image.Image", draw: "ImageDraw.ImageDraw", layer: dict) -> None:
+    """渲染矩形图层到画布。"""
+    from PIL import Image, ImageDraw
+    
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    w = int(layer.get("width", 200))
+    h = int(layer.get("height", 60))
+    radius = int(layer.get("radius", 16))
+    fill = layer.get("fill", "#FFFFFF")
+    opacity = float(layer.get("opacity", 1.0))
+    rotation = float(layer.get("rotation", 0) or 0)
+    border_w = int(layer.get("border_width", 0) or 0)
+    border_color = layer.get("border_color", fill)
+    
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    
+    if isinstance(fill, str) and "→" in fill:
+        try:
+            from image_edit_engine import make_gradient
+            top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
+            grad = make_gradient(w, h, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+            overlay.paste(grad, (0, 0), _rounded_mask(w, h, radius))
+        except Exception:
+            od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=fill)
+    else:
+        od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=fill)
+    
+    if border_w > 0:
+        od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=border_color, width=border_w)
+    
+    if opacity < 1.0:
+        overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+    
+    if rotation:
+        overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+        nw, nh = overlay.size
+        paste_x = int(x + w / 2 - nw / 2)
+        paste_y = int(y + h / 2 - nh / 2)
+        canvas.paste(overlay, (paste_x, paste_y), overlay)
+    else:
+        canvas.paste(overlay, (x, y), overlay)
+
+def _render_text_layer_to_canvas(draw: "ImageDraw.ImageDraw", layer: dict, canvas_width: int, canvas_height: int) -> None:
+    """渲染文本图层到画布。"""
+    from PIL import ImageFont
+    
+    text = layer.get("text", "")
+    if not text:
+        return
+    
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    font_size = int(layer.get("font_size", 24))
+    font_color = layer.get("font_color", "#000000")
+    font_path = layer.get("font_path")
+    
+    try:
+        if font_path and Path(font_path).exists():
+            font = ImageFont.truetype(font_path, font_size)
+        else:
+            font = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", font_size)
+    except Exception:
+        font = ImageFont.load_default()
+    
+    draw.text((x, y), text, fill=font_color, font=font)
+
+def _render_image_layer_to_canvas(img_draw: "ImageDraw.ImageDraw", layer: dict, canvas: "Image.Image") -> None:
+    """渲染图片图层到画布。"""
+    from PIL import Image
+    
+    img_url = layer.get("url", "")
+    if not img_url:
+        return
+    
+    try:
+        if img_url.startswith("/") and Path(img_url).exists():
+            img = Image.open(img_url)
+        else:
+            return
+        
+        img_w, img_h = img.size
+        layer_x = int(layer.get("x", 0))
+        layer_y = int(layer.get("y", 0))
+        layer_w = int(layer.get("width", img_w))
+        layer_h = int(layer.get("height", img_h))
+        
+        img = img.resize((layer_w, layer_h))
+        canvas.paste(img, (layer_x, layer_y))
+    except Exception:
+        pass
+
+def _render_textbox_layer_to_canvas(draw: "ImageDraw.ImageDraw", layer: dict, canvas_width: int, canvas_height: int) -> None:
+    """渲染文本框图层到画布。"""
+    from PIL import ImageFont
+    
+    text = layer.get("text", "")
+    if not text:
+        return
+    
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    w = int(layer.get("width", 200))
+    h = int(layer.get("height", 100))
+    font_size = int(layer.get("font_size", 16))
+    font_color = layer.get("font_color", "#000000")
+    
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", font_size)
+    except Exception:
+        font = ImageFont.load_default()
+    
+    words = text.split(" ")
+    line = ""
+    current_y = y
+    for word in words:
+        test_line = line + word + " "
+        bbox = draw.textbbox((0, 0), test_line, font=font)
+        if bbox[2] - bbox[0] > w:
+            draw.text((x, current_y), line, fill=font_color, font=font)
+            line = word + " "
+            current_y += font_size + 5
+        else:
+            line = test_line
+    draw.text((x, current_y), line, fill=font_color, font=font)
+
 async def render_template_image(template: dict, overrides: dict | None = None,  # noqa: C901, PLR0912
                                 progress: Callable | None = None) -> list[Image.Image]:
     """按模板渲染出 PIL 图像列表（不保存，供渲染任务/封面缩略图复用）。
@@ -1337,7 +1514,32 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
             return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
         return Image.new("RGB", (width, height), bg_color)
 
-    async def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
+    
+def _render_once_simplified(template, slot_map, batch_urls, main_slot_key, width, height, progress=None):
+    """简化版：渲染单张图片。"""
+    from PIL import Image
+    
+    # 创建画布
+    canvas = Image.new("RGB", (width, height), "#FFFFFF")
+    
+    # 处理图层
+    layers = template.get("layers", [])
+    for i, layer in enumerate(layers):
+        layer_type = layer.get("type", "rect")
+        if layer_type == "image":
+            # 图片图层（简化）
+            img_url = layer.get("url", "")
+            if img_url:
+                try:
+                    img = Image.open(img_url) if img_url.startswith("/") else None
+                    if img:
+                        canvas.paste(img, (int(layer.get("x", 0)), int(layer.get("y", 0))))
+                except Exception:
+                    pass
+    
+    return [canvas]
+
+async def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
         """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
         canvas = await _make_bg()
         draw = ImageDraw.Draw(canvas)
