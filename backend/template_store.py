@@ -488,6 +488,63 @@ def _layer_types(template: dict) -> dict:
     return m
 
 
+
+def _build_row_overrides(row: dict, field_map: dict, layer_types: dict) -> dict:
+    """按字段映射构建单行渲染参数（图片/文本分离）。"""
+    overrides = {}
+    images: dict = {}
+    for col, key in field_map.items():
+        val = row.get(col, "")
+        if not key:
+            continue
+        if layer_types.get(key) == "image":
+            if val:
+                images[key] = val
+        else:
+            overrides[key] = val
+    if images:
+        overrides["images"] = images
+    return overrides
+
+
+async def _render_batch_rows(rows: list, field_map: dict, layer_types: dict, template, total: int, _report, template_id: str) -> list:
+    """逐行渲染模板，返回图片 URL 列表。"""
+    from image_factory import save_image, render_template_image
+
+    results = []
+    for i, row in enumerate(rows):
+        _report(5 + int(i * 85 / total), f"正在生成第 {i + 1}/{total} 张（{row.get(next(iter(row), ''), '')}）")
+        overrides = _build_row_overrides(row, field_map, layer_types)
+        try:
+            imgs = await render_template_image(template, overrides)
+        except Exception as e:
+            logger.warning(f"批量渲染第 {i + 1} 行失败: {e}")
+            raise HTTPException(500, "操作失败，请稍后重试")
+        fname = save_image(imgs[0])
+        results.append(f"/api/image-factory/images/{fname}")
+        record_usage(template_id)
+    return results
+
+
+def _zip_batch_results(results: list, rows: list, batch_name: str, task_id: str) -> str:
+    """批量结果 zip 打包 + 生成清单。"""
+    import zipfile
+
+    zip_name = f"batch_{task_id}_{int(datetime.now().timestamp())}.zip"
+    zip_path = os.path.join(BATCH_DIR, zip_name)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, url in enumerate(results):
+            fname = url.rsplit("/", 1)[-1]
+            src = os.path.join(IMAGE_DIR, fname)
+            if os.path.exists(src):
+                zf.write(src, f"{i + 1:03d}_{batch_name}_{fname}")
+    manifest = "\n".join(
+        f"{i + 1}\t{row.get(next(iter(row), ''), '')}\t{url}" for i, (row, url) in enumerate(zip(rows, results))
+    )
+    with zipfile.ZipFile(zip_path, "a") as zf:
+        zf.writestr("生成清单.tsv", f"序号\t首列值\t图片地址\n{manifest}")
+    return zip_path
+
 async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) -> dict:
     """Excel/CSV 批量套版：逐行渲染 → 保存 → zip 打包。"""
     from image_factory import IMAGE_DIR, render_template_image, save_image
@@ -526,47 +583,10 @@ async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) ->
     def _report(pct, stage):
         _notify_progress(update, pct, stage)
 
-    results = []
-    for i, row in enumerate(rows):
-        _report(5 + int(i * 85 / total), f"正在生成第 {i + 1}/{total} 张（{row.get(next(iter(row), ''), '')}）")
-        overrides = {}
-        images: dict = {}
-        for col, key in field_map.items():
-            val = row.get(col, "")
-            if not key:
-                continue
-            if layer_types.get(key) == "image":
-                if val:
-                    images[key] = val
-            else:
-                overrides[key] = val
-        if images:
-            overrides["images"] = images
-        try:
-            imgs = await render_template_image(template, overrides)
-        except Exception as e:
-            logger.warning(f"批量渲染第 {i + 1} 行失败: {e}")
-            raise HTTPException(500, "操作失败，请稍后重试")
-        fname = save_image(imgs[0])
-        results.append(f"/api/image-factory/images/{fname}")
-        record_usage(template_id)
-        # 清理中间图（zip 打包后再删？保留原图可单张下载，不删）
+    results = await _render_batch_rows(rows, field_map, layer_types, template, total, _report, template_id)
 
     # zip 打包
-    zip_name = f"batch_{task_id}_{int(datetime.now().timestamp())}.zip"
-    zip_path = os.path.join(BATCH_DIR, zip_name)
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, url in enumerate(results):
-            fname = url.rsplit("/", 1)[-1]
-            src = os.path.join(IMAGE_DIR, fname)
-            if os.path.exists(src):
-                zf.write(src, f"{i + 1:03d}_{batch_name}_{fname}")
-    # 同时写一份清单
-    manifest = "\n".join(
-        f"{i + 1}\t{row.get(next(iter(row), ''), '')}\t{url}" for i, (row, url) in enumerate(zip(rows, results))
-    )
-    with zipfile.ZipFile(zip_path, "a") as zf:
-        zf.writestr("生成清单.tsv", f"序号\t首列值\t图片地址\n{manifest}")
+    zip_path = _zip_batch_results(results, rows, batch_name, task_id)
 
     _report(100, f"批量生成完成，共 {total} 张")
     return {
