@@ -3691,23 +3691,15 @@ def _build_pptx_simple_v2(slides_data: list, output_path: str) -> str:
         logger.info(f"PPT构建失败: {e}")
         return ""
 
-def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
-    """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。
 
-    template 决定主题色板与字体（PPT_TEMPLATES），content 支持段落级结构（level/emphasis）。
-    """
-    from pptx import Presentation
+def _pptx_make_renderers(tpl: dict):
+    """创建 PPT 版式渲染器集合（闭包绑定主题色板/字体）。返回 (helpers, renderers)。"""
     from pptx.dml.color import RGBColor
     from pptx.enum.shapes import MSO_SHAPE
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Inches, Pt
 
-    tpl = PPT_TEMPLATES.get(template) or PPT_TEMPLATES["business"]
     pal = tpl["palette"]
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
-    blank = prs.slide_layouts[6]
     DARK = RGBColor(*pal["dark"])
     ACCENT = RGBColor(*pal["accent"])
     ACCENT_LIGHT = RGBColor(*pal["accent_light"])
@@ -3716,21 +3708,21 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
     WHITE = RGBColor(*pal["white"])
     FONT = tpl["font"]
 
-    def _rect(slide, left, top, w, h, color):
+    def rect(slide, left, top, w, h, color):
         shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(left), Inches(top), Inches(w), Inches(h))
         shape.fill.solid()
         shape.fill.fore_color.rgb = color
         shape.line.fill.background()
         return shape
 
-    def _text(slide, left, top, w, h, text, size, color, bold=False, align=PP_ALIGN.LEFT, first=True):
+    def text(slide, left, top, w, h, content, size, color, bold=False, align=PP_ALIGN.LEFT, first=True):
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
         tf = box.text_frame
         tf.word_wrap = True
         p = tf.paragraphs[0] if first else tf.add_paragraph()
         p.alignment = align
         run = p.add_run()
-        run.text = text
+        run.text = content
         f = run.font
         f.name = FONT
         f.size = Pt(size)
@@ -3738,7 +3730,7 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
         f.color.rgb = color
         return box
 
-    def _bullets(slide, items: list, left, top, w, h, size=18, color=None, gap=10):
+    def bullets(slide, items: list, left, top, w, h, size=18, color=None, gap=10):
         color = color or TEXT
         box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(w), Inches(h))
         tf = box.text_frame
@@ -3746,21 +3738,20 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
         for i, item in enumerate(items):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.space_after = Pt(gap)
-            # 段落级结构：字符串 → level 0 普通条目；dict → 解析 level/emphasis
             if isinstance(item, dict):
-                text = str(item.get("text", ""))
+                content = str(item.get("text", ""))
                 level = int(item.get("level", 0) or 0)
                 emphasis = str(item.get("emphasis", "normal"))
             else:
-                text = str(item)
+                content = str(item)
                 level = 0
                 emphasis = "normal"
-            if not text:
+            if not content:
                 continue
             indent = "  " if level >= 1 else ""
             prefix = "•  " if level == 0 else "–  "
             run = p.add_run()
-            run.text = f"{indent}{prefix}{text}"
+            run.text = f"{indent}{prefix}{content}"
             f = run.font
             f.name = FONT
             f.size = Pt(max(size - (3 if level >= 1 else 0), 10))
@@ -3775,84 +3766,95 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
                 f.color.rgb = color
         return box
 
-    def _notes(slide, text: str):
-        if text:
-            slide.notes_slide.notes_text_frame.text = text
+    def notes(slide, content: str):
+        if content:
+            slide.notes_slide.notes_text_frame.text = content
 
-    # ── 版式渲染（封面/致谢/目录/案例/数据/内容）──
-    def _render_cover(slide, title_text, subtitle, meta):
-        _rect(slide, 0, 0, 13.333, 7.5, DARK)
-        _rect(slide, 0, 4.7, 13.333, 0.06, ACCENT)
-        _text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, WHITE, bold=True, align=PP_ALIGN.CENTER)
+    def render_cover(slide, title_text, subtitle, meta):
+        rect(slide, 0, 0, 13.333, 7.5, DARK)
+        rect(slide, 0, 4.7, 13.333, 0.06, ACCENT)
+        text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, WHITE, bold=True, align=PP_ALIGN.CENTER)
         if subtitle:
-            _text(
-                slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER, first=False
-            )
-        _text(
-            slide,
-            1.2,
-            6.8,
-            10.9,
-            0.4,
-            f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
-            12,
-            GRAY,
-            align=PP_ALIGN.CENTER,
-        )
+            text(slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER, first=False)
+        text(slide, 1.2, 6.8, 10.9, 0.4,
+             f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
+             12, GRAY, align=PP_ALIGN.CENTER)
 
-    def _render_thanks(slide, title_text, subtitle):
-        _rect(slide, 0, 0, 13.333, 7.5, DARK)
-        _text(slide, 1.2, 3.1, 10.9, 1.0, title_text, 44, WHITE, bold=True, align=PP_ALIGN.CENTER)
+    def render_thanks(slide, title_text, subtitle):
+        rect(slide, 0, 0, 13.333, 7.5, DARK)
+        text(slide, 1.2, 3.1, 10.9, 1.0, title_text, 44, WHITE, bold=True, align=PP_ALIGN.CENTER)
         if subtitle:
-            _text(slide, 1.2, 4.2, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER)
+            text(slide, 1.2, 4.2, 10.9, 0.6, subtitle, 20, GRAY, align=PP_ALIGN.CENTER)
 
-    def _render_toc(slide, title_text, content):
-        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
-        _rect(slide, 0, 0, 0.25, 7.5, ACCENT)
-        _text(slide, 0.8, 0.6, 8, 0.8, "目录", 30, DARK, bold=True)
+    def render_toc(slide, title_text, content):
+        rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        rect(slide, 0, 0, 0.25, 7.5, ACCENT)
+        text(slide, 0.8, 0.6, 8, 0.8, "目录", 30, DARK, bold=True)
         for j, item in enumerate(content):
-            _text(slide, 1.0, 1.9 + j * 0.95, 10, 0.7, f"{j + 1:02d}    {item}", 20, TEXT)
+            text(slide, 1.0, 1.9 + j * 0.95, 10, 0.7, f"{j + 1:02d}    {item}", 20, TEXT)
 
-    def _render_case(slide, title_text, content, chart_suggestion):
-        _rect(slide, 0, 0, 13.333, 7.5, ACCENT_LIGHT)
-        _rect(slide, 0, 0, 13.333, 0.18, ACCENT)
-        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
-        _bullets(slide, content, 0.8, 1.6, 11.7, 5.0, size=18, gap=12)
+    def render_case(slide, title_text, content, chart_suggestion):
+        rect(slide, 0, 0, 13.333, 7.5, ACCENT_LIGHT)
+        rect(slide, 0, 0, 13.333, 0.18, ACCENT)
+        text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+        bullets(slide, content, 0.8, 1.6, 11.7, 5.0, size=18, gap=12)
         if chart_suggestion:
-            _text(slide, 0.8, 6.4, 11.7, 0.5, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
+            text(slide, 0.8, 6.4, 11.7, 0.5, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
 
-    def _render_data(slide, title_text, subtitle, content, chart_suggestion):
-        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
-        _rect(slide, 0, 0, 13.333, 0.18, ACCENT)
-        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+    def render_data(slide, title_text, subtitle, content, chart_suggestion):
+        rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        rect(slide, 0, 0, 13.333, 0.18, ACCENT)
+        text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
         if subtitle:
-            _text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
-        _bullets(slide, content, 0.8, 1.95, 11.7, 4.2, size=18, gap=12)
+            text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
+        bullets(slide, content, 0.8, 1.95, 11.7, 4.2, size=18, gap=12)
         if chart_suggestion:
-            _rect(slide, 0.8, 6.15, 11.7, 0.75, ACCENT_LIGHT)
-            _text(slide, 1.05, 6.3, 11.2, 0.45, f"📊 数据可视化：{chart_suggestion}", 14, ACCENT, bold=True)
+            rect(slide, 0.8, 6.15, 11.7, 0.75, ACCENT_LIGHT)
+            text(slide, 1.05, 6.3, 11.2, 0.45, f"📊 数据可视化：{chart_suggestion}", 14, ACCENT, bold=True)
 
-    def _render_content(slide, title_text, subtitle, content, chart_suggestion):
-        _rect(slide, 0, 0, 13.333, 7.5, WHITE)
-        _rect(slide, 0, 0, 0.25, 7.5, ACCENT)
-        _text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
+    def render_content(slide, title_text, subtitle, content, chart_suggestion):
+        rect(slide, 0, 0, 13.333, 7.5, WHITE)
+        rect(slide, 0, 0, 0.25, 7.5, ACCENT)
+        text(slide, 0.8, 0.55, 11.7, 0.7, title_text, 26, DARK, bold=True)
         if subtitle:
-            _text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
-        _bullets(slide, content, 0.8, 1.95, 11.7, 4.6, size=18, gap=12)
+            text(slide, 0.8, 1.25, 11.7, 0.45, subtitle, 14, GRAY)
+        bullets(slide, content, 0.8, 1.95, 11.7, 4.6, size=18, gap=12)
         if chart_suggestion:
-            _text(slide, 0.8, 6.55, 11.7, 0.45, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
+            text(slide, 0.8, 6.55, 11.7, 0.45, f"📊 可视化建议：{chart_suggestion}", 13, GRAY)
 
-    def _page_footer(slide, page_no: int, total: int, dark: bool = False):
-        """页脚：品牌 + 页码（v19：全页统一视觉基线，深色底用浅灰字）"""
+    def page_footer(slide, page_no: int, total: int, dark: bool = False):
         fg = RGBColor(208, 213, 221) if dark else GRAY
-        _text(slide, 0.8, 7.05, 4, 0.35, f"小团智能 · {tpl['name']}", 10, fg)
-        _text(
-            slide, 11.6, 7.05, 1.0, 0.35, f"{page_no:02d} / {total:02d}", 10, fg, align=PP_ALIGN.RIGHT
-        )
+        text(slide, 0.8, 7.05, 4, 0.35, f"小团智能 · {tpl['name']}", 10, fg)
+        text(slide, 11.6, 7.05, 1.0, 0.35, f"{page_no:02d} / {total:02d}", 10, fg, align=PP_ALIGN.RIGHT)
+
+    helpers = {"rect": rect, "text": text, "bullets": bullets, "notes": notes}
+    renderers = {
+        "cover": render_cover,
+        "thanks": render_thanks,
+        "toc": render_toc,
+        "case": render_case,
+        "data": render_data,
+        "content": render_content,
+    }
+    return helpers, renderers, page_footer
+
+
+
+def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:
+    """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。"""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    tpl = PPT_TEMPLATES.get(template) or PPT_TEMPLATES["business"]
+    helpers, renderers, page_footer = _pptx_make_renderers(tpl)
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    blank = prs.slide_layouts[6]
+    rect, text, notes = helpers["rect"], helpers["text"], helpers["notes"]
 
     slides = outline.get("slides") or []
     meta = outline.get("meta") or {}
-
     for i, s in enumerate(slides):
         if not isinstance(s, dict):
             continue
@@ -3864,30 +3866,18 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
             content = [content]
         slide = prs.slides.add_slide(blank)
 
-        if stype == "cover":
-            _render_cover(slide, title_text, subtitle, meta)
-        elif stype == "thanks":
-            _render_thanks(slide, title_text, subtitle)
-        elif stype == "toc":
-            _render_toc(slide, title_text, content)
-        elif stype == "case":
-            _render_case(slide, title_text, content, s.get("chart_suggestion"))
-        elif stype == "data":
-            _render_data(slide, title_text, subtitle, content, s.get("chart_suggestion"))
-        else:  # content / summary
-            _render_content(slide, title_text, subtitle, content, s.get("chart_suggestion"))
-        _page_footer(slide, i + 1, len(slides), dark=stype in ("cover", "thanks"))
-        _notes(slide, s.get("notes") or "")
+        render = renderers.get(stype, renderers["content"])
+        render(slide, title_text, subtitle, content, s.get("chart_suggestion"))
+        page_footer(slide, i + 1, len(slides), dark=stype in ("cover", "thanks"))
+        notes(slide, s.get("notes") or "")
 
     if not slides:
         slide = prs.slides.add_slide(blank)
-        _rect(slide, 0, 0, 13.333, 7.5, DARK)
-        _text(slide, 1.2, 3.3, 10.9, 0.8, title or "未命名演示", 36, WHITE, bold=True, align=PP_ALIGN.CENTER)
+        renderers["cover"](slide, title or "未命名演示", "", {"estimated_duration": "-", "visual_theme": "-"})
 
     path = os.path.join(PPTX_DIR, f"ppt_{uuid.uuid4().hex[:12]}.pptx")
     prs.save(path)
     return path
-
 
 async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     """PPT worker：LLM 大纲 → 解析 → 生成 PPTX 文件 → 记录入库（带用户归属）。"""
