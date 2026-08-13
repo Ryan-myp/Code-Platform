@@ -1252,271 +1252,273 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
         """背景：背景图（cover 铺满 + 模糊 + 暗化）> 渐变简写 > 纯色。"""
         return await _make_template_bg(template, overrides, width, height)
 
-async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: str, slot_map: dict, main_slot_key: str) -> None:
-    """按图层类型渲染到画布（rect/circle/line/text/image）。"""
-    layer_type = layer.get("type")
+def _render_rect_layer(canvas, draw, layer, overrides) -> None:
+    """渲染 rect 图层。"""
+    # 圆角矩形底（卡片/横幅/按钮底）：支持渐变填充/描边边框/旋转
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    w = int(layer.get("width", 200))
+    h = int(layer.get("height", 60))
+    radius = int(layer.get("radius", 16))
+    fill = layer.get("fill", "#FFFFFF")
+    opacity = float(layer.get("opacity", 1.0))
+    rotation = float(layer.get("rotation", 0) or 0)
+    border_w = int(layer.get("border_width", 0) or 0)
+    border_color = layer.get("border_color", fill)
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    if isinstance(fill, str) and "→" in fill:
+        from image_edit_engine import make_gradient
 
-    if layer_type == "rect":
-        # 圆角矩形底（卡片/横幅/按钮底）：支持渐变填充/描边边框/旋转
-        x = int(layer.get("x", 0))
-        y = int(layer.get("y", 0))
-        w = int(layer.get("width", 200))
-        h = int(layer.get("height", 60))
-        radius = int(layer.get("radius", 16))
-        fill = layer.get("fill", "#FFFFFF")
-        opacity = float(layer.get("opacity", 1.0))
-        rotation = float(layer.get("rotation", 0) or 0)
-        border_w = int(layer.get("border_width", 0) or 0)
-        border_color = layer.get("border_color", fill)
-        overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        if isinstance(fill, str) and "→" in fill:
-            from image_edit_engine import make_gradient
+        top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
+        grad = make_gradient(w, h, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+        overlay.paste(grad, (0, 0), _rounded_mask(w, h, radius))
+    else:
+        od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=fill)
+    if border_w > 0:
+        od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=border_color, width=border_w)
+    if opacity < 1.0:
+        overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+    if rotation:
+        overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+        nw, nh = overlay.size
+        canvas.paste(overlay, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), overlay)
+    else:
+        canvas.paste(overlay, (x, y), overlay)
+    draw = ImageDraw.Draw(canvas)
 
-            top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
-            grad = make_gradient(w, h, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
-            overlay.paste(grad, (0, 0), _rounded_mask(w, h, radius))
-        else:
-            od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=fill)
-        if border_w > 0:
-            od.rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, outline=border_color, width=border_w)
-        if opacity < 1.0:
-            overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-        if rotation:
-            overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
-            nw, nh = overlay.size
-            canvas.paste(overlay, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), overlay)
-        else:
-            canvas.paste(overlay, (x, y), overlay)
-        draw = ImageDraw.Draw(canvas)
 
-    if layer_type == "circle":
-        # 圆/圆环（光斑、装饰环、徽章底）：x/y 为圆心，支持渐变填充/边框/旋转
-        cx = int(layer.get("x", 0))
-        cy = int(layer.get("y", 0))
-        radius = max(1, int(layer.get("radius", 50)))
-        fill = layer.get("fill", "#FFFFFF")
-        opacity = float(layer.get("opacity", 1.0))
-        rotation = float(layer.get("rotation", 0) or 0)
-        border_w = int(layer.get("border_width", 0) or 0)
-        border_color = layer.get("border_color", fill)
-        pad = max(border_w, 2)
-        d = radius * 2 + pad * 2
-        overlay = Image.new("RGBA", (d, d), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        box = [pad, pad, d - 1 - pad, d - 1 - pad]
-        if fill and isinstance(fill, str) and "→" in fill:
-            from image_edit_engine import make_gradient
+def _render_circle_layer(canvas, draw, layer, overrides) -> None:
+    """渲染 circle 图层。"""
+    # 圆/圆环（光斑、装饰环、徽章底）：x/y 为圆心，支持渐变填充/边框/旋转
+    cx = int(layer.get("x", 0))
+    cy = int(layer.get("y", 0))
+    radius = max(1, int(layer.get("radius", 50)))
+    fill = layer.get("fill", "#FFFFFF")
+    opacity = float(layer.get("opacity", 1.0))
+    rotation = float(layer.get("rotation", 0) or 0)
+    border_w = int(layer.get("border_width", 0) or 0)
+    border_color = layer.get("border_color", fill)
+    pad = max(border_w, 2)
+    d = radius * 2 + pad * 2
+    overlay = Image.new("RGBA", (d, d), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    box = [pad, pad, d - 1 - pad, d - 1 - pad]
+    if fill and isinstance(fill, str) and "→" in fill:
+        from image_edit_engine import make_gradient
 
-            top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
-            grad = make_gradient(d, d, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
-            mask = Image.new("L", (d, d), 0)
-            ImageDraw.Draw(mask).ellipse(box, fill=255)
-            overlay.paste(grad, (0, 0), mask)
-        elif fill:
-            od.ellipse(box, fill=fill)
-        if border_w > 0:
-            od.ellipse([pad, pad, d - 1 - pad, d - 1 - pad], outline=border_color, width=border_w)
-        if opacity < 1.0:
-            overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-        if rotation:
-            overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
-        canvas.paste(overlay, (cx - overlay.width // 2, cy - overlay.height // 2), overlay)
-        draw = ImageDraw.Draw(canvas)
+        top_hex, bottom_hex = (fill.split("→") + ["#FFFFFF"])[:2]
+        grad = make_gradient(d, d, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+        mask = Image.new("L", (d, d), 0)
+        ImageDraw.Draw(mask).ellipse(box, fill=255)
+        overlay.paste(grad, (0, 0), mask)
+    elif fill:
+        od.ellipse(box, fill=fill)
+    if border_w > 0:
+        od.ellipse([pad, pad, d - 1 - pad, d - 1 - pad], outline=border_color, width=border_w)
+    if opacity < 1.0:
+        overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+    if rotation:
+        overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+    canvas.paste(overlay, (cx - overlay.width // 2, cy - overlay.height // 2), overlay)
+    draw = ImageDraw.Draw(canvas)
 
-    if layer_type == "line":
-        # 直线/分隔线：x1/y1/x2/y2 或 x/y/length/angle（角度制，0=水平向右）
-        x1 = int(layer.get("x1", layer.get("x", 0)))
-        y1 = int(layer.get("y1", layer.get("y", 0)))
-        x2 = int(layer.get("x2", 0))
-        y2 = int(layer.get("y2", 0))
-        if layer.get("length"):
-            import math
 
-            angle = math.radians(float(layer.get("angle", 0) or 0))
-            length = int(layer.get("length", 100))
-            x2 = x1 + int(length * math.cos(angle))
-            y2 = y1 + int(length * math.sin(angle))
-        color = layer.get("color", "#DDDDDD")
-        lw = max(1, int(layer.get("width", 2) or 2))
-        opacity = float(layer.get("opacity", 1.0))
-        if opacity < 1.0:
-            overlay = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
-            ImageDraw.Draw(overlay).line([x1, y1, x2, y2], fill=color, width=lw)
-            overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-            canvas.paste(overlay, (0, 0), overlay)
-        else:
-            draw.line([x1, y1, x2, y2], fill=color, width=lw)
-        draw = ImageDraw.Draw(canvas)
+def _render_line_layer(canvas, draw, layer, overrides) -> None:
+    """渲染 line 图层。"""
+    # 直线/分隔线：x1/y1/x2/y2 或 x/y/length/angle（角度制，0=水平向右）
+    x1 = int(layer.get("x1", layer.get("x", 0)))
+    y1 = int(layer.get("y1", layer.get("y", 0)))
+    x2 = int(layer.get("x2", 0))
+    y2 = int(layer.get("y2", 0))
+    if layer.get("length"):
+        import math
 
-    if layer_type == "text":
-        # 文字排版：字体族/粗体/斜体/字间距/行高/描边/阴影色/旋转
-        x = int(layer.get("x", 0))
-        y = int(layer.get("y", 0))
-        key = layer.get("key", "")
-        default_text = layer.get("text", "")
-        text = str(overrides.get(key, default_text) or "")
-        font_size = int(layer.get("font_size", 24))
-        font_color = layer.get("color", "#000000")
-        align = layer.get("align", "left")
-        max_width = int(layer.get("max_width", 0) or 0)
-        shadow = layer.get("shadow", "")
-        shadow_color = layer.get("shadow_color", "#00000080")
-        family = layer.get("family", "")
-        bold = bool(layer.get("bold"))
-        italic = bool(layer.get("italic"))
-        letter_spacing = float(layer.get("letter_spacing", 0) or 0)
-        line_height = float(layer.get("line_height", 1.35) or 1.35)
-        stroke_w = int(layer.get("stroke_width", 0) or 0)
-        stroke_color = layer.get("stroke_color", font_color)
-        rotation = float(layer.get("rotation", 0) or 0)
+        angle = math.radians(float(layer.get("angle", 0) or 0))
+        length = int(layer.get("length", 100))
+        x2 = x1 + int(length * math.cos(angle))
+        y2 = y1 + int(length * math.sin(angle))
+    color = layer.get("color", "#DDDDDD")
+    lw = max(1, int(layer.get("width", 2) or 2))
+    opacity = float(layer.get("opacity", 1.0))
+    if opacity < 1.0:
+        overlay = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
+        ImageDraw.Draw(overlay).line([x1, y1, x2, y2], fill=color, width=lw)
+        overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+        canvas.paste(overlay, (0, 0), overlay)
+    else:
+        draw.line([x1, y1, x2, y2], fill=color, width=lw)
+    draw = ImageDraw.Draw(canvas)
 
-        font = get_font(font_size, family, bold, italic, text)
 
-        # 自动换行（max_width>0 时按像素宽度折行；显式 \n 优先断行）
-        if max_width > 0:
-            lines, cur = [], ""
-            for ch in text:
-                if ch == "\n":
-                    lines.append(cur)
-                    cur = ""
-                elif draw.textlength(cur + ch, font=font) > max_width:
-                    lines.append(cur)
-                    cur = ch
-                else:
-                    cur += ch
-            if cur:
+async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key) -> None:
+    """渲染 text 图层。"""
+    # 文字排版：字体族/粗体/斜体/字间距/行高/描边/阴影色/旋转
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    key = layer.get("key", "")
+    default_text = layer.get("text", "")
+    text = str(overrides.get(key, default_text) or "")
+    font_size = int(layer.get("font_size", 24))
+    font_color = layer.get("color", "#000000")
+    align = layer.get("align", "left")
+    max_width = int(layer.get("max_width", 0) or 0)
+    shadow = layer.get("shadow", "")
+    shadow_color = layer.get("shadow_color", "#00000080")
+    family = layer.get("family", "")
+    bold = bool(layer.get("bold"))
+    italic = bool(layer.get("italic"))
+    letter_spacing = float(layer.get("letter_spacing", 0) or 0)
+    line_height = float(layer.get("line_height", 1.35) or 1.35)
+    stroke_w = int(layer.get("stroke_width", 0) or 0)
+    stroke_color = layer.get("stroke_color", font_color)
+    rotation = float(layer.get("rotation", 0) or 0)
+
+    font = get_font(font_size, family, bold, italic, text)
+
+    # 自动换行（max_width>0 时按像素宽度折行；显式 \n 优先断行）
+    if max_width > 0:
+        lines, cur = [], ""
+        for ch in text:
+            if ch == "\n":
                 lines.append(cur)
-            text_lines = lines or [""]
-        else:
-            text_lines = text.split("\n") or [""]
+                cur = ""
+            elif draw.textlength(cur + ch, font=font) > max_width:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur += ch
+        if cur:
+            lines.append(cur)
+        text_lines = lines or [""]
+    else:
+        text_lines = text.split("\n") or [""]
 
-        line_h = int(font_size * line_height)
-        block_w = max_width or max(int(draw.textlength(ln, font=font)) for ln in text_lines)
-        block_h = line_h * len(text_lines)
-        # 粗体模拟：同色描边加粗（PIL 无可靠粗体变体）
-        sim_bold = max(1, round(font_size * 0.055)) if bold else 0
-        sx, sy = 2, 2
-        shadow_blur = 0
-        if shadow:
-            try:
-                parts = [int(v) for v in shadow.split(",")]
-                sx, sy = parts[0], parts[1]
-                shadow_blur = parts[2] if len(parts) > 2 else 0
-            except Exception:
-                pass
-        pad = 8 + (stroke_w + sim_bold) * 2 + shadow_blur
-        txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
-        td = ImageDraw.Draw(txt_img)
-        # v24：渐变文字（color 支持 #A→#B，垂直渐变——商业海报标题标配）
-        grad_fill = ""
-        if isinstance(font_color, str) and "→" in font_color:
-            grad_fill = font_color
-            font_color = "#FFFFFF"  # 文字本体先画白色，渐变最后按 alpha 覆盖
-        stroke_total = stroke_w + sim_bold
+    line_h = int(font_size * line_height)
+    block_w = max_width or max(int(draw.textlength(ln, font=font)) for ln in text_lines)
+    block_h = line_h * len(text_lines)
+    # 粗体模拟：同色描边加粗（PIL 无可靠粗体变体）
+    sim_bold = max(1, round(font_size * 0.055)) if bold else 0
+    sx, sy = 2, 2
+    shadow_blur = 0
+    if shadow:
+        try:
+            parts = [int(v) for v in shadow.split(",")]
+            sx, sy = parts[0], parts[1]
+            shadow_blur = parts[2] if len(parts) > 2 else 0
+        except Exception:
+            pass
+    pad = 8 + (stroke_w + sim_bold) * 2 + shadow_blur
+    txt_img = Image.new("RGBA", (block_w + pad * 2, block_h + pad * 2), (0, 0, 0, 0))
+    td = ImageDraw.Draw(txt_img)
+    # v24：渐变文字（color 支持 #A→#B，垂直渐变——商业海报标题标配）
+    grad_fill = ""
+    if isinstance(font_color, str) and "→" in font_color:
+        grad_fill = font_color
+        font_color = "#FFFFFF"  # 文字本体先画白色，渐变最后按 alpha 覆盖
+    stroke_total = stroke_w + sim_bold
 
-        def _line_pos(i, ln):
-            lx = pad
-            if align == "center":
-                lx = pad + (block_w - int(td.textlength(ln, font=font))) // 2
-            elif align == "right":
-                lx = pad + block_w - int(td.textlength(ln, font=font))
-            return lx, pad + i * line_h
+    def _line_pos(i, ln):
+        lx = pad
+        if align == "center":
+            lx = pad + (block_w - int(td.textlength(ln, font=font))) // 2
+        elif align == "right":
+            lx = pad + block_w - int(td.textlength(ln, font=font))
+        return lx, pad + i * line_h
 
-        # 阴影层：先单独绘制并模糊（软阴影），再合成到底层，避免模糊糊住正字
-        if shadow:
-            sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
-            sd = ImageDraw.Draw(sh_img)
-            for i, ln in enumerate(text_lines):
-                lx, ly = _line_pos(i, ln)
-                _draw_text_run(
-                    sd, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing,
-                    stroke_total, shadow_color,
-                )
-            if shadow_blur > 0:
-                sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
-            txt_img = Image.alpha_composite(txt_img, sh_img)
-            td = ImageDraw.Draw(txt_img)
-        # 正字层
+    # 阴影层：先单独绘制并模糊（软阴影），再合成到底层，避免模糊糊住正字
+    if shadow:
+        sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
+        sd = ImageDraw.Draw(sh_img)
         for i, ln in enumerate(text_lines):
             lx, ly = _line_pos(i, ln)
             _draw_text_run(
-                td, lx, ly, ln, font, font_color, letter_spacing, stroke_total,
-                stroke_color if stroke_w else font_color,
+                sd, lx + sx, ly + sy, ln, font, shadow_color, letter_spacing,
+                stroke_total, shadow_color,
             )
-        # 渐变覆盖：按文字 alpha 填充垂直渐变（描边/阴影保留原色，只染字身）
-        if grad_fill:
-            from image_edit_engine import make_gradient
+        if shadow_blur > 0:
+            sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
+        txt_img = Image.alpha_composite(txt_img, sh_img)
+        td = ImageDraw.Draw(txt_img)
+    # 正字层
+    for i, ln in enumerate(text_lines):
+        lx, ly = _line_pos(i, ln)
+        _draw_text_run(
+            td, lx, ly, ln, font, font_color, letter_spacing, stroke_total,
+            stroke_color if stroke_w else font_color,
+        )
+    # 渐变覆盖：按文字 alpha 填充垂直渐变（描边/阴影保留原色，只染字身）
+    if grad_fill:
+        from image_edit_engine import make_gradient
 
-            top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
-            grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
-            txt_img = Image.composite(grad, txt_img, txt_img.split()[3])
-        if rotation:
-            txt_img = txt_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
-            nw, nh = txt_img.size
-            canvas.paste(txt_img, (int(x + block_w / 2 - nw / 2), int(y + block_h / 2 - nh / 2)), txt_img)
-        else:
-            canvas.paste(txt_img, (x - pad, y - pad), txt_img)
+        top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
+        grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
+        txt_img = Image.composite(grad, txt_img, txt_img.split()[3])
+    if rotation:
+        txt_img = txt_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+        nw, nh = txt_img.size
+        canvas.paste(txt_img, (int(x + block_w / 2 - nw / 2), int(y + block_h / 2 - nh / 2)), txt_img)
+    else:
+        canvas.paste(txt_img, (x - pad, y - pad), txt_img)
 
+async def _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key) -> None:
+    """渲染 image 图层：cover 裁剪/圆角/边框/透明度/旋转。"""
+    # 图片层：cover 裁剪/圆角/边框/透明度/旋转
+    source = _resolve_layer_img(layer, slot_map, batch_url, main_slot_key)
+    layer_img = await _load_template_img(source)
+    if layer_img is None:
+        return
+    x = int(layer.get("x", 0))
+    y = int(layer.get("y", 0))
+    w = int(layer.get("width", 200))
+    h = int(layer.get("height", 200))
+    fit = layer.get("fit", "cover")
+    radius = int(layer.get("radius", 0) or 0)
+    opacity = float(layer.get("opacity", 1.0))
+    rotation = float(layer.get("rotation", 0) or 0)
+    border_w = int(layer.get("border_width", 0) or 0)
+    border_color = layer.get("border_color", "#FFFFFF")
+    if fit == "cover":
+        layer_img = _cover_resize(layer_img, w, h)
+    else:
+        layer_img = layer_img.resize((w, h), Image.LANCZOS)
+    if radius > 0:
+        layer_img.putalpha(_rounded_mask(w, h, radius))
+    if opacity < 1.0:
+        layer_img.putalpha(layer_img.getchannel("A").point(lambda a, op=opacity: int(a * op)))
+    if border_w > 0:
+        bd = ImageDraw.Draw(layer_img, "RGBA")
+        bd.rounded_rectangle(
+            [border_w // 2, border_w // 2, w - 1 - border_w // 2, h - 1 - border_w // 2],
+            radius=max(0, radius - border_w // 2), outline=border_color, width=border_w,
+        )
+    if rotation:
+        layer_img = layer_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
+        nw, nh = layer_img.size
+        canvas.paste(layer_img, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), layer_img)
+    else:
+        canvas.paste(layer_img, (x, y), layer_img)
+
+
+
+
+
+async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: str, slot_map: dict, main_slot_key: str) -> None:
+    """按图层类型渲染到画布（rect/circle/line/text/image）。"""
+    layer_type = layer.get("type")
+    if layer_type == "rect":
+        _render_rect_layer(canvas, draw, layer, overrides)
+    elif layer_type == "circle":
+        _render_circle_layer(canvas, draw, layer, overrides)
+    elif layer_type == "line":
+        _render_line_layer(canvas, draw, layer, overrides)
+    elif layer_type == "text":
+        await _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key)
     elif layer_type == "image":
-        # 图片层：cover 裁剪/圆角/边框/透明度/旋转
-        source = _resolve_layer_img(layer, slot_map, batch_url, main_slot_key)
-        layer_img = await _load_template_img(source)
-        if layer_img is None:
-            return
-        x = int(layer.get("x", 0))
-        y = int(layer.get("y", 0))
-        w = int(layer.get("width", 200))
-        h = int(layer.get("height", 200))
-        fit = layer.get("fit", "cover")
-        radius = int(layer.get("radius", 0) or 0)
-        opacity = float(layer.get("opacity", 1.0))
-        rotation = float(layer.get("rotation", 0) or 0)
-        border_w = int(layer.get("border_width", 0) or 0)
-        border_color = layer.get("border_color", "#FFFFFF")
-        if fit == "cover":
-            layer_img = _cover_resize(layer_img, w, h)
-        else:
-            layer_img = layer_img.resize((w, h), Image.LANCZOS)
-        if radius > 0:
-            layer_img.putalpha(_rounded_mask(w, h, radius))
-        if opacity < 1.0:
-            layer_img.putalpha(layer_img.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-        if border_w > 0:
-            bd = ImageDraw.Draw(layer_img, "RGBA")
-            bd.rounded_rectangle(
-                [border_w // 2, border_w // 2, w - 1 - border_w // 2, h - 1 - border_w // 2],
-                radius=max(0, radius - border_w // 2), outline=border_color, width=border_w,
-            )
-        if rotation:
-            layer_img = layer_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
-            nw, nh = layer_img.size
-            canvas.paste(layer_img, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), layer_img)
-        else:
-            canvas.paste(layer_img, (x, y), layer_img)
-
-    async def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
-        """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
-        canvas = await _make_bg()
+        await _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key)
+    else:
         draw = ImageDraw.Draw(canvas)
-        for layer in template.get("layers", []):
-            await _render_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key)
-            draw = ImageDraw.Draw(canvas)
 
-        return canvas
-
-    _report(15, "正在渲染模板…")
-    if batch_urls:
-        total = len(batch_urls)
-        results = []
-        for i, u in enumerate(batch_urls):
-            _report(15 + int(i * 75 / total), f"正在处理第 {i + 1}/{total} 张…")
-            results.append(await _render_once(u))
-        _report(100, "模板渲染完成")
-        return results
-    result = [await _render_once("")]
-    _report(100, "模板渲染完成")
-    return result
 
 
 async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
