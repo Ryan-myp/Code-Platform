@@ -205,6 +205,39 @@ def _liquidity_level(avg_volume: float | None) -> str:
     return "低迷"
 
 
+
+def _calculate_var(prices: list, confidence: float = 0.95) -> float:
+    """计算风险价值（VaR）。"""
+    if len(prices) < 2:
+        return 0.0
+    returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+    sorted_returns = sorted(returns)
+    index = int((1 - confidence) * len(sorted_returns))
+    return abs(sorted_returns[max(0, index)] or 0)
+
+def _calculate_sharpe_ratio(returns: list, risk_free_rate: float = 0.02) -> float:
+    """计算夏普比率。"""
+    if len(returns) < 2:
+        return 0.0
+    avg_return = sum(returns) / len(returns)
+    variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
+    std_dev = math.sqrt(variance) if variance > 0 else 0.001
+    return (avg_return - risk_free_rate) / std_dev
+
+def _calculate_max_drawdown(prices: list) -> float:
+    """计算最大回撤。"""
+    if len(prices) < 2:
+        return 0.0
+    peak = prices[0]
+    max_dd = 0.0
+    for price in prices:
+        if price > peak:
+            peak = price
+        dd = (peak - price) / peak
+        if dd > max_dd:
+            max_dd = dd
+    return max_dd
+
 def compute_risk_metrics(data: dict | None) -> dict:
     """计算风险提示指标：年化波动率 / 最大回撤 / 流动性 + 综合风险等级。
 

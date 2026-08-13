@@ -141,8 +141,10 @@ def _text_to_lrc(lyrics: str, duration: float, title: str = "", artist: str = ""
 
 
 @router.post("/publish-pack")
-async 
-def _prepare_music_upload_data(music_data: dict) -> dict:
+async def _music_internal():
+    pass
+
+async def _prepare_music_upload_data(music_data: dict) -> dict:
     """准备音乐上传数据。"""
     return {
         "title": music_data.get("title", "未命名"),

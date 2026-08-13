@@ -199,7 +199,35 @@ def _lazy_refund_failed(task: dict, auth: dict) -> float | None:
 
 
 @router.post("/v1/dh/videos")
-async def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
+async 
+def _validate_dh_inputs(text: str, voice_id: str, face_id: str) -> bool:
+    """验证数字人输入参数。"""
+    if not text or len(text) < 1:
+        return False
+    if not voice_id:
+        return False
+    if not face_id:
+        return False
+    return True
+
+def _prepare_dh_request(params: dict) -> dict:
+    """准备数字人请求参数。"""
+    return {
+        "text": params.get("text", ""),
+        "voice_id": params.get("voice_id", ""),
+        "face_id": params.get("face_id", ""),
+        "resolution": params.get("resolution", "720p")
+    }
+
+def _parse_dh_response(response: dict) -> dict:
+    """解析数字人响应。"""
+    return {
+        "video_url": response.get("video_url", ""),
+        "duration": response.get("duration", 0),
+        "status": response.get("status", "failed")
+    }
+
+def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。
 
     请求体（OpenAI 网关兼容白名单，多余字段忽略）：

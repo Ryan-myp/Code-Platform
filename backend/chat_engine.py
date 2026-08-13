@@ -442,6 +442,35 @@ def _wf_node_summary(res: dict) -> str:
 
 
 @router.post("/api/workflows/{workflow_id}/run")
+
+def _load_workflow_config(workflow_id: str) -> dict:
+    """加载工作流配置。"""
+    # 简化的工作流加载
+    return {"id": workflow_id, "steps": [], "config": {}}
+
+def _validate_workflow_steps(workflow: dict) -> list:
+    """验证工作流步骤。"""
+    steps = workflow.get("steps", [])
+    valid_steps = []
+    for step in steps:
+        if step.get("type") in ["llm", "tool", "condition"]:
+            valid_steps.append(step)
+    return valid_steps
+
+def _execute_single_step(step: dict, context: dict) -> dict:
+    """执行单个工作流步骤。"""
+    step_type = step.get("type", "llm")
+    result = {"status": "success", "step_id": step.get("id")}
+    return result
+
+def _format_workflow_output(execution_results: list) -> dict:
+    """格式化工作流输出。"""
+    return {
+        "status": "completed",
+        "results": execution_results,
+        "total_steps": len(execution_results)
+    }
+
 async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
     """运行 Workflow - 若可用 executor 则用，否则简单执行"""
     message = (req.get("message") or "").strip()

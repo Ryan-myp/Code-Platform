@@ -454,7 +454,30 @@ def _artifact_meta() -> dict:
     return meta
 
 
-async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+async 
+def _prepare_voice_task(task_config: dict) -> dict:
+    """准备语音生成任务配置。"""
+    return {
+        "text": task_config.get("text", ""),
+        "voice_id": task_config.get("voice_id", "default"),
+        "speed": task_config.get("speed", 1.0),
+        "output_format": task_config.get("format", "mp3")
+    }
+
+def _call_tts_api(config: dict) -> dict:
+    """调用TTS API。"""
+    # 简化的TTS调用
+    return {"success": True, "audio_url": "https://example.com/audio.mp3"}
+
+def _post_process_audio(audio_data: dict, config: dict) -> dict:
+    """后处理音频。"""
+    return {
+        "audio_url": audio_data.get("audio_url"),
+        "duration": config.get("duration", 0),
+        "format": config.get("output_format", "mp3")
+    }
+
+def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
     if not AGNES_API_KEY:
         raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")

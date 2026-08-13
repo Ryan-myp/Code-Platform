@@ -498,6 +498,41 @@ def _page_desc(files: dict, page: str) -> str:
     return _PAGE_NAME_HINT.get(last, last)
 
 
+
+def _validate_app_config(files: dict) -> tuple:
+    """验证小程序配置。"""
+    app_json = files.get("app.json")
+    if not app_json:
+        return {}, [{"item": "app.json", "ok": False}]
+    try:
+        config = json.loads(app_json)
+        return config, [{"item": "app.json", "ok": True}]
+    except Exception as e:
+        return {}, [{"item": "app.json", "ok": False, "error": str(e)}]
+
+def _check_page_files(app_config: dict, files: dict) -> list:
+    """检查页面文件。"""
+    checks = []
+    registered_pages = set(app_config.get("pages") or [])
+    actual_pages = {p.replace(".json", "") for p in files if p.startswith("pages/") and p.endswith(".json")}
+    missing = actual_pages - registered_pages
+    if missing:
+        checks.append({"item": "页面注册", "ok": False, "detail": f"未注册: {list(missing)[:5]}"})
+    else:
+        checks.append({"item": "页面注册", "ok": True})
+    return checks
+
+def _generate_review_report(checks: list) -> dict:
+    """生成审核报告。"""
+    passed = sum(1 for c in checks if c.get("ok"))
+    total = len(checks)
+    return {
+        "passed": passed,
+        "total": total,
+        "pass_rate": f"{passed/total*100:.1f}%" if total > 0 else "0%",
+        "checks": checks
+    }
+
 def build_review_material(files: dict, name: str, template: str = "") -> dict:
     """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。
 
