@@ -41,6 +41,13 @@ const STEPS = [
     target: '/image-factory',
   },
   {
+    title: '玩法工坊 · 更多创作形态',
+    desc: '除了图片视频，还能一键生成小游戏（网页+微信双版本）、表情包（10+ 模板 / 16 种 AI 风格）、短剧（题材模板+数字人播报）、音乐（16 种乐器 / 12 种情绪）、小程序（模板套件）。所有作品自动保存历史，可随时复用、收藏、分享。',
+    icon: Wrench,
+    color: 'from-fuchsia-500 to-pink-600',
+    target: '/game-factory',
+  },
+  {
     title: '个人中心 · 额度与安全',
     desc: '免费用户每天 30 次 AI 调用额度，点击左下角头像进入个人中心可查看剩余额度、修改资料密码；结果支持一键生成分享链接。',
     icon: UserCircle,
