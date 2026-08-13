@@ -1,0 +1,137 @@
+{
+  "timestamp": "2026-08-13T17:20:42.087332",
+  "system": "Code Platform",
+  "version": "1.0.0",
+  "summary": {
+    "code_quality": {
+      "files_scanned": 123,
+      "issues_found": 0,
+      "issues_fixed": 0,
+      "complexity_score": 91
+    },
+    "tests": {
+      "total": 0,
+      "passed": 0,
+      "failed": 0,
+      "suggestions": [],
+      "failed_tests": []
+    },
+    "api_health": {
+      "checked": 5,
+      "healthy": 2,
+      "unhealthy": [
+        {
+          "path": "/api/quota",
+          "status": 404,
+          "time_ms": 14,
+          "expected_ms": 2000
+        },
+        {
+          "path": "/api/templates",
+          "status": 404,
+          "time_ms": 3,
+          "expected_ms": 3000
+        },
+        {
+          "path": "/api/search",
+          "status": 404,
+          "time_ms": 3,
+          "expected_ms": 3000
+        }
+      ],
+      "avg_response_time_ms": 62
+    },
+    "data_cleaned": {
+      "files_cleaned": 0,
+      "space_freed_mb": 0,
+      "db_records_deleted": 0
+    },
+    "output_quality": {
+      "prompts_optimized": 0,
+      "params_tuned": 0,
+      "quality_score": 0
+    },
+    "security": {
+      "checks_passed": 1,
+      "checks_failed": 10,
+      "vulnerabilities": [
+        {
+          "file": "ai_video_api.py",
+          "line": 62,
+          "match": "key='ai_video_gateway'"
+        },
+        {
+          "file": "ai_video_api.py",
+          "line": 281,
+          "match": "key='ai_video_pricing'"
+        },
+        {
+          "file": "dh_gateway.py",
+          "line": 11,
+          "match": "key='dh_pricing'"
+        },
+        {
+          "file": "dh_gateway.py",
+          "line": 77,
+          "match": "key='dh_pricing'"
+        },
+        {
+          "file": "prd_engine.py",
+          "line": 915,
+          "match": "key='model_list'"
+        },
+        {
+          "file": "prd_engine.py",
+          "line": 1001,
+          "match": "key='model_list'"
+        },
+        {
+          "file": "prd_engine.py",
+          "line": 1003,
+          "match": "key='model_name'"
+        },
+        {
+          "file": "common/config.py",
+          "line": 172,
+          "match": "key='model_list'"
+        },
+        {
+          "type": "cors_wildcard",
+          "message": "CORS 允许通配符"
+        },
+        {
+          "type": "no_backup",
+          "message": "无数据库备份"
+        }
+      ]
+    },
+    "dependencies": {
+      "total_deps": 38,
+      "outdated": 10,
+      "vulnerable": 0,
+      "recommendations": [
+        "agnoctl: 0.1.2 → 0.1.3",
+        "aiohappyeyeballs: 2.6.2 → 2.7.1",
+        "binaryornot: 0.4.4 → 0.6.0",
+        "certifi: 2024.8.30 → 2026.7.22",
+        "chardet: 5.2.0 → 7.5.1",
+        "cryptography: 49.0.0 → 50.0.0",
+        "cyclopts: 4.21.0 → 4.22.5",
+        "fastmcp: 3.4.4 → 3.4.7",
+        "flet: 0.85.0 → 0.86.5",
+        "flet-cli: 0.85.0 → 0.86.5"
+      ]
+    }
+  },
+  "enterprise_readiness": {
+    "score": 39,
+    "grade": "D",
+    "breakdown": {
+      "code_quality": 20,
+      "test_coverage": 10,
+      "api_health": 8,
+      "security": 1,
+      "dependencies": 0
+    }
+  }
+}
