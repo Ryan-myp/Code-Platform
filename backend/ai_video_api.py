@@ -418,6 +418,53 @@ def _validate_upload_refs(req: VideoGenerateRequest) -> None:
 # ── 异步任务处理器 ─────────────────────────────────────────────
 
 
+
+def _tts_dub_audio(filename: str, payload: dict) -> str | None:
+    """获取/生成配音音频：优先外部 audio_url，否则平台 TTS。"""
+    audio_url = payload.get("audio_url") or ""
+    text = (payload.get("prompt") or "").strip()
+    if audio_url:
+        local_audio = _resolve_local_upload(audio_url)
+        if audio_url.startswith("/uploads/") and os.path.exists(local_audio):
+            return local_audio
+    if text:
+        from voice_factory import _tts_one
+
+        voice = "zh-CN-XiaoxiaoNeural"
+        audio_bytes = _tts_one(text[:500], voice, 1.0, 0)
+        if not audio_bytes or len(audio_bytes) < 512:
+            return None
+        audio_path = os.path.join(_UPLOAD_VIDEO_DIR, f".dub_{filename}.mp3")
+        with open(audio_path, "wb") as fh:
+            fh.write(audio_bytes)
+        return audio_path
+    return None
+
+
+def _ffmpeg_dub_video(local_path: str, audio_path: str, filename: str) -> tuple:
+    """ffmpeg 合成：视频循环到配音时长 + 音轨。返回 (out_path, local_path)。"""
+    import subprocess as _sp
+
+    from common.media_check import is_valid_audio, is_valid_video
+
+    if not is_valid_audio(audio_path):
+        raise RuntimeError("配音音频无效")
+    out_path = os.path.join(_UPLOAD_VIDEO_DIR, f"ai_dub_{filename}")
+    cmd = [
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", local_path,
+        "-i", audio_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "-shortest", out_path,
+    ]
+    r = _sp.run(cmd, capture_output=True, timeout=300)
+    if r.returncode != 0 or not os.path.exists(out_path) or not is_valid_video(out_path):
+        raise RuntimeError("ffmpeg 合成失败")
+    _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
+            capture_output=True, timeout=15)
+    return out_path, local_path
+
 def _try_tts_dub(filename: str, local_path: str, payload: dict, update: callable) -> tuple | None:
     """混合方案：为 AGNES 照片活化视频叠加 TTS 配音（音频驱动口型的近似方案）。
 
@@ -431,69 +478,29 @@ def _try_tts_dub(filename: str, local_path: str, payload: dict, update: callable
     """
     try:
         text = (payload.get("prompt") or "").strip()
-        # 口型同步模式：优先用外部 audio_url（若提供且可访问）
         audio_url = payload.get("audio_url") or ""
         if not text and not audio_url:
             return None
         update(88, "正在合成配音…")
 
         # 1. 生成/获取配音音频
-        audio_path = None
-        if audio_url:
-            local_audio = _resolve_local_upload(audio_url)
-            if audio_url.startswith("/uploads/") and os.path.exists(local_audio):
-                audio_path = local_audio
-        if audio_path is None and text:
-            # 调平台 TTS（复用 voice_factory 多通道：agnes TTS → edge-tts 本地合成）
-            from voice_factory import _tts_one
-
-            voice = "zh-CN-XiaoxiaoNeural"
-            audio_bytes = _tts_one(text[:500], voice, 1.0, 0)
-            if not audio_bytes or len(audio_bytes) < 512:
-                raise RuntimeError("TTS 配音为空")
-            audio_path = os.path.join(_UPLOAD_VIDEO_DIR, f".dub_{filename}.mp3")
-            with open(audio_path, "wb") as f:
-                f.write(audio_bytes)
-
+        audio_path = _tts_dub_audio(filename, payload)
         if not audio_path or not os.path.exists(audio_path):
             return None
 
         # 2. ffmpeg 合成：视频循环到配音时长 + 音轨
-        import subprocess as _sp
-
-        from common.media_check import is_valid_audio, is_valid_video
-
-        if not is_valid_audio(audio_path):
-            return None
-        out_path = os.path.join(_UPLOAD_VIDEO_DIR, f"ai_dub_{filename}")
-        cmd = [
-            "ffmpeg", "-y",
-            "-stream_loop", "-1", "-i", local_path,  # 视频循环
-            "-i", audio_path,  # 配音
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-            "-shortest", out_path,
-        ]
-        r = _sp.run(cmd, capture_output=True, timeout=300)
-        if r.returncode != 0 or not os.path.exists(out_path) or not is_valid_video(out_path):
-            raise RuntimeError("ffmpeg 合成失败")
+        out_path, local_path = _ffmpeg_dub_video(local_path, audio_path, filename)
 
         # 清理临时文件，用合成视频替换
-        import subprocess as _sp2
-
-        _sp2.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
-                 capture_output=True, timeout=15)
-        import os as _os
-
         try:
-            _os.remove(local_path)
+            os.remove(local_path)
         except OSError:
             pass
         try:
-            _os.remove(audio_path)
+            os.remove(audio_path)
         except OSError:
             pass
-        _os.replace(out_path, local_path)
+        os.replace(out_path, local_path)
         dur = float(_probe_duration_s(local_path) or 0) or float(payload.get("duration", 5))
         update(92, "配音合成完成")
         return local_path, filename, dur

@@ -1955,47 +1955,7 @@ async def list_audios():
                 item_type = "lyrics"
                 url = f"/api/music-factory/lyrics/{f.name}"
                 cover = ""
-            duration = 0.0
-            thumbnail = ""
-            style = ""
-            title = ""
-            try:
-                from common.db import get_db
-
-                conn = get_db()
-                row = conn.execute(
-                    "SELECT duration, thumbnail, metadata, content FROM artifacts WHERE media_url=? ORDER BY created_at DESC LIMIT 1",
-                    (url,),
-                ).fetchone()
-                conn.close()
-                if row:
-                    duration = float(row["duration"] or 0)
-                    thumbnail = row["thumbnail"] or ""
-                    try:
-                        md = json.loads(row["metadata"] or "{}") or {}
-                        style = md.get("style", "")
-                        # v13.26 语义化标题：metadata.title → theme → 歌词首行
-                        title = md.get("title") or md.get("theme") or ""
-                        if not title and row["content"]:
-                            content_text = row["content"]
-                            try:
-                                content_dict = json.loads(content_text)
-                                content_text = content_dict.get("lyrics", content_text) if isinstance(content_dict, dict) else content_text
-                            except (TypeError, json.JSONDecodeError):
-                                pass
-                            first = (
-                                str(content_text)
-                                .strip()
-                                .replace("\\n", "\n")
-                                .split("\n")[0]
-                                .strip()
-                                .strip('\"\'')
-                            )
-                            title = first[:30] + ("…" if len(first) > 30 else "")
-                    except Exception:
-                        style = ""
-            except Exception:
-                pass
+            duration, thumbnail, style, title = _music_item_meta(url)
             items.append(
                 {
                     "filename": f.name,

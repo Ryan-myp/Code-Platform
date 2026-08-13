@@ -2955,6 +2955,47 @@ async def upload_kb_document(file: UploadFile = File(...), current_user: dict = 
 
 
 @app.get("/api/knowledge-bases/{kb_id}/documents")
+
+def _kb_docs_file(p: str) -> list:
+    """file 类型知识库文档列表（目录扫描或单文件）。"""
+    docs = []
+    if p and os.path.isdir(p):
+        for fn in sorted(os.listdir(p)):
+            fp = os.path.join(p, fn)
+            if os.path.isfile(fp):
+                try:
+                    docs.append({
+                        "name": fn, "path": fp, "size": os.path.getsize(fp),
+                        "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
+                    })
+                except OSError:
+                    continue
+    elif p and os.path.isfile(p):
+        try:
+            docs.append({
+                "name": os.path.basename(p), "path": p, "size": os.path.getsize(p),
+                "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+            })
+        except OSError:
+            pass
+    return docs
+
+
+def _kb_docs_db(d: dict) -> list:
+    """db 类型知识库文档列表（表信息）。"""
+    try:
+        cfg = json.loads(d.get("config") or "{}") or {}
+        db_conn, cursor, err = _kb_connect(cfg)
+        if db_conn and not err:
+            try:
+                tables = _kb_list_tables(cursor, (cfg.get("engine") or "sqlite").lower())
+                return [{"name": t, "path": t, "size": 0, "mtime": "", "is_table": True} for t in tables]
+            finally:
+                db_conn.close()
+    except Exception:
+        pass
+    return []
+
 async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):  # noqa: C901
     """列出知识库文档：file 类型扫描目录/文件；db 类型返回表信息；url 返回空。"""
     conn = get_db()
@@ -2966,46 +3007,9 @@ async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):  #
     kb_type = d.get("type") or "file"
     docs = []
     if kb_type == "file":
-        p = (d.get("path") or "").strip()
-        if p and os.path.isdir(p):
-            for fn in sorted(os.listdir(p)):
-                fp = os.path.join(p, fn)
-                if os.path.isfile(fp):
-                    try:
-                        docs.append(
-                            {
-                                "name": fn,
-                                "path": fp,
-                                "size": os.path.getsize(fp),
-                                "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
-                            }
-                        )
-                    except OSError:
-                        continue
-        elif p and os.path.isfile(p):
-            try:
-                docs.append(
-                    {
-                        "name": os.path.basename(p),
-                        "path": p,
-                        "size": os.path.getsize(p),
-                        "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
-                    }
-                )
-            except OSError:
-                pass
+        docs = _kb_docs_file((d.get("path") or "").strip())
     elif kb_type == "db":
-        try:
-            cfg = json.loads(d.get("config") or "{}") or {}
-            db_conn, cursor, err = _kb_connect(cfg)
-            if db_conn and not err:
-                try:
-                    tables = _kb_list_tables(cursor, (cfg.get("engine") or "sqlite").lower())
-                    docs = [{"name": t, "path": t, "size": 0, "mtime": "", "is_table": True} for t in tables]
-                finally:
-                    db_conn.close()
-        except Exception:
-            pass
+        docs = _kb_docs_db(d)
     return {"type": kb_type, "docs": docs, "count": len(docs)}
 
 
