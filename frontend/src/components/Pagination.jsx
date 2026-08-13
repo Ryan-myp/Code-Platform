@@ -24,6 +24,7 @@ export default function Pagination({
   emptyComponent,
   label,
   className = '',
+  onPageChange,
 }) {
   const [page, setPage] = useState(1)
   const total = items.length
@@ -34,6 +35,13 @@ export default function Pagination({
     if (page > totalPages) setPage(totalPages)
   }, [page, totalPages])
 
+  // 页码变化回调（用于"当前页全选"等场景）
+  useEffect(() => {
+    onPageChange?.(page)
+  }, [page, onPageChange])
+
+  const currentPageItems = items.slice((page - 1) * pageSize, page * pageSize)
+
   if (total === 0) {
     return emptyComponent || (
       <div className="py-12 text-center text-sm text-gray-400">暂无数据</div>
@@ -41,13 +49,12 @@ export default function Pagination({
   }
 
   const start = (page - 1) * pageSize
-  const pageItems = items.slice(start, start + pageSize)
 
   return (
     <div className={className}>
       {/* 数据网格 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {pageItems.map((item, idx) => (
+        {currentPageItems.map((item, idx) => (
           <div key={idx}>{renderItem(item, start + idx)}</div>
         ))}
       </div>

@@ -20,7 +20,8 @@ import {
   Copy,
   Package,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
+import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid,
+  Pagination} from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
@@ -163,6 +164,7 @@ export default function MemePage() {
   const [filterStyle, setFilterStyle] = useState('')
   const [sort, setSort] = useState('newest')
   const [selected, setSelected] = useState(new Set())
+  const [currentPage, setCurrentPage] = useState(1)
   const [renaming, setRenaming] = useState(null)
   const [renameTitle, setRenameTitle] = useState('')
   const [batchMode, setBatchMode] = useState(false)
@@ -506,9 +508,20 @@ export default function MemePage() {
   }
 
   const toggleAll = () => {
-    setSelected((prev) =>
-      prev.size === filtered.length ? new Set() : new Set(filtered.map((i) => i.id))
-    )
+    // 当前页全选（跨页保留已选，避免误操作）
+    const pageSize = 12
+    const pageItems = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    const pageIds = new Set(pageItems.map((i) => i.id))
+    const allOnPage = pageIds.size > 0 && pageIds.size === pageItems.filter((i) => selected.has(i.id)).length
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allOnPage) {
+        pageIds.forEach((id) => next.delete(id))
+      } else {
+        pageIds.forEach((id) => next.add(id))
+      }
+      return next
+    })
   }
 
   const openRename = (item) => {
@@ -1114,14 +1127,19 @@ export default function MemePage() {
                   onClick={toggleAll}
                   className="flex items-center gap-1.5 text-gray-600 hover:text-amber-600"
                 >
-                  {selected.size === filtered.length ? (
-                    <CheckSquare className="w-4 h-4" />
-                  ) : (
-                    <Square className="w-4 h-4" />
-                  )}
-                  全选
+                  {(() => {
+                    const pageSize = 12
+                    const pageItems = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                    const allOnPage = pageItems.length > 0 && pageItems.every((i) => selected.has(i.id))
+                    return allOnPage ? (
+                      <CheckSquare className="w-4 h-4" />
+                    ) : (
+                      <Square className="w-4 h-4" />
+                    )
+                  })()}
+                  全选本页
                 </button>
-                <span className="text-gray-400">已选 {selected.size} 项</span>
+                <span className="text-gray-400">已选 {selected.size} 项（跨页累计）</span>
                 {selected.size > 0 && (
                   <div className="ml-auto flex gap-2">
                     <Button
@@ -1164,8 +1182,12 @@ export default function MemePage() {
                 }
               />
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {filtered.map((item) => (
+              <Pagination
+                items={filtered}
+                pageSize={12}
+                onPageChange={setCurrentPage}
+                label={q || filterStyle ? `找到 ${filtered.length} 个表情包` : `共 ${filtered.length} 个表情包`}
+                renderItem={(item) => (
                   <div
                     key={item.id}
                     className="group relative rounded-xl border border-gray-100 overflow-hidden hover:shadow-lg transition-all"
@@ -1251,8 +1273,8 @@ export default function MemePage() {
                       </button>
                     </div>
                   </div>
-                ))}
-              </div>
+                )}
+              />
             )}
           </Card>
         </div>
