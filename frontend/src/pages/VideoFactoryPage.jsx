@@ -17,6 +17,7 @@ import {
   BookOpen,
   Layers,
   ChevronDown,
+  Sliders,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -220,6 +221,7 @@ export default function VideoFactoryPage() {
   const [image, setImage] = useState('')
   const [imageError, setImageError] = useState(false) // 参考图预览失败提示
   const [creating, setCreating] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
   const [lastResult, setLastResult] = useState(null)
   const { submitTask, startPolling, stopPolling } = useAsyncTask()
@@ -867,6 +869,52 @@ export default function VideoFactoryPage() {
           />
         </div>
 
+        {/* 核心操作：生成按钮（主路径最优先） */}
+        <div className="rounded-xl bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-100 p-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold text-blue-900">
+                {mode === 'ti2vid' ? '文生视频' : '图生视频'}
+              </div>
+              <div className="text-[11px] text-blue-600/70 mt-0.5">
+                {mode === 'ti2vid'
+                  ? '输入描述即可生成 · 支持风格/镜头/运镜等高级参数'
+                  : '填写参考图 URL + 描述即可生成'}
+              </div>
+            </div>
+            <Button
+              variant="gradient"
+              size="lg"
+              icon={Sparkles}
+              loading={creating}
+              disabled={!prompt.trim()}
+              onClick={handleCreate}
+              className="!px-6 whitespace-nowrap"
+            >
+              {creating ? '创建任务中...' : '生成视频'}
+            </Button>
+          </div>
+        </div>
+
+        {/* 高级参数（默认收起，避免主路径被参数淹没） */}
+        <div className="rounded-xl border border-gray-200 overflow-hidden">
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+          >
+            <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+              <Sliders className="w-3.5 h-3.5 text-gray-400" />
+              高级参数
+              <span className="text-gray-400 font-normal">
+                （模板/风格/镜头/分辨率/时长等）
+              </span>
+            </span>
+            <ChevronDown
+              className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {showAdvanced && (
+            <div className="p-4 space-y-4">
         {/* 分类提示词模板 */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">提示词模板</label>
@@ -1150,17 +1198,9 @@ export default function VideoFactoryPage() {
           </div>
         )}
 
-        <Button
-          variant="gradient"
-          size="lg"
-          icon={Sparkles}
-          loading={creating}
-          disabled={!prompt.trim()}
-          onClick={handleCreate}
-          className="w-full"
-        >
-          {creating ? '创建任务中...' : '创建视频任务'}
-        </Button>
+            </div>
+          )}
+        </div>
 
         {genHistory.length > 0 && (
           <div className="mt-3">
