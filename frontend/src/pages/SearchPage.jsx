@@ -1,17 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n/index.jsx'
-import { Search, Clock, FileText, Folder, MessageCircle, Zap, Tag } from 'lucide-react'
+import { Search, Clock, FileText, Folder, MessageCircle, Zap, Tag, Wrench } from 'lucide-react'
 import { api } from '../lib/api'
-const { t } = useI18n()
 
-const TYPE_ICONS = {
-  tool: { icon: Tool, color: 'text-blue-500', label: t('search.tools') },
+const TYPE_ICONS = (t) => ({
+  tool: { icon: Wrench, color: 'text-blue-500', label: t('search.tools') },
   template: { icon: FileText, color: 'text-purple-500', label: t('search.templates') },
   project: { icon: Folder, color: 'text-amber-500', label: t('search.projects') },
   task: { icon: Tag, color: 'text-green-500', label: t('search.tasks') },
   conversation: { icon: MessageCircle, color: 'text-cyan-500', label: '对话' },
   recent: { icon: Clock, color: 'text-gray-400', label: '最近' },
-}
+})
 
 const TYPE_PATHS = {
   tool: (id) => {
@@ -42,6 +41,8 @@ const TYPE_PATHS = {
 }
 
 export default function SearchPage() {
+  const { t } = useI18n()
+  const icons = TYPE_ICONS(t)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [suggestions, setSuggestions] = useState([])
@@ -161,7 +162,7 @@ export default function SearchPage() {
           ) : (
             <div className="divide-y divide-gray-100">
               {results.map((result, i) => {
-                const typeInfo = TYPE_ICONS[result.type] || TYPE_ICONS.recent
+                const typeInfo = icons[result.type] || icons.recent
                 const Icon = typeInfo.icon
                 return (
                   <button

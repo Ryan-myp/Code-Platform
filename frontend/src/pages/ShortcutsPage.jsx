@@ -1,9 +1,8 @@
 import React from 'react'
 import { useI18n } from '../i18n/index.jsx'
 import { Keyboard, Search, Zap, Grid3x3, Download, Share2, Settings, Sun, Moon } from 'lucide-react'
-const { t } = useI18n()
 
-const KEYMAP = [
+const buildKeymap = (t) => [
   { keys: ['Ctrl', 'K'], action: '打开搜索面板', section: t('shortcuts.general') },
   { keys: ['Ctrl', 'Shift', 'K'], action: '打开命令面板', section: t('shortcuts.general') },
   { keys: ['Esc'], action: '关闭弹窗/面板', section: t('shortcuts.general') },
@@ -33,9 +32,10 @@ const KEYMAP = [
   { keys: ['Ctrl', 'Shift', 'F5'], action: '强制刷新', section: '工具' },
 ]
 
-const SECTIONS = [t('shortcuts.general'), '文件', '编辑', '视图', '工具']
-
 export default function ShortcutsPage() {
+  const { t } = useI18n()
+  const KEYMAP = buildKeymap(t)
+  const SECTIONS = [t('shortcuts.general'), '文件', '编辑', '视图', '工具']
   const [search, setSearch] = React.useState('')
   const [activeSection, setActiveSection] = React.useState('all')
 

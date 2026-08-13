@@ -3,17 +3,16 @@ import { useI18n } from '../i18n/index.jsx'
 import { Send, ThumbsUp, ThumbsDown, AlertCircle, CheckCircle, Lightbulb, Bug, Star } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
-const { t } = useI18n()
-
-const FEEDBACK_TYPES = [
-  { id: 'feedback', label: '使用反馈', icon: MessageCircle, color: 'text-blue-500' },
-  { id: 'bug', label: t('feedback.type_bug'), icon: Bug, color: 'text-red-500' },
-  { id: 'suggestion', label: t('feedback.type_suggestion'), icon: Lightbulb, color: 'text-amber-500' },
-  { id: 'praise', label: t('feedback.type_praise'), icon: Star, color: 'text-emerald-500' },
-]
 
 export default function FeedbackPage() {
+  const { t } = useI18n()
   const toast = useToast()
+  const FEEDBACK_TYPES = [
+    { id: 'feedback', label: '使用反馈', icon: MessageCircle, color: 'text-blue-500' },
+    { id: 'bug', label: t('feedback.type_bug'), icon: Bug, color: 'text-red-500' },
+    { id: 'suggestion', label: t('feedback.type_suggestion'), icon: Lightbulb, color: 'text-amber-500' },
+    { id: 'praise', label: t('feedback.type_praise'), icon: Star, color: 'text-emerald-500' },
+  ]
   const [type, setType] = useState('feedback')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')

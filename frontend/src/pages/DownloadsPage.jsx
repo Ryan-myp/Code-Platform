@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react'
-import { useI18n } from '../i18n/index.jsx'
 import { Download, FileText, Image, Film, Music, Archive, Trash2, RefreshCw } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
-const { t } = useI18n()
 
 const FILE_ICONS = {
   image: Image,

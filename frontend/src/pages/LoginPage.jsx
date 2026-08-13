@@ -3,9 +3,9 @@ import { useI18n } from '../i18n/index.jsx'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, Lock, User as UserIcon, UserPlus, AtSign, Sparkles, Wand2, Zap, Puzzle, Mail } from 'lucide-react'
 import { api } from '../lib/api'
-const { t } = useI18n()
 
 export default function LoginPage({ onLogin }) {
+  const { t } = useI18n()
   const [mode, setMode] = useState('login') // login | register
   const [username, setUsername] = useState('')
   const [nickname, setNickname] = useState('')
