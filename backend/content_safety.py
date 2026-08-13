@@ -102,31 +102,24 @@ _CATEGORY_OF: dict[str, list[str]] = {
 }
 
 
-def quality_check_image(img: Image.Image) -> dict:
-    """图像美观度自检：分辨率/清晰度/对比度/色偏 → 0-100 分与建议。
 
-    返回：``{"score", "grade": A|B|C, "checks": [{name, ok, score, detail}], "suggestions"}``
-    """
-    if img is None:
-        return {"score": 0, "grade": "C", "checks": [], "suggestions": ["图像无效"]}
+def _check_resolution(img: Image.Image, checks: list, suggestions: list) -> int:
+    """分辨率检查（30 分）。"""
     w, h = img.size
-    checks: list[dict] = []
-    suggestions: list[str] = []
-    total = 0
-
-    # 1) 分辨率（30 分）：≥1080 满分，720-1080 扣分，<720 警告
     min_side = min(w, h)
-    res_score = 30 if min_side >= 1080 else (22 if min_side >= 720 else (12 if min_side >= 480 else 5))
+    score = 30 if min_side >= 1080 else (22 if min_side >= 720 else (12 if min_side >= 480 else 5))
     if min_side < 720:
         suggestions.append(f"分辨率偏低（{w}×{h}），建议 ≥1080px 以获得平台高清展示")
-    checks.append({"name": "分辨率", "ok": min_side >= 720, "score": res_score, "detail": f"{w}×{h}"})
-    total += res_score
+    checks.append({"name": "分辨率", "ok": min_side >= 720, "score": score, "detail": f"{w}×{h}"})
+    return score
 
-    # 2) 清晰度（30 分）：灰度 Laplacian 方差，<100 视为模糊
+
+def _check_clarity(img: Image.Image, checks: list, suggestions: list) -> int:
+    """清晰度检查（30 分，Laplacian 方差）。"""
     try:
+        w, h = img.size
         gray = img.convert("L").resize((min(w, 320), min(h, 320)))
         lap = np.array(gray.filter(ImageFilter.FIND_EDGES), dtype=np.float32)
-        # 裁掉边界行/列：卷积核在边缘越界补零会产生假边缘（纯色图也会方差很大）
         if lap.size > 9:
             lap = lap[1:-1, 1:-1]
         lap_var = float(lap.var())
@@ -137,12 +130,13 @@ def quality_check_image(img: Image.Image) -> dict:
     except Exception:
         clarity = 20
         checks.append({"name": "清晰度", "ok": True, "score": clarity, "detail": "检测跳过"})
-    total += clarity
+    return clarity
 
-    # 3) 对比度（20 分）：颜色方差过低 = 纯色/灰蒙蒙
+
+def _check_contrast(img: Image.Image, checks: list, suggestions: list) -> int:
+    """对比度检查（20 分，颜色方差）。"""
     try:
         stat = ImageStat.Stat(img.convert("RGB").resize((128, 128)))
-        # PIL 新版 stat.var 为 (r, g, b) 方差元组
         var = sum(stat.var) / 3.0
         contrast = 20 if var >= 600 else (13 if var >= 250 else 6)
         if var < 250:
@@ -151,9 +145,11 @@ def quality_check_image(img: Image.Image) -> dict:
     except Exception:
         contrast = 13
         checks.append({"name": "对比度", "ok": True, "score": contrast, "detail": "检测跳过"})
-    total += contrast
+    return contrast
 
-    # 4) 色偏（20 分）：RGB 通道均值差 >40 视为明显偏色
+
+def _check_color_drift(img: Image.Image, checks: list, suggestions: list) -> int:
+    """色偏检查（20 分，RGB 通道均值差）。"""
     try:
         stat = ImageStat.Stat(img.convert("RGB").resize((128, 128)))
         means = list(stat.mean)
@@ -165,7 +161,23 @@ def quality_check_image(img: Image.Image) -> dict:
     except Exception:
         color = 13
         checks.append({"name": "色偏", "ok": True, "score": color, "detail": "检测跳过"})
-    total += color
+    return color
+
+def quality_check_image(img: Image.Image) -> dict:
+    """图像美观度自检：分辨率/清晰度/对比度/色偏 → 0-100 分与建议。
+
+    返回：``{"score", "grade": A|B|C, "checks": [{name, ok, score, detail}], "suggestions"}``
+    """
+    if img is None:
+        return {"score": 0, "grade": "C", "checks": [], "suggestions": ["图像无效"]}
+    checks: list[dict] = []
+    suggestions: list[str] = []
+    total = 0
+
+    total += _check_resolution(img, checks, suggestions)
+    total += _check_clarity(img, checks, suggestions)
+    total += _check_contrast(img, checks, suggestions)
+    total += _check_color_drift(img, checks, suggestions)
 
     grade = "A" if total >= 85 else ("B" if total >= 65 else "C")
     return {"score": total, "grade": grade, "checks": checks, "suggestions": suggestions}

@@ -230,6 +230,51 @@ def _num_or_none(value):
         return None
 
 
+
+def _normalize_forecast_values(values: list) -> None:
+    """规范化预测值区间：low ≤ value ≤ high，缺失补 value。"""
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        v = _num_or_none(item.get("value"))
+        if v is None:
+            continue
+        low = _num_or_none(item.get("low"))
+        high = _num_or_none(item.get("high"))
+        if low is None:
+            low = v
+        if high is None:
+            high = v
+        if low > high:
+            low, high = high, low
+        item["value"] = v
+        item["low"] = low
+        item["high"] = high
+
+
+def _normalize_chart_bounds(charts: dict) -> None:
+    """规范化图表上下界数组长度与区间方向。"""
+    labels = charts.get("labels")
+    if not isinstance(labels, list) or not labels:
+        return
+    n = len(labels)
+    upper = charts.get("upper_bound")
+    lower = charts.get("lower_bound")
+    if not isinstance(upper, list):
+        upper = []
+    if not isinstance(lower, list):
+        lower = []
+    norm_upper, norm_lower = [], []
+    for i in range(n):
+        u = _num_or_none(upper[i]) if i < len(upper) else None
+        l = _num_or_none(lower[i]) if i < len(lower) else None
+        if u is not None and l is not None and l > u:
+            u, l = l, u
+        norm_upper.append(u)
+        norm_lower.append(l)
+    charts["upper_bound"] = norm_upper
+    charts["lower_bound"] = norm_lower
+
 def normalize_forecast_ranges(result: dict | None) -> dict:
     """规范化预测区间：确保 low ≤ value ≤ high，charts 上下界与 labels 对齐。
 
@@ -241,45 +286,11 @@ def normalize_forecast_ranges(result: dict | None) -> dict:
     if isinstance(predictions, dict):
         values = predictions.get("forecast_values")
         if isinstance(values, list):
-            for item in values:
-                if not isinstance(item, dict):
-                    continue
-                v = _num_or_none(item.get("value"))
-                if v is None:
-                    continue
-                low = _num_or_none(item.get("low"))
-                high = _num_or_none(item.get("high"))
-                if low is None:
-                    low = v
-                if high is None:
-                    high = v
-                if low > high:
-                    low, high = high, low
-                item["value"] = v
-                item["low"] = low
-                item["high"] = high
+            _normalize_forecast_values(values)
 
     charts = result.get("charts")
     if isinstance(charts, dict):
-        labels = charts.get("labels")
-        if isinstance(labels, list) and labels:
-            n = len(labels)
-            upper = charts.get("upper_bound")
-            lower = charts.get("lower_bound")
-            if not isinstance(upper, list):
-                upper = []
-            if not isinstance(lower, list):
-                lower = []
-            norm_upper, norm_lower = [], []
-            for i in range(n):
-                u = _num_or_none(upper[i]) if i < len(upper) else None
-                l = _num_or_none(lower[i]) if i < len(lower) else None
-                if u is not None and l is not None and l > u:
-                    u, l = l, u
-                norm_upper.append(u)
-                norm_lower.append(l)
-            charts["upper_bound"] = norm_upper
-            charts["lower_bound"] = norm_lower
+        _normalize_chart_bounds(charts)
 
     return result
 

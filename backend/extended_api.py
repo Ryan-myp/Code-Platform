@@ -3295,17 +3295,10 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
 
 
 
-def build_ab_report_md(test: dict, result: dict) -> str:
-    """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""
-    result = result or {}
-    lines = [
-        "# A/B 测试分析报告",
-        "",
-        f"- 实验名称：{test.get('name') or '-'}",
-        f"- 实验目标：{result.get('objective') or '-'}",
-        f"- 运行时间：{result.get('ran_at') or '-'}",
-        "",
-    ]
+
+def _ab_md_sections(test: dict, result: dict) -> list:
+    """A/B 报告各段落行（背景/方案/评分/结论/分析）。"""
+    lines = []
     if test.get("description"):
         lines += ["## 实验背景", "", test["description"], ""]
     lines += ["## 方案对比", "", f"**方案 A**：{test.get('variant_a') or '-'}", "", f"**方案 B**：{test.get('variant_b') or '-'}", ""]
@@ -3320,14 +3313,12 @@ def build_ab_report_md(test: dict, result: dict) -> str:
         lines += ["## 五维评分对比", "", "| 维度 | 方案A | 方案B |", "| --- | ---: | ---: |"]
         lines += [f"| {s.get('dimension') or '-'} | {s.get('a') or 0} | {s.get('b') or 0} |" for s in scores]
         lines.append("")
-    lines += [
-        "## 结论",
-        "",
-        f"- 胜出方：方案 {result.get('winner') or '-'}",
-        f"- 置信度：{result.get('confidence') or 0}%",
-        f"- 决策建议：{result.get('conclusion') or '-'}",
-        "",
-    ]
+    return lines
+
+
+def _ab_md_analysis(result: dict) -> list:
+    """A/B 报告分析段（胜出原因/风险/下一步）。"""
+    lines = []
     analysis = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
     if analysis.get("winner_reason"):
         lines += ["## 胜出原因", "", analysis["winner_reason"], ""]
@@ -3339,6 +3330,29 @@ def build_ab_report_md(test: dict, result: dict) -> str:
         lines += ["## 下一步行动", ""]
         lines += [f"- {n}" for n in analysis["next_steps"]]
         lines.append("")
+    return lines
+
+def build_ab_report_md(test: dict, result: dict) -> str:
+    """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""
+    result = result or {}
+    lines = [
+        "# A/B 测试分析报告",
+        "",
+        f"- 实验名称：{test.get('name') or '-'}",
+        f"- 实验目标：{result.get('objective') or '-'}",
+        f"- 运行时间：{result.get('ran_at') or '-'}",
+        "",
+    ]
+    lines += _ab_md_sections(test, result)
+    lines += [
+        "## 结论",
+        "",
+        f"- 胜出方：方案 {result.get('winner') or '-'}",
+        f"- 置信度：{result.get('confidence') or 0}%",
+        f"- 决策建议：{result.get('conclusion') or '-'}",
+        "",
+    ]
+    lines += _ab_md_analysis(result)
     lines += ["---", "由小团智能平台 AI A/B 测试生成"]
     return "\n".join(lines)
 
