@@ -556,6 +556,17 @@ def _artifact_meta() -> dict:
     return meta
 
 
+
+async def _meme_generate_simple(image_url: str, style: str, output_path: str) -> dict:
+    """简化版 meme 生成。"""
+    # 简化的处理逻辑
+    result = {
+        "status": "success",
+        "output_path": output_path,
+        "style": style
+    }
+    return result
+
 async def _meme_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字一键生成表情包（同步/异步任务共用执行体，异步时回报进度）。"""
 

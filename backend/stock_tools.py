@@ -1,5 +1,50 @@
 #!/usr/bin/env python3
 
+def _calculate_returns_simple(closes: list) -> list:
+    """简化版计算收益率。"""
+    returns = []
+    prev = None
+    for c in closes:
+        if c is not None and prev is not None and prev > 0:
+            returns.append((c - prev) / prev)
+        prev = c
+    return returns
+
+def _calculate_drawdown_simple(closes: list) -> dict:
+    """简化版计算回撤。"""
+    running_max = None
+    max_drawdown_pct = None
+    for c in closes:
+        if c is None:
+            continue
+        if running_max is None or c > running_max:
+            running_max = c
+        if running_max and running_max > 0:
+            dd = (running_max - c) / running_max
+            if max_drawdown_pct is None or dd > max_drawdown_pct:
+                max_drawdown_pct = dd
+    return {"max_drawdown_pct": max_drawdown_pct}
+
+def _compute_risk_simple(portfolio: dict, market_data: dict) -> dict:
+    """简化版风险计算。"""
+    # 简化的风险计算逻辑
+    volatility = market_data.get("volatility", 0.2)
+    correlation = portfolio.get("correlation", 0.5)
+    
+    risk_score = volatility * (1 + correlation)
+    
+    return {
+        "risk_score": risk_score,
+        "level": "high" if risk_score > 0.3 else ("medium" if risk_score > 0.2 else "low")
+    }
+
+def _prepare_risk_params(request_data: dict) -> dict:
+    """简化版准备风险参数。"""
+    return {
+        "portfolio": request_data.get("portfolio", {}),
+        "market_data": request_data.get("market_data", {})
+    }
+
 
 
 def _prepare_step_context(**kwargs) -> dict:
