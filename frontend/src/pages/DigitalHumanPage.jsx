@@ -146,6 +146,7 @@ export default function DigitalHumanPage() {
   const [speed, setSpeed] = useState(1.0)
   const [emotion, setEmotion] = useState('auto') // v13.24 情绪：auto=LLM 自动判断
   const [generating, setGenerating] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   // 商业参数：分辨率 / 帧率 / 水印
   const [resolution, setResolution] = useState('720p')
   const [fps, setFps] = useState(24) // 默认 24fps 流畅档（画质优先，异步任务可等）
@@ -1969,7 +1970,53 @@ const fmtDaysLeft = (days) => {
             )}
           </Card>
 
-          {/* 商业参数：分辨率 / 帧率 / 水印 */}
+          {/* 核心操作：生成按钮（紧跟口播文案，主路径最短） */}
+          <div className="rounded-xl bg-gradient-to-r from-violet-50 to-fuchsia-50 border border-violet-100 p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-violet-900">
+                  {text.trim() ? '文案已就绪，可以生成' : '输入文案后即可生成'}
+                </div>
+                <div className="text-[11px] text-violet-600/70 mt-0.5">
+                  {avatar?.name || '数字人形象'} · {voice?.name || '音色'} · 视频质量等高级参数可展开调整
+                </div>
+              </div>
+              <Button
+                variant="primary"
+                size="lg"
+                icon={Sparkles}
+                loading={generating}
+                onClick={generate}
+                className="!px-6 whitespace-nowrap"
+              >
+                {generating
+                  ? (currentTask &&
+                      !['success', 'failed'].includes(currentTask.status) &&
+                      currentTask.stage) ||
+                    genPhase ||
+                    'AI数字人正在生成…'
+                  : '生成视频'}
+              </Button>
+            </div>
+          </div>
+
+          {/* 高级参数（默认收起） */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <Sliders className="w-3.5 h-3.5 text-gray-400" />
+                高级参数
+                <span className="text-gray-400 font-normal">（视频质量/帧率/水印等）</span>
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {showAdvanced && (
+              <div className="p-4 space-y-3">
           <Card>
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Film className="w-4 h-4 text-sky-500" /> 视频质量
@@ -2195,34 +2242,21 @@ ${batchTexts
             )}
           </Card>
 
-          {/* 生成按钮 */}
-          <div className="flex gap-2">
-            <Button
-              variant="primary"
-              size="lg"
-              icon={Sparkles}
-              loading={generating}
-              onClick={generate}
-              className="flex-1"
-            >
-              {generating
-                ? (currentTask &&
-                    !['success', 'failed'].includes(currentTask.status) &&
-                    currentTask.stage) ||
-                  genPhase ||
-                  'AI数字人正在生成…'
-                : '生成数字人视频'}
-            </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              icon={Video}
-              loading={generating}
-              onClick={recordAndPlay}
-            >
-              生成+录制
-            </Button>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={Video}
+                  loading={generating}
+                  onClick={recordAndPlay}
+                >
+                  生成并录制（含口播录制）
+                </Button>
+              </div>
+            </div>
+          )}
           </div>
+
           {genHistory.length > 0 && (
             <div className="mt-3">
               <HistoryPanel
