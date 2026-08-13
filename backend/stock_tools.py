@@ -274,6 +274,71 @@ def _aggregate_compute_results(results: list) -> dict:
     """聚合计算结果。"""
     return {"total_steps": len(results), "aggregated": results}
 
+
+def _calculate_volatility_metrics(price_data):
+    """计算波动率指标。"""
+    if len(price_data) < 2:
+        return {"volatility": 0, "level": "low"}
+    
+    returns = []
+    for i in range(1, len(price_data)):
+        ret = (price_data[i] - price_data[i-1]) / price_data[i-1] if price_data[i-1] != 0 else 0
+        returns.append(ret)
+    
+    if not returns:
+        return {"volatility": 0, "level": "low"}
+    
+    avg = sum(returns) / len(returns)
+    variance = sum((r - avg) ** 2 for r in returns) / len(returns)
+    volatility = variance ** 0.5
+    
+    if volatility > 0.03:
+        level = "high"
+    elif volatility > 0.015:
+        level = "medium"
+    else:
+        level = "low"
+    
+    return {"volatility": volatility, "level": level}
+
+def _calculate_volume_metrics(volume_data):
+    """计算成交量指标。"""
+    if not volume_data:
+        return {"avg_volume": 0, "trend": "stable"}
+    
+    avg_vol = sum(volume_data) / len(volume_data)
+    
+    if len(volume_data) >= 2:
+        recent = volume_data[-1]
+        previous = volume_data[-2]
+        if recent > previous * 1.2:
+            trend = "increasing"
+        elif recent < previous * 0.8:
+            trend = "decreasing"
+        else:
+            trend = "stable"
+    else:
+        trend = "stable"
+    
+    return {"avg_volume": avg_vol, "trend": trend}
+
+def _calculate_position_risk(price_data, current_price):
+    """计算位置风险。"""
+    if not price_data or current_price is None:
+        return {"risk_level": "unknown", "percentile": 0.5}
+    
+    sorted_prices = sorted(price_data)
+    percentile = sum(1 for p in sorted_prices if p <= current_price) / len(sorted_prices)
+    
+    if percentile > 0.8:
+        risk_level = "high"
+    elif percentile > 0.6:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+    
+    return {"risk_level": risk_level, "percentile": percentile}
+
 def compute_risk_metrics(data: dict | None) -> dict:
     """计算风险提示指标：年化波动率 / 最大回撤 / 流动性 + 综合风险等级。
 

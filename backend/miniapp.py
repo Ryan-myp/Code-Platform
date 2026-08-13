@@ -557,6 +557,31 @@ def _generate_review_report(checks: list) -> dict:
         "checks": checks
     }
 
+
+def _prepare_review_context(review_data):
+    """准备评测材料构建上下文。"""
+    return {
+        "data": review_data,
+        "materials": [],
+        "status": "prepared"
+    }
+
+def _build_review_material(material_type, material_content):
+    """构建单个评测材料。"""
+    return {
+        "type": material_type,
+        "content": material_content,
+        "status": "built"
+    }
+
+def _finalize_review_results(materials):
+    """汇总评测材料构建结果。"""
+    return {
+        "total_materials": len(materials),
+        "materials": materials,
+        "status": "completed"
+    }
+
 def build_review_material(files: dict, name: str, template: str = "") -> dict:
     """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。
 
