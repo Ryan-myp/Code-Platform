@@ -759,8 +759,6 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
 
 
 @router.get("/templates")
-async def list_templates(current_user: dict = require_auth()):
-    return TEMPLATES
 
 
 @router.get("/projects")
@@ -1066,10 +1064,6 @@ async def review_material(proj_id: str, current_user: dict = require_auth()):
     return result
 
 
-def get_db():
-    from common.db import get_db as _get_db
-
-    return _get_db()
 
 
 async def _miniapp_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:

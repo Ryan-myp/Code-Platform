@@ -383,19 +383,6 @@ def _calculate_position_risk(price_data, current_price):
     return {"risk_level": risk_level, "percentile": percentile}
 
 
-def _compute_risk_simple(portfolio: dict, market_data: dict) -> dict:
-    """简化版风险计算。"""
-    # 简化的风险计算逻辑
-    volatility = market_data.get("volatility", 0.2)
-    correlation = portfolio.get("correlation", 0.5)
-    
-    risk_score = volatility * (1 + correlation)
-    
-    return {
-        "risk_score": risk_score,
-        "level": "high" if risk_score > 0.3 else ("medium" if risk_score > 0.2 else "low")
-    }
-
 def compute_risk_metrics(data: dict | None) -> dict:
     """计算风险提示指标：年化波动率 / 最大回撤 / 流动性 + 综合风险等级。"""
     points = (data or {}).get("data_points") or []

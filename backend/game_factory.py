@@ -611,8 +611,6 @@ def _qc_check(files: dict) -> dict:
 
 
 @router.get("/templates")
-async def list_templates(current_user: dict = require_auth()):
-    return TEMPLATES
 
 
 @router.get("/projects")
@@ -1517,10 +1515,6 @@ async def restore_project(proj_id: str, req: RestoreRequest, current_user: dict 
     }
 
 
-def get_db():
-    from common.db import get_db as _get_db
-
-    return _get_db()
 
 
 # ══════════════════════════════════════════════════════════════
