@@ -308,7 +308,7 @@ def _run_scheduler_loop():
             # 1. 检查数据库中的定时任务
             conn = get_db()
             try:
-                jobs = conn.execute("SELECT * FROM scheduler_jobs WHERE enabled=1").fetchall()
+                jobs = [dict(r) for r in conn.execute("SELECT * FROM scheduler_jobs WHERE enabled=1").fetchall()]
             finally:
                 conn.close()
 
