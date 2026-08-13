@@ -2698,6 +2698,32 @@ def _format_search_response(results: list, total: int) -> dict:
         "limit": len(results)
     }
 
+
+def _prepare_search_context(query_data):
+    """准备知识库搜索上下文。"""
+    return {
+        "query": query_data.get("query", ""),
+        "filters": query_data.get("filters", {}),
+        "results": [],
+        "status": "prepared"
+    }
+
+def _execute_search_step(search_type, search_params):
+    """执行单步搜索。"""
+    return {
+        "type": search_type,
+        "params": search_params,
+        "status": "searched"
+    }
+
+def _finalize_search_results(results):
+    """汇总搜索结果。"""
+    return {
+        "total_results": len(results),
+        "results": results,
+        "status": "completed"
+    }
+
 def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()

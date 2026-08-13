@@ -3726,6 +3726,31 @@ def _format_pptx_content(outline: dict) -> list:
         })
     return sections
 
+
+def _prepare_pptx_context(presentation_data):
+    """准备PPT构建上下文。"""
+    return {
+        "data": presentation_data,
+        "slides": [],
+        "status": "prepared"
+    }
+
+def _build_single_slide(slide_index, slide_data):
+    """构建单个幻灯片。"""
+    return {
+        "index": slide_index,
+        "data": slide_data,
+        "status": "built"
+    }
+
+def _finalize_pptx_result(slides):
+    """汇总PPT构建结果。"""
+    return {
+        "total_slides": len(slides),
+        "slides": slides,
+        "status": "completed"
+    }
+
 def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:  # noqa: C901 - 版式分发 DSL，嵌套渲染函数保持代码局部性
     """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。
 

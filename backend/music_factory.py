@@ -634,6 +634,31 @@ _STYLE_CFG = {
 }
 
 
+
+def _prepare_music_context(track_data):
+    """准备音乐合成上下文。"""
+    return {
+        "track": track_data,
+        "instruments": [],
+        "status": "prepared"
+    }
+
+def _compose_instrument_track(instrument_type, notes_data):
+    """合成单个乐器音轨。"""
+    return {
+        "instrument": instrument_type,
+        "notes": notes_data,
+        "status": "composed"
+    }
+
+def _finalize_music_result(tracks):
+    """汇总音乐合成结果。"""
+    return {
+        "total_tracks": len(tracks),
+        "tracks": tracks,
+        "status": "completed"
+    }
+
 async def _compose_music_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """音乐合成执行体（同步/异步任务共用）：numpy 伴奏 + edge-tts 分句人声 + ffmpeg 混音 → mp3 + 封面。"""
 

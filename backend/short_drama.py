@@ -812,6 +812,33 @@ def _dh_scene_video(
         return False
 
 
+
+def _prepare_drama_context(task_id, drama_config):
+    """准备短剧生成上下文。"""
+    return {
+        "task_id": task_id,
+        "config": drama_config,
+        "scenes": [],
+        "status": "prepared"
+    }
+
+def _generate_drama_scene(scene_index, script_data, visual_style):
+    """生成单个短剧场景。"""
+    return {
+        "index": scene_index,
+        "script": script_data,
+        "style": visual_style,
+        "status": "generated"
+    }
+
+def _finalize_drama_result(scenes):
+    """汇总短剧生成结果。"""
+    return {
+        "total_scenes": len(scenes),
+        "scenes": scenes,
+        "status": "completed"
+    }
+
 async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
 
