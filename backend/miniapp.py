@@ -771,6 +771,84 @@ async def list_projects(current_user: dict = require_auth()):
     return [dict(r) for r in rows]
 
 
+
+def _miniapp_ensure_appjson(files: dict, req) -> dict:
+    """兜底：确保 app.json 存在（小程序运行必需）。"""
+    if "app.json" in files:
+        return files
+    pages = sorted({p.split("/", 1)[0] + "/index/index" for p in files if p.startswith("pages/")})
+    app_json = {
+        "pages": pages or ["pages/index/index"],
+        "window": {
+            "navigationBarTitleText": req.name,
+            "navigationBarBackgroundColor": "#4F46E5",
+            "navigationBarTextStyle": "white",
+        },
+    }
+    return {"app.json": json.dumps(app_json, ensure_ascii=False, indent=2), **files}
+
+
+async def _miniapp_quality_gate(user_prompt: str, req, _report) -> tuple:
+    """生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单修复）。"""
+    result = None
+    files = None
+    qc = None
+    for attempt in range(3):
+        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
+        try:
+            files = _extract_json(result)
+            if not isinstance(files, dict) or not files:
+                raise ValueError("AI 未生成任何文件")
+            files = _miniapp_ensure_appjson(files, req)
+            qc = _qc_check(files)
+            if qc["ok"]:
+                break
+            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
+            logger.warning("miniapp QC failed (attempt %d): %s", attempt + 1, last_err)
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
+                f"问题清单：{last_err}\n"
+                "请针对性地修复以上问题，重新输出完整的项目 JSON（不要省略任何文件、不要截断，"
+                "app.json 的 pages 必须与生成页面完全一致）。"
+            )
+            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=12000, temperature=0.3)
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.warning("miniapp JSON parse failed (attempt %d): %s", attempt + 1, e)
+            try:
+                retry_prompt = user_prompt + (
+                    "\n\n重要：上次输出因过长被截断导致失败。本次请严格精简：\n"
+                    "1. 页面数量控制在 2 个以内（首页 + 一个核心功能页），其余页面省略\n"
+                    "2. 每个文件控制在 40 行以内，全部文件总字符数不超过 15000\n"
+                    "3. app.json 只注册实际生成的页面"
+                )
+                result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=8000, temperature=0.3)
+            except (HTTPException, ValueError, json.JSONDecodeError) as e2:
+                raise HTTPException(
+                    502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}"
+                ) from e2
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, "操作失败，请稍后重试") from e
+    if not files or qc is None or not qc["ok"]:
+        raise HTTPException(502, "操作失败，请稍后重试")
+    return files, qc, result
+
+
+def _save_miniapp_project(proj_id: str, req, files: dict, qc: dict) -> None:
+    """保存小程序项目到数据库。"""
+    conn = get_db()
+    _ensure_qc_column(conn)
+    conn.execute(
+        """INSERT INTO miniapp_projects (id, name, template, requirement, files, qc, created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        (proj_id, req.name, req.template, req.requirement,
+         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False),
+         datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
 async def _miniapp_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 生成完整小程序项目（同步/异步任务共用执行体，异步时回报进度）。"""
     req = GenerateRequest(**payload)
@@ -811,91 +889,10 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
     except Exception as e:
         raise HTTPException(500, "操作失败，请稍后重试") from e
 
-    files = None
-    qc = None
-    last_err = ""
-    # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
-    for attempt in range(3):
-        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
-        try:
-            files = _extract_json(result)
-            if not isinstance(files, dict) or not files:
-                raise ValueError("AI 未生成任何文件")
-            # 兜底：确保 app.json 存在（小程序运行必需）
-            if "app.json" not in files:
-                files = {
-                    "app.json": json.dumps(
-                        {
-                            "pages": sorted(
-                                {p.split("/", 1)[0] + "/index/index" for p in files if p.startswith("pages/")}
-                            )
-                            or ["pages/index/index"],
-                            "window": {
-                                "navigationBarTitleText": req.name,
-                                "navigationBarBackgroundColor": "#4F46E5",
-                                "navigationBarTextStyle": "white",
-                            },
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                    **files,
-                }
-            qc = _qc_check(files)
-            if qc["ok"]:
-                break
-            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
-            logger.warning("miniapp QC failed (attempt %d): %s", attempt + 1, last_err)
-            retry_prompt = user_prompt + (
-                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
-                f"问题清单：{last_err}\n"
-                "请针对性地修复以上问题，重新输出完整的项目 JSON（不要省略任何文件、不要截断，"
-                "app.json 的 pages 必须与生成页面完全一致）。"
-            )
-            result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=12000, temperature=0.3)
-        except (ValueError, json.JSONDecodeError) as e:
-            last_err = str(e)
-            logger.warning("miniapp JSON parse failed (attempt %d): %s", attempt + 1, e)
-            # 输出被截断/超长：自动降级为精简版重试（只保留核心页面）
-            try:
-                retry_prompt = user_prompt + (
-                    "\n\n重要：上次输出因过长被截断导致失败。本次请严格精简：\n"
-                    "1. 页面数量控制在 2 个以内（首页 + 一个核心功能页），其余页面省略\n"
-                    "2. 每个文件控制在 40 行以内，全部文件总字符数不超过 15000\n"
-                    "3. app.json 只注册实际生成的页面"
-                )
-                result = await call_llm_async(_GENERATE_SYSTEM, retry_prompt, max_tokens=8000, temperature=0.3)
-            except (HTTPException, ValueError, json.JSONDecodeError) as e2:
-                raise HTTPException(
-                    502, f"AI 输出格式异常（已自动重试精简版仍失败），请重试或更换模型。详情: {e2}"
-                ) from e2
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试") from e
-    if not files or qc is None:
-        raise HTTPException(502, "操作失败，请稍后重试")
-    if not qc["ok"]:
-        raise HTTPException(502, "操作失败，请稍后重试")
+    files, qc, result = await _miniapp_quality_gate(user_prompt, req, _report)
 
     proj_id = f"mp_{uuid.uuid4().hex[:12]}"
-    conn = get_db()
-    _ensure_qc_column(conn)
-    conn.execute(
-        """INSERT INTO miniapp_projects (id, name, template, requirement, files, qc, created_at)
-           VALUES (?,?,?,?,?,?,?)""",
-        (
-            proj_id,
-            req.name,
-            req.template,
-            req.requirement,
-            json.dumps(files, ensure_ascii=False),
-            json.dumps(qc, ensure_ascii=False),
-            datetime.now().isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
+    _save_miniapp_project(proj_id, req, files, qc)
     _report(85, "项目已保存")
 
     elapsed = round(time.time() - start, 2)
