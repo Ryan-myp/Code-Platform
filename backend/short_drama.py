@@ -884,6 +884,62 @@ async def _drama_load_script(theme: str, scenes_override: list, duration_hint: i
     return script
 
 
+
+async def _drama_render_one(
+    i: int, sc: dict, text: str, tmpdir: str, avatar_mode: bool, avatar_id: str, dh_engine: str,
+    user: str, uid: str, role: str, illust_mode: bool, char_map: dict, char_refs: dict,
+    dh_off: bool, fade_in: bool, fade_out: bool, motion: str, title: str, _report, total: int,
+) -> tuple:
+    """单镜渲染：数字人 → 素材 → 插画/卡片 三级回退。返回 (clip, audio_path, dh_off)。"""
+    clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
+    audio_path = ""
+    ok = False
+    if avatar_mode and not dh_off:
+        try:
+            ok = await asyncio.to_thread(
+                _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
+                sc.get("emotion", "neutral"), fade_in, fade_out,
+            )
+        except HTTPException as e:
+            if e.status_code == 402:
+                dh_off = True
+                ok = False
+                _report(15 + int(50 * i / max(total, 1)), "数字人额度不足，切换素材模式…")
+            else:
+                raise
+    if not ok:
+        audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
+        audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+        with open(audio_path, "wb") as f:
+            f.write(audio)
+        dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
+        if not illust_mode:
+            scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
+            lead = char_map.get(scene_chars[0]) if scene_chars else None
+            search_q = _anchor_search(lead, sc.get("search", ""))
+            ok = await asyncio.to_thread(_material_scene_video, search_q, audio_path, clip, dur, fade_in, fade_out)
+    if not ok:
+        img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
+        shot = sc.get("shot", "")
+        data = None
+        if shot:
+            scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
+            anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
+            refs = [char_refs[c] for c in scene_chars if c in char_refs]
+            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
+        if data:
+            with open(img_path, "wb") as f:
+                f.write(data)
+            await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+            ok = True
+            if len(scene_chars) == 1:
+                char_refs[scene_chars[0]] = data
+        else:
+            ok = await asyncio.to_thread(_make_scene_card, text, i, total, title, img_path)
+            if ok:
+                await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
+    return (clip if ok else None), audio_path, dh_off
+
 async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str, role: str, tmpdir: str, _report) -> tuple:
     """逐镜配音 + 画面（三级回退：数字人 → 素材 → 插画/卡片）。返回 (clip_paths, srt_durations, voice_durations)。"""
     avatar_mode = bool(payload.get("avatar_mode"))
@@ -902,54 +958,16 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         if not text:
             continue
         clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
-        audio_path = ""
         scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
         fade_in, fade_out = i == 0, i == total - 1
         motion = _SCENE_MOTIONS[i % len(_SCENE_MOTIONS)]
-        ok = False
-        if avatar_mode and not dh_off:
-            try:
-                ok = await asyncio.to_thread(
-                    _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
-                    sc.get("emotion", "neutral"), fade_in, fade_out,
-                )
-            except HTTPException as e:
-                if e.status_code == 402:
-                    dh_off = True
-                    ok = False
-                    _report(15 + int(50 * i / max(total, 1)), "数字人额度不足，切换素材模式…")
-                else:
-                    raise
-        if not ok:
-            audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
-            audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
-            with open(audio_path, "wb") as f:
-                f.write(audio)
-            dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
-            if not illust_mode:
-                lead = char_map.get(scene_chars[0]) if scene_chars else None
-                search_q = _anchor_search(lead, sc.get("search", ""))
-                ok = await asyncio.to_thread(_material_scene_video, search_q, audio_path, clip, dur, fade_in, fade_out)
-        if not ok:
-            img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
-            shot = sc.get("shot", "")
-            data = None
-            if shot:
-                anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
-                refs = [char_refs[c] for c in scene_chars if c in char_refs]
-                data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
-            if data:
-                with open(img_path, "wb") as f:
-                    f.write(data)
-                await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
-                ok = True
-                if len(scene_chars) == 1:
-                    char_refs[scene_chars[0]] = data
-            else:
-                ok = await asyncio.to_thread(_make_scene_card, text, i, total, payload.get("title") or "未命名短剧", img_path)
-                if ok:
-                    await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
-        if ok:
+        result = await _drama_render_one(
+            i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
+            illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
+            payload.get("title") or "未命名短剧", _report, total,
+        )
+        clip, audio_path, dh_off = result
+        if clip:
             clip_paths.append(clip)
             srt_durations.append(_probe_seconds(clip))
             vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
