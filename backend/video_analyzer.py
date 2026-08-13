@@ -327,17 +327,10 @@ def normalize_segments(result: dict) -> dict:
     return result
 
 
-def build_report_md(record: dict, analysis: dict) -> str:
-    """视频分析报告 → Markdown（纯函数，可单测；用于报告导出）。"""
-    analysis = analysis or {}
-    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
-    lines = [
-        "# 视频分析报告",
-        "",
-        f"- 文件名：{record.get('filename') or '-'}",
-        f"- 分析时间：{record.get('created_at') or '-'}",
-        "",
-    ]
+
+def _va_md_sections(analysis: dict) -> list:
+    """视频分析报告主要段（标题/摘要/评分）。"""
+    lines = []
     if analysis.get("title"):
         lines += [f"## 标题建议", "", analysis["title"], ""]
     if analysis.get("summary"):
@@ -346,20 +339,31 @@ def build_report_md(record: dict, analysis: dict) -> str:
         lines += ["## 详细概述", "", analysis["detailed_summary"], ""]
     if analysis.get("overall_score") is not None:
         lines += ["## 综合评分", "", f"**{analysis['overall_score']} / 100**", ""]
+    return lines
 
-    # 分段报告：画面 / 音频 / 文本
-    if segments:
-        lines.append("## 分段分析")
-        for key, label in SEGMENT_LABELS.items():
-            seg = segments.get(key) or {}
-            lines += ["", f"### {label}"]
-            score = seg.get("score")
-            lines.append(f"评分：{score if score is not None else '—'} / 100")
-            lines += ["", seg.get("analysis") or "—", ""]
-            for p in seg.get("key_points") or []:
-                lines.append(f"- {p}")
-            lines.append("")
 
+def _va_md_segments(analysis: dict) -> list:
+    """视频分析报告分段分析段。"""
+    lines = []
+    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
+    if not segments:
+        return lines
+    lines.append("## 分段分析")
+    for key, label in SEGMENT_LABELS.items():
+        seg = segments.get(key) or {}
+        lines += ["", f"### {label}"]
+        score = seg.get("score")
+        lines.append(f"评分：{score if score is not None else '—'} / 100")
+        lines += ["", seg.get("analysis") or "—", ""]
+        for p in seg.get("key_points") or []:
+            lines.append(f"- {p}")
+        lines.append("")
+    return lines
+
+
+def _va_md_lists(analysis: dict) -> list:
+    """视频分析报告列表段（关键场景/亮点/建议）。"""
+    lines = []
     if analysis.get("key_scenes"):
         lines += ["## 关键场景", ""]
         for s in analysis["key_scenes"]:
@@ -375,6 +379,22 @@ def build_report_md(record: dict, analysis: dict) -> str:
         lines += ["## 优化建议", ""]
         lines += [f"- {r}" for r in analysis["recommendations"]]
         lines.append("")
+    return lines
+
+def build_report_md(record: dict, analysis: dict) -> str:
+    """视频分析报告 → Markdown（纯函数，可单测；用于报告导出）。"""
+    analysis = analysis or {}
+    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
+    lines = [
+        "# 视频分析报告",
+        "",
+        f"- 文件名：{record.get('filename') or '-'}",
+        f"- 分析时间：{record.get('created_at') or '-'}",
+        "",
+    ]
+    lines += _va_md_sections(analysis)
+    lines += _va_md_segments(analysis)
+    lines += _va_md_lists(analysis)
     lines.append("---")
     lines.append("由小团智能平台 AI 视频分析生成")
     return "\n".join(lines)

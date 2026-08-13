@@ -1913,7 +1913,49 @@ async def list_workflows(current_user: dict = require_auth()):
     return result
 
 
+_WF_VALID_TYPES = {"agent", "http", "condition", "parallel", "code", "delay", "output"}
+_WF_TYPE_MAP = {"start": "agent", "end": "output", "llm": "agent", "http": "http", "condition": "condition"}
+
+
+def _normalize_wf_nodes(nodes: list) -> list:
+    """规范化工作流节点：映射旧类型、补 x/y/config 字段。"""
+    normalized = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        raw_type = n.get("type", "agent")
+        n["type"] = _WF_TYPE_MAP.get(raw_type, raw_type) if raw_type not in _WF_VALID_TYPES else raw_type
+        if "x" not in n:
+            n["x"] = 80 + len(normalized) * 180
+        if "y" not in n:
+            n["y"] = 160
+        if "config" not in n:
+            n["config"] = {}
+        normalized.append(n)
+    return normalized
+
+
+def _normalize_wf_edges(edges: list) -> list:
+    """规范化工作流边：统一 from/to 格式。"""
+    normalized = []
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        edge_from = e.get("from") or e.get("source")
+        edge_to = e.get("to") or e.get("target")
+        if edge_from and edge_to:
+            normalized.append(
+                {
+                    "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
+                    "from": edge_from,
+                    "to": edge_to,
+                }
+            )
+    return normalized
+
+
 @app.get("/api/workflows/{workflow_id}")
+
 async def get_workflow(workflow_id: str, current_user: dict = require_auth()):  # noqa: C901
     """获取工作流详情"""
     conn = get_db()
@@ -1934,43 +1976,9 @@ async def get_workflow(workflow_id: str, current_user: dict = require_auth()):  
     except (json.JSONDecodeError, TypeError):
         edges = []
 
-    # 规范化节点格式：确保每个节点都有 x/y/config/type 字段
-    valid_types = {"agent", "http", "condition", "parallel", "code", "delay", "output"}
-    type_map = {"start": "agent", "end": "output", "llm": "agent", "http": "http", "condition": "condition"}
-    normalized_nodes = []
-    for n in nodes:
-        if not isinstance(n, dict):
-            continue
-        # 映射旧类型到新类型
-        raw_type = n.get("type", "agent")
-        n["type"] = type_map.get(raw_type, raw_type) if raw_type not in valid_types else raw_type
-        # 确保有 x/y 坐标
-        if "x" not in n:
-            n["x"] = 80 + len(normalized_nodes) * 180
-        if "y" not in n:
-            n["y"] = 160
-        # 确保有 config
-        if "config" not in n:
-            n["config"] = {}
-        normalized_nodes.append(n)
-
-    # 规范化边格式：统一使用 from/to
-    normalized_edges = []
-    for e in edges:
-        if not isinstance(e, dict):
-            continue
-        # 兼容 source/target 和 from/to
-        edge_from = e.get("from") or e.get("source")
-        edge_to = e.get("to") or e.get("target")
-        if edge_from and edge_to:
-            normalized_edges.append(
-                {
-                    "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
-                    "from": edge_from,
-                    "to": edge_to,
-                }
-            )
-
+    # 规范化节点/边格式
+    normalized_nodes = _normalize_wf_nodes(nodes)
+    normalized_edges = _normalize_wf_edges(edges)
     d["nodes"] = normalized_nodes
     d["definition"] = {"nodes": normalized_nodes, "edges": normalized_edges}
     return d
@@ -2491,6 +2499,47 @@ def _kb_list_tables(cursor, engine: str) -> list[str]:
 
 
 @app.get("/api/knowledge-bases")
+
+def _kb_file_stats(p: str) -> tuple:
+    """统计 file 类型知识库的文档数与大小。"""
+    doc_count, total_size = 0, 0
+    if os.path.isdir(p):
+        for root, _, files in os.walk(p):
+            for fn in files:
+                try:
+                    total_size += os.path.getsize(os.path.join(root, fn))
+                    doc_count += 1
+                except OSError:
+                    pass
+    elif os.path.isfile(p):
+        try:
+            total_size = os.path.getsize(p)
+            doc_count = 1
+        except OSError:
+            pass
+    return doc_count, total_size
+
+
+def _kb_db_stats(cfg: dict) -> tuple:
+    """统计 db 类型知识库的行数（表内记录数）。"""
+    try:
+        db_conn, cursor, _err = _kb_connect(cfg)
+        if not db_conn:
+            return 0, 0
+        try:
+            table = (cfg.get("table") or "").strip()
+            if table:
+                cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
+                row = cursor.fetchone()
+                return (row[0] if row else 0), 0
+        except Exception:
+            pass
+        finally:
+            db_conn.close()
+    except Exception:
+        pass
+    return 0, 0
+
 async def list_knowledge_bases(current_user: dict = require_auth()):  # noqa: C901
     """获取所有知识库（连接配置脱敏；file/db 类型附文档统计）"""
     conn = get_db()
@@ -2507,34 +2556,9 @@ async def list_knowledge_bases(current_user: dict = require_auth()):  # noqa: C9
         kb_type = d.get("type") or "file"
         doc_count, total_size = 0, 0
         if kb_type == "file" and d.get("path"):
-            p = d["path"]
-            if os.path.isdir(p):
-                for root, _, files in os.walk(p):
-                    for fn in files:
-                        try:
-                            total_size += os.path.getsize(os.path.join(root, fn))
-                            doc_count += 1
-                        except OSError:
-                            pass
-            elif os.path.isfile(p):
-                try:
-                    total_size = os.path.getsize(p)
-                    doc_count = 1
-                except OSError:
-                    pass
+            doc_count, total_size = _kb_file_stats(d["path"])
         elif kb_type == "db":
-            db_conn, cursor, _err = _kb_connect(cfg)
-            if db_conn:
-                try:
-                    table = (cfg.get("table") or "").strip()
-                    if table:
-                        cursor.execute(f'SELECT COUNT(*) FROM "{table}"')
-                        row = cursor.fetchone()
-                        doc_count = row[0] if row else 0
-                except Exception:
-                    pass
-                finally:
-                    db_conn.close()
+            doc_count, _ = _kb_db_stats(cfg)
         d["doc_count"] = doc_count
         d["total_size"] = total_size
         result.append(d)
