@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """Platform v9.0 Extended API - 研发增强/内容创作/运营分析/办公效率"""
 
 import glob
@@ -833,6 +838,19 @@ def _fix_system(lang: str, kind: str) -> str:
     return TEST_FIX_SYSTEM
 
 
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
+
 def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。
 
@@ -1172,6 +1190,19 @@ def _validate_results(test_results: dict, output_path: str) -> bool:
         return False
     import os
     return os.path.exists(output_path)
+
+
+def _prepare_common_context(**kwargs) -> dict:
+    """准备通用执行上下文。"""
+    return {"context": kwargs, "status": "initialized"}
+
+def _execute_common_step(step_name: str, step_data: dict) -> dict:
+    """执行通用处理步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _finalize_common_operation(results: list) -> dict:
+    """汇总最终操作结果。"""
+    return {"total": len(results), "results": results}
 
 def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     """自动化测试门禁：按技术栈生成测试文件 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
@@ -3140,6 +3171,19 @@ _AB_RUN_USER = """实验名称：{name}
 }}"""
 
 
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
+
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
 
@@ -3217,6 +3261,19 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
         "ran_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
+
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
 
 def build_ab_report_md(test: dict, result: dict) -> str:
     """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""

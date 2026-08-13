@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """数字人按量计费 API 网关 — 对外开发者计费入口（Phase 5.1 商业化预留，最小实现）。
 
 复用 openai_gateway 的 API Key 认证模式（api_keys 表 + Bearer xt-xxx）：
@@ -228,6 +233,19 @@ def _parse_dh_response(response: dict) -> dict:
         "duration": response.get("duration", 0),
         "status": response.get("status", "failed")
     }
+
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
 
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。

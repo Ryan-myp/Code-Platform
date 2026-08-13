@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 from backend.template_base import TemplateBase, create_template
 """小程序工坊 — AI 生成微信小程序项目。
 

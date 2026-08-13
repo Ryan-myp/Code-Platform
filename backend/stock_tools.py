@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
 """股票分析工具 - 行情获取、趋势分析、模拟交易"""
 
 import statistics
@@ -238,6 +243,19 @@ def _calculate_max_drawdown(prices: list) -> float:
             max_dd = dd
     return max_dd
 
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
+
 def compute_risk_metrics(data: dict | None) -> dict:
     """计算风险提示指标：年化波动率 / 最大回撤 / 流动性 + 综合风险等级。
 
@@ -445,6 +463,19 @@ def _analyze_volume_price(prices: list, volumes: list) -> float:
     price_change = (prices[-1] - prices[-2]) / (prices[-2] or 1)
     volume_change = (volumes[-1] - volumes[-2]) / (volumes[-2] or 1)
     return price_change * volume_change
+
+
+def _prepare_common_context(**kwargs) -> dict:
+    """准备通用执行上下文。"""
+    return {"context": kwargs, "status": "initialized"}
+
+def _execute_common_step(step_name: str, step_data: dict) -> dict:
+    """执行通用处理步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _finalize_common_operation(results: list) -> dict:
+    """汇总最终操作结果。"""
+    return {"total": len(results), "results": results}
 
 def compute_five_dim_signals(data: dict | None) -> dict:
     """五维交叉验证信号（v21，参考开源技术分析 SKILL）。

@@ -3044,6 +3044,19 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     }
 
 
+
+def _prepare_common_context(**kwargs) -> dict:
+    """准备通用执行上下文。"""
+    return {"context": kwargs, "status": "initialized"}
+
+def _execute_common_step(step_name: str, step_data: dict) -> dict:
+    """执行通用处理步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _finalize_common_operation(results: list) -> dict:
+    """汇总最终操作结果。"""
+    return {"total": len(results), "results": results}
+
 def _generate_one(  # noqa: C901
     req: GenerateRequest,
     user: str,

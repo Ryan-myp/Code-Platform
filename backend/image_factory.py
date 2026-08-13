@@ -16,7 +16,6 @@ import base64
 import io
 import json
 import logging
-from template_base import TemplateBase, create_template
 import os
 import re
 import tempfile
@@ -208,6 +207,19 @@ def _has_cjk(text: str) -> bool:
         for ch in text
     )
 
+
+
+def _initialize_compute_context(data: dict) -> dict:
+    """初始化计算上下文。"""
+    return {"data": data, "results": {}, "status": "running"}
+
+def _execute_compute_step(step_name: str, step_data: dict) -> dict:
+    """执行计算步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _aggregate_compute_results(results: list) -> dict:
+    """聚合计算结果。"""
+    return {"total_steps": len(results), "aggregated": results}
 
 def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False,
              text: str = "") -> ImageFont.FreeTypeFont:
