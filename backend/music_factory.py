@@ -141,38 +141,7 @@ def _text_to_lrc(lyrics: str, duration: float, title: str = "", artist: str = ""
 
 
 @router.post("/publish-pack")
-async def _music_internal():
-    pass
-
-async def _prepare_music_upload_data(music_data: dict) -> dict:
-    """准备音乐上传数据。"""
-    return {
-        "title": music_data.get("title", "未命名"),
-        "artist": music_data.get("artist", "未知艺术家"),
-        "audio_url": music_data.get("audio_url", ""),
-        "cover_url": music_data.get("cover_url", "")
-    }
-
-def _select_publish_platform(platform: str) -> str:
-    """选择发布平台。"""
-    platforms = {
-        "netease": "网易云音乐",
-        "qq": "QQ音乐",
-        "kugou": "酷狗音乐",
-        "kuwo": "酷我音乐"
-    }
-    return platforms.get(platform, "网易云音乐")
-
-def _format_publish_result(upload_result: dict, platform: str) -> dict:
-    """格式化发布结果。"""
-    return {
-        "platform": platform,
-        "success": upload_result.get("success", False),
-        "music_id": upload_result.get("music_id", ""),
-        "publish_url": upload_result.get("publish_url", "")
-    }
-
-def music_publish_pack(
+async def music_publish_pack(
     audio_id: str = Form(...),
     song_title: str = Form(""),
     artist: str = Form(""),
@@ -922,31 +891,6 @@ def _place_arpeggio(place, chord: list[int], t0: float, beat: float, pattern: st
                 place(_synth_note(_note_freq(ci + 12), beat * 0.28, "strum", 0.32), t0 + b_i * beat + k * 0.045)
 
 
-
-def _generate_drum_pattern(seed: int, pattern_type: str) -> list:
-    """生成鼓点模式。"""
-    import random
-    random.seed(seed)
-    patterns = {
-        "rock": [1, 0, 1, 0, 1, 0, 1, 0],
-        "pop": [1, 0, 1, 1, 1, 0, 1, 1],
-        "electronic": [1, 1, 1, 1, 1, 1, 1, 1]
-    }
-    return patterns.get(pattern_type, patterns["rock"])
-
-def _apply_drum_effects(drum_data: dict, effects: dict) -> dict:
-    """应用鼓点效果。"""
-    return {
-        **drum_data,
-        "reverb": effects.get("reverb", 0.3),
-        "compress": effects.get("compress", 0.7)
-    }
-
-def _mix_drum_track(drum_pattern: list, volume: float) -> bytes:
-    """混音鼓点轨道。"""
-    # 简化的混音逻辑
-    return b"dummy_drum_audio"
-
 def _place_drums(place, drums: str, t0: float, beat: float) -> None:  # noqa: C901
     """按鼓模式铺鼓点（4/4 拍）。"""
     if drums == "none":
@@ -1239,22 +1183,6 @@ def _vocalize_word(cut: np.ndarray, f1: float, target_dur: float, ref_f0: float 
         env[-e:] = np.linspace(1, 0, e) ** 0.8
     return shifted * env, f0
 
-
-
-def _convert_text_to_phonemes(text: str) -> list:
-    """将文本转换为音素序列。"""
-    # 简化的音素转换
-    return [{"phoneme": c, "duration": 0.1} for c in text if c.isalnum()]
-
-def _synthesize_voice_segment(phonemes: list, voice_config: dict) -> bytes:
-    """合成语音片段。"""
-    # 简化的语音合成
-    return b"dummy_audio_data"
-
-def _apply_audio_effects(audio_data: bytes, effects: dict) -> bytes:
-    """应用音频效果。"""
-    # 简化的效果处理
-    return audio_data
 
 def _vocalize_phrase(  # noqa: C901
     mp3_path: str, json_path: str, melody: list[dict], seg_start: float, seg_dur: float, sr: int = _SR

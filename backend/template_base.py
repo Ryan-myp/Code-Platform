@@ -1,57 +1,94 @@
+
 """
-模板公共基类 - 提取重复的模板处理逻辑
+模板公共基类 - 提供类型注解支持
 """
 
-from typing import Any, dict, list, Optional
-import os
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
+from dataclasses import dataclass, field
+from enum import Enum
+import asyncio
+from pathlib import Path as PathLib
+from abc import ABC, abstractmethod
 
+T = TypeVar('T')
+"""泛型类型变量"""
 
-class TemplateBase:
-    """模板处理公共基类。"""
+@dataclass
+class TemplateConfig:
+    """模板配置数据类"""
+    template_id: str = ""
+    width: int = 1080
+    height: int = 1920
+    layers: List[Dict[str, Any]] = field(default_factory=list)
+    output_format: str = "png"
     
-    def __init__(self, template_id: str = "", config: dict | None = None):
-        self.template_id = template_id
-        self.config = config or {}
-        self.layers: list[dict] = []
-        self.output_dir = "outputs"
-    
-    def validate(self) -> tuple[bool, list[str]]:
-        """验证模板配置。"""
+    def validate(self) -> Tuple[bool, List[str]]:
+        """验证配置"""
         errors = []
-        
         if not self.template_id:
             errors.append("template_id is required")
-        
-        if not isinstance(self.config, dict):
-            errors.append("config must be a dictionary")
-        
+        if self.width <= 0 or self.height <= 0:
+            errors.append("width and height must be positive")
         return len(errors) == 0, errors
+
+
+class TemplateBase(ABC):
+    """模板处理抽象基类"""
     
-    def add_layer(self, layer: dict) -> None:
-        """添加图层。"""
+    def __init__(self, template_id: str = "", config: Optional[TemplateConfig] = None):
+        self.template_id = template_id
+        self.config = config or TemplateConfig(template_id=template_id)
+        self.layers: List[Dict[str, Any]] = []
+        self.output_dir: str = "outputs"
+    
+    @abstractmethod
+    def render(self, **kwargs) -> Any:
+        """渲染模板（子类必须实现）"""
+        pass
+    
+    def add_layer(self, layer: Dict[str, Any]) -> None:
+        """添加图层"""
         self.layers.append(layer)
     
-    def get_layer_by_key(self, key: str) -> dict | None:
-        """按key获取图层。"""
+    def get_layer_by_key(self, key: str) -> Optional[Dict[str, Any]]:
+        """按key获取图层"""
         for layer in self.layers:
             if layer.get("key") == key:
                 return layer
         return None
     
-    def render_to_path(self, output_path: str) -> str:
-        """渲染到指定路径。"""
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        return output_path
+    def remove_layer(self, key: str) -> bool:
+        """移除图层"""
+        for i, layer in enumerate(self.layers):
+            if layer.get("key") == key:
+                self.layers.pop(i)
+                return True
+        return False
     
-    def get_template_config(self) -> dict:
-        """获取模板配置。"""
+    def clear_layers(self) -> None:
+        """清空所有图层"""
+        self.layers.clear()
+    
+    def get_template_info(self) -> Dict[str, Any]:
+        """获取模板信息"""
         return {
             "template_id": self.template_id,
-            "config": self.config,
-            "layer_count": len(self.layers)
+            "width": self.config.width,
+            "height": self.config.height,
+            "layer_count": len(self.layers),
+            "output_format": self.config.output_format
         }
 
 
 def create_template(template_type: str, **kwargs) -> TemplateBase:
-    """工厂方法创建模板实例。"""
+    """工厂方法创建模板实例"""
+    # 这里可以根据template_type返回不同的子类实例
     return TemplateBase(**kwargs)
+
+
+def batch_process_templates(templates: List[TemplateBase], processor: Callable) -> List[Any]:
+    """批量处理模板"""
+    results = []
+    for template in templates:
+        results.append(processor(template))
+    return results

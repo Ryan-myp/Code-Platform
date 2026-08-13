@@ -593,30 +593,7 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
 
 
 # ── 抖音：素材上传 + 发布 ────────────────────────────────────
-async 
-def _prepare_douyin_video(video_data: dict) -> dict:
-    """准备抖音视频数据。"""
-    return {
-        "title": video_data.get("title", ""),
-        "description": video_data.get("description", ""),
-        "video_url": video_data.get("video_url", ""),
-        "cover_url": video_data.get("cover_url", "")
-    }
-
-def _authenticate_douyin(credential: dict) -> dict:
-    """抖音认证。"""
-    # 简化的认证逻辑
-    return {"access_token": "dummy_token", "expires_in": 7200}
-
-def _upload_to_douyin(video_data: dict, token: dict) -> dict:
-    """上传到抖音。"""
-    return {
-        "success": True,
-        "video_id": "douyin_" + video_data.get("title", ""),
-        "publish_url": f"https://www.douyin.com/video/{video_data.get('title', '')}"
-    }
-
-def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
+async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
         raise HTTPException(400, "请选择要发布的图片/视频素材")
     # 1. client_credential 获取 access_token（需开放平台已审核通过）

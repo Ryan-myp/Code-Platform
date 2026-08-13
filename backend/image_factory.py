@@ -16,6 +16,7 @@ import base64
 import io
 import json
 import logging
+from template_base import TemplateBase, create_template
 import os
 import re
 import tempfile

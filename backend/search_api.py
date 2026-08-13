@@ -419,29 +419,6 @@ def _search_works(conn, keyword: str, limit: int = 20) -> list:
     return results
 
 
-
-def _parse_search_request(query: str, filters: dict) -> dict:
-    """解析搜索请求。"""
-    return {
-        "query": query.strip()[:200],
-        "filters": filters,
-        "page": 1,
-        "page_size": 20
-    }
-
-def _search_knowledge_base(params: dict) -> list:
-    """搜索知识库。"""
-    return []
-
-def _search_templates(params: dict) -> list:
-    """搜索模板。"""
-    return []
-
-def _merge_and_rank_results(kb_results: list, template_results: list) -> list:
-    """合并并排序搜索结果。"""
-    all_results = kb_results + template_results
-    return sorted(all_results, key=lambda x: x.get("relevance", 0), reverse=True)
-
 def global_search(params: dict, current_user: dict) -> dict:
     """全局搜索入口 — 支持 types 过滤。"""
     from common.db import get_db
