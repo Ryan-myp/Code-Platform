@@ -6,3 +6,5 @@ export { PageLoading, CardLoading, SkeletonList, SkeletonGrid, ErrorState } from
 export { default as Badge, ColorBadge } from './Badge'
 export { default as ConfirmDialog } from './ConfirmDialog'
 export { default as PageHeader } from './PageHeader'
+
+export { default as Pagination } from '../Pagination'

@@ -32,6 +32,7 @@ import {
   Badge,
   PageHeader,
   ConfirmDialog,
+  Pagination,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
@@ -1377,9 +1378,12 @@ export default function VideoFactoryPage() {
         ) : videos.length === 0 ? (
           <Empty icon={Film} title="暂无视频" description="创建你的第一个视频任务" />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {videos.map((video) => (
-              <div key={video.filename} className="group relative">
+          <Pagination
+            items={videos}
+            pageSize={9}
+            label={`共 ${videos.length} 个视频`}
+            renderItem={(video) => (
+              <div className="group relative">
                 <div
                   className="aspect-video bg-gray-100 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-200 transition-colors overflow-hidden"
                   onClick={() => handlePlay(video)}
@@ -1392,7 +1396,6 @@ export default function VideoFactoryPage() {
                       loading="lazy"
                     />
                   ) : (
-                    /* 封面缺失兜底：渐变底 + 图标（后端抽帧失败会自动生成兜底封面，极少出现） */
                     <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-100 to-blue-50">
                       <Video className="w-8 h-8 text-gray-400 group-hover:text-blue-500 transition-colors" />
                       <span className="mt-1.5 text-[10px] text-gray-400">封面生成中…</span>
@@ -1453,8 +1456,8 @@ export default function VideoFactoryPage() {
                 <div className="mt-2 text-xs text-gray-600 truncate">{video.title || video.filename}</div>
                 <div className="text-xs text-gray-400">{formatBytes(video.size)}</div>
               </div>
-            ))}
-          </div>
+            )}
+          />
         )}
       </div>
 

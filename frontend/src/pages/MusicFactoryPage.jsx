@@ -29,6 +29,7 @@ import {
   PageHeader,
   ConfirmDialog,
   Modal,
+  Pagination,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
@@ -1377,12 +1378,12 @@ export default function MusicFactoryPage() {
             description="生成歌词或合成人声后，作品会出现在这里"
           />
         ) : (
-          <div className="space-y-2">
-            {audios.map((audio) => (
-              <div
-                key={audio.filename}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
-              >
+          <Pagination
+            items={audios}
+            pageSize={8}
+            label={`共 ${audios.length} 首音乐`}
+            renderItem={(audio) => (
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   {audio.cover_url ? (
                     <img
@@ -1459,8 +1460,8 @@ export default function MusicFactoryPage() {
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
+            )}
+          />
         )}
         {/* 单例音频播放器 */}
         {playingAudio && (

@@ -54,6 +54,7 @@ import {
   ErrorState,
   PageHeader,
   ConfirmDialog,
+  Pagination,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
@@ -3184,70 +3185,65 @@ export default function ImageFactoryPage() {
               title={searchQuery ? '未找到匹配的图片' : '暂无图片'}
               description={searchQuery ? '尝试调整搜索条件' : '去「文生图」生成你的第一张图片'}
             />
-          ) : viewMode === 'grid' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {filteredImages.map((img) => (
-                <div
-                  key={img.filename}
-                  className="group relative rounded-xl overflow-hidden shadow-sm"
-                >
-                  <img
-                    src={absUrl(img.thumb_url || img.url)}
-                    alt={img.title || img.filename}
-                    className="w-full h-40 object-cover"
-                    loading="lazy"
-                  />
-                  {renderImageActions({ ...img, url: absUrl(img.url) })}
-                  <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs text-white truncate bg-black/50">
-                    {img.title || img.filename}
-                  </div>
-                </div>
-              ))}
-            </div>
           ) : (
-            <div className="space-y-2">
-              {filteredImages.map((img) => (
-                <div
-                  key={img.filename}
-                  className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <img
-                    src={absUrl(img.thumb_url || img.url)}
-                    alt={img.title || img.filename}
-                    className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{img.title || img.filename}</p>
-                    <p className="text-sm text-gray-500">
-                      {formatRelativeTime(img.created_at)} · {formatBytes(img.size)}
-                    </p>
+            <Pagination
+              items={filteredImages}
+              pageSize={12}
+              label={searchQuery ? `找到 ${filteredImages.length} 张图片` : `共 ${filteredImages.length} 张图片`}
+              renderItem={(img) =>
+                viewMode === 'grid' ? (
+                  <div className="group relative rounded-xl overflow-hidden shadow-sm">
+                    <img
+                      src={absUrl(img.thumb_url || img.url)}
+                      alt={img.title || img.filename}
+                      className="w-full h-40 object-cover"
+                      loading="lazy"
+                    />
+                    {renderImageActions({ ...img, url: absUrl(img.url) })}
+                    <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs text-white truncate bg-black/50">
+                      {img.title || img.filename}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => setPreviewImage({ ...img, url: absUrl(img.url) })}
-                      className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
-                      title="预览"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDownload({ ...img, url: absUrl(img.url) })}
-                      className="p-2 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded-lg transition-colors"
-                      title="下载"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteTarget({ ...img, url: absUrl(img.url) })}
-                      className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
-                      title="删除"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                ) : (
+                  <div className="flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                    <img
+                      src={absUrl(img.thumb_url || img.url)}
+                      alt={img.title || img.filename}
+                      className="w-16 h-16 object-cover rounded-lg flex-shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{img.title || img.filename}</p>
+                      <p className="text-sm text-gray-500">
+                        {formatRelativeTime(img.created_at)} · {formatBytes(img.size)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => setPreviewImage({ ...img, url: absUrl(img.url) })}
+                        className="p-2 hover:bg-blue-50 text-gray-400 hover:text-blue-600 rounded-lg transition-colors"
+                        title="预览"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDownload({ ...img, url: absUrl(img.url) })}
+                        className="p-2 hover:bg-green-50 text-gray-400 hover:text-green-600 rounded-lg transition-colors"
+                        title="下载"
+                      >
+                        <Download className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setDeleteTarget({ ...img, url: absUrl(img.url) })}
+                        className="p-2 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded-lg transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                )
+              }
+            />
           )}
         </div>
       )}
