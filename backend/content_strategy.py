@@ -776,34 +776,27 @@ def _as_list(value) -> list:
     return []
 
 
-def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> dict:
-    """排期 + 已发布记录 → 月历聚合视图（纯函数，可单测）。
 
-    schedules 需含 scheduled_at；records 需含 created_at（ISO 字符串）。
-    返回：{month, first_weekday, day_count, summary, days: {date: {...}}}
-    days 内每项含 schedules / records 列表与 total，超出月份的记录被忽略。
-    """
-    year, mon, _, day_count, first_weekday = _month_bounds(month)
-    month_str = f"{year:04d}-{mon:02d}"
-    days: dict[str, dict] = {}
-    summary = {"scheduled": 0, "published": 0}
+def _calendar_slot(days: dict, day_str: str) -> dict:
+    """获取/创建月历槽位。"""
+    if day_str not in days:
+        days[day_str] = {
+            "date": day_str,
+            "day": int(day_str[8:10]),
+            "schedules": [],
+            "records": [],
+            "total": 0,
+        }
+    return days[day_str]
 
-    def _slot(day_str: str) -> dict:
-        if day_str not in days:
-            days[day_str] = {
-                "date": day_str,
-                "day": int(day_str[8:10]),
-                "schedules": [],
-                "records": [],
-                "total": 0,
-            }
-        return days[day_str]
 
+def _fill_calendar_schedules(days: dict, schedules: list, month_str: str, summary: dict) -> None:
+    """填充排期到月历槽位。"""
     for s in schedules or []:
         ds = _parse_iso_date(s.get("scheduled_at"))
         if not ds or not ds.startswith(month_str):
             continue
-        slot = _slot(ds)
+        slot = _calendar_slot(days, ds)
         slot["schedules"].append(
             {
                 "id": s.get("id", ""),
@@ -819,11 +812,14 @@ def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> di
         slot["total"] += 1
         summary["scheduled"] += 1
 
+
+def _fill_calendar_records(days: dict, records: list, month_str: str, summary: dict) -> None:
+    """填充已发布记录到月历槽位。"""
     for r in records or []:
         ds = _parse_iso_date(r.get("created_at"))
         if not ds or not ds.startswith(month_str):
             continue
-        slot = _slot(ds)
+        slot = _calendar_slot(days, ds)
         slot["records"].append(
             {
                 "id": r.get("id", ""),
@@ -840,6 +836,21 @@ def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> di
         )
         slot["total"] += 1
         summary["published"] += 1
+
+def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> dict:
+    """排期 + 已发布记录 → 月历聚合视图（纯函数，可单测）。
+
+    schedules 需含 scheduled_at；records 需含 created_at（ISO 字符串）。
+    返回：{month, first_weekday, day_count, summary, days: {date: {...}}}
+    days 内每项含 schedules / records 列表与 total，超出月份的记录被忽略。
+    """
+    year, mon, _, day_count, first_weekday = _month_bounds(month)
+    month_str = f"{year:04d}-{mon:02d}"
+    days: dict[str, dict] = {}
+    summary = {"scheduled": 0, "published": 0}
+
+    _fill_calendar_schedules(days, schedules, month_str, summary)
+    _fill_calendar_records(days, records, month_str, summary)
 
     return {
         "month": month_str,

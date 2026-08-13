@@ -671,6 +671,44 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
 
 
 # ── 快手：素材上传 + 发布 ────────────────────────────────────
+
+async def _ks_upload_media(client, headers: dict, req: PublishRequest) -> object:
+    """上传素材到快手：视频走 uploadId 两段式，图片逐个上传。返回 resourceId 或 id 列表。"""
+    if req.content_type == "video":
+        resp = await client.post(
+            "https://open.kuaishou.com/api/open/file/upload/start",
+            headers=headers,
+            json={"fileName": _asset_filename(req.asset_urls[0])},
+        )
+        upload = resp.json()
+        upload_id = upload.get("uploadId") or (upload.get("data") or {}).get("uploadId")
+        if not upload_id:
+            raise HTTPException(502, "操作失败，请稍后重试")
+        video_bytes = await _fetch_asset_bytes(req.asset_urls[0])
+        resp = await client.post(
+            "https://open.kuaishou.com/api/open/file/upload/complete",
+            headers=headers,
+            json={"uploadId": upload_id},
+            files={"file": (_asset_filename(req.asset_urls[0]), video_bytes)},
+        )
+        upload_data = resp.json()
+        resource_id = (upload_data.get("data") or {}).get("resourceId") or upload_data.get("resourceId")
+        if not resource_id:
+            raise HTTPException(502, "操作失败，请稍后重试")
+        return resource_id
+    img_ids = []
+    for url in req.asset_urls[:9]:
+        resp = await client.post(
+            "https://open.kuaishou.com/api/open/file/upload/complete",
+            headers=headers,
+            data={},
+            files={"file": (_asset_filename(url), await _fetch_asset_bytes(url))},
+        )
+        rid = (resp.json().get("data") or {}).get("resourceId")
+        if rid:
+            img_ids.append(rid)
+    return img_ids
+
 async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
         raise HTTPException(400, "请选择要发布的图片/视频素材")
@@ -686,41 +724,7 @@ async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C90
             raise HTTPException(502, "操作失败，请稍后重试")
         headers = {"Authorization": f"Bearer {token}"}
         # 2. 上传素材（支持图片/视频）
-        if req.content_type == "video":
-            resp = await client.post(
-                "https://open.kuaishou.com/api/open/file/upload/start",
-                headers=headers,
-                json={"fileName": _asset_filename(req.asset_urls[0])},
-            )
-            upload = resp.json()
-            upload_id = upload.get("uploadId") or (upload.get("data") or {}).get("uploadId")
-            if not upload_id:
-                raise HTTPException(502, "操作失败，请稍后重试")
-            video_bytes = await _fetch_asset_bytes(req.asset_urls[0])
-            resp = await client.post(
-                "https://open.kuaishou.com/api/open/file/upload/complete",
-                headers=headers,
-                json={"uploadId": upload_id},
-                files={"file": (_asset_filename(req.asset_urls[0]), video_bytes)},
-            )
-            upload_data = resp.json()
-            resource_id = (upload_data.get("data") or {}).get("resourceId") or upload_data.get("resourceId")
-            if not resource_id:
-                raise HTTPException(502, "操作失败，请稍后重试")
-        else:
-            resource_id = None
-            img_ids = []
-            for url in req.asset_urls[:9]:
-                resp = await client.post(
-                    "https://open.kuaishou.com/api/open/file/upload/complete",
-                    headers=headers,
-                    data={},
-                    files={"file": (_asset_filename(url), await _fetch_asset_bytes(url))},
-                )
-                rid = (resp.json().get("data") or {}).get("resourceId")
-                if rid:
-                    img_ids.append(rid)
-            resource_id = img_ids
+        resource_id = await _ks_upload_media(client, headers, req)
         # 3. 发布
         text = req.title
         if req.content:
