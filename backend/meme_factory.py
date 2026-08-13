@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 """表情包工坊 — 文字一键生成表情包。
 
 - 经典模板模式（PIL 直接绘制，秒出不依赖 AI）：黄底/白底/红底/黑底/渐变 5 种风格

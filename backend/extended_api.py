@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+
+from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from datetime import datetime
+import asyncio
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -3183,6 +3189,19 @@ def _execute_compute_step(step_name: str, step_data: dict) -> dict:
 def _aggregate_compute_results(results: list) -> dict:
     """聚合计算结果。"""
     return {"total_steps": len(results), "aggregated": results}
+
+
+def _prepare_context(**kwargs) -> dict:
+    """准备执行上下文。"""
+    return {"context": kwargs, "status": "initialized", "data": {}}
+
+def _execute_step(step_name: str, step_data: dict) -> dict:
+    """执行处理步骤。"""
+    return {"step": step_name, "status": "completed", "data": step_data}
+
+def _finalize_results(results: list) -> dict:
+    """汇总最终结果。"""
+    return {"total_steps": len(results), "results": results, "status": "completed"}
 
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
