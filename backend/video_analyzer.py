@@ -256,19 +256,36 @@ def _clamp_score(score) -> int | None:
     return max(0, min(100, v))
 
 
-def normalize_segments(result: dict) -> dict:
-    """分段报告结构化兜底（纯函数，可单测）。
 
-    LLM 输出可能缺失 segments，此时从现有字段派生三段结构，保证
-    analysis 落库后始终含 segments 与 overall_score，前端可直接渲染。
-    """
-    result = dict(result or {})
-    raw_segments = result.get("segments") if isinstance(result.get("segments"), dict) else {}
-    key_scenes = result.get("key_scenes") or []
-    subtitles = result.get("subtitles_text") or ""
-    summary = result.get("summary") or ""
-    detailed = result.get("detailed_summary") or ""
-    tone = result.get("tone") or ""
+def _derive_segment_fallbacks(result: dict, raw_segments: dict, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str) -> tuple:
+    """派生三段 fallback 内容与要点。返回 (visual_fallback, visual_points, audio_fallback, text_fallback, text_points)。"""
+    visual_points = [
+        f"[{s.get('timestamp') or '00:00'}] {s.get('description') or ''}".strip() for s in key_scenes
+    ] if key_scenes else []
+    visual_fallback = (
+        f"共识别 {len(key_scenes)} 个关键场景，涵盖开头钩子、主体推进与结尾收束。"
+        if key_scenes
+        else "未能提取画面轨道信息，建议补充视频描述后重新分析。"
+    )
+    audio_fallback = (
+        f"整体基调为「{tone}」。基于字幕文本推断人声表达与节奏特征，"
+        "完整音轨分析需结合实际音频轨道（配乐/音效/人声质量）。"
+        if tone
+        else "未能提取音频轨道信息，建议补充视频描述后重新分析。"
+    )
+    text_parts = [p for p in (detailed, summary, subtitles) if p]
+    text_fallback = (
+        text_parts[0]
+        if text_parts
+        else "未能提取文本轨道信息，建议补充视频描述后重新分析。"
+    )
+    text_points = [f"字幕片段：{subtitles[:60]}…"] if subtitles else []
+    return visual_fallback, visual_points, audio_fallback, text_fallback, text_points
+
+
+def _build_segments(raw_segments: dict, fallbacks: tuple, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str) -> dict:
+    """构建三段 segments 结构。"""
+    visual_fallback, visual_points, audio_fallback, text_fallback, text_points = fallbacks
 
     def _segment(key: str, fallback_analysis: str, fallback_points: list[str]) -> dict:
         seg = raw_segments.get(key) if isinstance(raw_segments.get(key), dict) else {}
@@ -283,38 +300,32 @@ def normalize_segments(result: dict) -> dict:
             "score": _clamp_score(seg.get("score")),
         }
 
-    # 画面：优先用关键场景时间线派生要点
-    visual_points = [
-        f"[{s.get('timestamp') or '00:00'}] {s.get('description') or ''}".strip() for s in key_scenes
-    ] if key_scenes else []
-    visual_fallback = (
-        f"共识别 {len(key_scenes)} 个关键场景，涵盖开头钩子、主体推进与结尾收束。"
-        if key_scenes
-        else "未能提取画面轨道信息，建议补充视频描述后重新分析。"
-    )
-
-    # 音频：基调/语气信息即音频表现的一部分
-    audio_fallback = (
-        f"整体基调为「{tone}」。基于字幕文本推断人声表达与节奏特征，"
-        "完整音轨分析需结合实际音频轨道（配乐/音效/人声质量）。"
-        if tone
-        else "未能提取音频轨道信息，建议补充视频描述后重新分析。"
-    )
-
-    # 文本：摘要 + 字幕组合
-    text_parts = [p for p in (detailed, summary, subtitles) if p]
-    text_fallback = (
-        text_parts[0]
-        if text_parts
-        else "未能提取文本轨道信息，建议补充视频描述后重新分析。"
-    )
-    text_points = [f"字幕片段：{subtitles[:60]}…"] if subtitles else []
-
-    segments = {
+    return {
         "visual": _segment("visual", visual_fallback, visual_points),
         "audio": _segment("audio", audio_fallback, []),
         "text": _segment("text", text_fallback, text_points),
     }
+
+def normalize_segments(result: dict) -> dict:
+    """分段报告结构化兜底（纯函数，可单测）。
+
+    LLM 输出可能缺失 segments，此时从现有字段派生三段结构，保证
+    analysis 落库后始终含 segments 与 overall_score，前端可直接渲染。
+    """
+    result = dict(result or {})
+    raw_segments = result.get("segments") if isinstance(result.get("segments"), dict) else {}
+    key_scenes = result.get("key_scenes") or []
+    subtitles = result.get("subtitles_text") or ""
+    summary = result.get("summary") or ""
+    detailed = result.get("detailed_summary") or ""
+    tone = result.get("tone") or ""
+
+    fallbacks = _derive_segment_fallbacks(
+        result, raw_segments, key_scenes, tone, subtitles, summary, detailed
+    )
+    segments = _build_segments(
+        raw_segments, fallbacks, key_scenes, tone, subtitles, summary, detailed
+    )
 
     overall = _clamp_score(result.get("overall_score"))
     if overall is None:

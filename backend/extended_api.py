@@ -1085,13 +1085,7 @@ def _attach_case_meta(cases: list, project_dir: str) -> list:
 
 
 def _extract_failed_functions(project_dir: str, out: str) -> list:  # noqa: C901
-    """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。
-
-    pytest 无 -x 时输出所有失败：解析 FAILED ...::test_x 行（+ traceback 帧）→
-    定位测试函数源码 → 提取请求路径 → AST 匹配 @app.get("/path") 装饰器。
-    返回 [(name, start_line, end_line, [test_seg...]), ...]（按失败顺序、按函数去重）；
-    定位失败返回 []。test_seg 为失败测试用例源码（供 LLM 理解断言要求）。
-    """
+    """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。"""
     import ast
 
     main_file = os.path.join(project_dir, "main.py")
@@ -1101,60 +1095,12 @@ def _extract_failed_functions(project_dir: str, out: str) -> list:  # noqa: C901
         tree = ast.parse(code)
     except Exception:
         return []
-    # 失败测试名：FAILED test_main.py::Class::test_x - 原因（+ traceback ' in test_x' 帧兜底）
-    failed = re.findall(r"FAILED [^\n]*::([a-zA-Z0-9_]+) - ", out or "")
-    failed += re.findall(r" in (test_\w+)\b", out or "")
-    names, seen = [], set()
-    for n in failed:
-        if n not in seen:
-            seen.add(n)
-            names.append(n)
+    names = _parse_failed_test_names(out)
     if not names:
         return []
-    test_file = os.path.join(project_dir, "test_main.py")
-    try:
-        with open(test_file, encoding="utf-8") as f:
-            tcode = f.read()
-        ttree = ast.parse(tcode)
-    except Exception:
-        return []
-    # 测试函数 → {请求路径列表, 源码段}
-    test_info = {}
-    for node in ast.walk(ttree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names:
-            seg = ast.get_source_segment(tcode, node) or ""
-            paths = [
-                p
-                for p in re.findall(r'["\'][^"\']*?(/[^"\']+)[^"\']*["\']', seg)
-                if p not in ("/", "/docs", "/openapi.json", "/redoc")
-            ]
-            info = test_info.setdefault(node.name, {"paths": [], "segs": []})
-            info["paths"] += [p for p in paths if p not in info["paths"]]
-            if seg not in info["segs"]:
-                info["segs"].append(seg)
-    # 路由函数匹配（保留路由装饰器行，只替换 def..函数尾）
-    funcs, order = {}, []
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for d in node.decorator_list:
-            seg = ast.get_source_segment(code, d) or ""
-            m = re.search(r'["\'](/[^"\']+)["\']', seg)
-            if not m:
-                continue
-            for _, info in test_info.items():
-                if m.group(1) in info["paths"]:
-                    if node.name not in funcs:
-                        funcs[node.name] = {
-                            "start": node.lineno,
-                            "end": getattr(node, "end_lineno", node.lineno),
-                            "segs": [],
-                        }
-                        order.append(node.name)
-                    funcs[node.name]["segs"] += [s for s in info["segs"] if s not in funcs[node.name]["segs"]]
-                    break
+    test_info = _parse_test_info(project_dir, names)
+    funcs, order = _match_route_functions(tree, code, test_info)
     return [(n, funcs[n]["start"], funcs[n]["end"], funcs[n]["segs"]) for n in order]
-
 
 def _replace_function(target_path: str, new_code: str, start_line: int, end_line: int) -> None:
     """用修复后的函数源码替换文件指定行区间，并按原函数缩进适配。"""
