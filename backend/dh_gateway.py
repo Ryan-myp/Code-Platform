@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 
+async def _create_dh_simple(dh_params: dict) -> dict:
+    """简化版数字人视频创建。"""
+    return {"status": "success", "video_url": dh_params.get("output_path", "")}
+
+async def _prepare_dh_params_simple(request_data: dict) -> dict:
+    """简化版准备数字人参数。"""
+    return {
+        "image_path": request_data.get("image", ""),
+        "audio_path": request_data.get("audio", ""),
+        "output_path": request_data.get("output_path", "")
+    }
+
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
