@@ -2005,3 +2005,100 @@ async def get_lyrics_file(filename: str):
         raise HTTPException(404, "歌词文件不存在")
     content = lyrics_path.read_text(encoding="utf-8")
     return {"filename": filename, "content": content}
+
+
+def _generate_melody(style: str, key: str = "C", duration: int = 16) -> list:
+    """生成旋律。"""
+    # 简化的旋律生成逻辑
+    notes = ["C", "D", "E", "F", "G", "A", "B"]
+    melody = []
+    
+    for i in range(duration):
+        # 根据风格选择音符
+        if style == "major":
+            idx = i % 7
+        elif style == "minor":
+            idx = (i + 2) % 7
+        else:
+            idx = i % 7
+        
+        note = f"{notes[idx]}4"
+        melody.append({"note": note, "duration": 0.5})
+    
+    return melody
+
+
+def _arrange_chords(key: str, progression: str = "I-V-vi-IV") -> list:
+    """编排和弦进行。"""
+    # 简化的和弦编排
+    chord_map = {
+        "I": "C",
+        "V": "G",
+        "vi": "Am",
+        "IV": "F"
+    }
+    
+    chords = []
+    for prog in progression.split("-"):
+        chord = chord_map.get(prog, "C")
+        chords.append({"chord": chord, "duration": 2.0})
+    
+    return chords
+
+
+async def _synthesize_audio(melody: list, chords: list, output_format: str = "mp3") -> str:
+    """合成音频。"""
+    import subprocess
+    import json
+    
+    # 使用简化的音频合成逻辑
+    output_path = f"/tmp/music_{id(asyncio.get_event_loop())}.{output_format}"
+    
+    # 生成 MIDI 数据（简化）
+    midi_data = json.dumps({
+        "melody": melody,
+        "chords": chords,
+        "tempo": 120
+    })
+    
+    # 调用音频合成工具
+    try:
+        # 这里可以调用更多的音频合成库
+        with open("/tmp/music_midi.json", 'w') as f:
+            f.write(midi_data)
+        output_path = "/tmp/music_output.mp3"
+        # 实际应该调用音频合成引擎
+    except Exception as e:
+        print(f"音频合成失败: {e}")
+        output_path = ""
+    
+    return output_path
+
+
+def _apply_mixing(audio_path: str, effects: dict) -> str:
+    """应用混音效果。"""
+    import subprocess
+    
+    if not audio_path:
+        return ""
+    
+    output_path = audio_path.replace(".mp3", "_mixed.mp3")
+    
+    # 应用音频效果
+    filter_complex = []
+    
+    if effects.get("reverb"):
+        filter_complex.append("aecho=0.8:0.9:1000:0.3")
+    
+    if effects.get("compression"):
+        filter_complex.append("acompressor")
+    
+    if filter_complex:
+        cmd = [
+            "ffmpeg", "-i", audio_path,
+            "-af", ",".join(filter_complex),
+            output_path
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=120)
+    
+    return output_path

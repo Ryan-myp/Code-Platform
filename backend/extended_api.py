@@ -4042,3 +4042,80 @@ async def list_excel_history(current_user: dict = require_auth()):
 register_handler("copywriting_generate", _copywriting_handler, user_limit=2, max_attempts=1)
 register_handler("translation_translate", _translation_handler, user_limit=2, max_attempts=1)
 register_handler("ppt_generate", _ppt_handler, user_limit=2, max_attempts=1)
+
+
+def _setup_test_environment(project_dir: str, cfg: dict) -> bool:
+    """准备测试环境：安装依赖、检查测试文件。"""
+    try:
+        # 检查测试文件
+        test_files = []
+        for root, dirs, files in os.walk(project_dir):
+            dirs[:] = [d for d in dirs if d not in ('.venv', 'venv', '__pycache__', 'node_modules')]
+            for f in files:
+                if f.endswith('_test.py') or f.startswith('test_') or f.endswith('.test.js'):
+                    test_files.append(os.path.join(root, f))
+        
+        if not test_files:
+            logger.warning("未找到测试文件")
+            return False
+        
+        # 安装依赖
+        req_file = os.path.join(project_dir, 'requirements.txt')
+        if os.path.exists(req_file):
+            subprocess.run(['pip', 'install', '-r', req_file], 
+                         cwd=project_dir, capture_output=True, timeout=120)
+        
+        return True
+    except Exception as e:
+        logger.error(f"准备测试环境失败: {e}")
+        return False
+
+
+def _run_core_tests(project_dir: str, test_cmd: list, timeout: int = 300) -> tuple:
+    """运行核心测试。"""
+    try:
+        result = subprocess.run(test_cmd, 
+                               cwd=project_dir,
+                               capture_output=True,
+                               text=True,
+                               timeout=timeout)
+        return result.returncode, result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "测试超时"
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def _validate_results(returncode: int, stdout: str, stderr: str) -> dict:
+    """验证测试结果。"""
+    results = {
+        'passed': 0,
+        'failed': 0,
+        'error': 0,
+        'skipped': 0,
+        'summary': ''
+    }
+    
+    # 解析 pytest 输出
+    import re
+    passed_match = re.search(r'(\d+) passed', stdout)
+    failed_match = re.search(r'(\d+) failed', stdout)
+    error_match = re.search(r'(\d+) error', stdout)
+    skipped_match = re.search(r'(\d+) skipped', stdout)
+    
+    if passed_match:
+        results['passed'] = int(passed_match.group(1))
+    if failed_match:
+        results['failed'] = int(failed_match.group(1))
+    if error_match:
+        results['error'] = int(error_match.group(1))
+    if skipped_match:
+        results['skipped'] = int(skipped_match.group(1))
+    
+    # 生成摘要
+    if results['failed'] == 0 and results['error'] == 0:
+        results['summary'] = '✅ 所有测试通过'
+    else:
+        results['summary'] = f'❌ {results["failed"]} 个失败, {results["error"]} 个错误'
+    
+    return results

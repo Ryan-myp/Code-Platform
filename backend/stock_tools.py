@@ -1220,3 +1220,174 @@ async def reset_portfolio(current_user: dict = require_auth()):
         return {"ok": True, "message": "账户已重置，初始资金 100 万"}
     finally:
         conn.close()
+
+
+def _analyze_trend(data: dict) -> dict:
+    """趋势分析：均线排列、MACD 金叉死叉。"""
+    ind = (data or {}).get("indicators") or {}
+    points = (data or {}).get("data_points") or []
+    
+    ma5 = ind.get("ma5")
+    ma20 = ind.get("ma20")
+    ma60 = ind.get("ma60")
+    macd = ind.get("macd")
+    signal = ind.get("signal")
+    
+    # 均线排列
+    if ma5 and ma20 and ma60:
+        if ma5 > ma20 > ma60:
+            trend_level = "bullish"
+            trend_label = "多头排列"
+        elif ma5 < ma20 < ma60:
+            trend_level = "bearish"
+            trend_label = "空头排列"
+        else:
+            trend_level = "neutral"
+            trend_label = "均线纠缠"
+    else:
+        trend_level = "neutral"
+        trend_label = "数据不足"
+    
+    # MACD
+    if macd and signal:
+        if macd > signal and macd > 0:
+            macd_signal = "金叉看涨"
+        elif macd < signal and macd < 0:
+            macd_signal = "死叉看跌"
+        else:
+            macd_signal = "震荡"
+    else:
+        macd_signal = "数据不足"
+    
+    evidence = [f"MA5={ma5:.2f}" if ma5 else "MA5=N/A", 
+                f"MA20={ma20:.2f}" if ma20 else "MA20=N/A",
+                f"MA60={ma60:.2f}" if ma60 else "MA60=N/A",
+                f"MACD={macd:.4f}" if macd else "MACD=N/A"]
+    
+    return {
+        "level": trend_level,
+        "label": trend_label,
+        "evidence": evidence,
+        "macd_signal": macd_signal
+    }
+
+
+def _analyze_momentum(data: dict) -> dict:
+    """动量分析：RSI 超买超卖、KDJ。"""
+    ind = (data or {}).get("indicators") or {}
+    
+    rsi = ind.get("rsi")
+    
+    if rsi is not None:
+        if rsi >= 70:
+            momentum_level = "bearish"
+            momentum_label = f"RSI={rsi:.1f} 超买"
+        elif rsi <= 30:
+            momentum_level = "bullish"
+            momentum_label = f"RSI={rsi:.1f} 超卖"
+        else:
+            momentum_level = "neutral"
+            momentum_label = f"RSI={rsi:.1f} 中性"
+    else:
+        momentum_level = "neutral"
+        momentum_label = "RSI 数据不足"
+    
+    return {
+        "level": momentum_level,
+        "label": momentum_label,
+        "evidence": [f"RSI={rsi:.1f}" if rsi else "RSI=N/A"],
+        "rsi": rsi
+    }
+
+
+def _analyze_volatility(data: dict) -> dict:
+    """波动分析：ATR、标准差。"""
+    points = (data or {}).get("data_points") or []
+    
+    if not points:
+        return {"level": "neutral", "label": "数据不足", "evidence": []}
+    
+    closes = [p.get("close") for p in points if p.get("close")]
+    if len(closes) < 2:
+        return {"level": "neutral", "label": "数据不足", "evidence": []}
+    
+    # 计算日收益率标准差
+    returns = []
+    for i in range(1, len(closes)):
+        if closes[i-1] > 0:
+            returns.append((closes[i] - closes[i-1]) / closes[i-1])
+    
+    if returns:
+        import statistics
+        vol_std = statistics.stdev(returns) * 100
+        if vol_std > 3:
+            vol_level = "high"
+            vol_label = f"高波动 ({vol_std:.2f}%)"
+        elif vol_std > 1.5:
+            vol_level = "medium"
+            vol_label = f"中波动 ({vol_std:.2f}%)"
+        else:
+            vol_level = "low"
+            vol_label = f"低波动 ({vol_std:.2f}%)"
+    else:
+        vol_level = "neutral"
+        vol_label = "波动率计算失败"
+    
+    return {
+        "level": vol_level,
+        "label": vol_label,
+        "evidence": [f"日波动率={vol_std:.2f}%" if returns else "波动率=N/A"],
+        "vol_std": round(vol_std, 2) if returns else None
+    }
+
+
+def _analyze_volume_price(data: dict) -> dict:
+    """量价分析：成交量变化、资金流向。"""
+    points = (data or {}).get("data_points") or []
+    
+    if not points:
+        return {"level": "neutral", "label": "数据不足", "evidence": []}
+    
+    # 最近5日均量 vs 前5日均量
+    recent_vols = [p.get("volume", 0) for p in points[-5:] if p.get("volume")]
+    prev_vols = [p.get("volume", 0) for p in points[-10:-5] if p.get("volume")]
+    
+    if recent_vols and prev_vols:
+        avg_recent = sum(recent_vols) / len(recent_vols)
+        avg_prev = sum(prev_vols) / len(prev_vols)
+        
+        if avg_prev > 0:
+            vol_change = (avg_recent - avg_prev) / avg_prev * 100
+            if vol_change > 20:
+                vol_level = "increasing"
+                vol_label = f"量能放大 {vol_change:.1f}%"
+            elif vol_change < -20:
+                vol_level = "decreasing"
+                vol_label = f"量能萎缩 {abs(vol_change):.1f}%"
+            else:
+                vol_level = "stable"
+                vol_label = f"量能稳定 ({vol_change:.1f}%)"
+        else:
+            vol_level = "neutral"
+            vol_label = "量能比较失败"
+    else:
+        vol_level = "neutral"
+        vol_label = "量能数据不足"
+    
+    # 价格趋势
+    recent_closes = [p.get("close") for p in points[-5:] if p.get("close")]
+    if len(recent_closes) >= 2:
+        price_change = (recent_closes[-1] - recent_closes[0]) / recent_closes[0] * 100
+        price_trend = "上涨" if price_change > 0 else "下跌"
+    else:
+        price_change = 0
+        price_trend = "持平"
+    
+    return {
+        "level": vol_level,
+        "label": vol_label,
+        "evidence": [f"量能变化={vol_change:.1f}%" if recent_vols and prev_vols else "量能=N/A",
+                     f"价格趋势={price_trend} ({price_change:+.2f}%)"],
+        "vol_change": round(vol_change, 2) if recent_vols and prev_vols else None,
+        "price_change": round(price_change, 2)
+    }
