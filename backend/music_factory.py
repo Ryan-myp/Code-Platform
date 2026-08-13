@@ -1203,6 +1203,66 @@ def _vocalize_word(cut: np.ndarray, f1: float, target_dur: float, ref_f0: float 
     return shifted * env, f0
 
 
+
+def _estimate_word_f0s(raw: np.ndarray, valid: list, ref_f0: float | None, sr: int) -> list:
+    """逐词 F0 预估计：自相关 + 中位数 + 八度对齐 + 极端回退。"""
+    f0_list: list[float | None] = []
+    for w0, w1 in valid:
+        f0, vr = _estimate_f0_mono(raw[int(w0 * sr): int(w1 * sr)], pct=50)
+        if f0 is None or f0 < 70 or vr < 0.15:
+            f0_list.append(None)
+            continue
+        if ref_f0 is not None and ref_f0 > 70:
+            if f0 / ref_f0 > 3.0 or ref_f0 / f0 > 3.0:
+                f0 = ref_f0
+            else:
+                while f0 / ref_f0 > 2.0 and f0 > 75:
+                    f0 /= 2.0
+                while ref_f0 / f0 > 2.0 and f0 < 600:
+                    f0 *= 2.0
+        f0_list.append(f0)
+    return f0_list
+
+
+def _synthesize_word_vocal(
+    raw: np.ndarray, valid: list, f0_list: list, notes: list,
+    seg_dur: float, target_n: int, sr: int,
+) -> np.ndarray:
+    """逐词演唱化：槽位按词长比例分配 + raw 段直接变调 + 包络防爆音。"""
+    n = len(valid)
+    total_t = max(sum(w1 - w0 for w0, w1 in valid), 1e-6)
+    vocal = np.zeros(target_n)
+    pos = 0
+    for i in range(n):
+        w0, w1 = valid[i]
+        s0, s1 = pos, min(pos + int(seg_dur / total_t * (w1 - w0) * sr), target_n)
+        pos = s1
+        if s1 <= s0:
+            continue
+        seg_in = raw[int(w0 * sr): int(w1 * sr)]
+        if len(seg_in) < 64:
+            continue
+        f0 = f0_list[i]
+        ni = min(len(notes) - 1, round(i * (len(notes) - 1) / max(n - 1, 1)))
+        f1 = _note_freq(notes[ni]["midi"])
+        if f0 is None:
+            voiced = _phase_vocoder_stretch(seg_in, (s1 - s0) / len(seg_in))
+        else:
+            voiced = _pitch_shift_vibrato(seg_in, f0, f1, sr)
+            stretch = (s1 - s0) / max(len(voiced), 1)
+            if len(voiced) > 64 and stretch > 1.05:
+                voiced = _phase_vocoder_stretch(voiced, stretch)
+        env = np.ones(len(voiced))
+        a = min(int(0.015 * sr), len(voiced))
+        e = min(int(0.03 * sr), len(voiced))
+        if len(voiced) > a + e:
+            env[:a] = np.linspace(0, 1, a) ** 0.7
+            env[-e:] = np.linspace(1, 0, e) ** 0.8
+        voiced = voiced * env
+        end = min(s0 + len(voiced), target_n)
+        vocal[s0:end] = voiced[: end - s0]
+    return vocal
+
 def _vocalize_phrase(  # noqa: C901
     mp3_path: str, json_path: str, melody: list[dict], seg_start: float, seg_dur: float, sr: int = _SR
 ) -> np.ndarray | None:
@@ -1252,60 +1312,10 @@ def _vocalize_phrase(  # noqa: C901
         target_n = int(seg_dur * sr)
 
         # ── 1. 逐词 F0 预估计（raw 段，不受重采样伪相关影响）──
-        f0_list: list[float | None] = []
-        for w0, w1 in valid:
-            f0, vr = _estimate_f0_mono(raw[int(w0 * sr) : int(w1 * sr)], pct=50)
-            if f0 is None or f0 < 70 or vr < 0.15:
-                f0_list.append(None)
-                continue
-            if ref_f0 is not None and ref_f0 > 70:
-                if f0 / ref_f0 > 3.0 or ref_f0 / f0 > 3.0:
-                    f0 = ref_f0  # 极端误检回退句级基准
-                else:
-                    while f0 / ref_f0 > 2.0 and f0 > 75:
-                        f0 /= 2.0
-                    while ref_f0 / f0 > 2.0 and f0 < 600:
-                        f0 *= 2.0
-            f0_list.append(f0)
+        f0_list = _estimate_word_f0s(raw, valid, ref_f0, sr)
 
         # ── 2. 逐词演唱化：槽位按词朗读时长比例分配 + raw 段直接变调 ──
-        # 槽位按 TTS 词长比例（长词唱长、短词唱短），避免均分槽位下短词被拉长
-        # 数倍导致补拉伸超出相位声码器能力、槽位大量静音
-        total_t = max(sum(w1 - w0 for w0, w1 in valid), 1e-6)
-        vocal = np.zeros(target_n)
-        pos = 0
-        for i in range(n):
-            w0, w1 = valid[i]
-            s0, s1 = pos, min(pos + int(seg_dur / total_t * (w1 - w0) * sr), target_n)
-            pos = s1
-            if s1 <= s0:
-                continue
-            seg_in = raw[int(w0 * sr) : int(w1 * sr)]
-            if len(seg_in) < 64:
-                continue
-            f0 = f0_list[i]
-            ni = min(len(notes) - 1, round(i * (len(notes) - 1) / max(n - 1, 1)))
-            f1 = _note_freq(notes[ni]["midi"])
-            if f0 is None:
-                # 清音/无声词：相位声码器拉长到槽位（不变频），保留自然辅音
-                voiced = _phase_vocoder_stretch(seg_in, (s1 - s0) / len(seg_in))
-            else:
-                # 变调重采样（升调带抗混叠低通）→ 时长缩短 → 补拉伸回槽位时值：
-                # 真人演唱升调字音拉长，且保证整句人声连续铺满
-                voiced = _pitch_shift_vibrato(seg_in, f0, f1, sr)
-                stretch = (s1 - s0) / max(len(voiced), 1)
-                if len(voiced) > 64 and stretch > 1.05:
-                    voiced = _phase_vocoder_stretch(voiced, stretch)
-            # 包络：15ms 淡入 + 30ms 淡出（防爆音 + 咬字感）
-            env = np.ones(len(voiced))
-            a = min(int(0.015 * sr), len(voiced))
-            e = min(int(0.03 * sr), len(voiced))
-            if len(voiced) > a + e:
-                env[:a] = np.linspace(0, 1, a) ** 0.7
-                env[-e:] = np.linspace(1, 0, e) ** 0.8
-            voiced = voiced * env
-            end = min(s0 + len(voiced), target_n)
-            vocal[s0:end] = voiced[: end - s0]  # 覆盖写：升调变短留自然顿挫，降调变长覆盖尾部
+        vocal = _synthesize_word_vocal(raw, valid, f0_list, notes, seg_dur, target_n, sr)
         return vocal
     except Exception:
         return None

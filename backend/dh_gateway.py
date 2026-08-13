@@ -273,6 +273,33 @@ def _prepare_dh_params_simple(request_data: dict) -> dict:
         "duration": request_data.get("duration", 0)
     }
 
+
+def _apply_free_tier_downgrade(req, auth: dict) -> tuple:
+    """免费档降级：非 admin 免费 Key 的高级引擎/分辨率静默降级为 2D+720p。"""
+    qi = get_quota_info(auth["user_id"]) or {}
+    membership = qi.get("membership", "free")
+    forced = []
+    if membership == "free" and auth.get("role") != "admin":
+        if req.engine != "2d":
+            req = req.model_copy(update={"engine": "2d"})
+            forced.append("engine=2d")
+        if req.resolution != "720p":
+            req = req.model_copy(update={"resolution": "720p"})
+            forced.append("resolution=720p")
+    return req, forced
+
+
+def _check_and_charge(auth: dict, price: float, billing_id: str) -> float | None:
+    """余额校验并扣款；余额不足返回 None，成功返回扣款后余额。"""
+    with get_db_context() as conn:
+        _ensure_billing_tables(conn)
+        row = conn.execute("SELECT balance FROM users WHERE id=?", (auth["user_id"],)).fetchone()
+        balance = float(row["balance"] or 0) if row else 0.0
+        if balance < price:
+            return None
+    _charge(auth, billing_id, price)
+    return balance - price
+
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。
 
@@ -316,18 +343,8 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
     if req.template_id and req.template_id not in {t["id"] for t in INDUSTRY_TEMPLATES}:
         return _err(400, f"未知行业模板: {req.template_id}", "invalid_template")
 
-    # 免费/付费分层（5.2）：先分层再预检 —— 免费 Key 请求高级引擎被静默降级为
-    # 2D + 720p（水印由内部 membership 策略叠加），而非被素材预检直接拒绝
-    qi = get_quota_info(auth["user_id"]) or {}
-    membership = qi.get("membership", "free")
-    forced = []
-    if membership == "free" and auth.get("role") != "admin":
-        if req.engine != "2d":
-            req = req.model_copy(update={"engine": "2d"})
-            forced.append("engine=2d")
-        if req.resolution != "720p":
-            req = req.model_copy(update={"resolution": "720p"})
-            forced.append("resolution=720p")
+    # 免费/付费分层（5.2）：免费 Key 高级引擎静默降级为 2D+720p
+    req, forced = _apply_free_tier_downgrade(req, auth)
 
     # 素材/内容/配额预检（不扣费；与内部生成接口同规则）
     try:
@@ -338,20 +355,20 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
     price = _price_for(req.engine, req.resolution)
 
     # 余额校验与扣款（不足 402 不创建任务）
-    with get_db_context() as conn:
-        _ensure_billing_tables(conn)
-        row = conn.execute("SELECT balance FROM users WHERE id=?", (auth["user_id"],)).fetchone()
-        balance = float(row["balance"] or 0) if row else 0.0
-        if balance < price:
-            return _err(
-                402,
-                f"余额不足（本条需 {price:.2f} 元，当前余额 {balance:.2f} 元），请联系平台充值",
-                "insufficient_balance",
-                price=price,
-                balance=balance,
-            )
     billing_id = f"dhb_{uuid.uuid4().hex[:12]}"
-    _charge(auth, billing_id, price)
+    balance_after = _check_and_charge(auth, price, billing_id)
+    if balance_after is None:
+        with get_db_context() as conn:
+            _ensure_billing_tables(conn)
+            row = conn.execute("SELECT balance FROM users WHERE id=?", (auth["user_id"],)).fetchone()
+            balance = float(row["balance"] or 0) if row else 0.0
+        return _err(
+            402,
+            f"余额不足（本条需 {price:.2f} 元，当前余额 {balance:.2f} 元），请联系平台充值",
+            "insufficient_balance",
+            price=price,
+            balance=balance,
+        )
     try:
         task = create_task(
             "dh_generate",
@@ -369,7 +386,7 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
         "task_id": task["id"],
         "status": "pending",
         "price": price,
-        "balance": round(balance - price, 2),
+        "balance": round(balance_after, 2),
         "billing_id": billing_id,
         "engine": req.engine,
         "resolution": req.resolution,

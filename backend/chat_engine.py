@@ -488,6 +488,84 @@ def _format_workflow_output(execution_results: list) -> dict:
         "total_steps": len(execution_results)
     }
 
+
+async def _run_executor_workflow(workflow_id: str, message: str, nodes: list) -> dict:
+    """用完整 executor 执行工作流并整理结果摘要。"""
+    from workflows.executor import executor as _executor
+
+    run_id = await _executor.execute(workflow_id, {"message": message})
+    conn = get_db()
+    run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    run_dict = dict(run) if run else None
+    output_data = {}
+    if run_dict:
+        try:
+            output_data = json.loads(run_dict.get("output_data") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            output_data = {}
+    if not isinstance(output_data, dict):
+        output_data = {}
+
+    node_labels = {}
+    for n in nodes:
+        if isinstance(n, dict) and n.get("id"):
+            node_labels[n["id"]] = n.get("label") or n.get("name") or n["id"]
+
+    node_results = []
+    for nid, res in output_data.items():
+        if nid == "input":
+            continue
+        if not isinstance(res, dict):
+            res = {"status": "success", "result": str(res)}
+        node_results.append(
+            {
+                "node_id": nid,
+                "label": node_labels.get(nid, nid),
+                "status": res.get("status", "success"),
+                "summary": _wf_node_summary(res),
+            }
+        )
+
+    final_result = _wf_final_result(output_data, node_labels)
+    elapsed = _wf_elapsed(run_dict)
+
+    return {
+        "result": _wf_node_summary(final_result),
+        "nodes": node_results,
+        "run": run_dict,
+        "workflow_id": workflow_id,
+        "engine": "executor",
+        "elapsed": elapsed,
+    }
+
+
+def _wf_final_result(output_data: dict, node_labels: dict) -> dict:
+    """从输出中挑选最终结果：优先输出节点 → 最后成功节点 → 错误信息。"""
+    for nid in node_labels:
+        r = output_data.get(nid)
+        if isinstance(r, dict) and r.get("status") == "success":
+            return r
+    for r in reversed(list(output_data.values())):
+        if isinstance(r, dict) and r.get("status") == "success":
+            return r
+    for r in output_data.values():
+        if isinstance(r, dict) and r.get("status") == "error":
+            return r
+    return {"status": "error", "message": "工作流未产生任何输出，请检查节点配置与连线"}
+
+
+def _wf_elapsed(run_dict: dict | None) -> float | None:
+    """计算工作流运行耗时（秒）。"""
+    try:
+        if run_dict and run_dict.get("started_at") and run_dict.get("completed_at"):
+            start = datetime.fromisoformat(run_dict["started_at"])
+            end = datetime.fromisoformat(run_dict["completed_at"])
+            return round((end - start).total_seconds(), 2)
+    except (ValueError, TypeError):
+        pass
+    return None
+
 async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
     """运行 Workflow - 若可用 executor 则用，否则简单执行"""
     message = (req.get("message") or "").strip()
@@ -506,83 +584,7 @@ async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
 
     # 尝试用完整 executor
     try:
-        from workflows.executor import executor as _executor
-
-        run_id = await _executor.execute(workflow_id, {"message": message})
-        # 取出运行记录与各节点结果，整理成可读摘要返回
-        conn = get_db()
-        run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
-        conn.close()
-        run_dict = dict(run) if run else None
-        output_data = {}
-        if run_dict:
-            try:
-                output_data = json.loads(run_dict.get("output_data") or "{}")
-            except (json.JSONDecodeError, TypeError):
-                output_data = {}
-        if not isinstance(output_data, dict):
-            output_data = {}
-
-        # 节点 id → 显示名映射
-        node_labels = {}
-        for n in nodes:
-            if isinstance(n, dict) and n.get("id"):
-                node_labels[n["id"]] = n.get("label") or n.get("name") or n["id"]
-
-        # 每个节点的摘要（按执行顺序稳定排序）
-        node_results = []
-        for nid, res in output_data.items():
-            if nid == "input":
-                continue  # 注入的输入数据不当作节点展示
-            if not isinstance(res, dict):
-                res = {"status": "success", "result": str(res)}
-            node_results.append(
-                {
-                    "node_id": nid,
-                    "label": node_labels.get(nid, nid),
-                    "status": res.get("status", "success"),
-                    "summary": _wf_node_summary(res),
-                }
-            )
-
-        # 最终结果：优先输出节点，其次最后一个成功的节点，再退回错误信息
-        final_result = None
-        for nid in node_labels:
-            r = output_data.get(nid)
-            if isinstance(r, dict) and r.get("status") == "success":
-                final_result = r
-                break
-        if final_result is None:
-            for r in reversed(list(output_data.values())):
-                if isinstance(r, dict) and r.get("status") == "success":
-                    final_result = r
-                    break
-        if final_result is None:
-            for r in output_data.values():
-                if isinstance(r, dict) and r.get("status") == "error":
-                    final_result = r
-                    break
-        if final_result is None:
-            final_result = {"status": "error", "message": "工作流未产生任何输出，请检查节点配置与连线"}
-
-        # 计算耗时
-        elapsed = None
-        try:
-            if run_dict and run_dict.get("started_at") and run_dict.get("completed_at"):
-                start = datetime.fromisoformat(run_dict["started_at"])
-                end = datetime.fromisoformat(run_dict["completed_at"])
-                elapsed = round((end - start).total_seconds(), 2)
-        except (ValueError, TypeError):
-            elapsed = None
-
-        return {
-            "result": _wf_node_summary(final_result),
-            "nodes": node_results,
-            "run": run_dict,
-            "workflow_id": workflow_id,
-            "engine": "executor",
-            "elapsed": elapsed,
-        }
+        return await _run_executor_workflow(workflow_id, message, nodes)
     except Exception as e:
         logger.warning(f"workflow executor unavailable, simple run: {e}")
 

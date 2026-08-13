@@ -2411,47 +2411,62 @@ def _mask_kb_config(cfg: dict) -> dict:
     return cfg
 
 
+
+def _kb_connect_sqlite(cfg: dict):
+    """SQLite 连接。"""
+    path = (cfg.get("database") or "").strip()
+    if not path:
+        return None, None, "未配置数据库文件路径"
+    if not os.path.exists(path):
+        return None, None, f"数据库文件不存在：{path}"
+    conn = sqlite3.connect(path, timeout=5)
+    return conn, conn.cursor(), None
+
+
+def _kb_connect_mysql(cfg: dict):
+    """MySQL 连接。"""
+    try:
+        import pymysql
+    except ImportError:
+        return None, None, "未安装 pymysql 驱动（pip install pymysql）"
+    conn = pymysql.connect(
+        host=cfg.get("host") or "localhost",
+        port=int(cfg.get("port") or 3306),
+        user=cfg.get("user") or "",
+        password=cfg.get("password") or "",
+        database=cfg.get("database") or "",
+        charset="utf8mb4",
+        connect_timeout=5,
+    )
+    return conn, conn.cursor(), None
+
+
+def _kb_connect_postgres(cfg: dict):
+    """PostgreSQL 连接。"""
+    try:
+        import psycopg2
+    except ImportError:
+        return None, None, "未安装 psycopg2 驱动（pip install psycopg2-binary）"
+    conn = psycopg2.connect(
+        host=cfg.get("host") or "localhost",
+        port=int(cfg.get("port") or 5432),
+        user=cfg.get("user") or "",
+        password=cfg.get("password") or "",
+        dbname=cfg.get("database") or "",
+        connect_timeout=5,
+    )
+    return conn, conn.cursor(), None
+
 def _kb_connect(cfg: dict):
     """建立数据库连接，返回 (conn, cursor, error)。支持 sqlite / mysql / postgres。"""
     engine = (cfg.get("engine") or "sqlite").lower()
     try:
         if engine == "sqlite":
-            path = (cfg.get("database") or "").strip()
-            if not path:
-                return None, None, "未配置数据库文件路径"
-            if not os.path.exists(path):
-                return None, None, f"数据库文件不存在：{path}"
-            conn = sqlite3.connect(path, timeout=5)
-            return conn, conn.cursor(), None
+            return _kb_connect_sqlite(cfg)
         if engine == "mysql":
-            try:
-                import pymysql
-            except ImportError:
-                return None, None, "未安装 pymysql 驱动（pip install pymysql）"
-            conn = pymysql.connect(
-                host=cfg.get("host") or "localhost",
-                port=int(cfg.get("port") or 3306),
-                user=cfg.get("user") or "",
-                password=cfg.get("password") or "",
-                database=cfg.get("database") or "",
-                charset="utf8mb4",
-                connect_timeout=5,
-            )
-            return conn, conn.cursor(), None
+            return _kb_connect_mysql(cfg)
         if engine == "postgres":
-            try:
-                import psycopg2
-            except ImportError:
-                return None, None, "未安装 psycopg2 驱动（pip install psycopg2-binary）"
-            conn = psycopg2.connect(
-                host=cfg.get("host") or "localhost",
-                port=int(cfg.get("port") or 5432),
-                user=cfg.get("user") or "",
-                password=cfg.get("password") or "",
-                dbname=cfg.get("database") or "",
-                connect_timeout=5,
-            )
-            return conn, conn.cursor(), None
+            return _kb_connect_postgres(cfg)
         return None, None, f"不支持的数据库引擎：{engine}"
     except Exception as e:
         return None, None, f"连接失败：{e}"
@@ -2749,6 +2764,90 @@ def _build_kb_context_simple(context_docs: list) -> str:
     return "\n".join([doc.get("content", "") for doc in context_docs[:5]])
 
 
+
+def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
+    """知识库 db 类型检索：LIKE 匹配文本列。"""
+    db_conn, cursor, err = _kb_connect(cfg)
+    if err:
+        raise HTTPException(400, "操作失败")
+    try:
+        engine = (cfg.get("engine") or "sqlite").lower()
+        table = (cfg.get("table") or "").strip()
+        if not table:
+            tables = _kb_list_tables(cursor, engine)
+            if not tables:
+                raise HTTPException(400, "数据库中无可用表，请在连接配置中选择表")
+            table = tables[0]
+        cols = _kb_table_columns(cursor, engine, table)
+        text_cols = [c for c in cols if c and c.lower() not in ("id", "created_at", "updated_at")]
+        if not text_cols:
+            text_cols = cols
+        place = "%s" if engine == "mysql" else "?"
+        cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols)
+        cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT {place}', [f"%{q}%"] * len(text_cols) + [limit])
+        rows = cursor.fetchall()
+        hits = []
+        for r in rows:
+            item = {}
+            for i, c in enumerate(cols):
+                if i < len(r):
+                    v = r[i]
+                    item[c] = str(v)[:300] if v is not None else ""
+            hits.append(item)
+        return {"ok": True, "hits": hits, "count": len(hits), "table": table}
+    except Exception as e:
+        raise HTTPException(400, "服务异常，请稍后重试") from e
+    finally:
+        try:
+            db_conn.close()
+        except Exception:
+            pass
+
+
+def _kb_table_columns(cursor, engine: str, table: str) -> list:
+    """获取表的所有列名（按引擎方言）。"""
+    if engine == "sqlite":
+        cursor.execute(f'PRAGMA table_info("{table}")')
+        return [r[1] for r in cursor.fetchall()]
+    if engine == "mysql":
+        cursor.execute(f"SHOW COLUMNS FROM `{table}`")
+        return [r[0] for r in cursor.fetchall()]
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+    return [r[0] for r in cursor.fetchall()]
+
+
+def _kb_search_file(d: dict, q: str, limit: int) -> dict:
+    """知识库 file 类型检索：扫描目录内文本文件。"""
+    p = (d.get("path") or "").strip()
+    if not p or not os.path.exists(p):
+        raise HTTPException(400, "文件路径不存在")
+    files = [p] if os.path.isfile(p) else []
+    if not files:
+        for root, _, fns in os.walk(p):
+            for fn in fns:
+                if fn.lower().endswith((".txt", ".md", ".csv", ".log")):
+                    files.append(os.path.join(root, fn))
+    hits = []
+    for fp in files:
+        try:
+            with open(fp, encoding="utf-8", errors="ignore") as f:
+                content = f.read(200000)
+        except OSError:
+            continue
+        matched = [ln.strip() for ln in content.splitlines() if q.lower() in ln.lower()]
+        if matched:
+            hits.append(
+                {
+                    "file": os.path.basename(fp),
+                    "path": fp,
+                    "matches": matched[:5],
+                    "match_count": len(matched),
+                }
+            )
+        if len(hits) >= limit:
+            break
+    return {"ok": True, "hits": hits, "count": len(hits)}
+
 def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()
@@ -2767,80 +2866,9 @@ def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user:
     except (ValueError, TypeError):
         cfg = {}
     if kb_type == "db":
-        db_conn, cursor, err = _kb_connect(cfg)
-        if err:
-            raise HTTPException(400, "操作失败")
-        try:
-            engine = (cfg.get("engine") or "sqlite").lower()
-            table = (cfg.get("table") or "").strip()
-            if not table:
-                tables = _kb_list_tables(cursor, engine)
-                if not tables:
-                    raise HTTPException(400, "数据库中无可用表，请在连接配置中选择表")
-                table = tables[0]
-            # 获取列
-            if engine == "sqlite":
-                cursor.execute(f'PRAGMA table_info("{table}")')
-                cols = [r[1] for r in cursor.fetchall()]
-            elif engine == "mysql":
-                cursor.execute(f"SHOW COLUMNS FROM `{table}`")
-                cols = [r[0] for r in cursor.fetchall()]
-            else:
-                cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
-                cols = [r[0] for r in cursor.fetchall()]
-            text_cols = [c for c in cols if c and c.lower() not in ("id", "created_at", "updated_at")]
-            if not text_cols:
-                text_cols = cols
-            place = "%s" if engine == "mysql" else "?"
-            cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols)
-            cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT {place}', [f"%{q}%"] * len(text_cols) + [limit])
-            rows = cursor.fetchall()
-            hits = []
-            for r in rows:
-                item = {}
-                for i, c in enumerate(cols):
-                    if i < len(r):
-                        v = r[i]
-                        item[c] = str(v)[:300] if v is not None else ""
-                hits.append(item)
-            return {"ok": True, "hits": hits, "count": len(hits), "table": table}
-        except Exception as e:
-            raise HTTPException(400, "服务异常，请稍后重试") from e
-        finally:
-            try:
-                db_conn.close()
-            except Exception:
-                pass
+        return _kb_search_db(cfg, q, limit)
     if kb_type == "file":
-        p = (d.get("path") or "").strip()
-        if not p or not os.path.exists(p):
-            raise HTTPException(400, "文件路径不存在")
-        files = [p] if os.path.isfile(p) else []
-        if not files:
-            for root, _, fns in os.walk(p):
-                for fn in fns:
-                    if fn.lower().endswith((".txt", ".md", ".csv", ".log")):
-                        files.append(os.path.join(root, fn))
-        hits = []
-        for fp in files:
-            try:
-                with open(fp, encoding="utf-8", errors="ignore") as f:
-                    content = f.read(200000)
-            except OSError:
-                continue
-            matched = [ln.strip() for ln in content.splitlines() if q.lower() in ln.lower()]
-            if matched:
-                hits.append(
-                    {
-                        "file": os.path.basename(fp),
-                        "path": fp,
-                        "matches": matched[:5],
-                        "match_count": len(matched),
-                    }
-                )
-            if len(hits) >= limit:
-                break
-        return {"ok": True, "hits": hits, "count": len(hits)}
+        return _kb_search_file(d, q, limit)
     raise HTTPException(400, "该类型知识库暂不支持内容检索（db / file 支持）")
 
 
