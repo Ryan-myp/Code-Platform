@@ -422,6 +422,78 @@ def _search_works(conn, keyword: str, limit: int = 20) -> list:
     return results
 
 
+
+def _search_tools(query: str) -> list:
+    """搜索内置工具。"""
+    from search_api import TOOLS
+
+    results = []
+    for tool in TOOLS:
+        text = f"{tool['name']} {tool['desc']}"
+        if query.lower() in text.lower():
+            results.append({**tool, "score": 10})
+    return results
+
+
+def _search_builtin_templates(conn, kw: str, limit: int) -> list:
+    """搜索内置 + 用户模板。"""
+    results = []
+    try:
+        rows = conn.execute(
+            "SELECT id, name, description, category, tool_id, usage_count FROM templates WHERE name LIKE ? OR description LIKE ? LIMIT ?",
+            (kw, kw, limit),
+        ).fetchall()
+        for r in rows:
+            results.append({
+                "id": r["id"], "name": r["name"], "type": "template", "source": "builtin",
+                "category": r["category"], "tool_id": r["tool_id"],
+                "usage_count": r["usage_count"], "description": r["description"] or "", "score": 9,
+            })
+    except Exception:
+        pass
+    try:
+        rows = conn.execute(
+            "SELECT id, name, description, created_at FROM user_templates WHERE name LIKE ? LIMIT ?",
+            (kw, limit),
+        ).fetchall()
+        for r in rows:
+            results.append({
+                "id": r["id"], "name": r["name"], "type": "template", "source": "user_template",
+                "created_at": r["created_at"], "score": 8,
+            })
+    except Exception:
+        pass
+    return results
+
+
+def _search_table_rows(conn, table: str, kw: str, limit: int, result_type: str, score: int, source: str = "project") -> list:
+    """通用表搜索（requirements/projects 等）。"""
+    if table not in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
+        return []
+    try:
+        rows = conn.execute(
+            f"SELECT id, name, description FROM {table} WHERE name LIKE ? LIMIT ?",
+            (kw, limit),
+        ).fetchall()
+        return [{
+            "id": r["id"], "name": r["name"], "type": result_type, "source": source,
+            "description": r["description"] or "", "score": score,
+        } for r in rows]
+    except Exception:
+        return []
+
+
+def _dedup_results(results: list, limit: int) -> list:
+    """按 type-id 去重 + 排序 + 截断。"""
+    seen = set()
+    unique = []
+    for r in sorted(results, key=lambda x: x.get("score", 0), reverse=True):
+        key = f"{r.get('type','')}-{r.get('id','')}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return unique[:limit]
+
 def global_search(params: dict, current_user: dict) -> dict:
     """全局搜索入口 — 支持 types 过滤。"""
     from common.db import get_db
@@ -431,7 +503,6 @@ def global_search(params: dict, current_user: dict) -> dict:
     
     if not query:
         return {"results": [], "total": 0, "query": "", "suggestions": []}
-        return {"results": [], "total": 0, "query": "", "suggestions": []}
     
     conn = get_db()
     try:
@@ -439,87 +510,22 @@ def global_search(params: dict, current_user: dict) -> dict:
         kw = f"%{query}%"
         
         if "tools" in types:
-            from search_api import TOOLS
-            for tool in TOOLS:
-                text = f"{tool['name']} {tool['desc']}"
-                if query.lower() in text.lower():
-                    results.append({**tool, "score": 10})
+            results += _search_tools(query)
         
         if "templates" in types:
-            # 内置模板（seed_templates 填充的 templates 表）
-            try:
-                rows = conn.execute(
-                    "SELECT id, name, description, category, tool_id, usage_count FROM templates WHERE name LIKE ? OR description LIKE ? LIMIT ?",
-                    (kw, kw, limit),
-                ).fetchall()
-                for r in rows:
-                    results.append({
-                        "id": r["id"], "name": r["name"],
-                        "type": "template", "source": "builtin",
-                        "category": r["category"], "tool_id": r["tool_id"],
-                        "usage_count": r["usage_count"],
-                        "description": r["description"] or "", "score": 9,
-                    })
-            except Exception:
-                pass
-            # 用户自定义模板（user_templates 表）
-            try:
-                rows = conn.execute(
-                    "SELECT id, name, description, created_at FROM user_templates WHERE name LIKE ? LIMIT ?",
-                    (kw, limit),
-                ).fetchall()
-                for r in rows:
-                    results.append({
-                        "id": r["id"], "name": r["name"],
-                        "type": "template", "source": "user_template",
-                        "created_at": r["created_at"], "score": 8,
-                    })
-            except Exception:
-                pass
+            results += _search_builtin_templates(conn, kw, limit)
         
         if "works" in types:
-            works = _search_works(conn, kw, limit)
-            results.extend(works)
+            results.extend(_search_works(conn, kw, limit))
         
-        if "requirements" in types and "requirements" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            try:
-                rows = conn.execute(
-                    "SELECT id, name, description FROM requirements WHERE name LIKE ? LIMIT ?",
-                    (kw, limit),
-                ).fetchall()
-                for r in rows:
-                    results.append({
-                        "id": r["id"], "name": r["name"],
-                        "type": "requirement", "source": "project",
-                        "description": r["description"] or "", "score": 7,
-                    })
-            except Exception:
-                pass
+        if "requirements" in types:
+            results += _search_table_rows(conn, "requirements", kw, limit, "requirement", 7)
         
-        if "projects" in types and "projects" in [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]:
-            try:
-                rows = conn.execute(
-                    "SELECT id, name, description FROM projects WHERE name LIKE ? LIMIT ?",
-                    (kw, limit),
-                ).fetchall()
-                for r in rows:
-                    results.append({
-                        "id": r["id"], "name": r["name"],
-                        "type": "project", "source": "project",
-                        "description": r["description"] or "", "score": 6,
-                    })
-            except Exception:
-                pass
+        if "projects" in types:
+            results += _search_table_rows(conn, "projects", kw, limit, "project", 6)
         
         # 排序去重
-        seen = set()
-        unique = []
-        for r in sorted(results, key=lambda x: x.get("score", 0), reverse=True):
-            key = f"{r.get('type','')}-{r.get('id','')}"
-            if key not in seen:
-                seen.add(key)
-                unique.append(r)
-        
-        return {"results": unique[:limit], "total": len(unique), "query": query, "suggestions": []}
+        unique = _dedup_results(results, limit)
+        return {"results": unique, "total": len(unique), "query": query, "suggestions": []}
     finally:
         conn.close()

@@ -633,6 +633,82 @@ async def list_projects(current_user: dict = require_auth()):
     return result
 
 
+async def _game_llm_with_retry(system: str, prompt: str, max_tokens: int, temperature: float, _report) -> str:
+    """LLM 调用带指数退避重试（上游抖动，最多3次）。"""
+    last_err = ""
+    for _attempt in range(3):
+        try:
+            _report(25, f"AI 正在生成双版本代码（第 {_attempt + 1} 次尝试）…")
+            return await asyncio.to_thread(call_llm, system, prompt, max_tokens=max_tokens, temperature=temperature, timeout=300)
+        except HTTPException as e:
+            if e.status_code < 500:
+                raise
+            last_err = f"{e.status_code}: {e.detail}"
+            logger.warning("game LLM upstream error (attempt %d): %s", _attempt + 1, str(e.detail)[:200])
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("game LLM exception (attempt %d): %s", _attempt + 1, str(e)[:200])
+        await asyncio.sleep(2 * (_attempt + 1))
+    raise HTTPException(502, "操作失败，请稍后重试")
+
+
+async def _game_quality_gate(user_prompt: str, _report) -> tuple:
+    """生成链路质量门禁：最多3轮（解析失败→精简重试；QC未过→附问题清单修复）。"""
+    result = None
+    last_err = ""
+    for attempt in range(3):
+        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
+        try:
+            files = _validate_files(_extract_json(result))
+            qc = _qc_check(files)
+            if qc["ok"]:
+                return files, qc, result
+            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
+            logger.warning("game QC failed (attempt %d): %s", attempt + 1, last_err)
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
+                f"问题清单：{last_err}\n"
+                "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
+            )
+            result = await asyncio.to_thread(call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=22000, temperature=0.3, timeout=300)
+        except (ValueError, json.JSONDecodeError) as e:
+            last_err = str(e)
+            logger.warning(
+                "game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
+                attempt + 1, e, len(result or ""), (result or "")[:200],
+            )
+            retry_prompt = user_prompt + (
+                "\n\n重要：上次输出未通过解析，错误为：" + str(e) + "。\n"
+                "本次请严格：\n"
+                "1. 只输出合法 JSON 对象，不要 markdown 代码块、不要任何解释文字\n"
+                "2. 所有字符串正确转义（引号/换行），内容不要截断\n"
+                "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
+            )
+            result = await asyncio.to_thread(call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=14000, temperature=0.3, timeout=300)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, "操作失败，请稍后重试") from e
+    if not files or qc is None or not qc["ok"]:
+        raise HTTPException(502, "操作失败，请稍后重试")
+    return files, qc, result
+
+
+def _save_game_project(proj_id: str, req, files: dict, qc: dict) -> None:
+    """保存游戏项目到数据库。"""
+    conn = get_db()
+    _ensure_qc_column(conn)
+    now = datetime.now().isoformat()
+    conn.execute(
+        """INSERT INTO game_projects (id, name, template, requirement, files, qc, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (proj_id, req.name, req.template, req.requirement,
+         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False), now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
 async def _game_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 生成双版本小游戏（同步/异步任务共用执行体，异步时回报进度）。"""
     req = GenerateRequest(**payload)
@@ -655,95 +731,14 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
     _report(10, "已受理，正在组织生成提示词…")
 
     start = time.time()
-    files = None
-    qc = None
-    last_err = ""
     # 首次 LLM 调用：上游抖动自动重试（最多 3 次，指数退避）
-    result = None
-    for _attempt in range(3):
-        try:
-            _report(25, f"AI 正在生成双版本代码（第 {_attempt + 1} 次尝试）…")
-            result = await call_llm_async(_GENERATE_SYSTEM, user_prompt, max_tokens=22000, temperature=0.4, timeout=300)
-            break
-        except HTTPException as e:
-            if e.status_code < 500:
-                raise  # 4xx 属业务/参数问题，不重试
-            last_err = f"{e.status_code}: {e.detail}"
-            logger.warning("game LLM upstream error (attempt %d): %s", _attempt + 1, str(e.detail)[:200])
-        except Exception as e:
-            last_err = str(e)
-            logger.warning("game LLM exception (attempt %d): %s", _attempt + 1, str(e)[:200])
-        await asyncio.sleep(2 * (_attempt + 1))
-    if result is None:
-        raise HTTPException(502, "操作失败，请稍后重试")
+    result = await _game_llm_with_retry(_GENERATE_SYSTEM, user_prompt, 22000, 0.4, _report)
 
-    # 生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单自动修复重试）
-    for attempt in range(3):
-        _report(55, f"正在执行质量门禁检查（第 {attempt + 1} 轮）…")
-        try:
-            files = _validate_files(_extract_json(result))
-            qc = _qc_check(files)
-            if qc["ok"]:
-                break
-            last_err = "；".join(f"{c['item']}: {c['detail']}" for c in qc["checks"] if not c["ok"])
-            logger.warning("game QC failed (attempt %d): %s", attempt + 1, last_err)
-            retry_prompt = user_prompt + (
-                "\n\n重要：上次输出的代码未通过质量门禁（商用交付前必须全部通过）。"
-                f"问题清单：{last_err}\n"
-                "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
-            )
-            result = await call_llm_async(
-                _GENERATE_SYSTEM, retry_prompt, max_tokens=22000, temperature=0.3, timeout=300
-            )
-        except (ValueError, json.JSONDecodeError) as e:
-            last_err = str(e)
-            logger.warning(
-                "game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
-                attempt + 1,
-                e,
-                len(result or ""),
-                (result or "")[:200],
-            )
-            # 输出截断/超长：自动降级为精简版重试（优先保证 web 单文件可玩）
-            retry_prompt = user_prompt + (
-                "\n\n重要：上次输出未通过解析，错误为：" + str(e) + "。\n"
-                "本次请严格：\n"
-                "1. 只输出合法 JSON 对象，不要 markdown 代码块、不要任何解释文字\n"
-                "2. 所有字符串正确转义（引号/换行），内容不要截断\n"
-                "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
-            )
-            result = await call_llm_async(
-                _GENERATE_SYSTEM, retry_prompt, max_tokens=14000, temperature=0.3, timeout=300
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试") from e
-    if not files or qc is None:
-        raise HTTPException(502, "操作失败，请稍后重试")
-    if not qc["ok"]:
-        raise HTTPException(502, "操作失败，请稍后重试")
+    # 生成链路质量门禁：最多 3 轮
+    files, qc, result = await _game_quality_gate(user_prompt, _report)
 
     proj_id = f"game_{uuid.uuid4().hex[:12]}"
-    now = datetime.now().isoformat()
-    conn = get_db()
-    _ensure_qc_column(conn)
-    conn.execute(
-        """INSERT INTO game_projects (id, name, template, requirement, files, qc, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?)""",
-        (
-            proj_id,
-            req.name,
-            req.template,
-            req.requirement,
-            json.dumps(files, ensure_ascii=False),
-            json.dumps(qc, ensure_ascii=False),
-            now,
-            now,
-        ),
-    )
-    conn.commit()
-    conn.close()
+    _save_game_project(proj_id, req, files, qc)
     _report(85, "项目已保存")
 
     elapsed = round(time.time() - start, 2)
@@ -757,281 +752,6 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
         "files": files,
         "qc": qc,
     }
-
-
-@router.post("/generate")
-async def generate_game(
-    req: GenerateRequest,
-    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
-    current_user: dict = require_auth(),
-):
-    """选模板 + 需求 → AI 生成双版本小游戏（默认异步任务，立即返回 task_id）。"""
-    tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
-    if req.template != "custom" and not tpl:
-        raise HTTPException(400, "操作失败，请稍后重试")
-    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
-    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    if sync:
-        return await _game_generate_worker(req.model_dump())
-    task = create_task("game_generate", req.model_dump(), username=user, user_id=uid, role=role)
-    return {
-        "task_id": task["id"],
-        "status": "pending",
-        "message": "游戏生成任务已提交，后台执行中，可在任务中心查看进度",
-        "task": task,
-    }
-
-
-class CoverRequest(BaseModel):
-    cover: str = Field(..., description="封面 base64 dataURL（前端试玩 iframe canvas.toDataURL 截取）")
-
-
-COVER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "game_covers")
-
-
-def _ensure_cover_column(conn) -> None:
-    """幂等补列：game_projects.cover 存封面 URL。"""
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
-    if "cover" not in cols:
-        conn.execute("ALTER TABLE game_projects ADD COLUMN cover TEXT DEFAULT ''")
-        conn.commit()
-
-
-def _ensure_history_column(conn) -> None:
-    """game_projects 表确保 version_history 列存在（v15 迭代历史快照）。"""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()}
-    if "version_history" not in cols:
-        conn.execute("ALTER TABLE game_projects ADD COLUMN version_history TEXT DEFAULT '[]'")
-        conn.commit()
-
-
-def _ensure_qc_column(conn) -> None:
-    """幂等补列：game_projects.qc 存商用质量门禁报告（JSON）。"""
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
-    if "qc" not in cols:
-        conn.execute("ALTER TABLE game_projects ADD COLUMN qc TEXT DEFAULT ''")
-        conn.commit()
-
-
-@router.post("/{proj_id}/cover")
-async def save_cover(proj_id: str, req: CoverRequest, current_user: dict = require_auth()):
-    """保存游戏封面：前端试玩时截取首屏画面，作为项目卡片商用展示。"""
-    import base64
-
-    data = (req.cover or "").strip()
-    if not data.startswith("data:image"):
-        raise HTTPException(400, "cover 必须是 data:image 开头的 base64 图片")
-    try:
-        _, b64 = data.split(",", 1)
-        raw = base64.b64decode(b64)
-    except Exception as e:
-        raise HTTPException(400, "cover base64 解码失败") from e
-    if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(400, "封面图片过大（≤5MB）")
-    conn = get_db()
-    _ensure_cover_column(conn)
-    row = conn.execute("SELECT id FROM game_projects WHERE id=?", (proj_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "游戏项目不存在")
-    os.makedirs(COVER_DIR, exist_ok=True)
-    ext = "jpg" if "image/jpeg" in data else "png"
-    fname = f"{proj_id}.{ext}"
-    with open(os.path.join(COVER_DIR, fname), "wb") as f:
-        f.write(raw)
-    cover_url = f"/api/games/{proj_id}/cover-image"
-    conn.execute(
-        "UPDATE game_projects SET cover=?, updated_at=? WHERE id=?", (cover_url, datetime.now().isoformat(), proj_id)
-    )
-    conn.commit()
-    conn.close()
-    return {"success": True, "cover": cover_url}
-
-
-class AiCoverRequest(BaseModel):
-    prompt: str = Field("", max_length=500, description="自定义封面提示词（留空自动按游戏生成）")
-
-
-def _fallback_game_cover(name: str, tpl_name: str) -> bytes:
-    """文生图失败时的 PIL 兜底封面：渐变底 + 游戏名 + 玩法说明。"""
-    from PIL import Image, ImageDraw, ImageFont
-
-    w, h = 1024, 1024
-    schemes = [((99, 102, 241), (139, 92, 246)), ((16, 185, 129), (14, 165, 233))]
-    top, bottom = schemes[sum(ord(c) for c in name) % len(schemes)]
-    img = Image.new("RGB", (w, h), top)
-    px = img.load()
-    for y in range(h):
-        t = y / h
-        r = int(top[0] + (bottom[0] - top[0]) * t)
-        g = int(top[1] + (bottom[1] - top[1]) * t)
-        b = int(top[2] + (bottom[2] - top[2]) * t)
-        for x in range(w):
-            px[x, y] = (r, g, b)
-    draw = ImageDraw.Draw(img)
-    for k in range(3):
-        draw.ellipse(
-            [w * (0.58 + k * 0.12), h * 0.14, w * (0.98 + k * 0.12), h * 0.62],
-            outline=(255, 255, 255, 44 - k * 12),
-            width=2,
-        )
-    font = None
-    for fp in ("/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"):
-        if os.path.exists(fp):
-            try:
-                font = ImageFont.truetype(fp, 64)
-                break
-            except Exception:
-                continue
-    if font is None:
-        font = ImageFont.load_default()
-    title = (name or "AI 小游戏")[:12]
-    bbox = draw.textbbox((0, 0), title, font=font)
-    draw.text(((w - (bbox[2] - bbox[0])) / 2, h // 2 - 90), title, fill=(255, 255, 255, 240), font=font)
-    sub = f"{tpl_name} · 双版本小游戏"
-    draw.text(((w - (bbox[2] - bbox[0])) / 2, h // 2 + 20), sub, fill=(255, 255, 255, 170), font=font)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=85)
-    return buf.getvalue()
-
-
-@router.post("/{proj_id}/ai-cover")
-async def generate_ai_cover(proj_id: str, req: AiCoverRequest, current_user: dict = require_auth()):
-    """AI 生成游戏封面：按游戏名/模板自动生成提示词 → 文生图保存为封面；失败自动降级 PIL 兜底。"""
-    import requests as _requests
-
-    conn = get_db()
-    row = conn.execute("SELECT name, template FROM game_projects WHERE id=?", (proj_id,)).fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(404, "游戏项目不存在")
-    tpl = next((t for t in TEMPLATES if t["id"] == row["template"]), None)
-    tpl_name = tpl["name"] if tpl else "小游戏"
-    prompt = req.prompt.strip() or (
-        f"Mobile game cover art, cartoon style, vibrant gradient background, "
-        f"game theme: {row['name']}, {tpl_name} gameplay scene, "
-        "colorful illustration, game poster composition, no text, no watermark"
-    )
-    raw = None
-    try:
-        # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-        from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL
-
-        if not AGNES_API_KEY:
-            raise RuntimeError("AGNES_API_KEY 未配置")
-        resp = await asyncio.to_thread(
-            _requests.post,
-            f"{AGNES_API_BASE}/images/generations",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-            json={"model": IMAGE_MODEL, "prompt": prompt, "size": "1024x1024", "n": 1},
-            timeout=120,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"文生图失败: {resp.text[:200]}")
-        img_url = resp.json().get("data", [{}])[0].get("url")
-        if not img_url:
-            raise RuntimeError("文生图未返回图片 URL")
-        img_resp = await asyncio.to_thread(_requests.get, img_url, timeout=60)
-        if img_resp.status_code != 200:
-            raise RuntimeError("封面图片下载失败")
-        raw = img_resp.content
-    except Exception as e:
-        logger.warning("AI 封面生成失败，使用兜底封面: %s", str(e)[:200])
-        raw = _fallback_game_cover(row["name"], tpl_name)
-    os.makedirs(COVER_DIR, exist_ok=True)
-    fname = f"{proj_id}.jpg"
-    with open(os.path.join(COVER_DIR, fname), "wb") as f:
-        f.write(raw)
-    cover_url = f"/api/games/{proj_id}/cover-image"
-    conn = get_db()
-    conn.execute(
-        "UPDATE game_projects SET cover=?, updated_at=? WHERE id=?",
-        (cover_url, datetime.now().isoformat(), proj_id),
-    )
-    conn.commit()
-    conn.close()
-    return {"success": True, "cover": cover_url, "prompt": prompt}
-
-
-@router.get("/{proj_id}/cover-image")
-async def get_cover(proj_id: str):
-    """读取游戏封面图片。"""
-    for ext in ("png", "jpg"):
-        p = os.path.join(COVER_DIR, f"{proj_id}.{ext}")
-        if os.path.exists(p):
-            return FileResponse(p, media_type="image/png" if ext == "png" else "image/jpeg")
-    raise HTTPException(404, "暂无封面，可在试玩页截取保存")
-
-
-@router.get("/deploy-guide")
-async def deploy_guide(current_user: dict = require_auth()):
-    """微信小游戏部署指引。注意：必须注册在 /{proj_id} 之前，避免路径冲突。"""
-    return {
-        "steps": [
-            "下载生成的 ZIP 项目包并解压，`wx/` 目录就是微信小游戏项目",
-            "安装微信开发者工具（微信公众平台官网 → 下载 → 稳定版），登录时选择「小游戏」类型",
-            "打开开发者工具 → 「导入项目」→ 选择解压后的 `wx/` 目录",
-            "AppID 选择「测试号」或填入你的小游戏 AppID，点击「编译」即可在模拟器试玩",
-            "确认无误后：登录 mp.weixin.qq.com → 小游戏 → 开发管理 → 版本管理 → 上传代码",
-            "在微信公众平台提交审核，审核通过后点击「发布」即可上线",
-            "网页版（web/index.html）可直接双击运行，或部署到任意静态网站（如 GitHub Pages）分享给朋友",
-        ],
-        "note": "个人主体即可注册小游戏账号；用「测试号」可以先体验完整开发流程。",
-    }
-
-
-@router.get("/stats")
-async def game_stats(current_user: dict = require_auth()):
-    """小游戏工坊统计：项目数 / 模板分布 / 总迭代次数 / 收藏数。"""
-    conn = get_db()
-    total = conn.execute("SELECT COUNT(*) AS n FROM game_projects").fetchone()["n"]
-    favorites = conn.execute("SELECT COUNT(*) AS n FROM game_projects WHERE favorite=1").fetchone()["n"]
-    total_iter = conn.execute("SELECT COALESCE(SUM(iterations),0) AS n FROM game_projects").fetchone()["n"]
-    template_dist = {}
-    for r in conn.execute("SELECT template, COUNT(*) AS n FROM game_projects GROUP BY template").fetchall():
-        tpl = next((t for t in TEMPLATES if t["id"] == r["template"]), None)
-        template_dist[tpl["name"] if tpl else r["template"]] = r["n"]
-    conn.close()
-    return {"total": total, "favorites": favorites, "total_iterations": total_iter, "template_dist": template_dist}
-
-
-class RenameRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=80, description="新名称")
-    tags: list[str] = Field(default_factory=list, description="标签列表")
-
-
-@router.put("/{proj_id}")
-async def rename_project(proj_id: str, req: RenameRequest, current_user: dict = require_auth()):
-    """重命名游戏项目 / 更新标签。"""
-    conn = get_db()
-    row = conn.execute("SELECT id FROM game_projects WHERE id=?", (proj_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "游戏项目不存在")
-    conn.execute(
-        "UPDATE game_projects SET name=?, tags=?, updated_at=? WHERE id=?",
-        (req.name.strip(), json.dumps(req.tags[:10], ensure_ascii=False), datetime.now().isoformat(), proj_id),
-    )
-    conn.commit()
-    conn.close()
-    return {"success": True, "name": req.name.strip(), "tags": req.tags[:10]}
-
-
-@router.post("/{proj_id}/favorite")
-async def toggle_favorite(proj_id: str, current_user: dict = require_auth()):
-    """收藏/取消收藏游戏项目（toggle）。"""
-    conn = get_db()
-    row = conn.execute("SELECT favorite FROM game_projects WHERE id=?", (proj_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(404, "游戏项目不存在")
-    new_val = 0 if row["favorite"] else 1
-    conn.execute("UPDATE game_projects SET favorite=? WHERE id=?", (new_val, proj_id))
-    conn.commit()
-    conn.close()
-    return {"success": True, "favorite": bool(new_val)}
-
 
 class EvolveRequest(BaseModel):
     requirement: str = Field(..., min_length=2, max_length=2000, description="迭代需求")
@@ -1050,7 +770,6 @@ _EVOLVE_SYSTEM = """你是一位资深游戏开发工程师，正在对一个已
 6. 输出必须精简！web 版 index.html 不超过 700 行，wx 版 game.js 不超过 600 行，
    全部文件总字符数必须控制在 50000 以内
 7. 所有状态变量声明时必须初始化，事件回调触发的绘制/更新函数开头必须先判空，严禁运行时错误"""
-
 
 async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 二次迭代（同步/异步任务共用执行体）。"""
