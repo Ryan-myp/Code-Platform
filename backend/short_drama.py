@@ -844,29 +844,9 @@ def _prepare_drama_params(request_data: dict) -> dict:
         "output_path": request_data.get("output_path", "")
     }
 
-async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
-    """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
-
-    def _report(pct: float, stage: str) -> None:
-        _notify_progress(progress, pct, stage)
-
-    theme = (payload.get("theme") or "").strip()
-    scenes_override = payload.get("scenes") or []  # 可选：用户自定义分镜
-    if not theme and not scenes_override:
-        raise HTTPException(400, "请输入短剧主题")
-    title = (payload.get("title") or "").strip() or "未命名短剧"
-    user = payload.get("user") or ""
-    uid = payload.get("uid") or ""
-    role = payload.get("role") or ""
-    avatar_mode = bool(payload.get("avatar_mode"))
-    avatar_id = (payload.get("avatar_id") or "business-female").strip()
-    dh_engine = (payload.get("dh_engine") or "2d").strip()
-    # v13.30 AI 插画模式 + 角色表：角色一致性（A 出场即锁定，再出场不变）
-    illust_mode = bool(payload.get("illust_mode"))
-    characters = payload.get("characters") or []
+def _drama_quota_check(uid: str, avatar_mode: bool) -> None:
+    """额度检查：经典动画卡模式 worker 内扣费。"""
     if not avatar_mode:
-        # 经典动画卡模式：worker 内扣费（不进 _QUOTA_PATHS 中间件，避免双重扣费）；
-        # 数字人模式由 digital_human._generate_one 每镜内部扣费
         from common.auth import consume_quota
 
         quota = consume_quota(uid)
@@ -876,114 +856,138 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
                 "今日短剧生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
             )
 
+
+async def _drama_load_script(theme: str, scenes_override: list, duration_hint: int, payload: dict) -> dict:
+    """剧本：自定义分镜优先，否则 LLM 生成（模板注入 + 时长防御）。"""
+    script = {"title": payload.get("title") or "未命名短剧", "scenes": scenes_override} if scenes_override else None
+    if script is None:
+        tpl = None
+        tid = payload.get("template_id") or ""
+        if tid:
+            try:
+                from common.template_utils import load_one
+                from drama_templates import TEMPLATE_DIR
+
+                tpl = load_one(TEMPLATE_DIR, tid, "题材模板不存在")
+            except Exception:  # noqa: BLE001
+                logger.warning(f"题材模板加载失败：{tid}")
+        script = await _generate_script(theme, duration_hint, tpl)
+        if tpl:
+            try:
+                from drama_templates import record_usage
+
+                record_usage(tid)
+            except Exception:  # noqa: BLE001
+                pass
+    scenes = _enforce_duration(script["scenes"], duration_hint)
+    script["scenes"] = scenes
+    return script
+
+
+async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str, role: str, tmpdir: str, _report) -> tuple:
+    """逐镜配音 + 画面（三级回退：数字人 → 素材 → 插画/卡片）。返回 (clip_paths, srt_durations, voice_durations)。"""
+    avatar_mode = bool(payload.get("avatar_mode"))
+    avatar_id = (payload.get("avatar_id") or "business-female").strip()
+    dh_engine = (payload.get("dh_engine") or "2d").strip()
+    illust_mode = bool(payload.get("illust_mode"))
+    characters = payload.get("characters") or []
+    clip_paths, srt_durations, voice_durations = [], [], []
+    total = len(scenes)
+    dh_off = False
+    char_map = {c.get("id"): c for c in characters if c.get("id")}
+    char_refs: dict[str, bytes] = {}
+    for i, sc in enumerate(scenes):
+        _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
+        text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
+        if not text:
+            continue
+        clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
+        audio_path = ""
+        scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
+        fade_in, fade_out = i == 0, i == total - 1
+        motion = _SCENE_MOTIONS[i % len(_SCENE_MOTIONS)]
+        ok = False
+        if avatar_mode and not dh_off:
+            try:
+                ok = await asyncio.to_thread(
+                    _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
+                    sc.get("emotion", "neutral"), fade_in, fade_out,
+                )
+            except HTTPException as e:
+                if e.status_code == 402:
+                    dh_off = True
+                    ok = False
+                    _report(15 + int(50 * i / max(total, 1)), "数字人额度不足，切换素材模式…")
+                else:
+                    raise
+        if not ok:
+            audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
+            audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+            with open(audio_path, "wb") as f:
+                f.write(audio)
+            dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
+            if not illust_mode:
+                lead = char_map.get(scene_chars[0]) if scene_chars else None
+                search_q = _anchor_search(lead, sc.get("search", ""))
+                ok = await asyncio.to_thread(_material_scene_video, search_q, audio_path, clip, dur, fade_in, fade_out)
+        if not ok:
+            img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
+            shot = sc.get("shot", "")
+            data = None
+            if shot:
+                anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
+                refs = [char_refs[c] for c in scene_chars if c in char_refs]
+                data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
+            if data:
+                with open(img_path, "wb") as f:
+                    f.write(data)
+                await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                ok = True
+                if len(scene_chars) == 1:
+                    char_refs[scene_chars[0]] = data
+            else:
+                ok = await asyncio.to_thread(_make_scene_card, text, i, total, payload.get("title") or "未命名短剧", img_path)
+                if ok:
+                    await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
+        if ok:
+            clip_paths.append(clip)
+            srt_durations.append(_probe_seconds(clip))
+            vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
+            voice_durations.append(vd)
+    return clip_paths, srt_durations, voice_durations
+
+
+async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+    """短剧生成执行体：剧本 → 配音 → 镜头图 → 合成 → 字幕。"""
+
+    def _report(pct: float, stage: str) -> None:
+        _notify_progress(progress, pct, stage)
+
+    theme = (payload.get("theme") or "").strip()
+    scenes_override = payload.get("scenes") or []
+    if not theme and not scenes_override:
+        raise HTTPException(400, "请输入短剧主题")
+    title = (payload.get("title") or "").strip() or "未命名短剧"
+    user = payload.get("user") or ""
+    uid = payload.get("uid") or ""
+    role = payload.get("role") or ""
+    avatar_mode = bool(payload.get("avatar_mode"))
+
+    _drama_quota_check(uid, avatar_mode)
+
     tmpdir = tempfile.mkdtemp(prefix="drama_")
     try:
-        # 1. 剧本：自定义分镜优先，否则 LLM 生成
+        # 1. 剧本
         _report(5, "剧本创作中…")
-        # v13.28 目标时长统一计算（自定义分镜也参与台词量防御）
         duration_hint = max(20, min(1800, int(payload.get("duration") or 45)))
-        script = {"title": title, "scenes": scenes_override} if scenes_override else None
-        if script is None:
-            # v13.29 剧本生成共用（worker 与 /script 接口）：LLM 重试 3 次 + 时长防御
-            # v22 题材模板：按模板注入人设/结构/风格/钩子（AI 按爆款套路创作）
-            tpl = None
-            tid = payload.get("template_id") or ""
-            if tid:
-                try:
-                    from common.template_utils import load_one
-                    from drama_templates import TEMPLATE_DIR
-
-                    tpl = load_one(TEMPLATE_DIR, tid, "题材模板不存在")
-                except Exception:  # noqa: BLE001
-                    logger.warning(f"题材模板加载失败：{tid}")
-            script = await _generate_script(theme, duration_hint, tpl)
-            if tpl:
-                try:
-                    from drama_templates import record_usage
-
-                    record_usage(tid)
-                except Exception:  # noqa: BLE001
-                    pass
+        script = await _drama_load_script(theme, scenes_override, duration_hint, payload)
         scenes = script["scenes"]
-        # v13.28 时长硬校验：场次数 + 台词量双重防御（自定义分镜也兜底；LLM 剧本已校验，幂等）
-        scenes = _enforce_duration(scenes, duration_hint)
-        script["scenes"] = scenes
 
-        # 2. 逐镜配音 + 画面（v13.25 三级回退：数字人 → 素材 → 卡片）
+        # 2. 逐镜配音 + 画面（三级回退）
         _report(15, "分镜配音与画面生成中…")
-        clip_paths, srt_durations, voice_durations = [], [], []
-        total = len(scenes)
-        dh_off = False  # 数字人整体不可用（配额超限）时后续镜头直接素材模式
-        char_map = {c.get("id"): c for c in characters if c.get("id")}
-        char_refs: dict[str, bytes] = {}  # v13.30 每角色最近一张单人插画（图生图参考锚定）
-        for i, sc in enumerate(scenes):
-            _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
-            text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
-            if not text:
-                continue
-            clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
-            audio_path = ""  # v13.29 素材/卡片镜的配音文件（数字人镜不生成）
-            scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]  # v13.30 本镜出场角色
-            # v13.31 镜序 fade：首镜淡入、末镜淡出、中间镜硬切（消除镜间黑场闪烁）；
-            # 插画镜 Ken Burns 运镜按镜序交替（zoom_in/zoom_out/pan_in/pan_out）
-            fade_in, fade_out = i == 0, i == total - 1
-            motion = _SCENE_MOTIONS[i % len(_SCENE_MOTIONS)]
-            ok = False
-            # ① 数字人播报（avatar_mode 且配额可用）：每镜人像口播，失败落到素材模式
-            if avatar_mode and not dh_off:
-                try:
-                    ok = await asyncio.to_thread(
-                        _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
-                        sc.get("emotion", "neutral"), fade_in, fade_out,
-                    )
-                except HTTPException as e:
-                    if e.status_code == 402:
-                        dh_off = True
-                        ok = False
-                        _report(15 + int(50 * i / max(total, 1)), "数字人额度不足，切换素材模式…")
-                    else:
-                        raise
-            if not ok:
-                # ② 配音（素材/插画模式共用）：v13.24 情绪 → Azure 风格音色
-                audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
-                audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
-                with open(audio_path, "wb") as f:
-                    f.write(audio)
-                dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
-                if not illust_mode:
-                    # 素材模式：Pexels/本地真实素材（Ken Burns/cover），主角特征词锚定同性别（v13.30）
-                    lead = char_map.get(scene_chars[0]) if scene_chars else None
-                    search_q = _anchor_search(lead, sc.get("search", ""))
-                    ok = await asyncio.to_thread(_material_scene_video, search_q, audio_path, clip, dur, fade_in, fade_out)
-            if not ok:
-                # ③ 插画（v13.30 角色参考图链路：首镜定妆 → 后续镜图生图锚定）→ 渐变兜底
-                img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
-                shot = sc.get("shot", "")
-                data = None
-                if shot:
-                    anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
-                    refs = [char_refs[c] for c in scene_chars if c in char_refs]
-                    data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
-                if data:
-                    with open(img_path, "wb") as f:
-                        f.write(data)
-                    await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
-                    ok = True
-                    # 定妆存储：仅单人镜（多人镜含多角色，不作角色标准像）
-                    if len(scene_chars) == 1:
-                        char_refs[scene_chars[0]] = data
-                else:
-                    ok = await asyncio.to_thread(_make_scene_card, text, i, total, script["title"], img_path)
-                    if ok:
-                        await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
-            if ok:
-                clip_paths.append(clip)
-                srt_durations.append(_probe_seconds(clip))
-                # v13.29 字幕时序：素材镜字幕=配音时长（配音后字幕消失）；
-                # 数字人镜整镜有声（voice_dur=画面时长，字幕整镜显示）
-                vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
-                voice_durations.append(vd)
-                continue
+        clip_paths, srt_durations, voice_durations = await _drama_render_scenes(
+            scenes, payload, user, uid, role, tmpdir, _report
+        )
         if not clip_paths:
             raise HTTPException(502, "所有分镜合成失败，请重试")
 
@@ -999,7 +1003,6 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         _report(88, "字幕合成中…")
         await asyncio.to_thread(_burn_subtitles, raw_video, srt_path, str(final_path), _pick_bgm())
         shutil.copyfile(srt_path, DRAMA_DIR / f"{stem}.srt")
-        # v13.28 真封面：首镜抽帧 JPG + 6s 预览视频（旧实现把 mp4 复制成 .jpg，素材库/分享处裂图）
         cover_path = DRAMA_DIR / f"{stem}.jpg"
         preview_path = DRAMA_DIR / f"{stem}_preview.mp4"
         await asyncio.to_thread(_extract_cover, clip_paths[0], str(cover_path))
@@ -1040,7 +1043,6 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         }
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-
 
 def _drama_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务 handler（register_handler 约定签名）。"""
