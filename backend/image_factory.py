@@ -421,6 +421,28 @@ async def get_image(filename: str):
     return FileResponse(filepath)
 
 
+@router.get("/images/{filename}/quality")
+async def image_quality(filename: str):
+    """图片专业质量评估：分辨率/清晰度/对比度/色偏 → 0-100 分 + 等级 + 优化建议。
+
+    商用基线：生成结果自动质检，用户可查看每张图片的美观度评分与改进建议。
+    """
+    filepath = os.path.join(IMAGE_DIR, filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(404, "图片不存在")
+    try:
+        from PIL import Image
+
+        with Image.open(filepath) as im:
+            im.load()
+            result = quality_check_image(im)
+        result["filename"] = filename
+        return result
+    except Exception as e:
+        logger.warning(f"图片质量评估失败 {filename}: {e}")
+        return {"score": None, "grade": "", "checks": [], "suggestions": ["质量评估暂不可用"]}
+
+
 @router.get("/images/{filename}/thumb")
 async def get_image_thumb(filename: str):
     """图片缩略图（≤256px JPEG，内存生成，历史缩略图墙加载提速；失败回退原图）。"""

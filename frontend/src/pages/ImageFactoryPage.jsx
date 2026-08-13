@@ -58,6 +58,7 @@ import {
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
+import ImageQualityBadge from '../components/ImageQualityBadge'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -2137,6 +2138,9 @@ export default function ImageFactoryPage() {
                           generatedImages.length === 1 ? 'max-h-[70vh]' : 'max-h-[46vh]'
                         }`}
                       />
+                      <div className="absolute top-2 left-2 z-10">
+                        <ImageQualityBadge filename={img.filename} />
+                      </div>
                       {generatedImages.length > 1 && (
                         <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/50 text-white text-[10px] font-medium">
                           {idx + 1}/{generatedImages.length}
@@ -3199,6 +3203,9 @@ export default function ImageFactoryPage() {
                       className="w-full h-40 object-cover"
                       loading="lazy"
                     />
+                    <div className="absolute top-1.5 left-1.5 z-10">
+                      <ImageQualityBadge filename={img.filename} />
+                    </div>
                     {renderImageActions({ ...img, url: absUrl(img.url) })}
                     <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-xs text-white truncate bg-black/50">
                       {img.title || img.filename}
