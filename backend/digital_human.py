@@ -1722,6 +1722,25 @@ def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, ava
         sw = bbox[2] - bbox[0]
         draw.text((cx - sw // 2, cy + r + 22), style_text, fill="#ffffff55", font=fonts["body"])
 
+
+def _draw_bottom_bar(draw, width: int, height: int, S: float, fonts: dict, avatar: dict, accent, progress: float) -> None:
+    """底部栏：品牌信息 + 主题色进度条。"""
+    bar_h = int(64 * S)
+    draw.rectangle([0, height - bar_h, width, height], fill="#00000055")
+    brand = "AI 数字人 · 智能口播视频"
+    draw.text((int(30 * S), height - int(48 * S)), brand, fill="#ffffff88", font=fonts["tag"])
+    voice_hint = avatar.get("desc", "")[:25]
+    if voice_hint:
+        bbox = draw.textbbox((0, 0), voice_hint, font=fonts["tag"])
+        dw = bbox[2] - bbox[0]
+        draw.text((width - dw - int(30 * S), height - int(48 * S)), voice_hint, fill="#ffffff55", font=fonts["tag"])
+    bar_y = height - int(14 * S)
+    bar_w = width - int(60 * S)
+    draw.rounded_rectangle([int(30 * S), bar_y, int(30 * S) + bar_w, bar_y + int(6 * S)], radius=3, fill="#ffffff20")
+    fill_w = int(bar_w * progress)
+    if fill_w > 4:
+        draw.rounded_rectangle([int(30 * S), bar_y, int(30 * S) + fill_w, bar_y + int(6 * S)], radius=3, fill=accent)
+
 def _render_frame(  # noqa: C901
     avatar: dict,
     bg_hex: str,
@@ -1885,30 +1904,7 @@ def _render_frame(  # noqa: C901
                 sub_cache["layer"] = sub_layer
 
     # ── 6. 底部：品牌信息 + 主题色进度条 ──
-    bar_h = int(64 * S)
-    draw.rectangle([0, height - bar_h, width, height], fill="#00000055")
-    brand = "AI 数字人 · 智能口播视频"
-    draw.text((int(30 * S), height - int(48 * S)), brand, fill="#ffffff88", font=fonts["tag"])
-    voice_hint = avatar.get("desc", "")[:25]
-    if voice_hint:
-        bbox = draw.textbbox((0, 0), voice_hint, font=fonts["tag"])
-        dw = bbox[2] - bbox[0]
-        draw.text((width - dw - int(30 * S), height - int(48 * S)), voice_hint, fill="#ffffff55", font=fonts["tag"])
-
-    bar_y = height - int(14 * S)
-    bar_w = width - int(60 * S)
-    draw.rounded_rectangle(
-        [int(30 * S), bar_y, int(30 * S) + bar_w, bar_y + int(6 * S)],
-        radius=3,
-        fill="#ffffff20",
-    )
-    fill_w = int(bar_w * progress)
-    if fill_w > 4:
-        draw.rounded_rectangle(
-            [int(30 * S), bar_y, int(30 * S) + fill_w, bar_y + int(6 * S)],
-            radius=3,
-            fill=accent,
-        )
+    _draw_bottom_bar(draw, width, height, S, fonts, avatar, accent, progress)
 
     return Image.alpha_composite(img.convert("RGBA"), ui).convert("RGB")
 
@@ -3228,6 +3224,42 @@ def _dh_generate_audio(voice: dict, req, optimized_text: str, emotion: str, _rep
             raise RuntimeError("TTS 生成的音频无效（文件过小）")
     return audio_path, audio_url
 
+
+def _dh_quota_setup(uid: str, req, role: str) -> tuple:
+    """商业配额扣费 + 记录ID + 水印策略。返回 (quota, record_id, conn, use_watermark)。"""
+    from common.auth import consume_quota, get_quota_info
+
+    quota = consume_quota(uid)
+    if not quota.get("allowed"):
+        raise HTTPException(
+            402,
+            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+        )
+    quota_info = get_quota_info(uid)
+    record_id = f"dh_{uuid.uuid4().hex[:12]}"
+    conn = get_db()
+    _ensure_tables(conn)
+    membership = quota_info.get("membership", "free") if isinstance(quota_info, dict) else "free"
+    use_watermark = (membership == "free" and role != "admin") or bool(req.watermark)
+    return quota, record_id, conn, use_watermark
+
+
+def _dh_final_failure(stage: str, audio_path: str, audio_error: str) -> tuple:
+    """最终失败分类：audio_only（音频成功、视频失败）vs failed（配音未生成）。"""
+    if stage == "render" and audio_path and os.path.exists(audio_path):
+        return "audio_only", f"{audio_error}，已生成配音音频"
+    return "failed", audio_error or "配音生成失败"
+
+
+def _dh_validate_video(video_path: str) -> None:
+    """校验渲染视频有效（非 0KB/损坏），无效删除并抛错。"""
+    if not os.path.exists(video_path) or not _valid_video(video_path):
+        try:
+            os.remove(video_path)
+        except OSError:
+            pass
+        raise RuntimeError("视频渲染结果无效（文件缺失或损坏）")
+
 def _generate_one(  # noqa: C901
     req: GenerateRequest,
     user: str,
@@ -3263,24 +3295,8 @@ def _generate_one(  # noqa: C901
     opening_text = template.get("opening", "") if template else ""
     closing_text = template.get("closing", "") if template else ""
 
-    # 0. 商业配额：参数与内容校验通过后才扣费（失败不消耗额度）
-    from common.auth import consume_quota, get_quota_info
-
-    quota = consume_quota(uid)
-    if not quota.get("allowed"):
-        raise HTTPException(
-            402,
-            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
-        )
-    quota_info = get_quota_info(uid)  # 会员等级用于水印策略
-
-    record_id = f"dh_{uuid.uuid4().hex[:12]}"
-    conn = get_db()
-    _ensure_tables(conn)
-
-    # 水印策略：免费用户强制加水印（商业规则，不可绕过）；会员显式传 True 才加
-    membership = quota_info.get("membership", "free") if isinstance(quota_info, dict) else "free"
-    use_watermark = (membership == "free" and role != "admin") or bool(req.watermark)
+    # 0. 商业配额 + 记录ID + 水印策略
+    quota, record_id, conn, use_watermark = _dh_quota_setup(uid, req, role)
 
     # 1. 文案 — 字幕与配音必须与用户输入完全一致：
     # 之前 LLM 优化环节会把原文改写为带 Markdown 标记（#、**、---）的口播脚本，
@@ -3319,12 +3335,7 @@ def _generate_one(  # noqa: C901
                 finally:
                     _RENDER_SLOT.release()
                 # 视频有效性校验：防止渲染引擎产出 0KB/损坏文件被误标记成功
-                if not os.path.exists(video_path) or not _valid_video(video_path):
-                    try:
-                        os.remove(video_path)
-                    except OSError:
-                        pass
-                    raise RuntimeError("视频渲染结果无效（文件缺失或损坏）")
+                _dh_validate_video(video_path)
                 video_url = f"/uploads/videos/{video_filename}"
                 _report(85, "视频渲染完成，正在保存记录…")
             status = "done"
@@ -3335,14 +3346,8 @@ def _generate_one(  # noqa: C901
             logger.warning(f"数字人生成第 {attempt} 次失败（stage={stage}）: {e}")
             audio_error = f"[stage:{stage}] {e}"
             if attempt < 2:
-                continue  # 自动重试 1 次：TTS 失败重跑 TTS；渲染失败时音频已缓存，只重跑渲染
-            # 最终失败：区分 audio_only（音频成功、视频失败）与 failed（配音未生成）
-            if stage == "render" and audio_path and os.path.exists(audio_path):
-                status = "audio_only"
-                error_msg = f"{audio_error}，已生成配音音频"
-            else:
-                status = "failed"
-                error_msg = audio_error or "配音生成失败"
+                continue
+            status, error_msg = _dh_final_failure(stage, audio_path, audio_error)
 
     # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板/情绪）
     _dh_save_record(conn, record_id, user, req, avatar, voice, bg, optimized_text,
