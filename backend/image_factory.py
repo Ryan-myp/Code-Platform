@@ -1198,6 +1198,30 @@ def _resolve_layer_img(layer: dict, slot_map: dict, batch_url: str, main_slot_ke
         return batch_url
     return layer.get("url", "")
 
+
+async def _make_template_bg(template: dict, overrides: dict, width: int, height: int) -> Image.Image:
+    """模板背景：背景图（cover 铺满 + 模糊 + 暗化）> 渐变简写 > 纯色。"""
+    bg_src = overrides.get("background_image", template.get("background_image", ""))
+    if bg_src:
+        bg = await _load_template_img(bg_src)
+        if bg is not None:
+            blur = float(overrides.get("background_blur", template.get("background_blur", 0)) or 0)
+            darken = float(overrides.get("background_darken", template.get("background_darken", 0)) or 0)
+            bg = _cover_resize(bg, width, height)
+            if blur > 0:
+                bg = bg.filter(ImageFilter.GaussianBlur(blur))
+            if darken > 0:
+                shade = Image.new("RGBA", (width, height), (0, 0, 0, int(255 * min(1.0, darken))))
+                bg = Image.alpha_composite(bg, shade)
+            return bg.convert("RGB")
+    bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
+    if isinstance(bg_color, str) and "→" in bg_color:
+        from image_edit_engine import make_gradient
+
+        top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
+        return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
+    return Image.new("RGB", (width, height), bg_color)
+
 async def render_template_image(template: dict, overrides: dict | None = None,  # noqa: C901, PLR0912
                                 progress: Callable | None = None) -> list[Image.Image]:
     """按模板渲染出 PIL 图像列表（不保存，供渲染任务/封面缩略图复用）。
@@ -1224,39 +1248,11 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
             main_slot_key = layer.get("key") or layer.get("slot") or ""
             break
 
-    def _resolve_layer_img(layer: dict, batch_url: str) -> str:
-        """图层图片来源：按 key 精确填充 > 批量主槽 > 图层自带 url。"""
-        key = layer.get("key", "")
-        if key and key in slot_map:
-            return slot_map[key]
-        if batch_url and key == main_slot_key:
-            return batch_url
-        return layer.get("url", "")
-
     async def _make_bg() -> Image.Image:
         """背景：背景图（cover 铺满 + 模糊 + 暗化）> 渐变简写 > 纯色。"""
-        bg_src = overrides.get("background_image", template.get("background_image", ""))
-        if bg_src:
-            bg = await _load_template_img(bg_src)
-            if bg is not None:
-                blur = float(overrides.get("background_blur", template.get("background_blur", 0)) or 0)
-                darken = float(overrides.get("background_darken", template.get("background_darken", 0)) or 0)
-                bg = _cover_resize(bg, width, height)
-                if blur > 0:
-                    bg = bg.filter(ImageFilter.GaussianBlur(blur))
-                if darken > 0:
-                    shade = Image.new("RGBA", (width, height), (0, 0, 0, int(255 * min(1.0, darken))))
-                    bg = Image.alpha_composite(bg, shade)
-                return bg.convert("RGB")
-        bg_color = overrides.get("background", template.get("background", "#FFFFFF"))
-        if isinstance(bg_color, str) and "→" in bg_color:
-            from image_edit_engine import make_gradient
+        return await _make_template_bg(template, overrides, width, height)
 
-            top_hex, bottom_hex = (bg_color.split("→") + ["#FFFFFF"])[:2]
-            return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
-        return Image.new("RGB", (width, height), bg_color)
-
-async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: str) -> None:
+async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: str, slot_map: dict, main_slot_key: str) -> None:
     """按图层类型渲染到画布（rect/circle/line/text/image）。"""
     layer_type = layer.get("type")
 
@@ -1464,7 +1460,7 @@ async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: s
 
     elif layer_type == "image":
         # 图片层：cover 裁剪/圆角/边框/透明度/旋转
-        source = _resolve_layer_img(layer, batch_url)
+        source = _resolve_layer_img(layer, slot_map, batch_url, main_slot_key)
         layer_img = await _load_template_img(source)
         if layer_img is None:
             return
@@ -1504,7 +1500,7 @@ async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: s
         canvas = await _make_bg()
         draw = ImageDraw.Draw(canvas)
         for layer in template.get("layers", []):
-            await _render_layer(canvas, draw, layer, overrides, batch_url)
+            await _render_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key)
             draw = ImageDraw.Draw(canvas)
 
         return canvas
