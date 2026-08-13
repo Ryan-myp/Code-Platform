@@ -168,57 +168,31 @@ def _text_to_lrc(lyrics: str, duration: float, title: str = "", artist: str = ""
 
 
 @router.post("/publish-pack")
-async def music_publish_pack(
-    audio_id: str = Form(...),
-    song_title: str = Form(""),
-    artist: str = Form(""),
-    genre: str = Form(""),
-    cover_image: UploadFile = File(None),  # v15：封面自定义上传（居中裁剪缩放 640×640）
-    current_user: dict = require_auth(),
-):
-    """歌曲发布包：选中歌曲一键打包为可提交网易云音乐人/腾讯音乐人/抖音音乐人的成套物料。
-
-    - 音频三格式：mp3（产物）+ wav 母带（44.1kHz/16bit）+ flac 无损
-    - 配套：封面 jpg + lrc/txt 歌词 + 各平台规格说明 + 上传指南 + 商用授权说明
-    - v15：cover_image 可选上传，自定义封面居中裁剪缩放为 640×640 JPG 后覆盖 AI 封面
-    """
-    audio_id = (audio_id or "").strip()
-    if not audio_id.endswith(".mp3"):
-        raise HTTPException(400, "audio_id 需为 .mp3 文件")
-    audio_path = MUSIC_DIR / audio_id
-    if not audio_path.exists():
-        raise HTTPException(404, "歌曲不存在")
-    stem = audio_id.rsplit(".", 1)[0]
+def _music_custom_cover(cover_image, audio_id: str, stem: str) -> tuple:
+    """处理自定义封面（可选）：居中裁剪缩放 640×640。返回 (cover_src, cover_label)。"""
     cover_path = MUSIC_DIR / f"{stem}.jpg"
-
-    # 自定义封面：等比居中裁剪 → 640×640 JPG（满足各平台 ≥500×500 要求）
     cover_src = cover_path if cover_path.exists() else None
     cover_label = "AI 生成封面"
     if cover_image is not None and (cover_image.filename or "").strip():
-        try:
-            data = await cover_image.read()
-            if len(data) > 8 * 1024 * 1024:
-                raise HTTPException(400, "封面图片不能超过 8MB")
-            from PIL import Image, ImageOps
+        data = io.BytesIO(cover_image.file.read())
+        if len(data) > 8 * 1024 * 1024:
+            raise HTTPException(400, "封面图片不能超过 8MB")
+        from PIL import Image, ImageOps
 
-            img = Image.open(io.BytesIO(data))
-            img = ImageOps.exif_transpose(img).convert("RGB")
-            w, h = img.size
-            side = min(w, h)
-            img = img.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
-            img = img.resize((640, 640), Image.LANCZOS)
-            cover_override = MUSIC_DIR / f"{stem}_cover_custom.jpg"
-            img.save(cover_override, "JPEG", quality=88)
-            cover_src = cover_override
-            cover_label = "自定义封面（640×640）"
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(400, "服务异常，请稍后重试") from e
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        w, h = img.size
+        side = min(w, h)
+        img = img.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
+        img = img.resize((640, 640), Image.LANCZOS)
+        cover_override = MUSIC_DIR / f"{stem}_cover_custom.jpg"
+        img.save(cover_override, "JPEG", quality=88)
+        return cover_override, "自定义封面（640×640）"
+    return cover_src, cover_label
 
-    # 从 artifacts 表取歌词与元数据（生成时已落库）
-    lyrics = ""
-    meta: dict = {}
+
+def _music_meta(audio_id: str) -> tuple:
+    """从 artifacts 表取歌词与元数据。返回 (lyrics, meta)。"""
     try:
         from common.db import get_db
 
@@ -231,47 +205,45 @@ async def music_publish_pack(
         if row:
             lyrics = row["content"] or ""
             try:
-                meta = json.loads(row["metadata"] or "{}")
+                return lyrics, json.loads(row["metadata"] or "{}")
             except Exception:
-                pass
+                return lyrics, {}
     except Exception as e:
         logger.debug(f"music_publish_pack db skipped: {e}")
+    return "", {}
 
-    title = (song_title or meta.get("theme") or stem).strip()[:60]
-    artist_name = (artist or "AI 音乐人").strip()[:40]
-    style_label = meta.get("style", "")
-    duration = _probe_seconds(str(audio_path)) or 0
 
-    # 母带级转码：wav 16bit/44.1kHz + flac 无损（ffmpeg 统一规格，兼容各平台上传）
+def _music_master_transcode(audio_path) -> tuple:
+    """母带级转码：wav 16bit/44.1kHz + flac 无损。返回 (wav_data, flac_data)。"""
     wav_data, flac_data = b"", b""
     try:
         r = subprocess.run(
             [FFMPEG_BIN, "-y", "-i", str(audio_path), "-ar", "44100", "-ac", "2", "-sample_fmt", "s16", "-f", "wav", "-"],
-            capture_output=True,
-            timeout=300,
+            capture_output=True, timeout=300,
         )
         if r.returncode == 0 and r.stdout:
             wav_data = r.stdout
         r = subprocess.run(
             [FFMPEG_BIN, "-y", "-i", str(audio_path), "-ar", "44100", "-ac", "2", "-f", "flac", "-"],
-            capture_output=True,
-            timeout=300,
+            capture_output=True, timeout=300,
         )
         if r.returncode == 0 and r.stdout:
             flac_data = r.stdout
     except Exception as e:
         logger.warning(f"母带转码失败（仅打包 mp3）: {e}")
+    return wav_data, flac_data
 
-    root = pack_dir_name("music_release")
-    entries: dict = {f"{root}/01_歌曲.mp3": str(audio_path)}  # key=zip 路径, value=磁盘路径
+
+def _music_pack_entries(root: str, audio_path, wav_data: bytes, flac_data: bytes, cover_src, lyrics: str, duration: float, title: str, artist_name: str, style_label: str, cover_label: str) -> dict:
+    """构建音乐发布包文件条目。"""
+    entries: dict = {f"{root}/01_歌曲.mp3": str(audio_path)}
     if wav_data:
         entries[f"{root}/02_母带.wav"] = wav_data
     if flac_data:
         entries[f"{root}/03_无损.flac"] = flac_data
     if cover_src is not None:
         entries[f"{root}/封面.jpg"] = str(cover_src)
-    lrc = _text_to_lrc(lyrics, duration, title, artist_name)
-    entries[f"{root}/歌词.lrc"] = lrc
+    entries[f"{root}/歌词.lrc"] = _text_to_lrc(lyrics, duration, title, artist_name)
     entries[f"{root}/歌词.txt"] = lyrics or "（无歌词）"
     entries[f"{root}/曲目信息.md"] = (
         f"# {title}\n\n- 歌手：{artist_name}\n- 时长：{int(duration // 60)} 分 {int(duration % 60)} 秒\n"
@@ -295,8 +267,11 @@ async def music_publish_pack(
         "3. 审核通过后可在抖音/汽水音乐发布"
     )
     entries[f"{root}/LICENSE.txt"] = license_text(f"歌曲《{title}》")
+    return entries
 
-    # 生产级内容保障：发布包附质量自检报告（歌词安全审核 + 音频规格合规）
+
+def _music_qc_report(lyrics: str, audio_path, cover_label: str, cover_src, title: str) -> str | None:
+    """音乐质量自检报告（失败返回 None）。"""
     try:
         lyrics_check = check_text(lyrics, "歌词") if lyrics else None
         extra = [
@@ -304,14 +279,50 @@ async def music_publish_pack(
             f"封面规格：{cover_label}（≥500×500 平台要求）{'✓' if cover_src is not None else '✗ 缺失'}",
             "歌词格式：txt + lrc（时间轴估算，建议发布前核对）",
         ]
-        entries[f"{root}/质量自检报告.md"] = quality_report(
-            f"歌曲《{title}》",
-            text_check=lyrics_check,
-            image_quality=None,
-            extra=extra,
-        )
+        return quality_report(f"歌曲《{title}》", text_check=lyrics_check, image_quality=None, extra=extra)
     except Exception as e:
         logger.debug(f"音乐质量自检报告生成失败: {e}")
+        return None
+
+
+async def music_publish_pack(
+    audio_id: str = Form(...),
+    song_title: str = Form(""),
+    artist: str = Form(""),
+    genre: str = Form(""),
+    cover_image: UploadFile = File(None),
+    current_user: dict = require_auth(),
+):
+    """歌曲发布包：选中歌曲一键打包为可提交音乐人平台的成套物料。"""
+    audio_id = (audio_id or "").strip()
+    if not audio_id.endswith(".mp3"):
+        raise HTTPException(400, "audio_id 需为 .mp3 文件")
+    audio_path = MUSIC_DIR / audio_id
+    if not audio_path.exists():
+        raise HTTPException(404, "歌曲不存在")
+    stem = audio_id.rsplit(".", 1)[0]
+
+    # 自定义封面处理
+    cover_src, cover_label = _music_custom_cover(cover_image, audio_id, stem)
+
+    # 歌词与元数据
+    lyrics, meta = _music_meta(audio_id)
+
+    title = (song_title or meta.get("theme") or stem).strip()[:60]
+    artist_name = (artist or "AI 音乐人").strip()[:40]
+    style_label = meta.get("style", "")
+    duration = _probe_seconds(str(audio_path)) or 0
+
+    # 母带级转码
+    wav_data, flac_data = _music_master_transcode(audio_path)
+
+    root = pack_dir_name("music_release")
+    entries = _music_pack_entries(root, audio_path, wav_data, flac_data, cover_src, lyrics, duration, title, artist_name, style_label, cover_label)
+
+    # 生产级内容保障：质量自检报告
+    qc_report = _music_qc_report(lyrics, audio_path, cover_label, cover_src, title)
+    if qc_report:
+        entries[f"{root}/质量自检报告.md"] = qc_report
 
     buf = build_publish_zip(entries, "music_release")
     publish = publish_registry.publish("music_platform", {"title": title, "artist": artist_name})
@@ -323,7 +334,6 @@ async def music_publish_pack(
             "X-Publish-Result": f"published={str(publish.get('published')).lower()}",
         },
     )
-
 
 @router.get("/lyrics/examples")
 async def get_lyrics_examples():
