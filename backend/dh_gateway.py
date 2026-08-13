@@ -266,6 +266,34 @@ def _finalize_results(results: list) -> dict:
     """汇总最终结果。"""
     return {"total_steps": len(results), "results": results, "status": "completed"}
 
+
+def _prepare_dh_video_context(dh_params):
+    """准备数字人视频生成上下文。"""
+    return {
+        "params": dh_params,
+        "status": "prepared"
+    }
+
+def _validate_dh_video_params(params):
+    """验证数字人视频参数。"""
+    required = ["image", "audio", "speaker"]
+    return all(p in params for p in required)
+
+def _execute_dh_video_generation(params):
+    """执行数字人视频生成。"""
+    return {
+        "status": "generating",
+        "task_id": params.get("task_id")
+    }
+
+def _finalize_dh_video_result(result):
+    """汇总数字人视频生成结果。"""
+    return {
+        "video_url": result.get("video_url"),
+        "duration": result.get("duration"),
+        "status": "completed"
+    }
+
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。
 
