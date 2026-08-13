@@ -1243,34 +1243,7 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
             return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
         return Image.new("RGB", (width, height), bg_color)
 
-    async def dummy():
-    pass
-
-async def _prepare_render_layers(template_cfg: dict) -> list:
-    """准备渲染图层列表。"""
-    layers = template_cfg.get("layers", [])
-    return sorted(layers, key=lambda l: l.get("z_order", 0))
-
-def _render_single_layer(canvas: "Image.Image", layer: dict, img_dir: str, opacity: float) -> None:
-    """渲染单个图层。"""
-    from PIL import ImageDraw
-    layer_type = layer.get("type", "rect")
-    if layer_type == "rect":
-        _draw_rect_layer(canvas, layer)
-    elif layer_type == "circle":
-        _draw_circle_layer(canvas, layer)
-    elif layer_type == "text":
-        _draw_text_layer(canvas, layer)
-
-def _draw_rect_layer(canvas: "Image.Image", layer: dict) -> None:
-    """绘制矩形图层。"""
-    from PIL import ImageDraw
-    draw = ImageDraw.Draw(canvas)
-    bbox = layer.get("bbox", [0, 0, 100, 100])
-    fill = layer.get("fill", "#FFFFFF")
-    draw.rectangle(bbox, fill=fill)
-
-def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
+    async def _render_once(batch_url: str) -> Image.Image:  # noqa: C901
         """按模板渲染一张（batch_url 为批量模式下该轮主槽图片，单张模式传空）。"""
         canvas = await _make_bg()
         draw = ImageDraw.Draw(canvas)
@@ -2825,13 +2798,6 @@ def _render_line_layer(layer: dict, canvas) -> None:
     
     draw = ImageDraw.Draw(canvas)
     if opacity < 1.0:
-        overlay = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
-        ImageDraw.Draw(overlay).line([x1, y1, x2, y2], fill=color, width=lw)
-        overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
-        canvas.paste(overlay, (0, 0), overlay)
-    else:
-        draw.line([x1, y1, x2, y2], fill=color, width=lw)
-
         overlay = Image.new("RGBA", (canvas.width, canvas.height), (0, 0, 0, 0))
         ImageDraw.Draw(overlay).line([x1, y1, x2, y2], fill=color, width=lw)
         overlay.putalpha(overlay.getchannel("A").point(lambda a, op=opacity: int(a * op)))
