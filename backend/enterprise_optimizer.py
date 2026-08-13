@@ -184,6 +184,10 @@ class CodeQualityOptimizer:
                 pass
         avg_lines_per_func = total_lines / max(total_functions, 1)
         # Python 3.9 兼容的评分算法
+        high_complexity_funcs = results.get("high_complexity_funcs", 0)
+        duplicate_blocks = results.get("duplicate_blocks", 0)
+        type_hint_coverage = results.get("type_hint_coverage", 0)
+        
         complexity_penalty = min(30, avg_lines_per_func / 3)
         high_complexity_penalty = min(20, high_complexity_funcs * 0.5)
         duplicate_penalty = min(10, duplicate_blocks * 0.05)
