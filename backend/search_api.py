@@ -71,8 +71,6 @@ def _score_result(doc: dict, keywords: list) -> int:
     return score
 
 
-@router.get("/quick")
-
 def _qs_search_tools(keywords: list) -> list:
     """搜索内置工具。"""
     results = []
@@ -220,6 +218,7 @@ def _qs_finalize(results: list, keywords: list, q: str, limit: int) -> dict:
         "time_ms": 50,
     }
 
+@router.get("/quick")
 async def quick_search(
     q: str = Query(..., min_length=1, description="搜索关键词"),
     limit: int = Query(20, ge=1, le=50, description="返回数量"),
