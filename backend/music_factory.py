@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 
+def _compose_music_simple(music_params: dict) -> dict:
+    """简化版音乐合成。"""
+    return {
+        "status": "success",
+        "audio_url": music_params.get("output_path", ""),
+        "duration": music_params.get("duration", 0)
+    }
+
+def _prepare_music_params_simple(request_data: dict) -> dict:
+    """简化版准备音乐参数。"""
+    return {
+        "style": request_data.get("style", "pop"),
+        "duration": request_data.get("duration", 30),
+        "output_path": request_data.get("output_path", "")
+    }
+
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
