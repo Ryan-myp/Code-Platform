@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from backend.template_base import TemplateBase, create_template
+from template_base import TemplateBase, create_template
 """模板市场 — 内置模板聚合 + C2C 用户模板交易。
 
 聚合来源：

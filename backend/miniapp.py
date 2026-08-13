@@ -28,7 +28,7 @@ from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeV
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from datetime import datetime
-from backend.template_base import TemplateBase, create_template
+from template_base import TemplateBase, create_template
 """小程序工坊 — AI 生成微信小程序项目。
 
 - 内置常用模板（电商/预约/展示/工具/资讯），选模板 + 输入需求 → LLM 生成完整项目代码
