@@ -1515,6 +1515,36 @@ def _draw_karaoke(  # noqa: C901 — 卡拉OK逐字绘制（right/center 双布�
         cur_x += _text_width(ch, font)
 
 
+
+def _create_ui_layer(width: int, height: int):
+    """创建 UI 图层。"""
+    from PIL import Image, ImageDraw
+    ui = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    return ui, ImageDraw.Draw(ui)
+
+def _draw_glow_spots(img, ui, width, height, t, S):
+    """绘制高斯柔光斑。"""
+    for i, (gx, gy, scale) in enumerate([
+        (0.82, 0.20, 1.6),
+        (0.12, 0.72, 1.3),
+        (0.58, 0.92, 1.9),
+    ]):
+        layer = _get_glow_template(150, scale)
+        cx = int(width * gx + __import__('math').sin(t * 0.3 + i * 2.1) * 40 * S)
+        cy = int(height * gy + __import__('math').cos(t * 0.25 + i * 1.7) * 30 * S)
+        img.paste(layer, (cx - layer.width // 2, cy - layer.height // 2), layer)
+
+def _apply_talk_motion(t, energy, emotion, S):
+    """应用说话律动。"""
+    import math
+    emo = _EMOTION_FACE.get(emotion, _EMOTION_FACE["neutral"])
+    talk = min(1.0, energy * 1.6) * emo["move"]
+    sway_t = math.sin(t * 1.15)
+    breathe_t = math.sin(t * 1.3)
+    glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))
+    enter_ease = 1 - (1 - min(1.0, t / 0.8)) ** 3
+    return talk, sway_t, breathe_t, glow_alpha, enter_ease, emo
+
 def _render_frame(  # noqa: C901
     avatar: dict,
     bg_hex: str,
@@ -1548,21 +1578,8 @@ def _render_frame(  # noqa: C901
     # 半透明 UI 元素（粒子/名片/字幕/底条/进度条）画到独立 RGBA 图层：
     # ImageDraw 无 alpha 合成能力（RGBA 图上直接覆盖 RGB+写 alpha），
     # 画到底图会把半透明色覆盖成纯色（曾致底部 bar 纯黑盖住嘴部贴图）
-    ui = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(ui)
-
-    # ── 2. 高斯柔光斑（缓慢漂移，营造摄影棚光效）──
-    for i, (gx, gy, scale) in enumerate(
-        [
-            (0.82, 0.20, 1.6),
-            (0.12, 0.72, 1.3),
-            (0.58, 0.92, 1.9),
-        ]
-    ):
-        layer = _get_glow_template(150, scale)
-        cx = int(width * gx + math.sin(t * 0.3 + i * 2.1) * 40 * S)
-        cy = int(height * gy + math.cos(t * 0.25 + i * 1.7) * 30 * S)
-        img.paste(layer, (cx - layer.width // 2, cy - layer.height // 2), layer)
+    ui, draw = _create_ui_layer(width, height)
+    _draw_glow_spots(img, ui, width, height, t, S)
 
     # ── 3. 漂浮粒子（像直播间的氛围光点，画在 UI 图层参与 alpha 合成）──
     _draw_particles(ui, t)
@@ -1570,15 +1587,8 @@ def _render_frame(  # noqa: C901
     # ── 3.5 摄影棚光影：主光聚焦人物 + 地面反光 + 暗角（背景上、人物下）──
     img = _apply_studio_lighting(img, t)
 
-    # 说话能量 → 驱动全身律动（能量高=说话中：幅度加大；静音：回归静态呼吸）
-    # v13.24 情绪：talk 幅度乘情绪系数（欢快=更活泼、悲伤=更收敛）
-    emo = _EMOTION_FACE.get(emotion, _EMOTION_FACE["neutral"])
-    talk = min(1.0, energy * 1.6) * emo["move"]
-    sway_t = math.sin(t * 1.15)
-    breathe_t = math.sin(t * 1.3)
-    glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))
-    # 入场动画：前 0.8s 人物从左侧滑入（ease-out，开局明显动起来）
-    enter_ease = 1 - (1 - min(1.0, t / 0.8)) ** 3
+    # 说话能量 → 驱动全身律动
+    talk, sway_t, breathe_t, glow_alpha, enter_ease, emo = _apply_talk_motion(t, energy, emotion, S)
 
     # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
