@@ -380,6 +380,39 @@ def compute_support_resistance(data: dict | None) -> dict:
     return {"support": support, "resistance": resistance}
 
 
+
+def _analyze_price_trend(prices: list, window: int = 5) -> float:
+    """分析价格趋势。"""
+    if len(prices) < window:
+        return 0.0
+    recent = prices[-window:]
+    trend = sum(recent[i] - recent[i-1] for i in range(1, len(recent))) / window
+    return trend / (recent[-1] or 1)
+
+def _analyze_momentum(prices: list, window: int = 10) -> float:
+    """分析动量指标。"""
+    if len(prices) < window + 1:
+        return 0.0
+    change = (prices[-1] - prices[-window-1]) / (prices[-window-1] or 1)
+    return change
+
+def _analyze_volatility(prices: list, window: int = 20) -> float:
+    """分析波动率。"""
+    if len(prices) < window:
+        return 0.0
+    recent = prices[-window:]
+    mean = sum(recent) / len(recent)
+    variance = sum((p - mean) ** 2 for p in recent) / len(recent)
+    return math.sqrt(variance) / (mean or 1)
+
+def _analyze_volume_price(prices: list, volumes: list) -> float:
+    """分析量价关系。"""
+    if len(prices) < 2 or len(volumes) < 2:
+        return 0.0
+    price_change = (prices[-1] - prices[-2]) / (prices[-2] or 1)
+    volume_change = (volumes[-1] - volumes[-2]) / (volumes[-2] or 1)
+    return price_change * volume_change
+
 def compute_five_dim_signals(data: dict | None) -> dict:
     """五维交叉验证信号（v21，参考开源技术分析 SKILL）。
 
