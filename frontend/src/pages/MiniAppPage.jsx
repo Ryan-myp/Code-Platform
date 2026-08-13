@@ -25,7 +25,8 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader, Modal, Pagination,
+} from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -486,12 +487,14 @@ export default function MiniAppPage() {
                 description="选择模板、填写需求后点击「生成小程序项目」"
               />
             ) : (
-              <div className="space-y-2">
-                {projects.map((p) => {
+              <Pagination
+                items={projects}
+                pageSize={8}
+                label={`共 ${projects.length} 个项目`}
+                renderItem={(p) => {
                   const t = templates.find((x) => x.id === p.template)
                   return (
                     <div
-                      key={p.id}
                       onClick={() => openProject(p)}
                       className="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all cursor-pointer"
                     >
@@ -544,8 +547,8 @@ export default function MiniAppPage() {
                       </button>
                     </div>
                   )
-                })}
-              </div>
+                }}
+              />
             )}
           </Card>
 
