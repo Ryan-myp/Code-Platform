@@ -1,17 +1,49 @@
-# ─── Docker ──────────────────────────────────────────────────────
-.git/
+# Git
+.git
 .gitignore
-docs/
-tests/
-*.md
-Makefile
-docker-compose.yml
-Dockerfile.*
-.github/
 
-# ─── Local files ───────────────────────────────────────────────
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+
+# Node
+node_modules
+frontend/node_modules
+frontend/dist
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs
+
+# Tests
+tests/__pycache__
+
+# Documentation (optional, include if needed)
+# docs
+
+# Optimizer reports (large, regenerate)
+backend/.optimizer_reports
+backend/backups
+
+# Environment
 .env
 .env.local
-*.db
-data/
-backend/artifacts/*.md
