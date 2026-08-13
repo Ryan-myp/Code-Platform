@@ -31,6 +31,8 @@ RENDER_DIR = Path(__file__).parent / "video_templates" / "renders"
 RENDER_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter(prefix="/api/video-templates", tags=["视频模板"])
+from common.template_utils import load_all, load_one
+
 
 
 def _ffmpeg_bin() -> str:
@@ -434,28 +436,11 @@ def init_video_templates():
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(t, f, ensure_ascii=False, indent=2)
             logger.info(f"初始化视频模板：{t['name']}")
-    return _load_all()
+    return load_all(TEMPLATE_DIR)
 
 
-def _load_all() -> list[dict]:
-    items = []
-    for f in sorted(os.listdir(TEMPLATE_DIR)):
-        if not f.endswith(".json"):
-            continue
-        try:
-            with open(TEMPLATE_DIR / f, encoding="utf-8") as fh:
-                items.append(json.load(fh))
-        except Exception:  # noqa: BLE001
-            continue
-    return items
 
 
-def _load_one(tid: str) -> dict:
-    path = TEMPLATE_DIR / f"{tid}.json"
-    if not path.exists():
-        raise HTTPException(404, "视频模板不存在")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -725,7 +710,7 @@ async def render_video_template(template: dict, overrides: dict | None = None,
 async def video_templates_list(category: str = "", q: str = "", sort: str = "hot"):
     """视频模板市场列表（含预览图/定价/热度/分类）。"""
     items = []
-    for t in _load_all():
+    for t in load_all(TEMPLATE_DIR):
         pricing = t.get("pricing") or {}
         mode = pricing.get("mode", "free")
         item = {
@@ -766,7 +751,7 @@ async def video_templates_list(category: str = "", q: str = "", sort: str = "hot
 @router.get("/{tid}")
 async def video_template_detail(tid: str):
     """模板详情（渲染参数变量说明）。"""
-    t = _load_one(tid)
+    t = load_one(TEMPLATE_DIR, tid, '视频模板不存在')
     keys = []
     for scene in t.get("scenes", []):
         for layer in scene.get("layers", []):
@@ -779,7 +764,7 @@ async def video_template_detail(tid: str):
 @router.get("/preview/{tid}")
 async def video_template_preview(tid: str):
     """模板封面：首场景帧渲染（PNG，公开 CORS 供市场卡片展示）。"""
-    t = _load_one(tid)
+    t = load_one(TEMPLATE_DIR, tid, '视频模板不存在')
     scene = t["scenes"][0]
     frame_tpl = {
         "width": t["width"], "height": t["height"],

@@ -31,36 +31,6 @@ router = APIRouter(tags=["开放API"])
 _GATEWAY_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
-def _auth(request: Request):
-    """Bearer API Key 认证。失败返回 OpenAI 风格错误响应。"""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "message": "缺少 API Key（Authorization: Bearer xt-xxx）",
-                    "type": "invalid_request_error",
-                    "code": "invalid_api_key",
-                }
-            },
-        )
-    token = auth[7:].strip()
-    try:
-        return _auth_by_api_key(token)
-    except HTTPException as e:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "message": str(e.detail),
-                    "type": "invalid_request_error",
-                    "code": "invalid_api_key",
-                }
-            },
-        )
-
-
 def _estimate_tokens(messages: list, content: str) -> dict:
     """粗略 Token 估算（字符数口径，中文约 1 token/字）。"""
     prompt_tokens = sum(len(str(m.get("content") or "")) for m in messages)

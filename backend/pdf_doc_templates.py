@@ -18,6 +18,8 @@ TEMPLATE_DIR = Path(__file__).parent / "pdf_doc_templates"
 TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter(prefix="/api/pdf-doc-templates", tags=["PDF文档模板"])
+from common.template_utils import load_all, load_one, record_usage
+
 
 
 def _tpl(tid, name, category, icon, desc, sample, tips, position="", pricing=None):
@@ -314,28 +316,11 @@ def init_pdf_doc_templates():
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(t, f, ensure_ascii=False, indent=2)
             logger.info(f"初始化 PDF 文档模板：{t['name']}")
-    return _load_all()
+    return load_all(TEMPLATE_DIR)
 
 
-def _load_all() -> list[dict]:
-    items = []
-    for f in sorted(os.listdir(TEMPLATE_DIR)):
-        if not f.endswith(".json"):
-            continue
-        try:
-            with open(TEMPLATE_DIR / f, encoding="utf-8") as fh:
-                items.append(json.load(fh))
-        except Exception:  # noqa: BLE001
-            continue
-    return items
 
 
-def _load_one(tid: str) -> dict:
-    path = TEMPLATE_DIR / f"{tid}.json"
-    if not path.exists():
-        raise HTTPException(404, "PDF 文档模板不存在")
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
 
 
 def _get_usage(tid: str) -> int:
@@ -352,32 +337,13 @@ def _get_usage(tid: str) -> int:
         return 0
 
 
-def record_usage(tid: str) -> None:
-    """使用文档模板时记录热度（接口调用方触发，失败静默）。"""
-    try:
-        from common.db import get_db
-
-        conn = get_db()
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS pdf_doc_template_usage "
-            "(template_id TEXT PRIMARY KEY, usage_count INTEGER DEFAULT 0)"
-        )
-        conn.execute(
-            "INSERT INTO pdf_doc_template_usage(template_id, usage_count) VALUES(?,1) "
-            "ON CONFLICT(template_id) DO UPDATE SET usage_count=usage_count+1",
-            (tid,),
-        )
-        conn.commit()
-        conn.close()
-    except Exception:  # noqa: BLE001
-        pass
 
 
 @router.get("/list")
 async def pdf_doc_templates_list(category: str = "", q: str = ""):
     """PDF 文档模板市场列表（合同审查/简历优化两类，含一键填充所需全量字段）。"""
     items = []
-    for t in _load_all():
+    for t in load_all(TEMPLATE_DIR):
         pricing = t.get("pricing") or {}
         items.append({
             "id": t["id"],
@@ -408,7 +374,7 @@ async def pdf_doc_templates_list(category: str = "", q: str = ""):
 @router.get("/{tid}")
 async def pdf_doc_template_detail(tid: str):
     """PDF 文档模板详情（示例文本 + 专业要点，供一键填充与展示）。"""
-    t = _load_one(tid)
+    t = load_one(TEMPLATE_DIR, tid, 'PDF模板不存在')
     pricing = t.get("pricing") or {}
     data = {k: t[k] for k in ("id", "name", "category", "icon", "desc", "sample",
                               "pro_tips", "position", "pricing") if k in t}

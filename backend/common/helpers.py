@@ -94,3 +94,51 @@ def _notify_progress(progress: Any, pct: float, stage: str) -> None:
 def _report(progress: Any, pct: float, stage: str) -> None:
     """安全回调进度（progress 可为 None）。"""
     _notify_progress(progress, pct, stage)
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """序列化 SSE 事件：``event: {event}\ndata: {json}\n\n``。"""
+    import json as _json
+
+    return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _srt_ts(sec: float) -> str:
+    """秒 → SRT 时间戳（HH:MM:SS,mmm）。"""
+    sec = max(0.0, sec)
+    h, rem = int(sec // 3600), sec % 3600
+    m, s = int(rem // 60), rem % 60
+    return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
+
+
+def _auth_bearer(request: Any, auth_by_key: Any) -> Any:
+    """Bearer API Key 认证。失败返回 OpenAI 风格错误响应。"""
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": "缺少 API Key（Authorization: Bearer xt-xxx）",
+                    "type": "invalid_request_error",
+                    "code": "invalid_api_key",
+                }
+            },
+        )
+    token = auth[7:].strip()
+    try:
+        return auth_by_key(token)
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "message": str(e.detail),
+                    "type": "invalid_request_error",
+                    "code": "invalid_api_key",
+                }
+            },
+        )

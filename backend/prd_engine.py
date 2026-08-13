@@ -329,6 +329,7 @@ CODE_SYSTEM = """你是一位高级开发工程师，擅长编写高质量可运
 ```python main.py
 # 文件用途说明
 import ...
+from common.helpers import _sse_event
 
 if __name__ == "__main__":
     # 入口逻辑
@@ -378,11 +379,6 @@ if __name__ == "__main__":
 - 缓存: Redis
 - 消息队列: Kafka/RabbitMQ
 """
-
-
-def _sse_event(event: str, data: dict) -> str:
-    """序列化 SSE 事件：``event: {event}\ndata: {json}\n\n``。"""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}

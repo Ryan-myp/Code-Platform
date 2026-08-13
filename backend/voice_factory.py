@@ -389,11 +389,7 @@ def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
 def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
     """生成标准 SRT 字幕：按分段文本与真实时长累计时间戳（商用配音包必备）。"""
 
-    def ts(sec: float) -> str:
-        sec = max(0.0, sec)
-        h, rem = int(sec // 3600), sec % 3600
-        m, s = int(rem // 60), rem % 60
-        return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
+    ts = _srt_ts
 
     lines, cursor = [], 0.0
     for i, (seg_text, dur) in enumerate(zip(segs, durations, strict=False), 1):

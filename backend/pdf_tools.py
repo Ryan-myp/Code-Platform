@@ -349,8 +349,9 @@ def contract_review(req: ContractReviewRequest, current_user: dict = require_aut
         # 文档模板注入：审查要点提示词（按模板专家视角，非法 id 静默忽略）
         if req.template_id:
             try:
-                from pdf_doc_templates import _load_one, record_usage
-                tpl = _load_one(req.template_id)
+                from common.template_utils import load_one, record_usage
+                from pdf_doc_templates import TEMPLATE_DIR
+                tpl = load_one(TEMPLATE_DIR, req.template_id, "PDF模板不存在")
                 if tpl.get("pro_tips"):
                     user_prompt = f"【模板：《{tpl['name']}》】请额外重点审查以下要点：{tpl['pro_tips']}\n\n{user_prompt}"
                 record_usage(req.template_id)
@@ -406,8 +407,9 @@ def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_aut
     # 文档模板注入：岗位优化要点（按模板专家视角，非法 id 静默忽略）
     if req.template_id:
         try:
-            from pdf_doc_templates import _load_one, record_usage
-            tpl = _load_one(req.template_id)
+            from common.template_utils import load_one, record_usage
+            from pdf_doc_templates import TEMPLATE_DIR
+            tpl = load_one(TEMPLATE_DIR, req.template_id, "PDF模板不存在")
             if tpl.get("pro_tips"):
                 user_prompt = f"【模板：《{tpl['name']}》】请额外重点参考以下优化要点：{tpl['pro_tips']}\n\n{user_prompt}"
             if tpl.get("position") and not req.target_position:

@@ -700,11 +700,7 @@ def _make_srt(scenes: list[dict], durations: list[float], voice_durs: list[float
     voice_durs 缺省时退化为整镜显示（数字人模式全镜有声）。
     """
 
-    def ts(sec: float) -> str:
-        sec = max(0.0, sec)
-        h, rem = int(sec // 3600), sec % 3600
-        m, s = int(rem // 60), rem % 60
-        return f"{h:02d}:{m:02d}:{int(s):02d},{int(round((s % 1) * 1000)):03d}"
+    ts = _srt_ts
 
     lines, cursor = [], 0.0
     for i, (sc, dur) in enumerate(zip(scenes, durations, strict=False), 1):

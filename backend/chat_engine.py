@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _sse_event
 
 
 def _run_workflow_simple(workflow_data: dict) -> dict:
@@ -66,11 +66,6 @@ async def list_conversations(agent_id: str):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
-
-def _sse_event(event: str, data: dict) -> str:
-    """序列化 SSE 事件：``event: {event}\ndata: {json}\n\n``。"""
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}

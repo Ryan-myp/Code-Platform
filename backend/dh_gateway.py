@@ -121,36 +121,6 @@ def _price_for(engine: str, resolution: str, pricing: dict | None = None) -> flo
 # ── 认证（复用 openai_gateway 的 OpenAI 风格错误） ─────────────────
 
 
-def _auth(request: Request):
-    """Bearer API Key 认证。失败返回 OpenAI 风格错误响应。"""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "message": "缺少 API Key（Authorization: Bearer xt-xxx）",
-                    "type": "invalid_request_error",
-                    "code": "invalid_api_key",
-                }
-            },
-        )
-    token = auth[7:].strip()
-    try:
-        return _auth_by_api_key(token)
-    except HTTPException as e:
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "message": str(e.detail),
-                    "type": "invalid_request_error",
-                    "code": "invalid_api_key",
-                }
-            },
-        )
-
-
 def _err(status: int, message: str, code: str, **extra) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"message": message, "code": code, **extra}})
 
