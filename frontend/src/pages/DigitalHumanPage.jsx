@@ -44,6 +44,9 @@ import {
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import HistoryPanel from '../components/HistoryPanel'
+import FavoriteButton from '../components/FavoriteButton'
+import useToolHistory from '../hooks/useToolHistory'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
 import { friendlyError } from '../lib/errors'
@@ -129,6 +132,8 @@ const emotionLabel = (id) => EMOTION_OPTIONS.find((e) => e.id === id)?.label || 
 
 export default function DigitalHumanPage() {
   const toast = useRef(useToast()).current
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('dh_factory_history_v1', 30)
 
   // 生成表单
   const [text, setText] = useState('')
