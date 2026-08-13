@@ -454,6 +454,9 @@ def _artifact_meta() -> dict:
     return meta
 
 
+async def _voice_internal():
+    pass
+
 async 
 def _prepare_voice_task(task_config: dict) -> dict:
     """准备语音生成任务配置。"""
