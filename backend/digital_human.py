@@ -1547,6 +1547,181 @@ def _apply_talk_motion(t, energy, emotion, S):
     enter_ease = 1 - (1 - min(1.0, t / 0.8)) ** 3
     return talk, sway_t, breathe_t, glow_alpha, enter_ease, emo
 
+def _draw_portrait_region(img, draw, portrait, t, energy, S, width, height, talk, sway_t, breathe_t, glow_alpha, enter_ease, emo, mouth_shape, avatar) -> None:
+    """绘制人物区（写真动态 + 眨眼/嘴型 + 光环）——完整迁移。"""
+    import math
+    p_base, p_mask_base, p_base_w, p_base_h, face_meta = portrait
+    # 头部几何（归一化画布 800x1000 坐标）→ 眼/嘴/颊彩动态定位，
+    # 适配不同写真构图差异（固定比例在构图漂移时会贴错位）
+    bx = p_base_w / 800.0
+    by = p_base_h / 1000.0
+    if face_meta:
+        cy_c = face_meta["cy"]
+        head_h_c = face_meta["head_w"] * 1.30  # 头高估计（检测带宽含肩，按唇色实测校准）
+        eye_y_c = cy_c - 12  # 眼 ≈ 肤色区上界（眉骨附近）
+        mouth_y_c = cy_c + head_h_c * 0.15  # 唇：实测校准（唇-头中心差 ≈ 0.15 x 头高）
+        cheek_y_c = cy_c + head_h_c * 0.08  # 颊：眼唇之间
+        cheek_dx_c = face_meta["head_w"] * 0.32
+    else:
+        eye_y_c, mouth_y_c, cheek_y_c, cheek_dx_c = 240, 340, 290, 140
+        head_h_c = 320  # 默认头高（无检测时，眉毛按固定比例定位）
+    # 呼吸缩放（真人幅度 ~1.2%，收敛气球感）+ 说话节奏起伏
+    breath_scale = 1 + 0.012 * breathe_t + 0.010 * talk * math.sin(t * 3.2)
+    p_w = max(20, int(p_base_w * breath_scale * S))
+    p_h = max(20, int(p_base_h * breath_scale * S))
+    # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
+    # v13.24 情绪头姿：欢快/严肃微抬头，悲伤低头，愤怒微前倾
+    tilt = (
+        0.9 * sway_t * (1.0 + 0.9 * talk)
+        + 0.45 * talk * math.sin(t * 2.9)
+        + 0.22 * math.sin(t * 5.1)
+        + emo["head"]
+    )
+    nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
+    p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
+    p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
+    # 垂直浮动 + 水平摇摆（幅度收敛，说话时叠加轻微起伏）
+    float_offset = int((breathe_t * 6 + talk * 4 * math.sin(t * 2.8)) * S)
+    sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
+    # 入场滑入：x 从画面外（-p_w）滑到目标位
+    enter_shift = int((1 - enter_ease) * (p_w + int(80 * S)))
+    px = int(40 * S) + sway_offset - enter_shift
+    py = int(35 * S) + float_offset
+    # 人物脚下平台光斑（小尺寸 RGBA 图层，像直播台灯光）
+    plat_w, plat_h = int(560 * S), int(110 * S)
+    plat = Image.new("RGBA", (plat_w, plat_h), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(plat)
+    pd.ellipse([0, 0, plat_w, plat_h], fill=(255, 255, 255, 26 + int(14 * math.sin(t * 1.2))))
+    img.paste(plat, (int(60 * S), py + p_h - int(50 * S)), plat)
+    # 阴影 + 写真
+    shadow = Image.new("RGBA", (p_w + 20, p_h + 20), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        [10, 10, p_w + 10, p_h + 10],
+        radius=40,
+        fill=(0, 0, 0, 50),
+    )
+    img.paste(shadow, (px - 5, py - 5), shadow)
+    img.paste(p_img, (px, py), p_mask)
+
+    # 自然眨眼：随机间隔（2.2~4.8s）+ 上眼睑渐变遮罩下压（替代"画线"）
+    # v13.24 情绪眯眼：happy/gentle 微眯（笑眼）、angry 眯视，叠加在眨眼之上
+    close = max(_blink_progress(t), emo["squint"])
+    if close > 0.03:
+        eye_w = max(6, int(p_w * 0.135))
+        eye_y = py + int(eye_y_c * by * breath_scale)
+        lid = _get_eyelid_template(eye_w)
+        lid_h = max(2, int(lid.height * min(close * 1.25, 1.0)))
+        lid_use = lid.crop((0, 0, lid.width, lid_h)) if lid_h < lid.height else lid
+        for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
+            img.paste(lid_use, (ex - lid_use.width // 2, eye_y - lid_h), lid_use)
+
+    # v13.24 情绪眉毛：半透明眉形贴图（上挑/下垂/皱眉）叠加在眉骨位置，
+    # 传达欢快/悲伤/愤怒；轻微情绪（gentle）整体降透明度
+    if emo["brow_k"] > 0.05:
+        brow_img = _get_eyebrow_template(max(6, int(p_w * 0.15)), emo["brow"])
+        if emo["brow_k"] < 0.5:
+            brow_a = brow_img.getchannel("A").point(lambda v: int(v * (emo["brow_k"] / 0.5)))
+            brow_img = brow_img.copy()
+            brow_img.putalpha(brow_a)
+        brow_y = py + int((eye_y_c - head_h_c * 0.10) * by * breath_scale) - brow_img.height // 2
+        for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
+            img.paste(brow_img, (ex - brow_img.width // 2, brow_y), brow_img)
+
+    # 颊彩表情层：柔和粉彩脸颊（说话时随能量微亮），提升生气感
+    # v13.24 情绪腮红：欢快/温柔加深（笑出红晕），悲伤减淡
+    cheek_alpha = int((22 + 14 * talk) * emo["cheek"])
+    cheek_w = max(8, int(p_w * 0.17))
+    cheek_h = max(4, int(cheek_w * 0.55))
+    cheek_y = py + int(cheek_y_c * by * breath_scale)
+    cheek = Image.new("RGBA", (cheek_w * 2 + 4, cheek_h * 2 + 4), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cheek)
+    for s in (-1.0, 1.0):
+        cex = cheek_w + 2 + int(s * cheek_dx_c * bx * breath_scale)
+        cd.ellipse([cex - cheek_w, 2, cex + cheek_w, 2 + cheek_h * 2], fill=(240, 120, 130, cheek_alpha))
+    cheek = cheek.filter(ImageFilter.GaussianBlur(cheek_w * 0.55))
+    img.paste(cheek, (px + int(p_w * 0.5) - cheek.width // 2, cheek_y - cheek.height // 2), cheek)
+
+    # 逼真口型：量化嘴部模板（开度 6 档 x 圆度 4 档），羽化贴图融入皮肤；
+    # open 控制开度、round 控制圆度，仍由拼音时间轴逐字驱动；
+    # 位置由头部几何动态定位（原固定 0.805 在构图漂移时贴到颈部/胸口）
+    mouth_open_v, roundness = mouth_shape
+    aspect = p_base_w / p_base_h
+    if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and mouth_open_v > 0.05:
+        open_idx = min(5, int(round(mouth_open_v * 5)))
+        round_idx = min(3, int(round(roundness * 3)))
+        mw = max(6, int(p_w * (0.20 + 0.08 * roundness)))
+        mh = max(3, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
+        # v13.24 情绪嘴型：smile 驱动嘴角上翘/下垂（笑/哭/怒）
+        mouth_layer = _get_mouth_template(open_idx, round_idx, emo["smile"]).resize(
+            (mw, mh),
+            Image.LANCZOS,
+        )
+        mx = px + int(p_w * 0.49)
+        my = py + int(mouth_y_c * by * breath_scale)
+        img.paste(mouth_layer, (mx - mw // 2, my - mh // 2), mouth_layer)
+
+    # 光环脉动
+    glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow_layer)
+    gd.rounded_rectangle([60, 55, p_w + 60, p_h + 55], radius=48, outline=(255, 255, 255, glow_alpha), width=6)
+    img.paste(glow_layer, (px - 60, py - 55), glow_layer)
+
+
+def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, avatar) -> None:
+    """无人物时的兜底画面（云朵/光斑/表情）。"""
+    import math
+    # fallback：emoji 大头像（有真实人物感）
+    float_offset = int(math.sin(t * 1.3) * 8 * S)
+    sway_offset = int(math.sin(t * 0.9) * 5 * S)
+    breath_scale = 1 + 0.012 * math.sin(t * 1.1)  # 呼吸缩放
+    cx = int(300 * S) + sway_offset
+    cy = height // 2 + float_offset
+    r = max(20, int(170 * S * breath_scale))
+    # 平台光斑（小尺寸 RGBA 图层）
+    plat_w, plat_h = int(460 * S), int(90 * S)
+    plat = Image.new("RGBA", (plat_w, plat_h), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(plat)
+    pd.ellipse([0, 0, plat_w, plat_h], fill=(255, 255, 255, 26 + int(14 * math.sin(t * 1.2))))
+    img.paste(plat, (int(cx - plat_w / 2), cy + r - int(20 * S)), plat)
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse(
+        [cx - r - 18, cy - r - 18, cx + r + 18, cy + r + 18],
+        outline=(255, 255, 255, glow_alpha),
+        width=6,
+    )
+    img.paste(glow, (0, 0), glow)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ffffff12", outline="#ffffff30", width=4)
+    # 彩色 emoji 头像（位图字体渲染后放大，RGBA 图层合成保留颜色）
+    emoji = avatar.get("emoji", "👩‍💼")
+    emoji_font = _try_load_emoji_font(160)
+    if emoji_font:
+        layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer)
+        bbox = ld.textbbox((0, 0), emoji, font=emoji_font)
+        ew = bbox[2] - bbox[0]
+        eh = bbox[3] - bbox[1]
+        target = int(r * 1.9)
+        scale = target / max(ew, 1)
+        if scale > 1.6:
+            small = Image.new("RGBA", (ew + 40, eh + 40), (0, 0, 0, 0))
+            sd = ImageDraw.Draw(small)
+            sd.text((20 - bbox[0], 20 - bbox[1]), emoji, font=emoji_font, embedded_color=True)
+            big = small.resize((int((ew + 40) * scale), int((eh + 40) * scale)), Image.LANCZOS)
+            layer.paste(big, (int(cx - big.width / 2), int(cy - big.height / 2)), big)
+        else:
+            ld.text((cx - ew / 2 - bbox[0], cy - eh / 2 - bbox[1]), emoji, font=emoji_font, embedded_color=True)
+        img.paste(layer, (0, 0), layer)
+    else:
+        name_text = avatar.get("name", "AI数字人")
+        bbox = draw.textbbox((0, 0), name_text, font=fonts["title"])
+        tw = bbox[2] - bbox[0]
+        draw.text((cx - tw // 2, cy - 18), name_text, fill="#ffffff88", font=fonts["title"])
+    style_text = avatar.get("style", "")
+    if style_text:
+        bbox = draw.textbbox((0, 0), style_text, font=fonts["body"])
+        sw = bbox[2] - bbox[0]
+        draw.text((cx - sw // 2, cy + r + 22), style_text, fill="#ffffff55", font=fonts["body"])
+
 def _render_frame(  # noqa: C901
     avatar: dict,
     bg_hex: str,
@@ -1594,173 +1769,14 @@ def _render_frame(  # noqa: C901
 
     # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
-        p_base, p_mask_base, p_base_w, p_base_h, face_meta = portrait
-        # 头部几何（归一化画布 800x1000 坐标）→ 眼/嘴/颊彩动态定位，
-        # 适配不同写真构图差异（固定比例在构图漂移时会贴错位）
-        bx = p_base_w / 800.0
-        by = p_base_h / 1000.0
-        if face_meta:
-            cy_c = face_meta["cy"]
-            head_h_c = face_meta["head_w"] * 1.30  # 头高估计（检测带宽含肩，按唇色实测校准）
-            eye_y_c = cy_c - 12  # 眼 ≈ 肤色区上界（眉骨附近）
-            mouth_y_c = cy_c + head_h_c * 0.15  # 唇：实测校准（唇-头中心差 ≈ 0.15 x 头高）
-            cheek_y_c = cy_c + head_h_c * 0.08  # 颊：眼唇之间
-            cheek_dx_c = face_meta["head_w"] * 0.32
-        else:
-            eye_y_c, mouth_y_c, cheek_y_c, cheek_dx_c = 240, 340, 290, 140
-            head_h_c = 320  # 默认头高（无检测时，眉毛按固定比例定位）
-        # 呼吸缩放（真人幅度 ~1.2%，收敛气球感）+ 说话节奏起伏
-        breath_scale = 1 + 0.012 * breathe_t + 0.010 * talk * math.sin(t * 3.2)
-        p_w = max(20, int(p_base_w * breath_scale * S))
-        p_h = max(20, int(p_base_h * breath_scale * S))
-        # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
-        # v13.24 情绪头姿：欢快/严肃微抬头，悲伤低头，愤怒微前倾
-        tilt = (
-            0.9 * sway_t * (1.0 + 0.9 * talk)
-            + 0.45 * talk * math.sin(t * 2.9)
-            + 0.22 * math.sin(t * 5.1)
-            + emo["head"]
+        _draw_portrait_region(
+            img, draw, portrait, t, energy, S, width, height,
+            talk, sway_t, breathe_t, glow_alpha, enter_ease, emo, mouth_shape, avatar,
         )
-        nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
-        p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
-        p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
-        # 垂直浮动 + 水平摇摆（幅度收敛，说话时叠加轻微起伏）
-        float_offset = int((breathe_t * 6 + talk * 4 * math.sin(t * 2.8)) * S)
-        sway_offset = int((sway_t * 5 + talk * 4 * math.cos(t * 2.2)) * S)
-        # 入场滑入：x 从画面外（-p_w）滑到目标位
-        enter_shift = int((1 - enter_ease) * (p_w + int(80 * S)))
-        px = int(40 * S) + sway_offset - enter_shift
-        py = int(35 * S) + float_offset
-        # 人物脚下平台光斑（小尺寸 RGBA 图层，像直播台灯光）
-        plat_w, plat_h = int(560 * S), int(110 * S)
-        plat = Image.new("RGBA", (plat_w, plat_h), (0, 0, 0, 0))
-        pd = ImageDraw.Draw(plat)
-        pd.ellipse([0, 0, plat_w, plat_h], fill=(255, 255, 255, 26 + int(14 * math.sin(t * 1.2))))
-        img.paste(plat, (int(60 * S), py + p_h - int(50 * S)), plat)
-        # 阴影 + 写真
-        shadow = Image.new("RGBA", (p_w + 20, p_h + 20), (0, 0, 0, 0))
-        ImageDraw.Draw(shadow).rounded_rectangle(
-            [10, 10, p_w + 10, p_h + 10],
-            radius=40,
-            fill=(0, 0, 0, 50),
-        )
-        img.paste(shadow, (px - 5, py - 5), shadow)
-        img.paste(p_img, (px, py), p_mask)
-
-        # 自然眨眼：随机间隔（2.2~4.8s）+ 上眼睑渐变遮罩下压（替代"画线"）
-        # v13.24 情绪眯眼：happy/gentle 微眯（笑眼）、angry 眯视，叠加在眨眼之上
-        close = max(_blink_progress(t), emo["squint"])
-        if close > 0.03:
-            eye_w = max(6, int(p_w * 0.135))
-            eye_y = py + int(eye_y_c * by * breath_scale)
-            lid = _get_eyelid_template(eye_w)
-            lid_h = max(2, int(lid.height * min(close * 1.25, 1.0)))
-            lid_use = lid.crop((0, 0, lid.width, lid_h)) if lid_h < lid.height else lid
-            for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
-                img.paste(lid_use, (ex - lid_use.width // 2, eye_y - lid_h), lid_use)
-
-        # v13.24 情绪眉毛：半透明眉形贴图（上挑/下垂/皱眉）叠加在眉骨位置，
-        # 传达欢快/悲伤/愤怒；轻微情绪（gentle）整体降透明度
-        if emo["brow_k"] > 0.05:
-            brow_img = _get_eyebrow_template(max(6, int(p_w * 0.15)), emo["brow"])
-            if emo["brow_k"] < 0.5:
-                brow_a = brow_img.getchannel("A").point(lambda v: int(v * (emo["brow_k"] / 0.5)))
-                brow_img = brow_img.copy()
-                brow_img.putalpha(brow_a)
-            brow_y = py + int((eye_y_c - head_h_c * 0.10) * by * breath_scale) - brow_img.height // 2
-            for ex in (px + int(p_w * 0.30), px + int(p_w * 0.58)):
-                img.paste(brow_img, (ex - brow_img.width // 2, brow_y), brow_img)
-
-        # 颊彩表情层：柔和粉彩脸颊（说话时随能量微亮），提升生气感
-        # v13.24 情绪腮红：欢快/温柔加深（笑出红晕），悲伤减淡
-        cheek_alpha = int((22 + 14 * talk) * emo["cheek"])
-        cheek_w = max(8, int(p_w * 0.17))
-        cheek_h = max(4, int(cheek_w * 0.55))
-        cheek_y = py + int(cheek_y_c * by * breath_scale)
-        cheek = Image.new("RGBA", (cheek_w * 2 + 4, cheek_h * 2 + 4), (0, 0, 0, 0))
-        cd = ImageDraw.Draw(cheek)
-        for s in (-1.0, 1.0):
-            cex = cheek_w + 2 + int(s * cheek_dx_c * bx * breath_scale)
-            cd.ellipse([cex - cheek_w, 2, cex + cheek_w, 2 + cheek_h * 2], fill=(240, 120, 130, cheek_alpha))
-        cheek = cheek.filter(ImageFilter.GaussianBlur(cheek_w * 0.55))
-        img.paste(cheek, (px + int(p_w * 0.5) - cheek.width // 2, cheek_y - cheek.height // 2), cheek)
-
-        # 逼真口型：量化嘴部模板（开度 6 档 x 圆度 4 档），羽化贴图融入皮肤；
-        # open 控制开度、round 控制圆度，仍由拼音时间轴逐字驱动；
-        # 位置由头部几何动态定位（原固定 0.805 在构图漂移时贴到颈部/胸口）
-        mouth_open_v, roundness = mouth_shape
-        aspect = p_base_w / p_base_h
-        if (not avatar.get("is_custom") or 0.55 <= aspect <= 1.05) and mouth_open_v > 0.05:
-            open_idx = min(5, int(round(mouth_open_v * 5)))
-            round_idx = min(3, int(round(roundness * 3)))
-            mw = max(6, int(p_w * (0.20 + 0.08 * roundness)))
-            mh = max(3, int(p_h * 0.032 * mouth_open_v * (0.6 + 0.8 * roundness)))
-            # v13.24 情绪嘴型：smile 驱动嘴角上翘/下垂（笑/哭/怒）
-            mouth_layer = _get_mouth_template(open_idx, round_idx, emo["smile"]).resize(
-                (mw, mh),
-                Image.LANCZOS,
-            )
-            mx = px + int(p_w * 0.49)
-            my = py + int(mouth_y_c * by * breath_scale)
-            img.paste(mouth_layer, (mx - mw // 2, my - mh // 2), mouth_layer)
-
-        # 光环脉动
-        glow_layer = Image.new("RGBA", (p_w + 120, p_h + 120), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow_layer)
-        gd.rounded_rectangle([60, 55, p_w + 60, p_h + 55], radius=48, outline=(255, 255, 255, glow_alpha), width=6)
-        img.paste(glow_layer, (px - 60, py - 55), glow_layer)
     else:
-        # fallback：emoji 大头像（有真实人物感）
-        float_offset = int(math.sin(t * 1.3) * 8 * S)
-        sway_offset = int(math.sin(t * 0.9) * 5 * S)
-        breath_scale = 1 + 0.012 * math.sin(t * 1.1)  # 呼吸缩放
-        cx = int(300 * S) + sway_offset
-        cy = height // 2 + float_offset
-        r = max(20, int(170 * S * breath_scale))
-        # 平台光斑（小尺寸 RGBA 图层）
-        plat_w, plat_h = int(460 * S), int(90 * S)
-        plat = Image.new("RGBA", (plat_w, plat_h), (0, 0, 0, 0))
-        pd = ImageDraw.Draw(plat)
-        pd.ellipse([0, 0, plat_w, plat_h], fill=(255, 255, 255, 26 + int(14 * math.sin(t * 1.2))))
-        img.paste(plat, (int(cx - plat_w / 2), cy + r - int(20 * S)), plat)
-        glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse(
-            [cx - r - 18, cy - r - 18, cx + r + 18, cy + r + 18],
-            outline=(255, 255, 255, glow_alpha),
-            width=6,
+        _draw_portrait_region_fallback(
+            img, draw, portrait, t, S, width, height, avatar,
         )
-        img.paste(glow, (0, 0), glow)
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ffffff12", outline="#ffffff30", width=4)
-        # 彩色 emoji 头像（位图字体渲染后放大，RGBA 图层合成保留颜色）
-        emoji = avatar.get("emoji", "👩‍💼")
-        emoji_font = _try_load_emoji_font(160)
-        if emoji_font:
-            layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            ld = ImageDraw.Draw(layer)
-            bbox = ld.textbbox((0, 0), emoji, font=emoji_font)
-            ew = bbox[2] - bbox[0]
-            eh = bbox[3] - bbox[1]
-            target = int(r * 1.9)
-            scale = target / max(ew, 1)
-            if scale > 1.6:
-                small = Image.new("RGBA", (ew + 40, eh + 40), (0, 0, 0, 0))
-                sd = ImageDraw.Draw(small)
-                sd.text((20 - bbox[0], 20 - bbox[1]), emoji, font=emoji_font, embedded_color=True)
-                big = small.resize((int((ew + 40) * scale), int((eh + 40) * scale)), Image.LANCZOS)
-                layer.paste(big, (int(cx - big.width / 2), int(cy - big.height / 2)), big)
-            else:
-                ld.text((cx - ew / 2 - bbox[0], cy - eh / 2 - bbox[1]), emoji, font=emoji_font, embedded_color=True)
-            img.paste(layer, (0, 0), layer)
-        else:
-            name_text = avatar.get("name", "AI数字人")
-            bbox = draw.textbbox((0, 0), name_text, font=fonts["title"])
-            tw = bbox[2] - bbox[0]
-            draw.text((cx - tw // 2, cy - 18), name_text, fill="#ffffff88", font=fonts["title"])
-        style_text = avatar.get("style", "")
-        if style_text:
-            bbox = draw.textbbox((0, 0), style_text, font=fonts["body"])
-            sw = bbox[2] - bbox[0]
-            draw.text((cx - sw // 2, cy + r + 22), style_text, fill="#ffffff55", font=fonts["body"])
 
     # ── 5. 人物名片（右上）+ 卡拉OK逐字字幕（right=名片下 / center=底部居中大字）──
     right_x = int(600 * S)
