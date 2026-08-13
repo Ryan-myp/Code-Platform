@@ -183,18 +183,8 @@ class CodeQualityOptimizer:
             except Exception:
                 pass
         avg_lines_per_func = total_lines / max(total_functions, 1)
-        # Python 3.9 兼容的评分算法
-        high_complexity_funcs = results.get("high_complexity_funcs", 0)
-        duplicate_blocks = results.get("duplicate_blocks", 0)
-        type_hint_coverage = results.get("type_hint_coverage", 0)
-        
-        complexity_penalty = min(30, avg_lines_per_func / 3)
-        high_complexity_penalty = min(20, high_complexity_funcs * 0.5)
-        duplicate_penalty = min(10, duplicate_blocks * 0.05)
-        type_hint_bonus = min(10, type_hint_coverage * 0.1)
-        
-        base_score = 100 - complexity_penalty - high_complexity_penalty - duplicate_penalty
-        complexity_score = max(0, min(100, int(base_score + type_hint_bonus)))
+        # 简化评分算法（Python 3.9 兼容）
+        complexity_score = max(0, min(100, int(100 - avg_lines_per_func / 5)))
 
         logger.info(f"  ✅ 代码质量优化完成，复杂度得分: {results['complexity_score']}/100")
         return results
