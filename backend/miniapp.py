@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 
+def _build_review_simple(review_data: dict) -> dict:
+    """简化版构建评测材料。"""
+    return {
+        "title": review_data.get("title", ""),
+        "content": review_data.get("content", ""),
+        "score": review_data.get("score", 0)
+    }
+
+def _prepare_review_params(request_data: dict) -> dict:
+    """简化版准备评测参数。"""
+    return {
+        "template_id": request_data.get("template_id", ""),
+        "data": request_data.get("data", {})
+    }
+
 
 
 def _prepare_step_context(**kwargs) -> dict:

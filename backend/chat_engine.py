@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 
+def _run_workflow_simple(workflow_data: dict) -> dict:
+    """简化版工作流执行。"""
+    return {
+        "status": "success",
+        "workflow_id": workflow_data.get("workflow_id", ""),
+        "result": workflow_data.get("result", {})
+    }
+
+def _prepare_workflow_params(request_data: dict) -> dict:
+    """简化版准备工作流参数。"""
+    return {
+        "workflow_id": request_data.get("workflow_id", ""),
+        "inputs": request_data.get("inputs", {})
+    }
+
 
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
 from dataclasses import dataclass, field
