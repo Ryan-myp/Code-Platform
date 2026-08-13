@@ -3664,6 +3664,85 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
     }
 
 
+
+def _warmup_tts(texts: list, req, indexes: list, user: str):
+    """并行 TTS 预热。"""
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        voice_info = _lookup_voice(user, req.voice_id)
+    except Exception:
+        return
+    if not voice_info:
+        return
+    if voice_info.get("is_custom") and not voice_info.get("is_clone"):
+        return
+    tts_voice = voice_info.get("edge_voice") or req.voice_id if voice_info.get("is_clone") else req.voice_id
+    tts_pitch = int(voice_info.get("pitch_hz") or 0) if voice_info.get("is_clone") else 0
+    
+    warm = [
+        i for i in (indexes if indexes is not None else range(len(texts)))
+        if 5 <= len(texts[i].strip()) <= 10000
+        and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
+    ]
+    if not warm:
+        return
+    
+    def _warm(i: int):
+        try:
+            emo = req.emotion if req.emotion != "auto" else _detect_emotion(texts[i].strip())
+            _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch, EMOTION_TTS_STYLE.get(emo, ""))
+        except Exception as e:
+            logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
+    
+    with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
+        list(pool.map(_warm, warm))
+
+def _process_batch_item(item, text, req, user, uid, role):
+    """处理单个批量项目。"""
+    if len(text) < 5:
+        item["status"] = "failed"
+        item["error"] = "文案太短（至少 5 字）"
+        return False
+    if any(w.lower() in text.lower() for w in _HARD_BLOCK_WORDS):
+        item["status"] = "failed"
+        item["error"] = "文案含违规词，已拦截"
+        return False
+    
+    try:
+        sub = GenerateRequest(
+            text=text,
+            avatar_id=req.avatar_id,
+            voice_id=req.voice_id,
+            background_id=req.background_id,
+            scene_id=req.scene_id,
+            template_id=req.template_id,
+            speed=req.speed,
+            resolution=req.resolution,
+            fps=req.fps,
+            watermark=req.watermark,
+            engine=req.engine,
+            emotion=req.emotion,
+        )
+        res = _generate_one(sub, user, uid, role)
+        if res["status"] == "done":
+            item.update(
+                status="success",
+                record_id=res["record_id"],
+                audio_url=res["audio_url"],
+                video_url=res["video_url"],
+                watermark=res["watermark"],
+                sensitive_warning=res.get("sensitive_warning", ""),
+            )
+            return True
+        else:
+            item["status"] = "failed"
+            item["error"] = (res.get("error") or "生成失败")[:120]
+            return False
+    except Exception as e:
+        item["status"] = "failed"
+        item["error"] = str(e)[:120]
+        return False
+
 def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试多分支，逐段可读
     batch_id: str,
     texts: list[str],
@@ -3682,39 +3761,8 @@ def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试�
     task = _BATCH_TASKS[batch_id]
 
     def _prefetch_tts() -> None:
-        """并行 TTS 预热：合法文案写入音频缓存，供主循环渲染时命中。"""
-        try:
-            voice_info = _lookup_voice(user, req.voice_id)
-        except Exception:  # noqa: BLE001 — 预热失败不影响主流程
-            return
-        if not voice_info:
-            return
-        if voice_info.get("is_custom") and not voice_info.get("is_clone"):
-            return  # 自定义上传声音无 TTS 环节
-        tts_voice = voice_info.get("edge_voice") or req.voice_id if voice_info.get("is_clone") else req.voice_id
-        tts_pitch = int(voice_info.get("pitch_hz") or 0) if voice_info.get("is_clone") else 0
-        warm = [
-            i
-            for i in (indexes if indexes is not None else range(len(texts)))
-            if 5 <= len(texts[i].strip()) <= 10000
-            and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
-        ]
-        if not warm:
-            return
-
-        def _warm(i: int) -> None:
-            try:
-                emo = (
-                    req.emotion
-                    if req.emotion != "auto"
-                    else _detect_emotion(texts[i].strip())
-                )
-                _tts_cached(texts[i].strip(), tts_voice, req.speed, tts_pitch, EMOTION_TTS_STYLE.get(emo, ""))
-            except Exception as e:  # noqa: BLE001 — 预热失败仅告警，主流程会再 合成
-                logger.warning(f"批量 TTS 预热失败 idx={i}: {e}")
-
-        with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
-            list(pool.map(_warm, warm))
+        """并行 TTS 预热。"""
+        _warmup_tts(texts, req, indexes, user)
 
     prefetch = threading.Thread(target=_prefetch_tts, daemon=True)
     prefetch.start()
@@ -3722,42 +3770,7 @@ def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试�
         for i in indexes if indexes is not None else range(len(texts)):
             item = task["items"][i]
             text = texts[i].strip()
-            if len(text) < 5:
-                item["status"] = "failed"
-                item["error"] = "文案太短（至少 5 字）"
-            elif any(w.lower() in text.lower() for w in _HARD_BLOCK_WORDS):
-                item["status"] = "failed"
-                item["error"] = "文案含违规词，已拦截"
-            else:
-                try:
-                    sub = GenerateRequest(
-                        text=text,
-                        avatar_id=req.avatar_id,
-                        voice_id=req.voice_id,
-                        background_id=req.background_id,
-                        scene_id=req.scene_id,
-                        template_id=req.template_id,
-                        speed=req.speed,
-                        resolution=req.resolution,
-                        fps=req.fps,
-                        watermark=req.watermark,
-                        engine=req.engine,
-                        emotion=req.emotion,
-                    )
-                    res = _generate_one(sub, user, uid, role)
-                    if res["status"] == "done":
-                        item.update(
-                            status="success",
-                            record_id=res["record_id"],
-                            audio_url=res["audio_url"],
-                            video_url=res["video_url"],
-                            watermark=res["watermark"],
-                            sensitive_warning=res.get("sensitive_warning", ""),
-                        )
-                    else:
-                        # audio_only/failed：未产出视频一律算失败（可重试），已扣额度退回
-                        item["status"] = "failed"
-                        item["error"] = (res.get("error") or "生成失败")[:120]
+            _process_batch_item(item, text, req, user, uid, role)
                         from common.auth import refund_quota
 
                         refund_quota(uid)
