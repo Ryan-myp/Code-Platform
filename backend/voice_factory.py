@@ -491,34 +491,21 @@ def _prepare_voice_params_simple(request_data: dict) -> dict:
         "duration": request_data.get("duration", 0)
     }
 
-async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
-    """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
 
-    def _report(pct: float, stage: str) -> None:
-        _notify_progress(progress, pct, stage)
-
+def _resolve_voice_params(payload: dict) -> dict:
+    """解析并校验 TTS 参数，返回 {text, scene, voice, speed, pitch, format, emotion, tts_voice, tts_speed}。"""
     text = (payload.get("text") or "").strip()
     scene = payload.get("scene") or "shortvideo"
     voice = payload.get("voice") or ""
     speed = float(payload.get("speed") or 1.0)
     pitch = int(payload.get("pitch") or 0)
-    format = payload.get("format") or "mp3"
+    fmt = payload.get("format") or "mp3"
     emotion = payload.get("emotion") or ""
-    # v23 配音场景模板热度：按模板生成时记录（失败静默）
-    tpl_id = (payload.get("template_id") or "").strip()
-    if tpl_id:
-        try:
-            from voice_templates import record_usage
-            record_usage(tpl_id)
-        except Exception:  # noqa: BLE001
-            pass
     if not text:
         raise HTTPException(400, "请输入要配音的文本")
     if len(text) > MAX_TEXT_CHARS:
         raise HTTPException(400, "操作失败，请稍后重试")
-    if format not in ("mp3", "wav"):
+    if fmt not in ("mp3", "wav"):
         raise HTTPException(400, "format 仅支持 mp3 / wav")
     pitch = max(-20, min(20, pitch))
     scene_cfg = next((s for s in SCENES if s["id"] == scene), None)
@@ -527,47 +514,95 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     tts_voice = voice or (scene_cfg["voice"] if scene_cfg else "zh-CN-XiaoxiaoNeural")
     tts_speed = speed if scene == "custom" else (scene_cfg["speed"] if scene_cfg else speed)
     tts_speed = max(0.5, min(2.0, float(tts_speed)))
+    return {
+        "text": text, "scene": scene, "voice": voice, "speed": speed, "pitch": pitch,
+        "format": fmt, "emotion": emotion, "tts_voice": tts_voice, "tts_speed": tts_speed,
+    }
 
-    start = time.time()
+
+async def _synthesize_audio(params: dict, progress: Callable | None) -> dict:
+    """合成音频：分段 TTS → 拼接 → 母带 → 字幕。返回 {segments, seg_durations, out_path, srt_path, has_srt, tmp_dir}。"""
+    from common.helpers import _notify_progress
+
+    def _report(pct: float, stage: str) -> None:
+        _notify_progress(progress, pct, stage)
+
+    text, tts_voice, tts_speed, pitch, emotion = (
+        params["text"], params["tts_voice"], params["tts_speed"], params["pitch"], params["emotion"],
+    )
+    fmt = params["format"]
+    segments = _split_text(text)
+    if not segments:
+        raise HTTPException(400, "文本为空")
+    tmp_dir = tempfile.mkdtemp(prefix="voice_seg_")
+    seg_files, seg_durations = [], []
+    for i, seg in enumerate(segments):
+        _report(10 + int(i * 70 / len(segments)), f"正在合成第 {i + 1}/{len(segments)} 段…")
+        data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch, emotion)
+        seg_path = os.path.join(tmp_dir, f"seg_{i}.mp3")
+        with open(seg_path, "wb") as f:
+            f.write(data)
+        seg_files.append(seg_path)
+        seg_durations.append(_audio_duration(seg_path))
+    _report(85, "正在拼接与母带处理…")
+    stem = f"voice_{int(time.time() * 1000)}"
+    raw_path = os.path.join(tmp_dir, "merged.mp3")
+    if len(seg_files) == 1:
+        shutil.copyfile(seg_files[0], raw_path)
+    else:
+        _merge_mp3(seg_files, raw_path)
+    filename = f"{stem}.{'wav' if fmt == 'wav' else 'mp3'}"
+    out_path = os.path.join(VOICE_DIR, filename)
+    _master_audio(raw_path, out_path, fmt)
+    duration = _audio_duration(out_path) or round(len(text) / 4.5, 1)
+    srt_path = os.path.join(VOICE_DIR, f"{stem}.srt")
+    _make_srt(segments, seg_durations, srt_path)
+    return {
+        "segments": segments, "seg_durations": seg_durations, "out_path": out_path,
+        "srt_path": srt_path, "has_srt": os.path.exists(srt_path), "tmp_dir": tmp_dir,
+        "filename": filename, "duration": duration,
+    }
+
+async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+    """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
+
+    # v23 配音场景模板热度：按模板生成时记录（失败静默）
+    tpl_id = (payload.get("template_id") or "").strip()
+    if tpl_id:
+        try:
+            from voice_templates import record_usage
+            record_usage(tpl_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+    params = _resolve_voice_params(payload)
+    text = params["text"]
+    scene = params["scene"]
+    tts_voice = params["tts_voice"]
+    tts_speed = params["tts_speed"]
+    pitch = params["pitch"]
+    format = params["format"]
     segments = _split_text(text)
     if not segments:
         raise HTTPException(400, "文本为空")
 
+    start = time.time()
     try:
-        tmp_dir = tempfile.mkdtemp(prefix="voice_seg_")
-        seg_files, seg_durations = [], []
-        for i, seg in enumerate(segments):
-            _report(10 + int(i * 70 / len(segments)), f"正在合成第 {i + 1}/{len(segments)} 段…")
-            data = await asyncio.to_thread(_tts_one, seg, tts_voice, tts_speed, pitch, emotion)
-            seg_path = os.path.join(tmp_dir, f"seg_{i}.mp3")
-            with open(seg_path, "wb") as f:
-                f.write(data)
-            seg_files.append(seg_path)
-            seg_durations.append(_audio_duration(seg_path))
-
-        # 拼接 → 母带处理（响度标准化 + 淡入淡出）→ 输出产物
-        _report(85, "正在拼接与母带处理…")
-        stem = f"voice_{int(time.time() * 1000)}"
-        raw_path = os.path.join(tmp_dir, "merged.mp3")
-        if len(seg_files) == 1:
-            shutil.copyfile(seg_files[0], raw_path)
-        else:
-            _merge_mp3(seg_files, raw_path)
-        filename = f"{stem}.{'wav' if format == 'wav' else 'mp3'}"
-        out_path = os.path.join(VOICE_DIR, filename)
-        _master_audio(raw_path, out_path, format)
-        duration = _audio_duration(out_path) or round(len(text) / 4.5, 1)
-        # 字幕：分段文本 + 分段真实时长，时间戳与最终音频对齐
-        srt_path = os.path.join(VOICE_DIR, f"{stem}.srt")
-        _make_srt(segments, seg_durations, srt_path)
-        has_srt = os.path.exists(srt_path)
+        syn = await _synthesize_audio(params, progress)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"TTS 生成失败: {e}")
         raise HTTPException(500, "操作失败，请稍后重试") from e
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        shutil.rmtree(syn["tmp_dir"], ignore_errors=True) if "syn" in dir() else None
+
+    filename = syn["filename"]
+    out_path = syn["out_path"]
+    duration = syn["duration"]
+    has_srt = syn["has_srt"]
 
     art_id = _save_artifact(
         filename,

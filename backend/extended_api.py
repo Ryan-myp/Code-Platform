@@ -3200,6 +3200,54 @@ _AB_RUN_USER = """实验名称：{name}
 
 
 
+
+def _normalize_ab_scores(parsed: dict) -> list:
+    """规范化 AB 五维评分：钳制 0-100、补缺失维度、保留额外维度。"""
+    scores_map: dict = {}
+    for s in parsed.get("scores") or []:
+        if not isinstance(s, dict) or not s.get("dimension"):
+            continue
+        dim = s["dimension"]
+        scores_map[dim] = {"dimension": dim, "a": _ab_num(s.get("a")), "b": _ab_num(s.get("b"))}
+    scores = [scores_map.get(d, {"dimension": d, "a": 0, "b": 0}) for d in _AB_DIMENSIONS]
+    for dim, s in scores_map.items():
+        if dim not in _AB_DIMENSIONS:
+            scores.append(s)
+    return scores
+
+
+def _ab_num(v) -> int:
+    """AB 维度分数钳制 0-100。"""
+    try:
+        return max(0, min(100, int(v)))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _ab_infer_winner(scores: list, winner: str | None) -> str:
+    """按总分推断胜出方。"""
+    if winner in ("A", "B"):
+        return winner
+    total_a = sum(s["a"] for s in scores)
+    total_b = sum(s["b"] for s in scores)
+    return "A" if total_a >= total_b else "B"
+
+
+def _ab_winner_reason(scores: list, winner: str, total_a: int, total_b: int, reason: str) -> str:
+    """胜出原因：优先 LLM 输出，否则用分差最大维度派生。"""
+    if reason:
+        return reason
+    diffs = sorted(scores, key=lambda s: abs(s["a"] - s["b"]), reverse=True)
+    if diffs and diffs[0]["a"] != diffs[0]["b"]:
+        top = diffs[0]
+        win_side = top["a"] if winner == "A" else top["b"]
+        lose_side = top["b"] if winner == "A" else top["a"]
+        return (
+            f"方案 {winner} 在「{top['dimension']}」维度领先 {win_side - lose_side} 分，"
+            f"五维总分亦占优（{total_a} vs {total_b}），故判定胜出。"
+        )
+    return f"方案 {winner} 五维评分更高，判定胜出。"
+
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
 
@@ -3209,36 +3257,16 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     parsed = parsed or {}
 
     # 维度分：非法值钳制 0-100；缺失维度补 0 分；LLM 额外维度保留
-    scores_map: dict = {}
-    for s in parsed.get("scores") or []:
-        if not isinstance(s, dict) or not s.get("dimension"):
-            continue
-        dim = s["dimension"]
-
-        def _num(v):
-            try:
-                return max(0, min(100, int(v)))
-            except (ValueError, TypeError):
-                return 0
-
-        scores_map[dim] = {"dimension": dim, "a": _num(s.get("a")), "b": _num(s.get("b"))}
-    scores = [scores_map.get(d, {"dimension": d, "a": 0, "b": 0}) for d in _AB_DIMENSIONS]
-    for dim, s in scores_map.items():
-        if dim not in _AB_DIMENSIONS:
-            scores.append(s)
-
+    scores = _normalize_ab_scores(parsed)
     total_a = sum(s["a"] for s in scores)
     total_b = sum(s["b"] for s in scores)
-    winner = parsed.get("winner")
-    if winner not in ("A", "B"):
-        winner = "A" if total_a >= total_b else "B"
+    winner = _ab_infer_winner(scores, parsed.get("winner"))
 
     try:
         confidence = max(0, min(100, int(parsed.get("confidence") or 0)))
     except (ValueError, TypeError):
         confidence = 0
     if confidence == 0 and total_a != total_b:
-        # 按总分分差推断置信度（50-90 区间，避免空分时误判高置信）
         diff = abs(total_a - total_b)
         confidence = round(min(90, max(50, diff / max(total_a, total_b, 1) * 100)))
 
@@ -3246,19 +3274,7 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     winner_reason = (analysis.get("winner_reason") or "").strip()
     risks = [str(r).strip() for r in (analysis.get("risks") or []) if str(r).strip()]
     next_steps = [str(n).strip() for n in (analysis.get("next_steps") or []) if str(n).strip()]
-    if not winner_reason:
-        # 派生：用分差最大的维度说明胜出原因
-        diffs = sorted(scores, key=lambda s: abs(s["a"] - s["b"]), reverse=True)
-        if diffs and diffs[0]["a"] != diffs[0]["b"]:
-            top = diffs[0]
-            win_side = top["a"] if winner == "A" else top["b"]
-            lose_side = top["b"] if winner == "A" else top["a"]
-            winner_reason = (
-                f"方案 {winner} 在「{top['dimension']}」维度领先 {win_side - lose_side} 分，"
-                f"五维总分亦占优（{total_a} vs {total_b}），故判定胜出。"
-            )
-        else:
-            winner_reason = f"方案 {winner} 五维评分更高，判定胜出。"
+    winner_reason = _ab_winner_reason(scores, winner, total_a, total_b, winner_reason)
 
     return {
         "status": "completed",
