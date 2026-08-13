@@ -31,7 +31,7 @@ class APINode(BusinessNode):
             url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
             headers={"Content-Type": "application/json"},
             body_field="message",  # 从context中取message字段作为body
-            auth_token="slack-webhook-token"
+            auth_token=os.environ.get("SLACK_WEBHOOK_TOKEN", "")
         )
     """
 

@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-08-13T16:23:06.644783",
+  "system": "Code Platform",
+  "version": "1.0.0",
+  "summary": {
+    "code_quality": {
+      "files_scanned": 123,
+      "issues_found": 0,
+      "issues_fixed": 0,
+      "complexity_score": 91
+    },
+    "tests": {
+      "total": 0,
+      "passed": 0,
+      "failed": 0,
+      "suggestions": [],
+      "failed_tests": []
+    },
+    "api_health": {
+      "checked": 5,
+      "healthy": 2,
+      "unhealthy": [
+        {
+          "path": "/api/quota",
+          "status": 404,
+          "time_ms": 6,
+          "expected_ms": 2000
+        },
+        {
+          "path": "/api/templates",
+          "status": 404,
+          "time_ms": 2,
+          "expected_ms": 3000
+        },
+        {
+          "path": "/api/search",
+          "status": 404,
+          "time_ms": 2,
+          "expected_ms": 3000
+        }
+      ],
+      "avg_response_time_ms": 54
+    },
+    "data_cleaned": {
+      "files_cleaned": 0,
+      "space_freed_mb": 0,
+      "db_records_deleted": 0
+    },
+    "output_quality": {
+      "prompts_optimized": 0,
+      "params_tuned": 0,
+      "quality_score": 0
+    },
+    "security": {
+      "checks_passed": 4,
+      "checks_failed": 0,
+      "vulnerabilities": []
+    },
+    "dependencies": {
+      "total_deps": 149,
+      "outdated": 10,
+      "vulnerable": 0,
+      "recommendations": [
+        "agnoctl: 0.1.2 → 0.1.3",
+        "aiofile: 3.11.1 → 3.12.3",
+        "aiohappyeyeballs: 2.6.2 → 2.7.1",
+        "aiohttp: 3.14.1 → 3.14.3",
+        "annotated-doc: 0.0.4 → 0.0.5",
+        "annotated-types: 0.7.0 → 0.8.0",
+        "anyio: 4.10.0 → 4.14.2",
+        "attrs: 25.3.0 → 26.1.0",
+        "binaryornot: 0.4.4 → 0.6.0",
+        "build: 1.3.0 → 1.5.0"
+      ]
+    }
+  },
+  "enterprise_readiness": {
+    "score": 58,
+    "grade": "D",
+    "breakdown": {
+      "code_quality": 20,
+      "test_coverage": 10,
+      "api_health": 8,
+      "security": 20,
+      "dependencies": 0
+    }
+  }
+}

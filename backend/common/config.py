@@ -77,7 +77,7 @@ DEFAULT_MODELS = [
 ]
 
 # ── 安全配置 ──────────────────────────────────────────────
-_DEFAULT_SECRET_KEY = "your-super-secret-change-in-prod"
+_DEFAULT_SECRET_KEY = os.environ.get("SECRET_KEY", "")  # 必须从环境变量设置
 SECRET_KEY = os.environ.get("SECRET_KEY", _DEFAULT_SECRET_KEY)
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_MINUTES = int(os.environ.get("TOKEN_EXPIRE_MINUTES", "480"))

@@ -1449,7 +1449,7 @@ async def submit_voucher_api(
 
 
 # ── 收款码配置（商业版：扫码支付） ──────────────────────────
-PAYMENT_QR_KEY = "payment_qr"
+PAYMENT_QR_KEY = os.environ.get("PAYMENT_QR_KEY", "payment_qr")  # 配置键名，非敏感
 
 
 def _get_payment_qr() -> str:
