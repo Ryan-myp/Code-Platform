@@ -25,7 +25,8 @@ import {
   FileSpreadsheet,
   ListChecks,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, PageHeader, Modal } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader, Modal, Pagination,
+} from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import FavoriteButton from '../components/FavoriteButton'
 import { useToast } from '../lib/toast'
@@ -1123,84 +1124,87 @@ export default function ShortDramaPage() {
               description="输入主题，开始你的第一部 AI 短剧吧"
             />
           ) : (
-            <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
-              {items.map((it) => (
-                <div
-                  key={it.id}
-                  className="flex gap-3 rounded-xl border border-gray-100 hover:border-violet-200 hover:shadow-sm transition-all p-2.5 cursor-pointer"
-                  onClick={() => setPlaying(it)}
-                >
-                  <div className="relative w-20 h-28 rounded-lg overflow-hidden bg-gray-900 flex-shrink-0 group">
-                    {/* v13.28 真 JPG 封面 + hover 播放首镜 6s 预览 */}
-                    <img
-                      src={it.cover_url}
-                      alt={it.title || '短剧封面'}
-                      loading="lazy"
-                      className="w-full h-full object-cover"
+            <Pagination
+              items={items}
+              pageSize={6}
+              label={`共 ${items.length} 部短剧`}
+              renderItem={(it) => (
+              <div
+                key={it.id}
+                className="flex gap-3 rounded-xl border border-gray-100 hover:border-violet-200 hover:shadow-sm transition-all p-2.5 cursor-pointer"
+                onClick={() => setPlaying(it)}
+              >
+                <div className="relative w-20 h-28 rounded-lg overflow-hidden bg-gray-900 flex-shrink-0 group">
+                  {/* v13.28 真 JPG 封面 + hover 播放首镜 6s 预览 */}
+                  <img
+                    src={it.cover_url}
+                    alt={it.title || '短剧封面'}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
+                  {it.preview_url && (
+                    <video
+                      src={it.preview_url}
+                      muted
+                      loop
+                      playsInline
+                      preload="none"
+                      className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
+                      onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                      onMouseLeave={(e) => e.currentTarget.pause()}
                     />
-                    {it.preview_url && (
-                      <video
-                        src={it.preview_url}
-                        muted
-                        loop
-                        playsInline
-                        preload="none"
-                        className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-opacity"
-                        onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-                        onMouseLeave={(e) => e.currentTarget.pause()}
+                  )}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors">
+                    <Play className="w-6 h-6 text-white drop-shadow" />
+                  </div>
+                  <span className="absolute bottom-1 right-1 flex items-center gap-0.5 text-[10px] text-white bg-black/60 rounded px-1">
+                    <Clock className="w-2.5 h-2.5" />
+                    {fmtDur(it.duration)}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0 py-1">
+                  <div className="font-medium text-sm text-gray-800 truncate">
+                    {it.title || it.id.replace('drama_', '').slice(0, 12)}
+                  </div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+                    <Film className="w-3 h-3" />
+                    竖屏 720x1280
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-400">{it.created_at}</div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <a
+                      href={it.srt_url}
+                      download
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1 text-[11px] text-violet-600 hover:underline"
+                    >
+                      <Subtitles className="w-3 h-3" />
+                      字幕
+                    </a>
+                    <a
+                      href={it.url}
+                      download
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-violet-600"
+                    >
+                      <Download className="w-3 h-3" />
+                      MP4
+                    </a>
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <FavoriteButton
+                        favType="record"
+                        targetId={it.id}
+                        label={it.title}
+                        className="!p-0.5 !text-gray-400"
                       />
-                    )}
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors">
-                      <Play className="w-6 h-6 text-white drop-shadow" />
-                    </div>
-                    <span className="absolute bottom-1 right-1 flex items-center gap-0.5 text-[10px] text-white bg-black/60 rounded px-1">
-                      <Clock className="w-2.5 h-2.5" />
-                      {fmtDur(it.duration)}
                     </span>
                   </div>
-                  <div className="flex-1 min-w-0 py-1">
-                    <div className="font-medium text-sm text-gray-800 truncate">
-                      {it.title || it.id.replace('drama_', '').slice(0, 12)}
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
-                      <Film className="w-3 h-3" />
-                      竖屏 720x1280
-                    </div>
-                    <div className="mt-1 text-[11px] text-gray-400">{it.created_at}</div>
-                    <div className="mt-2 flex items-center gap-2">
-                      <a
-                        href={it.srt_url}
-                        download
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-1 text-[11px] text-violet-600 hover:underline"
-                      >
-                        <Subtitles className="w-3 h-3" />
-                        字幕
-                      </a>
-                      <a
-                        href={it.url}
-                        download
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-violet-600"
-                      >
-                        <Download className="w-3 h-3" />
-                        MP4
-                      </a>
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <FavoriteButton
-                          favType="record"
-                          targetId={it.id}
-                          label={it.title}
-                          className="!p-0.5 !text-gray-400"
-                        />
-                      </span>
-                    </div>
-                  </div>
                 </div>
-              ))}
-            </div>
+              </div>
+              )}
+            />
           )}
-        </Card>
+          </Card>
       </div>
 
       {/* ── 素材清单 Modal（v15）── */}
