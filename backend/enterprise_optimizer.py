@@ -560,16 +560,57 @@ class DependencyChecker:
             except json.JSONDecodeError:
                 pass
         
-        # 7b. 获取过时依赖
+        # 7b. 获取过时依赖（只检查requirements.txt中的关键依赖）
         cmd_old = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
                    "-m", "pip", "list", "--format=json", "--outdated"]
         rc_old, stdout_old, _ = run_cmd(cmd_old, timeout=60)
+        
+        # 项目关键依赖列表（忽略系统工具包）
+        key_deps = {
+            "fastapi", "uvicorn", "httpx", "pydantic", "pydantic-core", "pydantic-settings",
+            "torch", "transformers", "sentence-transformers", "accelerate",
+            "edge-tts", "imageio-ffmpeg", "ffmpeg-python",
+            "chromadb", "sqlparse", "sqlalchemy",
+            "click", "attrs", "anyio", "build", "cachetools",
+            "cffi", "chardet", "charset-normalizer",
+            "aiohttp", "aiohappyeyeballs", "aiofile",
+            "annotated-types", "annotated-doc",
+            "argo", "arrow", "authlib", "bcrypt",
+            "beautifulsoup4", "blinker", "brotli",
+            "certifi", "cryptography",
+            "dnspython", "email-validator", "email-validator",
+            "fastapi-cloud-cli", "fastapi-cli", "filelock", "flask",
+            "fsspec", "furl",
+            "google-auth", "googleapis-common-protos", "grpcio",
+            "h11", "h2", "hpack", "httpcore", "httptools", "httpx", "httpx-sse",
+            "huggingface-hub", "hyperframe",
+            "idna", "importlib-metadata", "iniconfig",
+            "jinja2", "joblib", "jsonschema", "jsonschema-specifications",
+            "kiwisolver", "markdown-it-py", "markupsafe", "mdurl", "mpmath",
+            "multidict", "mypy-extensions",
+            "networkx", "numpy", "nvidia-cublas-cu12", "nvidia-cuda-cupti-cu12", "nvidia-cuda-nvrtc-cu12", "nvidia-cuda-runtime-cu12", "nvidia-cudnn-cu12", "nvidia-cufft-cu12", "nvidia-cufile-cu12", "nvidia-curand-cu12", "nvidia-cusolver-cu12", "nvidia-cusparse-cu12", "nvidia-cusparse-edit-cu12", "nvidia-nccl-cu12", "nvidia-nvjitlink-cu12", "nvidia-nvtx-cu12",
+            "oauthlib", "onnxruntime", "opentelemetry-api", "opentelemetry-sdk", "opentelemetry-semantic-conventions",
+            "orjson", "overrides",
+            "packaging", "partial-json", "pip", "platformdirs", "pluggy", "posthog", "prettytable", "protobuf", "pyasn1", "pyasn1-modules", "pycparser", "pydantic", "pydantic-core", "pydantic-settings", "pygments", "pymdown-extensions", "pynvml", "pyparsing", "pytest", "python-dateutil", "python-dotenv", "python-multipart", "pytz",
+            "pyyaml",
+            "regex", "requests", "requests-oauthlib", "rich", "rich-argparse", "rsa", "rubicon-objc",
+            "safetensors", "scikit-learn", "scipy", "shellingham", "six", "sentencepiece", "setuptools",
+            "shellingham", "six", "sklearn", "slowapi", "soupsieve", "sqlalchemy", "sqlparse", "starlette", "sympy",
+            "threadpoolctl", "tokenizers", "tomli", "tomli-w", "tomlkit", "torch", "tqdm", "triton", "typer", "typing-extensions", "tzdata",
+            "ujson", "uvicorn", "uvloop", "urllib3",
+            "watchfiles", "websockets", "werkzeug", "wheel", "wrapt", "yarl", "zipp", "zstandard",
+            # 项目特定依赖
+            "agno", "agnoctl",
+        }
         
         if rc_old == 0:
             try:
                 deps = json.loads(stdout_old)
                 for dep in deps:
-                    name = dep.get("name", "")
+                    name = dep.get("name", "").lower()
+                    # 只统计项目关键依赖
+                    if name not in key_deps:
+                        continue
                     current = dep.get("version", "")
                     latest = dep.get("latest_version", "")
                     if current != latest:
