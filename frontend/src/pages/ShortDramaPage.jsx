@@ -11,6 +11,7 @@ import {
   Clock,
   Subtitles,
   ChevronDown,
+  Sliders,
   ChevronUp,
   MonitorPlay,
   RefreshCw,
@@ -118,6 +119,7 @@ export default function ShortDramaPage() {
   const [dramaTplId, setDramaTplId] = useState('')
   const [dramaTplInfo, setDramaTplInfo] = useState(null) // 题材详情弹窗
   const [generating, setGenerating] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [genTask, setGenTask] = useState(null)
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -433,6 +435,50 @@ export default function ShortDramaPage() {
             />
           </div>
 
+          {/* 核心操作：开始创作（紧跟主题输入，主路径最短） */}
+          <div className="rounded-xl bg-gradient-to-r from-violet-50 to-fuchsia-50 border border-violet-100 p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-violet-900">
+                  {theme.trim() ? '主题已就绪，开始创作' : '输入主题后即可开始创作'}
+                </div>
+                <div className="text-[11px] text-violet-600/70 mt-0.5">
+                  画面模式/时长/题材模板等高级参数可展开调整 · 支持素材/AI插画/数字人三种模式
+                </div>
+              </div>
+              <Button onClick={generate} disabled={generating} className="!px-6 whitespace-nowrap">
+                {generating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    生成中（后台执行）…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    开始创作短剧
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+
+          {/* 高级参数（默认收起） */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+            >
+              <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                <Sliders className="w-3.5 h-3.5 text-gray-400" />
+                高级参数
+                <span className="text-gray-400 font-normal">（题材模板/时长/画面模式等）</span>
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-gray-400 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {showAdvanced && (
+              <div className="space-y-5">
           {/* v22 剧本题材模板库：爆款题材注入 AI 编剧（人设/结构/风格/钩子） */}
           {dramaTpls.length > 0 && (
             <div>
@@ -995,34 +1041,23 @@ export default function ShortDramaPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-3">
-            <Button onClick={generate} disabled={generating} className="px-6">
-              {generating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                  生成中（后台执行）…
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  {scriptData ? '重新生成短剧' : '开始创作短剧'}
-                </>
-              )}
-            </Button>
-            {/* v13.29 AI 写剧本：先出剧本可编辑，再确认生成 */}
-            <Button
-              onClick={writeScript}
-              disabled={generating}
-              loading={scripting}
-              variant="secondary"
-              className="px-4"
-            >
-              <Wand2 className="w-4 h-4 mr-1.5" />
-              AI 写剧本
-            </Button>
-            {mode === 'avatar' && <Badge color="purple">数字人播报 · 每镜扣数字人额度</Badge>}
-            {mode === 'material' && <Badge color="green">素材模式 · AI 匹配真实画面 · 支持 10 分钟长剧</Badge>}
-            {mode === 'illust' && <Badge color="purple">AI 插画模式 · 角色一致性（同角色全剧同脸同装）</Badge>}
+              <div className="pt-2 flex items-center gap-3 flex-wrap">
+                <Button
+                  onClick={writeScript}
+                  disabled={generating}
+                  loading={scripting}
+                  variant="secondary"
+                  className="px-4"
+                >
+                  <Wand2 className="w-4 h-4 mr-1.5" />
+                  AI 写剧本（先出剧本可编辑）
+                </Button>
+                {mode === 'avatar' && <Badge color="purple">数字人播报</Badge>}
+                {mode === 'material' && <Badge color="green">素材模式</Badge>}
+                {mode === 'illust' && <Badge color="purple">AI 插画模式</Badge>}
+              </div>
+            </div>
+          )}
           </div>
 
           {genHistory.length > 0 && (
