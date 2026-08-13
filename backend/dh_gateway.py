@@ -199,8 +199,10 @@ def _lazy_refund_failed(task: dict, auth: dict) -> float | None:
 
 
 @router.post("/v1/dh/videos")
-async 
-def _validate_dh_inputs(text: str, voice_id: str, face_id: str) -> bool:
+async def _internal_helper():
+    pass
+
+async def _validate_dh_inputs(text: str, voice_id: str, face_id: str) -> bool:
     """验证数字人输入参数。"""
     if not text or len(text) < 1:
         return False
