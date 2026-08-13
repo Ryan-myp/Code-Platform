@@ -656,21 +656,111 @@ _STYLE_CFG = {
 }
 
 
-async def _compose_music_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
-    """音乐合成执行体（同步/异步任务共用）：numpy 伴奏 + edge-tts 分句人声 + ffmpeg 混音 → mp3 + 封面。"""
+async def _compose_vocal_track(phrases: list, melody: list, voice: str, total_end: float, tmpdir: str, _report) -> str:
+    """合成人声轨：CosyVoice 真歌声优先，edge-tts 变调回退。返回 vocal.wav 路径。"""
+    voice_edge = _VOICE_EDGE.get(voice, _VOICE_EDGE["female"])
+    vocal_track = np.zeros(int((total_end + 1.5) * _SR) + _SR)
+    vocal_ok = 0
+    total_ph = len(phrases)
+    cosy_ok = _cosyvoice_ok()
+    if cosy_ok:
+        logger.info("音乐工厂人声轨使用 CosyVoice 真歌声引擎（%s）", COSYVOICE_API_BASE)
+    for i, ph in enumerate(phrases):
+        _report(15 + int(45 * i / max(total_ph, 1)), f"演唱第 {i + 1}/{total_ph} 句…")
+        phrase_vocal = None
+        if cosy_ok:
+            phrase_vocal = await asyncio.to_thread(_sing_phrase_aligned, ph["text"], ph["dur"])
+        if phrase_vocal is None or len(phrase_vocal) == 0:
+            out = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
+            out_json = os.path.join(tmpdir, f"seg_{i:03d}.json")
+            ok = await asyncio.to_thread(_tts_segment, ph["text"], voice_edge, out, out_json)
+            if not ok:
+                continue
+            phrase_vocal = await asyncio.to_thread(_vocalize_phrase, out, out_json, melody, ph["start"], ph["dur"])
+        if phrase_vocal is None or len(phrase_vocal) == 0:
+            continue
+        pos = int(ph["start"] * _SR)
+        end = min(pos + len(phrase_vocal), len(vocal_track))
+        if end > pos:
+            vocal_track[pos:end] = phrase_vocal[: end - pos]
+            vocal_ok += 1
+    if vocal_ok == 0:
+        raise HTTPException(502, "人声演唱合成全部失败，请检查网络后重试")
 
-    def _report(pct: float, stage: str) -> None:
-        _notify_progress(progress, pct, stage)
+    # 人声轨写 wav（峰值归一化到 0.95，防削波失真）
+    vpeak = float(np.max(np.abs(vocal_track)))
+    if vpeak > 0.95:
+        vocal_track = vocal_track * (0.95 / vpeak)
+    vocal_wav = os.path.join(tmpdir, "vocal.wav")
+    _write_wav_stereo(vocal_wav, vocal_track)
+    return vocal_wav
 
+
+async def _compose_accompaniment(style: str, vocal_wav: str, seed: int, tmpdir: str) -> str:
+    """合成伴奏轨（时长对齐人声）。返回 acc.wav 路径。"""
+    import wave as _wave
+
+    with _wave.open(vocal_wav, "rb") as w:
+        frames = w.getnframes()
+        fps = w.getframerate()
+    duration = frames / fps
+    acc = await asyncio.to_thread(_synthesize_accompaniment, style, duration + 0.5, seed)
+    acc_wav = os.path.join(tmpdir, "acc.wav")
+    _write_wav_stereo(acc_wav, acc)
+    return acc_wav
+
+
+def _write_wav_stereo(path: str, track) -> None:
+    """numpy 单声道 → 16bit 立体声 wav。"""
+    import wave as _wave
+
+    pcm = (np.clip(track, -1, 1) * 32767).astype(np.int16)
+    stereo = np.repeat(pcm[:, None], 2, axis=1)
+    with _wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(_SR)
+        w.writeframes(stereo.tobytes())
+
+
+def _compose_mix(vocal_wav: str, acc_wav: str, filename: str) -> Path:
+    """混音链：人声压缩器 + 伴奏中频挖坑 + 总限制器 → mp3。返回输出路径。"""
+    from common.media_check import is_valid_audio
+
+    out_mp3 = MUSIC_DIR / filename
+    r = subprocess.run(
+        [
+            FFMPEG_BIN, "-y", "-i", vocal_wav, "-i", acc_wav,
+            "-filter_complex",
+            "[0:a]volume=1.5,acompressor=threshold=-24dB:ratio=3:attack=6:release=120:makeup=9dB,alimiter=limit=0.93[v];"
+            "[1:a]equalizer=f=480:t=q:w=1.1:g=-6,equalizer=f=1400:t=q:w=1.1:g=-4,volume=0.26[a];"
+            "[v][a]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.95[out]",
+            "-map", "[out]",
+            "-b:a", "192k", str(out_mp3),
+        ],
+        capture_output=True,
+        timeout=300,
+    )
+    if r.returncode != 0 or not out_mp3.exists() or out_mp3.stat().st_size < 1024:
+        raise RuntimeError("最终混音失败: " + r.stderr.decode(errors="replace")[-200:])
+    if not is_valid_audio(str(out_mp3)):
+        try:
+            out_mp3.unlink()
+        except OSError:
+            pass
+        raise RuntimeError("最终混音结果无法解析（音频无效）")
+    return out_mp3
+
+
+
+def _compose_params(payload: dict) -> dict:
+    """音乐合成参数解析 + 模板热度 + 安全审核。"""
     lyrics = (payload.get("lyrics") or "").strip()
     style = payload.get("style") or "pop"
-    mood = payload.get("mood") or "happy"
-    voice = payload.get("voice") or "female"
-    theme = (payload.get("theme") or "").strip()
-    project_id = payload.get("project_id") or ""
+    if style not in _STYLE_CFG:
+        style = "pop"
     if not lyrics:
         raise HTTPException(400, "请输入歌词内容")
-    # v22 音乐场景模板热度：按模板生成时记录（失败静默）
     tpl_id = (payload.get("template_id") or "").strip()
     if tpl_id:
         try:
@@ -679,16 +769,30 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
             record_usage(tpl_id)
         except Exception:  # noqa: BLE001
             pass
-    if style not in _STYLE_CFG:
-        style = "pop"
-
-    # 生产级内容保障：歌词/主题生成前安全审核（歌曲需过平台内容审核）
+    theme = (payload.get("theme") or "").strip()
     for label, t in (("歌词", lyrics), ("主题", theme)):
         if not t:
             continue
         res = check_text(t, "歌词")
         if not res["ok"]:
             raise HTTPException(400, "内容审核不通过")
+    return {
+        "lyrics": lyrics, "style": style, "mood": payload.get("mood") or "happy",
+        "voice": payload.get("voice") or "female", "theme": theme,
+        "project_id": payload.get("project_id") or "",
+    }
+
+async def _compose_music_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+    """音乐合成执行体（同步/异步任务共用）：numpy 伴奏 + edge-tts 分句人声 + ffmpeg 混音 → mp3 + 封面。"""
+
+    def _report(pct: float, stage: str) -> None:
+        _notify_progress(progress, pct, stage)
+
+    params = _compose_params(payload)
+    lyrics, style, mood, voice, theme, project_id = (
+        params["lyrics"], params["style"], params["mood"],
+        params["voice"], params["theme"], params["project_id"],
+    )
 
     # ACE-Step 大模型引擎优先（auto 模式可用时；失败自动回退本地链路）
     use_acestep = MUSIC_ENGINE_MODE != "local" and _acestep_ok()
@@ -714,93 +818,17 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
     _report(15, "AI 人声演唱合成中（旋律谱曲 + 逐句演唱，约需 1-2 分钟）…")
     tmpdir = tempfile.mkdtemp(prefix="music_compose_")
     try:
-        voice_edge = _VOICE_EDGE.get(voice, _VOICE_EDGE["female"])
-        vocal_track = np.zeros(int((total_end + 1.5) * _SR) + _SR)
-        vocal_ok = 0
-        total_ph = len(phrases)
-        cosy_ok = _cosyvoice_ok()
-        if cosy_ok:
-            logger.info("音乐工厂人声轨使用 CosyVoice 真歌声引擎（%s）", COSYVOICE_API_BASE)
-        for i, ph in enumerate(phrases):
-            _report(15 + int(45 * i / max(total_ph, 1)), f"演唱第 {i + 1}/{total_ph} 句…")
-            phrase_vocal = None
-            # 优先 CosyVoice 真歌声：/sing 生成后时间拉伸对齐谱曲时长
-            if cosy_ok:
-                phrase_vocal = await asyncio.to_thread(_sing_phrase_aligned, ph["text"], ph["dur"])
-            # 回退 edge-tts 朗读变调链路（CosyVoice 未启用或单句失败时）
-            if phrase_vocal is None or len(phrase_vocal) == 0:
-                out = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
-                out_json = os.path.join(tmpdir, f"seg_{i:03d}.json")
-                ok = await asyncio.to_thread(_tts_segment, ph["text"], voice_edge, out, out_json)
-                if not ok:
-                    continue  # 单句失败跳过，保证整首出歌
-                phrase_vocal = await asyncio.to_thread(
-                    _vocalize_phrase, out, out_json, melody, ph["start"], ph["dur"]
-                )
-            if phrase_vocal is None or len(phrase_vocal) == 0:
-                continue
-            pos = int(ph["start"] * _SR)
-            end = min(pos + len(phrase_vocal), len(vocal_track))
-            if end > pos:
-                vocal_track[pos:end] = phrase_vocal[: end - pos]
-                vocal_ok += 1
-        if vocal_ok == 0:
-            raise HTTPException(502, "人声演唱合成全部失败，请检查网络后重试")
-
-        # 人声轨写 wav（峰值归一化到 0.95，防削波失真）
-        vpeak = float(np.max(np.abs(vocal_track)))
-        if vpeak > 0.95:
-            vocal_track = vocal_track * (0.95 / vpeak)
-        vocal_wav = os.path.join(tmpdir, "vocal.wav")
-        pcm = (np.clip(vocal_track, -1, 1) * 32767).astype(np.int16)
-        stereo = np.repeat(pcm[:, None], 2, axis=1)
-        with wave.open(vocal_wav, "wb") as w:
-            w.setnchannels(2)
-            w.setsampwidth(2)
-            w.setframerate(_SR)
-            w.writeframes(stereo.tobytes())
+        vocal_wav = await _compose_vocal_track(phrases, melody, voice, total_end, tmpdir, _report)
 
         _report(78, "伴奏谱曲合成中…")
-        acc = await asyncio.to_thread(_synthesize_accompaniment, style, len(vocal_track) / _SR + 0.5, seed)
-        acc_wav = os.path.join(tmpdir, "acc.wav")
-        pcm = (np.clip(acc, -1, 1) * 32767).astype(np.int16)
-        stereo = np.repeat(pcm[:, None], 2, axis=1)
-        with wave.open(acc_wav, "wb") as w:
-            w.setnchannels(2)
-            w.setsampwidth(2)
-            w.setframerate(_SR)
-            w.writeframes(stereo.tobytes())
+        acc_wav = await _compose_accompaniment(style, vocal_wav, seed, tmpdir)
 
         _report(86, "混音合成中…")
         # 混音链：人声压缩器（压动态提响度）+ 限制器 → 伴奏中频挖坑（避开人声频段）+ 降量 → 混合 + 总限制器
         # 人声链：volume 1.5 前置增益，threshold -24dB 以上 3:1 压缩，makeup +9dB，限制 0.93 防削波
         # 伴奏链：480Hz/1.4kHz 分别 -6/-4dB（人声频段让路），整体 0.26x
         filename = f"{generate_music_id()}.mp3"
-        out_mp3 = MUSIC_DIR / filename
-        r = subprocess.run(
-            [
-                FFMPEG_BIN, "-y", "-i", vocal_wav, "-i", acc_wav,
-                "-filter_complex",
-                "[0:a]volume=1.5,acompressor=threshold=-24dB:ratio=3:attack=6:release=120:makeup=9dB,alimiter=limit=0.93[v];"
-                "[1:a]equalizer=f=480:t=q:w=1.1:g=-6,equalizer=f=1400:t=q:w=1.1:g=-4,volume=0.26[a];"
-                "[v][a]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.95[out]",
-                "-map", "[out]",
-                "-b:a", "192k", str(out_mp3),
-            ],
-            capture_output=True,
-            timeout=300,
-        )
-        if r.returncode != 0 or not out_mp3.exists() or out_mp3.stat().st_size < 1024:
-            raise RuntimeError("最终混音失败: " + r.stderr.decode(errors="replace")[-200:])
-        # 写入后 ffprobe 校验：防止本地合成链路产出假数据
-        from common.media_check import is_valid_audio
-
-        if not is_valid_audio(str(out_mp3)):
-            try:
-                out_mp3.unlink()
-            except OSError:
-                pass
-            raise RuntimeError("最终混音结果无法解析（音频无效）")
+        out_mp3 = _compose_mix(vocal_wav, acc_wav, filename)
 
         _report(85, "生成封面…")
         stem = filename.rsplit(".", 1)[0]
