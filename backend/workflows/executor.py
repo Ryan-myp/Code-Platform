@@ -252,6 +252,52 @@ class WorkflowExecutor:
 
         return adjacency, in_degree
 
+
+    async def _run_dag_layers(self, nodes, node_map, in_degree, adjacency, results, input_data, run_id, ws_channel, processed) -> dict:
+        """Kahn 拓扑排序分层并行执行节点。"""
+        while len(processed) < len(nodes):
+            ready = [nid for nid in in_degree if in_degree[nid] == 0 and nid not in processed]
+            if not ready:
+                remaining = [nid for nid in in_degree if nid not in processed]
+                for nid in remaining:
+                    results[nid] = {"status": "error", "message": "检测到循环依赖，节点未执行"}
+                    self._log_node(run_id, nid, "failed", results[nid])
+                break
+            await asyncio.gather(*[self._exec_one(nid, node_map, results, input_data, run_id, ws_channel) for nid in ready])
+            for nid in ready:
+                processed.add(nid)
+                for downstream in adjacency.get(nid, []):
+                    in_degree[downstream] -= 1
+        return results
+
+    async def _exec_one(self, node_id: str, node_map: dict, results: dict, input_data: dict, run_id: str, ws_channel: str) -> str:
+        """执行单个节点并记录日志 + WS 推送。"""
+        node = node_map[node_id]
+        node_type = node.get("type", "")
+        config = node.get("config", {}) or {}
+        try:
+            result = await self.execute_node(node_type, config, results, input_data or {})
+            results[node_id] = result
+            status = "success"
+            output = json.dumps(result, ensure_ascii=False, default=str)
+        except Exception as e:
+            logger.exception(f"node {node_id} ({node_type}) failed")
+            results[node_id] = {"status": "error", "message": str(e)}
+            status = "failed"
+            output = json.dumps(results[node_id], ensure_ascii=False, default=str)
+        self._log_node(run_id, node_id, status, output)
+        try:
+            from realtime import manager
+
+            await manager.send_progress(
+                ws_channel,
+                "node_completed",
+                {"node_id": node_id, "status": status, "result": results[node_id]},
+            )
+        except Exception:
+            pass
+        return node_id
+
     async def execute(self, workflow_id: str, input_data: dict = None) -> str:  # noqa: C901
         """执行工作流，返回 run_id。
 
@@ -316,57 +362,9 @@ class WorkflowExecutor:
             processed = set()
 
             # Kahn 算法：按入度分层并行执行
-            while len(processed) < len(nodes):
-                # 找出当前可执行的节点（入度为 0 且未处理）
-                ready = [nid for nid in in_degree if in_degree[nid] == 0 and nid not in processed]
-                if not ready:
-                    # 有环：剩余节点无法执行
-                    remaining = [nid for nid in in_degree if nid not in processed]
-                    for nid in remaining:
-                        results[nid] = {"status": "error", "message": "检测到循环依赖，节点未执行"}
-                        self._log_node(run_id, nid, "failed", results[nid])
-                    break
-
-                # 并行执行就绪的节点
-                async def _exec_one(node_id: str):
-                    node = node_map[node_id]
-                    node_type = node.get("type", "")
-                    config = node.get("config", {}) or {}
-                    try:
-                        result = await self.execute_node(node_type, config, results, input_data or {})
-                        results[node_id] = result
-                        status = "success"
-                        output = json.dumps(result, ensure_ascii=False, default=str)
-                    except Exception as e:
-                        logger.exception(f"node {node_id} ({node_type}) failed")
-                        results[node_id] = {"status": "error", "message": str(e)}
-                        status = "failed"
-                        output = json.dumps(results[node_id], ensure_ascii=False, default=str)
-                    self._log_node(run_id, node_id, status, output)
-                    # WebSocket 推送进度
-                    try:
-                        from realtime import manager
-
-                        await manager.send_progress(
-                            ws_channel,
-                            "node_completed",
-                            {
-                                "node_id": node_id,
-                                "status": status,
-                                "result": results[node_id],
-                            },
-                        )
-                    except Exception:
-                        pass
-                    return node_id
-
-                await asyncio.gather(*[_exec_one(nid) for nid in ready])
-
-                # 更新已处理集合和入度
-                for nid in ready:
-                    processed.add(nid)
-                    for downstream in adjacency.get(nid, []):
-                        in_degree[downstream] -= 1
+            results = await self._run_dag_layers(
+                nodes, node_map, in_degree, adjacency, results, input_data, run_id, ws_channel, processed
+            )
         finally:
             self.running = False
             self.current_run = None
