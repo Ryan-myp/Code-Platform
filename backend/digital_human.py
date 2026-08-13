@@ -1897,6 +1897,103 @@ def _render_frame(  # noqa: C901
     return Image.alpha_composite(img.convert("RGBA"), ui).convert("RGB")
 
 
+def _render_video_frame(
+    f: int, fps: int, duration: float, energy_curve, script_timeline, avatar, bg_hex, fonts,
+    portrait, text_lines, RENDER_W: int, RENDER_H: int, bg_img, subtitle_style, sub_font,
+    sub_cache, emotion, OUT_W: int, OUT_H: int, opening: str, closing: str, watermark: bool,
+    wm_font, frames_dir: str,
+) -> None:
+    """渲染单帧：人物帧 + Ken Burns 运镜 + 淡入淡出 + 片头片尾 + 水印 → JPG。"""
+    import math
+
+    t = f / fps
+    progress = min(1.0, t / duration) if duration > 0 else 1.0
+    energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
+    mouth_shape = _mouth_shape_at(script_timeline, t)
+    frame = _render_frame(
+        avatar=avatar, bg_hex=bg_hex, fonts=fonts, portrait=portrait, text_lines=text_lines,
+        t=t, progress=progress, width=RENDER_W, height=RENDER_H, energy=energy,
+        mouth_shape=mouth_shape, bg_img=bg_img, subtitle_style=subtitle_style,
+        sub_font=sub_font, sub_cache=sub_cache, emotion=emotion,
+    )
+    # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放
+    zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
+    win_w = int(RENDER_W / (1 + zoom))
+    win_h = int(RENDER_H / (1 + zoom))
+    pan_x = int(0.012 * RENDER_W * math.sin(t * 0.18))
+    pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
+    x0 = max(0, min((RENDER_W - win_w) // 2 + pan_x, RENDER_W - win_w))
+    y0 = max(0, min((RENDER_H - win_h) // 2 + pan_y, RENDER_H - win_h))
+    frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize((OUT_W, OUT_H), Image.LANCZOS)
+    # 开头淡入 / 结尾淡出
+    fade = 1.0
+    if t < 0.4:
+        fade = t / 0.4
+    elif t > duration - 0.4:
+        fade = max(0.0, (duration - t) / 0.4)
+    if fade < 1.0:
+        black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
+        frame = Image.blend(black, frame, fade)
+    # 行业模板片头/片尾
+    if (opening and t < 1.2) or (closing and t > duration - 1.2):
+        frame = _overlay_script_text(frame, opening if t < 1.2 else closing, t, duration, fonts["title"], OUT_W, OUT_H)
+    # 商业水印
+    if watermark:
+        frame = _overlay_watermark(frame, wm_font, OUT_W, OUT_H)
+    frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
+
+
+def _overlay_script_text(frame, ov_text: str, t: float, duration: float, ov_font, OUT_W: int, OUT_H: int):
+    """片头/片尾文字叠加（渐显渐隐）。"""
+    if t < 1.2:
+        fade_o = min(1.0, t / 0.3) * min(1.0, (1.2 - t) / 0.4)
+    else:
+        fade_o = min(1.0, (t - (duration - 1.2)) / 0.3) * min(1.0, (duration - t) / 0.4)
+    if fade_o <= 0.02:
+        return frame
+    ov_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
+    ov_draw = ImageDraw.Draw(ov_layer)
+    ov_w = ov_draw.textlength(ov_text, font=ov_font)
+    ov_h = ov_font.getbbox(ov_text)[3]
+    a = int(255 * fade_o * 0.92)
+    ov_x = (OUT_W - ov_w) / 2
+    ov_y = OUT_H * 0.20 - ov_h / 2
+    ov_draw.text((ov_x + 2, ov_y + 2), ov_text, font=ov_font, fill=(0, 0, 0, a))
+    ov_draw.text((ov_x, ov_y), ov_text, font=ov_font, fill=(255, 255, 255, a))
+    frame.paste(ov_layer, (0, 0), ov_layer)
+    return frame
+
+
+def _overlay_watermark(frame, wm_font, OUT_W: int, OUT_H: int):
+    """右下角半透明水印（深色描边提高可读性）。"""
+    wm_text = WATERMARK_TEXT
+    wm_w = wm_font.getbbox(wm_text)[2]
+    wm_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
+    wm_draw = ImageDraw.Draw(wm_layer)
+    wm_x, wm_y = OUT_W - wm_w - int(24 * OUT_W / 1280), OUT_H - int(34 * OUT_H / 720)
+    wm_draw.text((wm_x - 1, wm_y - 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+    wm_draw.text((wm_x + 1, wm_y + 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
+    wm_draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(255, 255, 255, 170))
+    frame.paste(wm_layer, (0, 0), wm_layer)
+    return frame
+
+
+def _encode_with_fallback(frames_dir: str, audio_path: str, output_path: str, resolution: str, fps: int, total_frames: int, duration: float) -> None:
+    """ffmpeg 编码：1080p 失败自动降级 720p 重试。"""
+    encode_attempts = [resolution, "720p"] if resolution == "1080p" else [resolution]
+    encode_err: Exception | None = None
+    for enc_res in encode_attempts:
+        try:
+            _ffmpeg_encode(frames_dir, audio_path, output_path, enc_res, fps)
+            encode_err = None
+            logger.info(f"视频编码成功：{enc_res} {total_frames}帧 @{fps}fps, {duration:.1f}s")
+            return
+        except Exception as e:  # noqa: BLE001 — 编码失败尝试降级
+            encode_err = e
+            logger.warning(f"视频编码失败（{enc_res}），准备降级重试: {e}")
+    raise encode_err
+
+
 def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级），复杂度可控
     text: str,
     avatar: dict,
@@ -1990,85 +2087,11 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
     sub_cache = {"sig": None, "layer": None, "lock": threading.Lock()}
 
     def _render_one(f: int) -> None:
-        t = f / fps
-        progress = min(1.0, t / duration) if duration > 0 else 1.0
-        energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
-        mouth_shape = _mouth_shape_at(script_timeline, t)
-        frame = _render_frame(
-            avatar=avatar,
-            bg_hex=bg_hex,
-            fonts=fonts,
-            portrait=portrait,
-            text_lines=text_lines,
-            t=t,
-            progress=progress,
-            width=RENDER_W,
-            height=RENDER_H,
-            energy=energy,
-            mouth_shape=mouth_shape,
-            bg_img=bg_img,
-            subtitle_style=subtitle_style,
-            sub_font=sub_font,
-            sub_cache=sub_cache,
-            emotion=emotion,
+        frame = _render_video_frame(
+            f, fps, duration, energy_curve, script_timeline, avatar, bg_hex, fonts,
+            portrait, text_lines, RENDER_W, RENDER_H, bg_img, subtitle_style, sub_font,
+            sub_cache, emotion, OUT_W, OUT_H, opening, closing, watermark, wm_font, frames_dir,
         )
-        # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放（避免画面静止感）
-        zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
-        win_w = int(RENDER_W / (1 + zoom))
-        win_h = int(RENDER_H / (1 + zoom))
-        pan_x = int(0.012 * RENDER_W * math.sin(t * 0.18))
-        pan_y = int(0.008 * RENDER_H * math.sin(t * 0.13 + 1.0))
-        x0 = (RENDER_W - win_w) // 2 + pan_x
-        y0 = (RENDER_H - win_h) // 2 + pan_y
-        # 越界保护：裁剪窗口不允许超出画布（x/y 双向，防止运镜露边）
-        x0 = max(0, min(x0, RENDER_W - win_w))
-        y0 = max(0, min(y0, RENDER_H - win_h))
-        frame = frame.crop((x0, y0, x0 + win_w, y0 + win_h)).resize(
-            (OUT_W, OUT_H),
-            Image.LANCZOS,
-        )
-        # 开头淡入 / 结尾淡出
-        fade = 1.0
-        if t < 0.4:
-            fade = t / 0.4
-        elif t > duration - 0.4:
-            fade = max(0.0, (duration - t) / 0.4)
-        if fade < 1.0:
-            black = Image.new("RGB", (OUT_W, OUT_H), (0, 0, 0))
-            frame = Image.blend(black, frame, fade)
-        # 行业模板片头/片尾：首 1.2s 显示引导语、末 1.2s 显示收尾语（各自渐显渐隐，不遮字幕）
-        if (opening and t < 1.2) or (closing and t > duration - 1.2):
-            ov_text = opening if t < 1.2 else closing
-            if t < 1.2:
-                fade_o = min(1.0, t / 0.3) * min(1.0, (1.2 - t) / 0.4)
-            else:
-                fade_o = min(1.0, (t - (duration - 1.2)) / 0.3) * min(1.0, (duration - t) / 0.4)
-            if fade_o > 0.02:
-                ov_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
-                ov_draw = ImageDraw.Draw(ov_layer)
-                ov_font = fonts["title"]
-                ov_w = ov_draw.textlength(ov_text, font=ov_font)
-                ov_h = ov_font.getbbox(ov_text)[3]
-                a = int(255 * fade_o * 0.92)
-                ov_x = (OUT_W - ov_w) / 2
-                ov_y = OUT_H * 0.20 - ov_h / 2
-                ov_draw.text((ov_x + 2, ov_y + 2), ov_text, font=ov_font, fill=(0, 0, 0, a))
-                ov_draw.text((ov_x, ov_y), ov_text, font=ov_font, fill=(255, 255, 255, a))
-                frame.paste(ov_layer, (0, 0), ov_layer)
-        # 商业水印：右下角半透明（不随淡入淡出消失，全程可见）
-        if watermark:
-            wm_text = WATERMARK_TEXT
-            wm_w = wm_font.getbbox(wm_text)[2]
-            wm_layer = Image.new("RGBA", (OUT_W, OUT_H), (0, 0, 0, 0))
-            wm_draw = ImageDraw.Draw(wm_layer)
-            wm_x, wm_y = OUT_W - wm_w - int(24 * OUT_W / 1280), OUT_H - int(34 * OUT_H / 720)
-            # 深色描边提高任意背景下的可读性
-            wm_draw.text((wm_x - 1, wm_y - 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
-            wm_draw.text((wm_x + 1, wm_y + 1), wm_text, font=wm_font, fill=(0, 0, 0, 120))
-            wm_draw.text((wm_x, wm_y), wm_text, font=wm_font, fill=(255, 255, 255, 170))
-            frame.paste(wm_layer, (0, 0), wm_layer)
-        # JPG 帧序列（quality=95 视觉无损，比 PNG 快 10 倍+）
-        frame.save(os.path.join(frames_dir, f"{f:04d}.jpg"), quality=95)
 
     try:
         # 帧渲染并行化：PIL/numpy 的 C 层操作释放 GIL，线程池可吃满多核（帧间无依赖）
@@ -2096,23 +2119,8 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
                     raise TimeoutError(f"帧渲染总时长超限（>{deadline:.0f}s，已完成 {done}/{total_frames} 帧）")
         logger.info(f"帧渲染完成：{total_frames}帧 耗时{time.monotonic() - frame_start:.1f}s")
 
-        # ffmpeg：帧序列 + 音频 → MP4
-        # 编码器自动选择：Apple 芯片用 VideoToolbox 硬件编码（快 5~10 倍），
-        # Linux 容器等无硬件编码器环境自动回退 libx264 CPU 编码
-        # v13.0 降级：1080p 编码失败自动以 720p 重试，保证出片
-        encode_attempts = [resolution, "720p"] if resolution == "1080p" else [resolution]
-        encode_err: Exception | None = None
-        for enc_res in encode_attempts:
-            try:
-                _ffmpeg_encode(frames_dir, audio_path, output_path, enc_res, fps)
-                encode_err = None
-                logger.info(f"视频编码成功：{enc_res} {total_frames}帧 @{fps}fps, {duration:.1f}s")
-                break
-            except Exception as e:  # noqa: BLE001 — 编码失败尝试降级
-                encode_err = e
-                logger.warning(f"视频编码失败（{enc_res}），准备降级重试: {e}")
-        if encode_err:
-            raise encode_err
+        # ffmpeg：帧序列 + 音频 → MP4（1080p 失败自动降级 720p）
+        _encode_with_fallback(frames_dir, audio_path, output_path, resolution, fps, total_frames, duration)
     finally:
         shutil.rmtree(frames_dir, ignore_errors=True)
 
