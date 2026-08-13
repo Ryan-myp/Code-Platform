@@ -31,6 +31,9 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { wxmlToHtml } from '../lib/wxml-preview'
 import useAsyncTask from '../hooks/useAsyncTask'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
+import FavoriteButton from '../components/FavoriteButton'
 
 const TEMPLATES = [
   {
@@ -154,6 +157,8 @@ export default function MiniAppPage() {
   // 异步任务进度（task_id + 轮询进度）
   const [genTask, setGenTask] = useState(null)
   const { submitTask } = useAsyncTask()
+  const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
+    useToolHistory('miniapp_factory_history_v1', 30)
 
   useEffect(() => {
     loadProjects()
@@ -214,6 +219,7 @@ export default function MiniAppPage() {
         onUpdate: (t) => setGenTask(t),
         onSuccess: (data) => {
           const files = data.files || {}
+          addGenHistory({ type: '小程序', name: name.trim(), template, content: requirement.trim().slice(0, 50) })
           setViewing({ id: data.id, name: data.name, files })
           setViewMode('preview')
           buildPreview(files)
@@ -400,6 +406,22 @@ export default function MiniAppPage() {
               >
                 {generating ? '生成任务执行中（后台）…' : '生成小程序项目'}
               </Button>
+              {genHistory.length > 0 && (
+                <div className="mt-3">
+                  <HistoryPanel
+                    history={genHistory}
+                    onReuse={(item) => {
+                      if (item.name) setName(item.name)
+                      if (item.requirement) setRequirement(item.requirement)
+                      if (item.template) setTemplate(item.template)
+                      toast.info('已恢复需求，可重新生成')
+                    }}
+                    onRemove={removeGenHistory}
+                    onClear={clearGenHistory}
+                    title="生成历史"
+                  />
+                </div>
+              )}
               {generating && genTask && (
                 <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
                   <div className="flex items-center gap-2 text-xs text-indigo-600">
@@ -486,6 +508,14 @@ export default function MiniAppPage() {
                       </div>
                       <span className="text-xs text-gray-400 flex-shrink-0">
                         {p.created_at?.slice(0, 16).replace('T', ' ')}
+                      </span>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <FavoriteButton
+                          favType="record"
+                          targetId={p.id}
+                          label={p.name}
+                          className="!p-1.5"
+                        />
                       </span>
                       <Button
                         variant="secondary"
