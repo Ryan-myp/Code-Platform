@@ -854,14 +854,60 @@ def _fix_system(lang: str, kind: str) -> str:
 
 
 
-def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
-    """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。
+def _load_test_cases(cfg: dict) -> str:
+    """加载需求测试用例（无则空串）。"""
+    if not cfg.get("requirement_id"):
+        return ""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT test_cases FROM requirements WHERE id=?", (cfg["requirement_id"],)).fetchone()
+        return row["test_cases"] if row and row["test_cases"] else ""
+    finally:
+        conn.close()
 
-    LLM 不可用或语言无法推断时返回 False（调用方跳过测试门禁并提示），不阻塞部署。
-    """
+
+def _build_test_prompt(lang: str, entry: str, code: str, test_cases: str) -> str:
+    """构建测试文件生成提示词（超长代码截断）。"""
+    sys_prompt = _TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry)
+    prompt = f"【需求测试用例】\n{test_cases or '（无，请基于代码接口自拟核心用例）'}\n\n【{entry}】\n{code}"
+    if len(prompt) > 17000:
+        prompt = prompt[:11000] + "\n# ……（代码过长已截断）……\n" + prompt[-6000:]
+    return prompt
+
+
+def _rewrite_test_file(lang: str, test_file: str, fixed: str, err_v: str, append) -> str | None:
+    """语法错误时 LLM 重写测试文件（含错误上下文）。失败返回 None。"""
+    try:
+        flines = fixed.splitlines()
+        em = re.search(r"L(\d+)|:(\d+):", err_v)
+        err_line = int(em.group(1) or em.group(2) or 1) if em else 1
+        ctx_lines = flines[max(0, err_line - 22): err_line + 18]
+        ctx = "\n".join(f"{max(0, err_line - 22) + i + 1}| {line}" for i, line in enumerate(ctx_lines))
+        brief = fixed[:4000] + f"\n……（共 {len(flines)} 行，中间省略）……\n" + fixed[-2000:]
+        fix2 = call_llm(
+            _fix_system(lang, "test_file"),
+            f"【语法错误】{err_v} at line {err_line}（常见原因：输出被 token 限制截断）\n"
+            f"【错误上下文】\n{ctx}\n\n【文件结构（头尾摘要）】\n{brief}\n\n"
+            f"请重新输出修复后的完整 {test_file}（必须完整不截断）。",
+            max_tokens=6000,
+            timeout=180,
+        )
+        fixed2 = _extract_code_block(fix2)
+        ok_v2, err_v2 = _validate_test_file(lang, fixed2)
+    except Exception as e2:
+        append(f"  - ⚠ 测试文件重写失败: {e2}，跳过自动化测试门禁")
+        return None
+    if not fixed2 or not ok_v2:
+        append(f"  - ⚠ 测试文件重写仍无效（{err_v2}），跳过自动化测试门禁")
+        return None
+    append(f"  - 测试文件重写成功（{len(fixed)} 字节）")
+    return fixed2
+
+
+def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
+    """按技术栈生成测试文件（python→pytest / node→node --test / go→go test），已有则复用。"""
     lang = cfg.get("language") or _detect_project_type(project_dir)["lang"]
     if lang == "docker":
-        # 有 Dockerfile 但无清单文件：按入口文件扩展名推断测试语言
         ext = (cfg.get("entry") or "main.py").rsplit(".", 1)[-1]
         lang = {"py": "python", "js": "node", "ts": "node", "go": "go"}.get(ext, "python")
     entry = cfg.get("entry") or "main.py"
@@ -879,22 +925,10 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     except Exception as e:
         append(f"  - ⚠ 读取 {entry} 失败: {e}")
         return False
-    test_cases = ""
-    if cfg.get("requirement_id"):
-        conn = get_db()
-        try:
-            row = conn.execute("SELECT test_cases FROM requirements WHERE id=?", (cfg["requirement_id"],)).fetchone()
-            if row and row["test_cases"]:
-                test_cases = row["test_cases"]
-        finally:
-            conn.close()
-    sys_prompt = _TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry)
-    prompt = f"【需求测试用例】\n{test_cases or '（无，请基于代码接口自拟核心用例）'}\n\n【{entry}】\n{code}"
-    # 代码过长会超 LLM 上下文/响应超时：截断到 15K 字符（头尾拼接，保留路由与入口）
-    if len(prompt) > 17000:
-        prompt = prompt[:11000] + "\n# ……（代码过长已截断）……\n" + prompt[-6000:]
+    test_cases = _load_test_cases(cfg)
+    prompt = _build_test_prompt(lang, entry, code, test_cases)
     try:
-        out = call_llm(sys_prompt, prompt, max_tokens=6000, timeout=180)
+        out = call_llm(_TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry), prompt, max_tokens=6000, timeout=180)
     except Exception as e:
         append(f"  - ⚠ LLM 生成测试文件失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
         return False
@@ -902,40 +936,17 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     if not fixed:
         append("  - ⚠ LLM 未输出测试代码，跳过自动化测试门禁")
         return False
-    # 语法校验：生成物必须可解析（LLM 偶发输出未闭合围栏/截断）；校验失败 LLM 重写一次兜底
     ok_v, err_v = _validate_test_file(lang, fixed)
     if not ok_v:
         append(f"  - ⚠ 生成测试文件语法错误（{err_v}），LLM 重写中…")
-        try:
-            flines = fixed.splitlines()
-            em = re.search(r"L(\d+)|:(\d+):", err_v)
-            err_line = int(em.group(1) or em.group(2) or 1) if em else 1
-            ctx_lines = flines[max(0, err_line - 22) : err_line + 18]
-            ctx = "\n".join(f"{max(0, err_line - 22) + i + 1}| {line}" for i, line in enumerate(ctx_lines))
-            brief = fixed[:4000] + f"\n……（共 {len(flines)} 行，中间省略）……\n" + fixed[-2000:]
-            fix2 = call_llm(
-                _fix_system(lang, "test_file"),
-                f"【语法错误】{err_v} at line {err_line}（常见原因：输出被 token 限制截断）\n"
-                f"【错误上下文】\n{ctx}\n\n【文件结构（头尾摘要）】\n{brief}\n\n"
-                f"请重新输出修复后的完整 {test_file}（必须完整不截断）。",
-                max_tokens=6000,
-                timeout=180,
-            )
-            fixed2 = _extract_code_block(fix2)
-            ok_v2, err_v2 = _validate_test_file(lang, fixed2)
-        except Exception as e2:
-            append(f"  - ⚠ 测试文件重写失败: {e2}，跳过自动化测试门禁")
-            return False
-        if not fixed2 or not ok_v2:
-            append(f"  - ⚠ 测试文件重写仍无效（{err_v2}），跳过自动化测试门禁")
+        fixed2 = _rewrite_test_file(lang, test_file, fixed, err_v, append)
+        if fixed2 is None:
             return False
         fixed = fixed2
-        append(f"  - 测试文件重写成功（{len(fixed)} 字节）")
     with open(tf_path, "w", encoding="utf-8") as f:
         f.write(fixed)
     append(f"  - 测试文件已生成 {test_file}（{len(fixed)} 字节）")
     return True
-
 
 def _record_test_run(requirement_id, pipeline_id, status, summary, log_text, cases=None) -> None:
     """记录一次自动化测试执行结果（需求维度，AI 工作台可见）。记录失败不阻塞主流程。
