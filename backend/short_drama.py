@@ -1368,8 +1368,7 @@ async def _generate_script(scene_data: dict) -> str:
     
     for char in characters:
         name = char.get("name", "角色")
-        script += f"{name}：（台词待生成）
-"
+        script += f"{name}：（台词待生成）"
     
     return script
 
@@ -1424,11 +1423,9 @@ async def _assemble_drama_video(scenes: list[dict]) -> str:
             video = scene.get("video", "")
             audio = scene.get("audio", "")
             if video:
-                f.write(f"file '{video}'
-")
+                f.write(f"file '{video}'")
                 if audio:
-                    f.write(f"file '{audio}'
-")
+                    f.write(f"file '{audio}'")
     
     cmd = [
         "ffmpeg", "-f", "concat", "-safe", "0",
