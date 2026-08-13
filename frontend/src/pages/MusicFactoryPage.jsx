@@ -31,6 +31,7 @@ import {
   Modal,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
 import usePersistentToolState from '../hooks/usePersistentToolState'
@@ -1192,6 +1193,12 @@ export default function MusicFactoryPage() {
                     </span>
                   </div>
                 </div>
+                <FavoriteButton
+                  favType="record"
+                  targetId={musicResult.audio_id}
+                  label={musicResult.theme || 'AI 音乐'}
+                  className="!bg-white/20 !text-white !hover:bg-white/30"
+                />
                 <Button
                   variant="secondary"
                   size="sm"

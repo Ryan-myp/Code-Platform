@@ -56,6 +56,7 @@ import {
   ConfirmDialog,
 } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
 import useAsyncTask from '../hooks/useAsyncTask'
@@ -1786,6 +1787,14 @@ export default function ImageFactoryPage() {
           content={`# AI 图片作品\n\n提示词：${img.prompt || ''}\n\n> 由小团智能平台 AI 图片工厂生成 · ${new Date().toLocaleString()}`}
           title="AI 图片作品"
           contentType="image"
+          className="!p-2 !bg-white !rounded-full"
+        />
+      </span>
+      <span onClick={(e) => e.stopPropagation()}>
+        <FavoriteButton
+          favType="gallery"
+          targetId={img.filename || img.url?.split('/').pop()}
+          label={img.prompt?.slice(0, 40) || 'AI 图片'}
           className="!p-2 !bg-white !rounded-full"
         />
       </span>

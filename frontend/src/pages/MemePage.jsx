@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid } from '../components/ui'
 import ShareButton from '../components/ShareButton'
+import FavoriteButton from '../components/FavoriteButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -1213,6 +1214,14 @@ export default function MemePage() {
                           content={`# 表情包：${item.title}\n\n风格：${item.style_label || '未标记'}\n\n> 由小团智能平台表情包工坊生成 · ${new Date().toLocaleString()}`}
                           title={`表情包：${item.title}`}
                           contentType="meme"
+                          className="!p-1 !text-white !bg-transparent"
+                        />
+                      </span>
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <FavoriteButton
+                          favType="gallery"
+                          targetId={item.id || item.filename}
+                          label={item.title?.slice(0, 40) || '表情包'}
                           className="!p-1 !text-white !bg-transparent"
                         />
                       </span>

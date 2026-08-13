@@ -2631,6 +2631,16 @@ ${batchTexts
                     <Download className="w-3.5 h-3.5" /> 下载 MP4
                   </button>
                 )}
+                {(result.video_url || result.audio_url) && (
+                  <div className="flex items-center justify-center">
+                    <FavoriteButton
+                      favType="record"
+                      targetId={result.record_id}
+                      label={text.slice(0, 40) || '数字人口播'}
+                      className="!bg-gray-50 !border !border-gray-200 !rounded-lg !px-3 !py-2"
+                    />
+                  </div>
+                )}
                 {result.video_url && (
                   <button
                     onClick={() => publishVideo(result.video_url, text, result.avatar?.name)}
