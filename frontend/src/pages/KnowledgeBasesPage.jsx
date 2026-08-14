@@ -39,6 +39,7 @@ import {
   Badge,
   PageHeader,
   ConfirmDialog,
+  Pagination,
 } from '../components/ui'
 
 const KB_TYPES = [
@@ -963,8 +964,11 @@ function KBDocsModal({ kb, onClose, onSearch }) {
             <p className="text-xs text-gray-500">
               共 {docs.count} 个文档（{docs.type === 'db' ? '数据库表' : '文件'}）
             </p>
-            <div className="max-h-[45vh] overflow-y-auto space-y-1.5 pr-1">
-              {docs.docs.map((doc) => (
+            <Pagination
+              items={docs.docs}
+              pageSize={8}
+              label={`共 ${docs.count} 个文档`}
+              renderItem={(doc) => (
                 <div
                   key={doc.path || doc.name}
                   className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors"
@@ -999,8 +1003,8 @@ function KBDocsModal({ kb, onClose, onSearch }) {
                     </button>
                   )}
                 </div>
-              ))}
-            </div>
+              )}
+            />
           </>
         )}
       </div>
