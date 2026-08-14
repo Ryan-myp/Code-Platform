@@ -31,6 +31,22 @@ router = APIRouter(tags=["开放API"])
 _GATEWAY_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
 
 
+def _gateway_open() -> bool:
+    """对外中转站总开关：config 表 gateway_open=1 时开放，默认关闭。
+
+    当前计费/分组等商业化能力未完善，对外网关暂不开放；
+    内部功能（聊天/图片等）走平台自身 LLM 调用，不受此开关影响。
+    """
+    try:
+        from common.db import get_db_context
+
+        with get_db_context() as conn:
+            row = conn.execute("SELECT value FROM config WHERE key='gateway_open'").fetchone()
+        return bool(row and row["value"] in ("1", "true", "True"))
+    except Exception:
+        return False
+
+
 def _estimate_tokens(messages: list, content: str) -> dict:
     """粗略 Token 估算（字符数口径，中文约 1 token/字）。"""
     prompt_tokens = sum(len(str(m.get("content") or "")) for m in messages)
@@ -59,6 +75,11 @@ def _resolve_model(name: str) -> str:
 @router.get("/api/models")
 async def list_models():
     """返回平台可用模型列表（OpenAI 格式）。"""
+    if not _gateway_open():
+        return JSONResponse(
+            status_code=403,
+            content={"error": {"message": "中转站网关暂未开放，敬请期待", "type": "gateway_closed"}},
+        )
     models = get_model_list()
     return {
         "object": "list",
@@ -73,6 +94,11 @@ async def list_models():
 @router.post("/api/chat/completions")
 async def chat_completions(request: Request, body: dict):  # noqa: C901
     """LLM 对话补全（OpenAI 兼容）。支持多轮 messages 与 stream 流式。"""
+    if not _gateway_open():
+        return JSONResponse(
+            status_code=403,
+            content={"error": {"message": "中转站网关暂未开放，敬请期待", "type": "gateway_closed"}},
+        )
     auth = _auth(request)
     if isinstance(auth, JSONResponse):
         return auth

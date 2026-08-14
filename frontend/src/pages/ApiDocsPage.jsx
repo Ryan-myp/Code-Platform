@@ -114,6 +114,18 @@ export default function ApiDocsPage() {
         iconColor="from-violet-500 to-purple-600"
       />
 
+      {/* 对外网关暂未开放（计费/分组等能力完善中） */}
+      <div className="mb-6 px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 flex items-start gap-3">
+        <span className="text-lg">🔒</span>
+        <div>
+          <p className="text-sm font-medium text-amber-800">中转站网关暂未开放</p>
+          <p className="text-xs text-amber-700/80 mt-0.5">
+            平台正在完善计费、分组、限流等商业化能力，对外 OpenAI 兼容网关（/v1/chat/completions）暂不对外开放。
+            内部 AI 功能不受影响，可正常使用。开放后将在此页面公告并支持一键接入。
+          </p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* 左侧：Key管理 */}
         <div className="space-y-4">
