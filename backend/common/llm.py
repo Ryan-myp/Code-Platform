@@ -75,8 +75,33 @@ def _fallback_candidates(model: str | None, fallback_models: list[str] | None) -
     return candidates[:4]
 
 
-def _extract_content(resp_json: dict) -> str:
-    """从 OpenAI 兼容响应中提取文本内容（兼容非标准返回结构）。"""
+def _extract_content(resp_json) -> str:
+    """从 OpenAI 兼容响应中提取文本内容（兼容非标准返回结构 / SSE 流式文本）。"""
+    # SSE 格式：omniroute 等网关即使请求非流式也返回 data: {...} 块
+    if isinstance(resp_json, str):
+        text = resp_json
+        if "data: " in text:
+            chunks = []
+            for line in text.split("\n"):
+                line = line.strip()
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    try:
+                        chunk = json.loads(line[6:])
+                        delta = (
+                            (chunk.get("choices") or [{}])[0].get("delta") or {}
+                        )
+                        content = delta.get("content") or ""
+                        if content:
+                            chunks.append(content)
+                    except (ValueError, TypeError):
+                        continue
+            if chunks:
+                return "".join(chunks)
+        # 尝试直接 JSON
+        try:
+            resp_json = json.loads(text)
+        except (ValueError, TypeError):
+            return text or ""
     try:
         return resp_json["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError):
@@ -202,7 +227,11 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
                     continue
                 logger.error(f"LLM call failed: {resp.status_code} {body}")
                 raise HTTPException(502, "操作失败，请稍后重试")
-            return _extract_content(resp.json())
+            try:
+                return _extract_content(resp.json())
+            except (ValueError, TypeError):
+                # omniroute 等网关返回 SSE 文本而非标准 JSON
+                return _extract_content(resp.text)
         except HTTPException:
             raise
         except Exception as e:
@@ -289,7 +318,11 @@ async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperat
                         continue
                     logger.error(f"LLM async call failed: {resp.status_code} {body}")
                     raise HTTPException(502, "操作失败，请稍后重试")
-                return _extract_content(resp.json())
+                try:
+                    return _extract_content(resp.json())
+                except (ValueError, TypeError):
+                    # omniroute 等网关返回 SSE 文本而非标准 JSON
+                    return _extract_content(resp.text)
             except HTTPException:
                 raise
             except Exception as e:
