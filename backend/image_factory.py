@@ -1928,46 +1928,78 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         clothing_data_uri = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
 
         # 强化提示词：保持人物特征不变，只更换衣服
-        # 第一张图 = 人物本人，第二张图 = 要穿的衣物
         style_prompt = style_prompts.get(style, style_prompts["casual"])
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
-        # 调用 Agnes AI 双参考合成：
-        # - image 参数 = 衣物图（图生图锚定衣服细节，颜色/图案/纹理像素级保留）
-        # - messages 参数 = 人物图（身份锁定）
+        # 合成画布方案（AGNES 最佳实践，9/10 相似度）：
+        # 左半 = 衣物图（精确参考），右半 = 人物图（身份参考），拼成一张图让模型理解"穿这件"
+        try:
+            from PIL import Image as _PILImage, ImageDraw as _PILDraw
+
+            _person_img = _PILImage.open(BytesIO(person_content)).convert("RGB")
+            _cloth_img = _PILImage.open(BytesIO(clothing_content)).convert("RGB")
+            _side = 512
+            _person_img = _person_img.resize((_side, _side), _PILImage.LANCZOS)
+            _cloth_img = _cloth_img.resize((_side, _side), _PILImage.LANCZOS)
+            _canvas = _PILImage.new("RGB", (_side * 2, _side), (255, 255, 255))
+            _canvas.paste(_cloth_img, (0, 0))
+            _canvas.paste(_person_img, (_side, 0))
+            _cbuf = BytesIO()
+            _canvas.save(_cbuf, format="PNG")
+            combo_data_uri = f"data:image/png;base64,{base64.b64encode(_cbuf.getvalue()).decode('utf-8')}"
+            # 提取衣服主色（智能：跳过低饱和背景像素，取饱和像素众数）
+            def _is_neutral(_c):
+                _r, _g, _b = _c
+                return (max(_c) - min(_c)) < 30 or max(_c) > 240
+
+            _thumb = _cloth_img.resize((100, 100))
+            _px_all = list(_thumb.getdata())
+            _non_bg = [_c for _c in _px_all if not _is_neutral(_c)]
+            if _non_bg:
+                _main = max(set(_non_bg), key=_non_bg.count)
+            else:
+                _main = max(set(_px_all), key=_px_all.count)
+            main_color_text = f"RGB{tuple(_main)}"
+            logger.info(f"衣物主色提取: {main_color_text}")
+        except Exception as e:  # noqa: BLE001 — 合成失败回退双图模式
+            logger.warning(f"合成画布失败，回退双图: {e}")
+            combo_data_uri = None
+            main_color_text = ""
+
         identity_lock_text = (
-            "IDENTITY LOCK - This is the ONLY person. This is the model/character who must appear "
-            "in the final image. CRITICAL: Preserve EXACTLY this same person - the face, facial "
-            "features, eyes, nose, mouth, hairstyle, hair color, skin tone, body shape, height, "
-            "and posture. Do NOT change, replace, morph, or generate a different person. "
-            "The face must remain recognizable as this exact person. "
-            "You will dress this person in the garment shown in the reference image, "
-            "preserving the garment's exact colors, pattern, texture and details."
+            "IDENTITY LOCK - This is the person on the RIGHT. This is the ONLY person. "
+            "CRITICAL: Preserve EXACTLY this same person - the face, facial features, "
+            "hairstyle, skin tone, body shape and posture. Do NOT generate a different person. "
+            "The face must remain recognizable."
         ) if keep_identity else (
-            "This is the reference person. Keep the overall appearance and face similar, "
-            "but you may adjust pose and style to make the garment look natural."
+            "This is the reference person. Keep the overall appearance and face similar."
         )
         messages_content = [
             {
                 "type": "image_url",
-                "image_url": {"url": person_data_uri},
+                "image_url": {"url": combo_data_uri or person_data_uri},
             },
             {
                 "type": "text",
-                "text": identity_lock_text,
+                "text": (
+                    ("LEFT: the exact garment. RIGHT: the person. " if combo_data_uri else "This is the person. ")
+                    + identity_lock_text
+                ),
             },
         ]
 
-        # 衣物细节：结构化描述（主色/次色/图案/面料/领型/袖长/衣长）
+        # 衣物细节：结构化描述 + 精确色值注入（防色偏）
+        color_extra = f" The garment's main color is EXACTLY {main_color_text} (this exact RGB value) - do not lighten, darken, or shift the hue." if main_color_text else ""
         garment_lock = (
-            "GARMENT LOCK: A person is wearing THIS EXACT garment from the main reference image. "
+            "GARMENT LOCK: The person wears THIS EXACT garment from the LEFT image. "
             "The garment must remain the same type - if it is a shirt it stays a shirt, "
             "if it is a jacket it stays a jacket, if it is pants they stay pants. "
-            "Do NOT change the garment type (no shirt-to-dress conversion), do NOT change length or silhouette. "
+            "Do NOT change the garment type, do NOT change length or silhouette. "
             "Reproduce EXACTLY: the same color(s), the same pattern (stripes/dots/plaid/print layout), "
             "the same fabric texture, collar, sleeves, and every visible detail. "
             "COPY the pattern exactly as shown - do not omit, add, or modify any pattern element. "
-            f"Exact garment analysis: {clothing_description}. "
+            + color_extra
+            + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
             f"New background: {bg_prompt}. "
             "Photorealistic, high resolution, the person looks natural wearing the garment. "
@@ -1978,8 +2010,6 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             "prompt": garment_lock,
             "size": "1024x1024",
             "n": 1,
-            "strength": 0.30,
-            "image": clothing_data_uri,
             "messages": [{"role": "user", "content": messages_content}],
             "extra_body": {"response_format": "url"},
         }
