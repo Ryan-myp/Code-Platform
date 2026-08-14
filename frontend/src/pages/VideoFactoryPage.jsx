@@ -224,6 +224,7 @@ export default function VideoFactoryPage() {
   const [creating, setCreating] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
+  const [autoEnhance, setAutoEnhance] = useState(true) // 默认自动增强画面描述（提升视频质感）
   const [lastResult, setLastResult] = useState(null)
   const { submitTask, startPolling, stopPolling } = useAsyncTask()
   const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
@@ -455,9 +456,17 @@ export default function VideoFactoryPage() {
     }
     setCreating(true)
     setLastResult(null)
+    // 自动增强画面描述（默认开）：简短描述 → 专业画面描述（运动/镜头/光影/氛围）
+    let finalPrompt = prompt
+    if (autoEnhance && prompt.trim().length < 120) {
+      try {
+        const enRes = await api.post('/api/video-factory/enhance-prompt', { prompt: prompt.trim() })
+        if (enRes.data?.enhanced) finalPrompt = enRes.data.enhanced
+      } catch { /* 增强失败用原描述 */ }
+    }
     const form = new FormData()
     // 风格/镜头/运镜/情绪作为结构化控制项，拼入 prompt 参与生成（避免死控件）
-    const parts = [prompt]
+    const parts = [finalPrompt]
     if (videoStyle) parts.push(VIDEO_STYLES.find((s) => s.value === videoStyle)?.label)
     if (cameraAngle) parts.push(cameraAngle)
     if (cameraMotion) parts.push(CAMERA_MOTIONS.find((m) => m.value === cameraMotion)?.kw)
@@ -860,6 +869,15 @@ export default function VideoFactoryPage() {
               {enhancingPrompt ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
               {enhancingPrompt ? '增强中…' : '✨ AI 增强'}
             </button>
+            <label className="inline-flex items-center gap-1 text-[11px] text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoEnhance}
+                onChange={(e) => setAutoEnhance(e.target.checked)}
+                className="accent-blue-600 w-3 h-3"
+              />
+              自动增强画面
+            </label>
           </label>
           <textarea
             value={prompt}

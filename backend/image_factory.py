@@ -569,8 +569,12 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
             "size": size_str,
             "n": n,
         }
-        if negative:
-            api_payload["negative_prompt"] = negative
+        # 默认合并专业负面提示词（过滤低质/畸形/水印），用户自定义词追加
+        combined_negative = ", ".join(
+            p for p in [_DEFAULT_NEGATIVE_PROMPT, negative] if p
+        )
+        if combined_negative:
+            api_payload["negative_prompt"] = combined_negative
         try:
             resp = await asyncio.to_thread(requests.post, url, headers=headers, json=api_payload, timeout=180)
             resp.raise_for_status()
