@@ -147,6 +147,7 @@ from music_factory import router as music_factory_router  # noqa: E402
 from music_scene_templates import router as music_scene_templates_router  # noqa: E402
 from notify_api import router as notify_api_router  # noqa: E402
 from openai_gateway import router as openai_gateway_router  # noqa: E402
+from relay_api import router as relay_router  # noqa: E402
 from pdf_tools import router as pdf_tools_router  # noqa: E402
 from pdf_doc_templates import router as pdf_doc_templates_router  # noqa: E402
 from prd_engine import router as prd_engine_router  # noqa: E402
@@ -3861,6 +3862,7 @@ app.include_router(apikey_api_router)
 app.include_router(search_api_router)
 app.include_router(scheduler_router)
 app.include_router(openai_gateway_router)
+app.include_router(relay_router)
 app.include_router(dh_gateway_router)
 app.include_router(backup_router)
 app.include_router(oauth_router)
