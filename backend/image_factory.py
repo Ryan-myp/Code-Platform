@@ -1775,6 +1775,47 @@ async def person_segmentation(
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
+def _lightweight_cutout(img: Image.Image) -> Image.Image | None:
+    """轻量抠图：基于背景色距离分离前景（衣物图通常纯色/浅色背景，够用）。
+
+    返回 RGBA（前景保留、背景透明）；失败返回 None 交给调用方回退原图。
+    """
+    try:
+        import math as _math
+
+        img = img.convert("RGB")
+        w, h = img.size
+        if w < 10 or h < 10:
+            return None
+        # 背景色 = 四角采样中位数
+        pts = [(2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3)]
+        corners = [img.getpixel(p) for p in pts]
+        bg = tuple(sorted(c[i] for c in corners)[2] for i in range(3))  # 中位
+        px = img.load()
+        out = img.convert("RGBA")
+        opx = out.load()
+        # 前景阈值：与背景色距离（颜色+亮度）
+        for y in range(h):
+            for x in range(w):
+                r, g, b = px[x, y]
+                dist = _math.sqrt((r - bg[0]) ** 2 + (g - bg[1]) ** 2 + (b - bg[2]) ** 2)
+                if dist <= 45:
+                    opx[x, y] = (r, g, b, 0)
+        # 统计前景占比，太少说明分离失败
+        alpha = out.split()[3]
+        fcount = sum(1 for v in alpha.getdata() if v > 0)
+        if fcount / (w * h) < 0.03:
+            return None
+        # 边缘羽化柔和
+        from PIL import ImageFilter
+
+        alpha = alpha.filter(ImageFilter.GaussianBlur(1.5))
+        out.putalpha(alpha)
+        return out
+    except Exception:  # noqa: BLE001 — 抠图失败回退
+        return None
+
+
 async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """虚拟试衣（同步/异步任务共用执行体，异步时回报进度）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
@@ -1796,6 +1837,21 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
 
     try:
         _report(10, "正在识别衣物特征…")
+        _img = Image.open(BytesIO(clothing_content))
+
+        # 衣物图预处理：适度缩放居中（保留原背景细节，让 AI 看清条纹/图案真实质感）
+        try:
+            _img = _img.convert("RGB")
+            _w, _h = _img.size
+            _max_side = 800
+            _scale = min(1.0, _max_side / max(_w, _h))
+            if _scale < 1.0:
+                _img = _img.resize((max(64, int(_w * _scale)), max(64, int(_h * _scale))), Image.LANCZOS)
+            _buf = io.BytesIO()
+            _img.save(_buf, format="PNG")
+            clothing_content = _buf.getvalue()
+        except Exception as e:  # noqa: BLE001 — 预处理失败用原图
+            logger.warning(f"衣物图预处理失败，使用原图: {e}")
         _img = Image.open(BytesIO(clothing_content))
 
         # 生成描述性提示词
@@ -1834,15 +1890,19 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                             {
                                 "type": "text",
                                 "text": (
-                                    "Describe this garment in detail for a virtual try-on system. "
-                                    "Include: exact color(s), clothing type, fabric/material, pattern, "
-                                    "length, sleeves, style details. Reply in English, one concise paragraph."
+                                    "Analyze this garment precisely for a virtual try-on. Output a structured "
+                                    "description covering: 1) main color (exact name like 'crimson red'), "
+                                    "2) secondary colors, 3) clothing type (t-shirt/coat/dress/jeans...), "
+                                    "4) pattern (solid/stripes/plaid/print...and exact pattern layout), "
+                                    "5) fabric/material, 6) collar type, 7) sleeve length, 8) length/hem, "
+                                    "9) distinctive details (buttons/pockets/logo/embroidery). "
+                                    "Be extremely specific and factual. Reply in English, one structured paragraph."
                                 ),
                             },
                         ],
                     }
                 ],
-                "max_tokens": 200,
+                "max_tokens": 400,
             }
             analyze_resp = await asyncio.to_thread(
                 requests.post,
@@ -1872,14 +1932,17 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         style_prompt = style_prompts.get(style, style_prompts["casual"])
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
-        # 调用 Agnes AI 多图合成 API（messages 多模态格式，理解更准确）
+        # 调用 Agnes AI 双参考合成：
+        # - image 参数 = 衣物图（图生图锚定衣服细节，颜色/图案/纹理像素级保留）
+        # - messages 参数 = 人物图（身份锁定）
         identity_lock_text = (
             "IDENTITY LOCK - This is the ONLY person. This is the model/character who must appear "
             "in the final image. CRITICAL: Preserve EXACTLY this same person - the face, facial "
             "features, eyes, nose, mouth, hairstyle, hair color, skin tone, body shape, height, "
             "and posture. Do NOT change, replace, morph, or generate a different person. "
             "The face must remain recognizable as this exact person. "
-            "You will only replace their clothing with the garment shown in the next image."
+            "You will dress this person in the garment shown in the reference image, "
+            "preserving the garment's exact colors, pattern, texture and details."
         ) if keep_identity else (
             "This is the reference person. Keep the overall appearance and face similar, "
             "but you may adjust pose and style to make the garment look natural."
@@ -1893,35 +1956,38 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                 "type": "text",
                 "text": identity_lock_text,
             },
-            {
-                "type": "image_url",
-                "image_url": {"url": clothing_data_uri},
-            },
-            {
-                "type": "text",
-                "text": (
-                    f"This is the garment to wear ({style_prompt}). "
-                    f"Exact garment details: {clothing_description}. "
-                    f"Dress the SAME person from the first image in exactly this garment from the second image "
-                    f"(match the described color, type and pattern precisely). "
-                    f"New background: {bg_prompt}. "
-                    "Photorealistic, high resolution, the person looks natural wearing the garment. "
-                    + ("The person's face must stay identical to the first image." if keep_identity else "")
-                ),
-            },
         ]
 
+        # 衣物细节：结构化描述（主色/次色/图案/面料/领型/袖长/衣长）
+        garment_lock = (
+            "GARMENT LOCK: A person is wearing THIS EXACT garment from the main reference image. "
+            "The garment must remain the same type - if it is a shirt it stays a shirt, "
+            "if it is a jacket it stays a jacket, if it is pants they stay pants. "
+            "Do NOT change the garment type (no shirt-to-dress conversion), do NOT change length or silhouette. "
+            "Reproduce EXACTLY: the same color(s), the same pattern (stripes/dots/plaid/print layout), "
+            "the same fabric texture, collar, sleeves, and every visible detail. "
+            "COPY the pattern exactly as shown - do not omit, add, or modify any pattern element. "
+            f"Exact garment analysis: {clothing_description}. "
+            f"Style context: {style_prompt}. "
+            f"New background: {bg_prompt}. "
+            "Photorealistic, high resolution, the person looks natural wearing the garment. "
+        )
+
+        tryon_request = {
+            "model": IMAGE_MODEL,
+            "prompt": garment_lock,
+            "size": "1024x1024",
+            "n": 1,
+            "strength": 0.30,
+            "image": clothing_data_uri,
+            "messages": [{"role": "user", "content": messages_content}],
+            "extra_body": {"response_format": "url"},
+        }
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/images/generations",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": IMAGE_MODEL,
-                "messages": [{"role": "user", "content": messages_content}],
-                "size": "1024x1024",
-                "n": 1,
-                "extra_body": {"response_format": "url"},
-            },
+            json=tryon_request,
             timeout=120,
         )
 
