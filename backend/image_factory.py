@@ -2830,6 +2830,11 @@ async def _image_tryon_handler(task_id: str, payload: dict, update: Callable, ct
     return await _image_tryon_worker(payload, progress=update)
 
 
+async def _image_turntable_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
+    """异步任务处理器：3D 转盘视频（任务框架传入 4 参数，需包装）。"""
+    return await _image_turntable_worker(payload, progress=update)
+
+
 def _cover_fit(img: Image.Image, w: int, h: int) -> Image.Image:
     """cover 模式适配目标规格：等比放大至覆盖目标尺寸后居中裁剪（不变形）。"""
     ratio = max(w / img.width, h / img.height)
@@ -2978,7 +2983,7 @@ register_handler("image_t2i", _image_t2i_handler, user_limit=2)
 register_handler("image_i2i", _image_i2i_handler, user_limit=2)
 register_handler("image_template", _image_template_handler, user_limit=2)
 register_handler("image_tryon", _image_tryon_handler, user_limit=2)
-register_handler("image_turntable", _image_turntable_worker, user_limit=1, pool="long")
+register_handler("image_turntable", _image_turntable_handler, user_limit=1, pool="long")
 
 
 def _render_rect_layer(layer: dict, canvas, draw, width: int, height: int) -> None:
