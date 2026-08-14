@@ -1931,19 +1931,25 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         style_prompt = style_prompts.get(style, style_prompts["casual"])
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
-        # 合成画布方案（AGNES 最佳实践，9/10 相似度）：
-        # 左半 = 衣物图（精确参考），右半 = 人物图（身份参考），拼成一张图让模型理解"穿这件"
+        # 合成画布方案（AGNES 最佳实践）：
+        # 人物 = 主图（占右侧 65%，保持身份+人脸），衣物 = 参考图（左上 35%，穿这件）
+        # 布局权衡：衣服太小时细节丢失，太大时人脸被挤掉 → 35/65 平衡
         try:
             from PIL import Image as _PILImage, ImageDraw as _PILDraw
 
             _person_img = _PILImage.open(BytesIO(person_content)).convert("RGB")
             _cloth_img = _PILImage.open(BytesIO(clothing_content)).convert("RGB")
-            _side = 512
-            _person_img = _person_img.resize((_side, _side), _PILImage.LANCZOS)
-            _cloth_img = _cloth_img.resize((_side, _side), _PILImage.LANCZOS)
-            _canvas = _PILImage.new("RGB", (_side * 2, _side), (255, 255, 255))
+            _canvas = _PILImage.new("RGB", (1024, 1024), (255, 255, 255))
+            # 人物占右侧 65%（约 672x1024，保持比例）
+            _pw, _ph = _person_img.size
+            _pr = min(672 / _pw, 1024 / _ph)
+            _person_img = _person_img.resize((max(64, int(_pw * _pr)), max(64, int(_ph * _pr))), _PILImage.LANCZOS)
+            _canvas.paste(_person_img, (1024 - _person_img.width, 0))
+            # 衣物占左上角 35%（358x358 参考图）
+            _cloth_img = _cloth_img.resize((358, 358), _PILImage.LANCZOS)
             _canvas.paste(_cloth_img, (0, 0))
-            _canvas.paste(_person_img, (_side, 0))
+            _draw = _PILDraw.Draw(_canvas)
+            _draw.rectangle([0, 0, 357, 357], outline=(220, 220, 220), width=2)
             _cbuf = BytesIO()
             _canvas.save(_cbuf, format="PNG")
             combo_data_uri = f"data:image/png;base64,{base64.b64encode(_cbuf.getvalue()).decode('utf-8')}"
@@ -1974,10 +1980,12 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             secondary_color_text = ""
 
         identity_lock_text = (
-            "IDENTITY LOCK - This is the person on the RIGHT. This is the ONLY person. "
+            "IDENTITY LOCK - The large image on the RIGHT is the person. This is the ONLY person. "
             "CRITICAL: Preserve EXACTLY this same person - the face, facial features, "
-            "hairstyle, skin tone, body shape and posture. Do NOT generate a different person. "
-            "The face must remain recognizable."
+            "hairstyle, skin tone, body shape and posture. The face MUST be clearly visible, "
+            "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
+            "headless person. Do NOT generate a different person. "
+            "The small image in the top-LEFT corner is the garment reference - the person wears it."
         ) if keep_identity else (
             "This is the reference person. Keep the overall appearance and face similar."
         )
@@ -1989,7 +1997,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             {
                 "type": "text",
                 "text": (
-                    ("LEFT: the exact garment. RIGHT: the person. " if combo_data_uri else "This is the person. ")
+                    ("Top-LEFT small image: the exact garment reference. RIGHT large image: the person. " if combo_data_uri else "This is the person. ")
                     + identity_lock_text
                 ),
             },
@@ -2009,13 +2017,19 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                     "Do NOT invert the dominant and accent colors."
                 )
         garment_lock = (
-            "GARMENT LOCK: The person wears THIS EXACT garment from the LEFT image. "
+            "GARMENT LOCK: The person (large image on the right) wears THIS EXACT garment "
+            "from the small reference image in the top-left corner. "
+            "The small garment image is a DETAILED CLOSE-UP reference - zoom in and copy every detail: "
+            "exact colors, pattern layout, collar, sleeves, fabric texture, trims, logos. "
+            "The garment fits the person naturally and proportionally - normal human size, "
+            "not oversized, not tiny. "
             "The garment must remain the same type - if it is a shirt it stays a shirt, "
             "if it is a jacket it stays a jacket, if it is pants they stay pants. "
             "Do NOT change the garment type, do NOT change length or silhouette. "
             "Reproduce EXACTLY: the same color(s), the same pattern (stripes/dots/plaid/print layout), "
             "the same fabric texture, collar, sleeves, and every visible detail. "
             "COPY the pattern exactly as shown - do not omit, add, or modify any pattern element. "
+            "The person's face must be fully visible and unchanged. "
             + color_extra
             + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
