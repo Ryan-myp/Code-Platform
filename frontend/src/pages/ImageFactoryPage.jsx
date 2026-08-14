@@ -780,6 +780,7 @@ function LayerProps({ layer, onChange }) {
 }
 
 const TRYON_BACKGROUNDS = [
+  { id: 'none', label: '无', icon: '✨', desc: '保留原背景' },
   { id: 'beach', label: '沙滩', icon: '🏖️' },
   { id: 'city', label: '城市', icon: '🏙️' },
   { id: 'space', label: '太空', icon: '🚀' },
@@ -963,7 +964,7 @@ export default function ImageFactoryPage() {
   const [personImage, setPersonImage] = useState(null)
   const [clothingImage, setClothingImage] = useState(null)
   const [tryOnStyle, setTryOnStyle] = useState('casual')
-  const [tryOnBackground, setTryOnBackground] = useState('beach')
+  const [tryOnBackground, setTryOnBackground] = useState('none')
   const [tryOnDescription, setTryOnDescription] = useState('')
   const [tryOnKeepIdentity, setTryOnKeepIdentity] = useState(true)
   const [tryOnGenerating, setTryOnGenerating] = useState(false)
@@ -3114,6 +3115,7 @@ export default function ImageFactoryPage() {
                     >
                       <div className="text-2xl mb-1">{bg.icon}</div>
                       <div className="text-xs font-medium">{bg.label}</div>
+                      {bg.desc && <div className="text-[10px] text-gray-400 mt-0.5">{bg.desc}</div>}
                     </button>
                   ))}
                 </div>

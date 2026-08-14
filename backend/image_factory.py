@@ -1775,6 +1775,99 @@ async def person_segmentation(
 
 
 # ── 虚拟试衣 API ──────────────────────────────────────────────
+def _u2net_cutout(img: Image.Image) -> Image.Image | None:
+    """U2Net 语义分割抠图（onnxruntime 直接加载，无需 rembg/numba）。
+
+    返回 RGBA（前景保留、背景透明）；模型缺失或失败返回 None。
+    """
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+
+        import onnxruntime as _ort
+
+        _model = _Path(_os.path.expanduser("~/.u2net/u2net.onnx"))
+        if not _model.exists():
+            logger.warning("U2Net 模型不存在，跳过抠图")
+            return None
+        if not hasattr(_u2net_cutout, "_session"):
+            _u2net_cutout._session = _ort.InferenceSession(
+                str(_model), providers=["CPUExecutionProvider"]
+            )
+        _sess = _u2net_cutout._session
+        img = img.convert("RGB")
+        w, h = img.size
+        resized = img.resize((320, 320), Image.LANCZOS)
+        arr = np.array(resized, dtype=np.float32) / 255.0
+        arr = (arr - np.array([0.485, 0.456, 0.406], dtype=np.float32)) / np.array(
+            [0.229, 0.224, 0.225], dtype=np.float32
+        )
+        arr = arr.transpose(2, 0, 1)[None].astype(np.float32)
+        out = _sess.run(None, {"input.1": arr})
+        mask = out[0][0][0]
+        mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+        mask = (mask * 255).astype(np.uint8)
+        mask_img = Image.fromarray(mask, "L").resize((w, h), Image.LANCZOS)
+        mask_img = mask_img.point(lambda p: 255 if p > 100 else p)
+        result = img.convert("RGBA")
+        result.putalpha(mask_img)
+        return result
+    except Exception as e:  # noqa: BLE001 — 抠图失败回退
+        logger.warning(f"U2Net 抠图失败: {e}")
+        return None
+
+
+def _keep_original_background(person_img: Image.Image, tryon_img: Image.Image) -> Image.Image:
+    """保留原背景：U2Net 抠出 AI 试穿人物，贴回原人物图背景。
+
+    流程：
+    1. 从 AI 试穿图抠出人物（前景）
+    2. 从原人物图抠出背景（原图 - 人物）
+    3. 将 AI 人物合成到原背景上 → 背景 100% 保留
+    """
+    try:
+        _fg = _u2net_cutout(tryon_img)
+        _orig_fg = _u2net_cutout(person_img)
+        if _fg is None or _orig_fg is None:
+            return tryon_img
+        # 原背景 = 原图整体（去掉原人物，但保留原背景像素）
+        bg = person_img.convert("RGB")
+        # AI 人物按原图尺寸缩放贴合
+        fg = _fg.resize(bg.size, Image.LANCZOS)
+        # 边缘处理：MinFilter 收缩 alpha（去白边），再轻羽化 + defringe 去色边
+        alpha = fg.split()[3]
+        from PIL import ImageFilter as _IF
+
+        alpha = alpha.filter(_IF.MinFilter(3))  # 收缩 1px，去掉白边
+        alpha = alpha.filter(_IF.GaussianBlur(1.0))
+        fg.putalpha(alpha)
+        # defringe：半透明边缘像素颜色向邻近不透明像素收敛（消除白/灰晕）
+        try:
+            import numpy as _np
+
+            rgba = _np.array(fg, dtype=_np.float32)
+            a = rgba[..., 3:4] / 255.0
+            # 透明区域不要，仅处理 0<a<1 的边缘像素
+            edge = (a > 0.05) & (a < 0.95)
+            if edge.any():
+                # 用中值滤波的 RGB 替换边缘像素（去白边）
+                from PIL import Image as _PImg
+
+                rgb = fg.convert("RGB")
+                med = rgb.filter(_IF.MedianFilter(3))
+                med_arr = _np.array(med, dtype=_np.float32)
+                rgba[..., :3][edge[..., 0]] = med_arr[edge[..., 0]]
+                fg = _PImg.fromarray(rgba.astype(_np.uint8), "RGBA")
+        except Exception as _e:  # noqa: BLE001 — defringe 失败不影响合成
+            logger.warning(f"defringe 失败: {_e}")
+        result = bg.convert("RGBA")
+        result.alpha_composite(fg)
+        return result.convert("RGB")
+    except Exception as e:  # noqa: BLE001 — 合成失败回退 AI 原图
+        logger.warning(f"保留原背景合成失败，使用 AI 原图: {e}")
+        return tryon_img
+
+
 def _lightweight_cutout(img: Image.Image) -> Image.Image | None:
     """轻量抠图：基于背景色距离分离前景（衣物图通常纯色/浅色背景，够用）。
 
@@ -1921,7 +2014,9 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
 
         _report(30, "正在生成试穿效果…")
         prompt = f"{description} {style_prompts.get(style, style_prompts['casual'])}, high quality fashion photography, professional lighting"
-        bg_prompt = background_prompts.get(background, background_prompts["beach"])
+        # 背景：none=保留人物原背景，不注入背景提示词
+        bg_none = background in ("", "none", "original", "keep")
+        bg_prompt = "" if bg_none else background_prompts.get(background, background_prompts["beach"])
 
         # 将图像转换为 Data URI Base64
         person_data_uri = f"data:image/png;base64,{base64.b64encode(person_content).decode('utf-8')}"
@@ -1929,7 +2024,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
 
         # 强化提示词：保持人物特征不变，只更换衣服
         style_prompt = style_prompts.get(style, style_prompts["casual"])
-        bg_prompt = background_prompts.get(background, background_prompts["beach"])
+        bg_prompt = "" if bg_none else background_prompts.get(background, background_prompts["beach"])
 
         # 合成画布方案（AGNES 最佳实践）：
         # 人物 = 主图（占右侧 65%，保持身份+人脸），衣物 = 参考图（左上 35%，穿这件）
@@ -1986,6 +2081,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
             "headless person. Do NOT generate a different person. "
             "The small image in the top-LEFT corner is the garment reference - the person wears it."
+            + (" Also keep the person's ORIGINAL background/scene from the right image exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
         ) if keep_identity else (
             "This is the reference person. Keep the overall appearance and face similar."
         )
@@ -2033,8 +2129,8 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             + color_extra
             + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
-            f"New background: {bg_prompt}. "
-            "Photorealistic, high resolution, the person looks natural wearing the garment. "
+            + ("Keep the person's ORIGINAL background exactly as shown in the right image - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
+            + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
         tryon_request = {
@@ -2045,6 +2141,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             "messages": [{"role": "user", "content": messages_content}],
             "extra_body": {"response_format": "url"},
         }
+        # 无背景模式：不加 image 锚定（实测会裁剪人脸），仅靠提示词尽力保留原场景
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/images/generations",
@@ -2072,6 +2169,12 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             result_img = Image.open(BytesIO(img_data))
         else:
             raise HTTPException(500, "生成失败，请稍后重试")
+
+        # 无背景模式：U2Net 抠出 AI 试穿人物，贴回原人物图背景（背景 100% 保留）
+        if bg_none:
+            _person_img = Image.open(BytesIO(person_content)).convert("RGB")
+            result_img = await asyncio.to_thread(_keep_original_background, _person_img, result_img)
+            logger.info("保留原背景：U2Net 合成完成")
 
         filename = save_image(result_img)
         art_id = _save_artifact(
