@@ -32,6 +32,7 @@ import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { wxmlToHtml } from '../lib/wxml-preview'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 import useToolHistory from '../hooks/useToolHistory'
 import HistoryPanel from '../components/HistoryPanel'
 import FavoriteButton from '../components/FavoriteButton'
@@ -138,9 +139,14 @@ function fileTree(paths) {
 export default function MiniAppPage() {
   const toast = useToast()
   const [templates, setTemplates] = useState(TEMPLATES)
-  const [template, setTemplate] = useState('shop')
-  const [name, setName] = useState('')
-  const [requirement, setRequirement] = useState('')
+  const [draft, setDraft] = usePersistentToolState('miniapp_factory_draft_v1', {
+    template: 'shop',
+    name: '',
+    requirement: '',
+  })
+  const [template, setTemplate] = useState(draft.template || 'shop')
+  const [name, setName] = useState(draft.name || '')
+  const [requirement, setRequirement] = useState(draft.requirement || '')
   const [generating, setGenerating] = useState(false)
   const [projects, setProjects] = useState([])
   const [viewing, setViewing] = useState(null) // {id,name,files}
@@ -201,6 +207,11 @@ export default function MiniAppPage() {
     setPreviewHtml(result.html)
     setSelectedFile(pagePath)
   }
+
+  useEffect(() => {
+    setDraft({ template, name, requirement })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, name, requirement])
 
   const generate = async () => {
     if (!name.trim()) {

@@ -43,6 +43,7 @@ import RandomPromptButton from '../components/RandomPromptButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import useAsyncTask from '../hooks/useAsyncTask'
+import usePersistentToolState from '../hooks/usePersistentToolState'
 import useToolHistory from '../hooks/useToolHistory'
 import HistoryPanel from '../components/HistoryPanel'
 
@@ -271,9 +272,15 @@ export default function GameFactoryPage() {
   const { history: genHistory, add: addGenHistory, remove: removeGenHistory, clear: clearGenHistory } =
     useToolHistory('game_factory_history_v1', 30)
   const [templates, setTemplates] = useState(TEMPLATES)
-  const [template, setTemplate] = useState('snake')
-  const [name, setName] = useState('')
-  const [requirement, setRequirement] = useState('')
+  // 输入态持久化：刷新/误关不丢草稿
+  const [draft, setDraft] = usePersistentToolState('game_factory_draft_v1', {
+    template: 'snake',
+    name: '',
+    requirement: '',
+  })
+  const [template, setTemplate] = useState(draft.template || 'snake')
+  const [name, setName] = useState(draft.name || '')
+  const [requirement, setRequirement] = useState(draft.requirement || '')
   const [generating, setGenerating] = useState(false)
   const [projects, setProjects] = useState([])
   const [stats, setStats] = useState(null)
@@ -342,6 +349,12 @@ export default function GameFactoryPage() {
       return false
     return true
   })
+
+  // 自动保存草稿
+  useEffect(() => {
+    setDraft({ template, name, requirement })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, name, requirement])
 
   const generate = async () => {
     if (!name.trim()) {
