@@ -991,7 +991,6 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
     )
 
 
-@router.get("/{proj_id}/publish-pack")
 
 def _game_pack_entries(root: str, files: dict, row: dict) -> dict:
     """游戏发布包文件条目（web/wx 双版本 + 封面）。"""
@@ -1066,6 +1065,7 @@ def _game_pack_qc_report(row: dict) -> str | None:
         return None
 
 
+@router.get("/{proj_id}/publish-pack")
 async def game_publish_pack(proj_id: str, current_user: dict = require_auth()):
     """游戏发布包：网页成品 + 微信小游戏包 + 封面 + 上线清单 + 质量报告，一键交付可发布。"""
     conn = get_db()

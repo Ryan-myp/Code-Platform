@@ -219,7 +219,6 @@ class PurchaseRequest(BaseModel):
     access_type: str = "once"  # once | day | month
 
 
-@router.get("/list")
 
 def _market_load_templates() -> list:
     """加载市场模板列表（跳过隐藏项）。"""
@@ -301,6 +300,7 @@ def _market_categories(items: list) -> list:
         cats[c]["count"] += 1
     return list(cats.values())
 
+@router.get("/list")
 async def market_list(
     category: str = "",
     q: str = "",

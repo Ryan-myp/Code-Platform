@@ -464,7 +464,6 @@ def _wf_node_summary(res: dict) -> str:
     return "```json\n" + json.dumps(res, ensure_ascii=False, default=str) + "\n```"
 
 
-@router.post("/api/workflows/{workflow_id}/run")
 
 def _load_workflow_config(workflow_id: str) -> dict:
     """加载工作流配置。"""
@@ -566,6 +565,7 @@ def _wf_elapsed(run_dict: dict | None) -> float | None:
         pass
     return None
 
+@router.post("/api/workflows/{workflow_id}/run")
 async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
     """运行 Workflow - 若可用 executor 则用，否则简单执行"""
     message = (req.get("message") or "").strip()

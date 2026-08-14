@@ -193,10 +193,6 @@ def _lazy_refund_failed(task: dict, auth: dict) -> float | None:
 # ── 对外接口 ──────────────────────────────────────────────────
 
 
-@router.post("/v1/dh/videos")
-async def _internal_helper():
-    pass
-
 async def _validate_dh_inputs(text: str, voice_id: str, face_id: str) -> bool:
     """验证数字人输入参数。"""
     if not text or len(text) < 1:
@@ -351,6 +347,7 @@ def _create_billing_task(req, auth: dict, billing_id: str, price: float) -> dict
         )
     return task
 
+@router.post("/v1/dh/videos")
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
     """按量计费生成数字人视频（OpenAI 风格计费 API）。
 

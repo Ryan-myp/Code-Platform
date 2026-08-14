@@ -168,7 +168,6 @@ def _text_to_lrc(lyrics: str, duration: float, title: str = "", artist: str = ""
     return "\n".join(lrc)
 
 
-@router.post("/publish-pack")
 def _music_custom_cover(cover_image, audio_id: str, stem: str) -> tuple:
     """处理自定义封面（可选）：居中裁剪缩放 640×640。返回 (cover_src, cover_label)。"""
     cover_path = MUSIC_DIR / f"{stem}.jpg"
@@ -286,6 +285,7 @@ def _music_qc_report(lyrics: str, audio_path, cover_label: str, cover_src, title
         return None
 
 
+@router.post("/publish-pack")
 async def music_publish_pack(
     audio_id: str = Form(...),
     song_title: str = Form(""),

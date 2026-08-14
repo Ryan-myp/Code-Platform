@@ -1044,7 +1044,6 @@ _VIDEO_PLATFORM_TAGS = {
 }
 
 
-@router.post("/publish-pack")
 def _vp_transcode(src_path, out_name: str, w: int, h: int) -> tuple:
     """视频规格转码（cover 模式）：等比放大居中裁剪 + aac 重编码。返回 (out_path, has_audio)。"""
     import subprocess
@@ -1100,6 +1099,7 @@ def _vp_qc_report(prompt: str, width: int, height: int, w: int, h: int, duration
         return None
 
 
+@router.post("/publish-pack")
 async def video_publish_pack(
     filename: str = Form(...),
     platform: str = Form("douyin"),

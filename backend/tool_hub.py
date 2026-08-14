@@ -7798,7 +7798,6 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
         conn.close()
 
 
-@router.post("/api/tools/upload")
 
 def _extract_excel(tmp_path: str, filename: str) -> str:
     """Excel 内容提取为 Markdown 表格。"""
@@ -7882,6 +7881,7 @@ def _extract_word(tmp_path: str, filename: str) -> str:
     return out
 
 
+@router.post("/api/tools/upload")
 async def upload_file(file: UploadFile = File(...), current_user: dict = require_auth()):  # noqa: C901
     """上传文件并提取内容"""
     import tempfile

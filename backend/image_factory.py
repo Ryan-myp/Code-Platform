@@ -3128,7 +3128,6 @@ def _upscale2x(img: Image.Image) -> Image.Image:
     return img.filter(ImageFilter.UnsharpMask(radius=2, percent=80, threshold=3))
 
 
-@router.post("/publish-pack")
 def _ip_process_images(picked: list, w: int, h: int, root: str, upscale: bool) -> tuple:
     """处理图片：规格适配 + 高清版，返回 (entries, img_checks)。"""
     entries: dict = {}
@@ -3216,6 +3215,7 @@ def _ip_qc_report(picked: list, img_checks: list, upscale: bool, w: int, h: int,
         return None
 
 
+@router.post("/publish-pack")
 async def image_publish_pack(
     ids: list[str] = Form(...),
     platform: str = Form("xiaohongshu"),

@@ -766,7 +766,6 @@ def _ensure_publish_columns(conn) -> None:
     conn.commit()
 
 
-@router.post("/submit")
 
 def _publish_pick_candidates(acc: dict | None, platform: str) -> list:
     """配额感知选号：指定账号 + 同平台有配额账号（最多3个候选）。"""
@@ -843,6 +842,7 @@ def _publish_guide_response(record_id: str, req: PublishRequest, adapted: dict, 
         "message": f"自动发布未成功（{last_err}），已生成素材包可手动发布",
     }
 
+@router.post("/submit")
 async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):  # noqa: C901
     """一键发布（增长引擎版）。
 
