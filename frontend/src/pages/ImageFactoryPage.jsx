@@ -19,6 +19,7 @@ import {
   Camera,
   Crop,
   RotateCw,
+  Rotate3d,
   FlipHorizontal,
   Sliders,
   DownloadCloud,
@@ -891,6 +892,8 @@ export default function ImageFactoryPage() {
   const [img2imgStrength, setImg2imgStrength] = useState(0.35)
   const [img2imgSize, setImg2imgSize] = useState('1024x1024')
   const [img2imgBusy, setImg2imgBusy] = useState(false)
+  // 保留内容：person/pose/background/composition（多选，空=自由发挥）
+  const [img2imgPreserve, setImg2imgPreserve] = useState([])
   const img2imgRef = useRef(null)
 
   // 模板管理
@@ -962,15 +965,20 @@ export default function ImageFactoryPage() {
   const [tryOnStyle, setTryOnStyle] = useState('casual')
   const [tryOnBackground, setTryOnBackground] = useState('beach')
   const [tryOnDescription, setTryOnDescription] = useState('')
+  const [tryOnKeepIdentity, setTryOnKeepIdentity] = useState(true)
   const [tryOnGenerating, setTryOnGenerating] = useState(false)
   const [tryOnResult, setTryOnResult] = useState(null)
   const [showImagePicker, setShowImagePicker] = useState(null)
 
-  // 3D 旋转
+  // 3D 旋转（CSS 快速预览）
   const [rotationY, setRotationY] = useState(0)
   const [rotationX, setRotationX] = useState(0)
   const [isAutoRotate, setIsAutoRotate] = useState(false)
   const [rotationSpeed, setRotationSpeed] = useState(1)
+  // 3D 转盘视频（AI 生成人物原地旋转）
+  const [turntableBusy, setTurntableBusy] = useState(false)
+  const [turntableVideo, setTurntableVideo] = useState(null)
+  const [turntableDuration, setTurntableDuration] = useState(5)
 
   const loadModels = useCallback(async () => {
     try {
@@ -1344,6 +1352,7 @@ export default function ImageFactoryPage() {
     form.append('image', img2imgFile)
     form.append('size', img2imgSize)
     form.append('strength', img2imgStrength)
+    if (img2imgPreserve.length > 0) form.append('preserve', img2imgPreserve.join(','))
     if (negativePrompt.trim()) form.append('negative', negativePrompt.trim())
     await submitTask('/api/image-factory/generate/image-to-image', form, {
       onUpdate: (t) => setGenTask(t),
@@ -1707,6 +1716,7 @@ export default function ImageFactoryPage() {
       form.append('description', tryOnDescription)
       form.append('style', tryOnStyle)
       form.append('background', tryOnBackground)
+      form.append('keep_identity', String(tryOnKeepIdentity))
       await submitTask('/api/image-factory/try-on/generate', form, {
         onUpdate: (t) => setGenTask(t),
         onSuccess: (data) => {
@@ -1726,6 +1736,43 @@ export default function ImageFactoryPage() {
       })
     } catch (e) {
       setTryOnGenerating(false)
+      toast.error(`生成失败：${e.message}`)
+    }
+  }
+
+  // 3D 转盘：生成人物原地 360° 旋转视频（展示衣服全角度）
+  const handleTurntable = async (srcUrl) => {
+    if (!srcUrl) {
+      toast.error('请先生成试穿效果')
+      return
+    }
+    setTurntableBusy(true)
+    setTurntableVideo(null)
+    setGenTask({ progress: 0, stage: '提交 3D 转盘任务…', status: 'pending' })
+    try {
+      const resp = await fetch(srcUrl)
+      const blob = await resp.blob()
+      const form = new FormData()
+      form.append('image', blob, 'rotate.png')
+      form.append('duration', String(turntableDuration))
+      await submitTask('/api/image-factory/rotate/turntable', form, {
+        onUpdate: (t) => setGenTask(t),
+        onSuccess: (data) => {
+          if (data.url) {
+            setTurntableVideo({ url: absUrl(data.url), id: data.id })
+            toast.success('3D 转盘视频已生成')
+          } else {
+            toast.error('生成失败，请重试')
+          }
+          setTurntableBusy(false)
+        },
+        onError: (e) => {
+          setTurntableBusy(false)
+          toast.error(`生成失败：${e.message}`)
+        },
+      })
+    } catch (e) {
+      setTurntableBusy(false)
       toast.error(`生成失败：${e.message}`)
     }
   }
@@ -2305,9 +2352,43 @@ export default function ImageFactoryPage() {
                   value={img2imgPrompt}
                   onChange={(e) => setImg2imgPrompt(e.target.value)}
                   rows={4}
-                  placeholder="描述想要的风格/元素变化，如：把照片变成油画风格、保持人物不变…"
+                  placeholder="描述想要的风格/元素变化，如：把照片变成油画风格…"
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm resize-none"
                 />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                  保留内容 <span className="text-gray-400 font-normal">（可多选，不选 = 自由发挥）</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'person', label: '👤 人物不变', desc: '换背景/加元素' },
+                    { id: 'pose', label: '🧍 姿态不变', desc: '保持姿势' },
+                    { id: 'background', label: '🏞️ 背景不变', desc: '只改人物/加元素' },
+                    { id: 'composition', label: '🎨 构图不变', desc: '保持布局/色彩' },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        setImg2imgPreserve((prev) =>
+                          prev.includes(p.id) ? prev.filter((x) => x !== p.id) : [...prev, p.id]
+                        )
+                      }
+                      className={`px-3 py-2 rounded-xl border text-left transition-all ${img2imgPreserve.includes(p.id) ? 'border-violet-500 bg-violet-50 shadow-sm' : 'border-gray-200 hover:border-violet-300 hover:bg-gray-50'}`}
+                      title={p.desc}
+                    >
+                      <div className="text-xs font-medium text-gray-800">{p.label}</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{p.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  {img2imgPreserve.length === 0
+                    ? '不勾选时 AI 自由创作，适合换风格/换背景' 
+                    : '已锁定「' + img2imgPreserve.map((x) => ({person: '人物', pose: '姿态', background: '背景', composition: '构图'})[x]).join('、') + '」不变，AI 只做其他调整'}
+                </p>
               </div>
 
               <div>
@@ -2988,6 +3069,24 @@ export default function ImageFactoryPage() {
                 />
               </div>
 
+              <div className="flex items-center justify-between rounded-xl border border-gray-200 px-4 py-3 bg-gray-50/50">
+                <div>
+                  <div className="text-sm font-medium text-gray-800">人物保持</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {tryOnKeepIdentity ? '严格锁定你的脸和身材不变，只换衣服' : '允许调整姿势/风格，效果更自然'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTryOnKeepIdentity(!tryOnKeepIdentity)}
+                  className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${tryOnKeepIdentity ? 'bg-violet-500' : 'bg-gray-300'}`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${tryOnKeepIdentity ? 'left-[22px]' : 'left-0.5'}`}
+                  />
+                </button>
+              </div>
+
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-3 block">风格</label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -3097,8 +3196,88 @@ export default function ImageFactoryPage() {
           {/* 3D Rotation Viewer */}
           {tryOnResult && (
             <div className="p-6 rounded-xl bg-gray-50">
+              {/* AI 3D 转盘：生成人物原地旋转视频（真 360° 看衣服） */}
+              <div className="mb-5 rounded-xl border border-violet-200 bg-white p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center">
+                      <Rotate3d className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-medium text-gray-900">AI 3D 转盘视频</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">让照片中的人物原地 360° 旋转，从前到后看穿上的衣服效果</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={turntableDuration}
+                      onChange={(e) => setTurntableDuration(Number(e.target.value))}
+                      className="px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white"
+                    >
+                      <option value={5}>5秒</option>
+                      <option value={10}>10秒</option>
+                    </select>
+                    <button
+                      onClick={() => handleTurntable(tryOnResult.url)}
+                      disabled={turntableBusy}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium text-white transition-all flex items-center gap-1.5 ${turntableBusy ? 'bg-violet-300 cursor-not-allowed' : 'bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:opacity-90'}`}
+                    >
+                      {turntableBusy ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> 生成中…</>
+                      ) : (
+                        <><Rotate3d className="w-4 h-4" /> 生成 360° 转盘</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                {turntableBusy && genTask && (
+                  <div className="mt-3 rounded-lg bg-violet-50 border border-violet-100 px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs text-violet-700">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                      <span className="flex-1 truncate">{genTask.stage || '任务执行中…'}</span>
+                      <span className="font-medium">{Math.round(genTask.progress || 0)}%</span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 bg-violet-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all"
+                        style={{ width: `${genTask.progress || 0}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-gray-400">云端生成约 1-5 分钟，可稍后在「任务中心」查看</p>
+                  </div>
+                )}
+                {turntableVideo && !turntableBusy && (
+                  <div className="mt-4">
+                    <video
+                      src={turntableVideo.url}
+                      controls
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      className="w-full max-h-[55vh] rounded-xl bg-black object-contain"
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-xs text-gray-500">🎉 人物已旋转 360°，可全屏查看衣服每个角度</p>
+                      <button
+                        onClick={() => {
+                          const a = document.createElement('a')
+                          a.href = turntableVideo.url
+                          a.download = `turntable_${turntableVideo.id || '360'}.mp4`
+                          a.click()
+                        }}
+                        className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" /> 下载视频
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CSS 快速预览（平面 3D 翻转，非真实人物旋转） */}
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-medium text-gray-900">3D 旋转查看</h3>
+                <h3 className="font-medium text-gray-900">快速预览（平面翻转）</h3>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsAutoRotate(!isAutoRotate)}

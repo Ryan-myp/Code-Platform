@@ -655,6 +655,41 @@ async def text_to_image(
 
 
 # ── 图生图 API ────────────────────────────────────────────────
+PRESERVE_OPTIONS = {
+    "person": ("IDENTITY LOCK: keep the EXACT same person - same face, facial features, hairstyle, hair color, skin tone, body shape. Do NOT change, replace, or age the person. ", "person, face, identity"),
+    "pose": ("Keep the person's exact pose, body position and camera angle. ", "pose, position, angle"),
+    "background": ("Keep the background and environment EXACTLY the same - do not change the scene, setting, or surroundings. ", "background, scene, environment"),
+    "composition": ("Keep the same composition, framing, lighting, color palette and overall structure. ", "composition, framing, lighting, colors"),
+}
+
+
+def _build_preserve_prompt(prompt: str, preserve: list | None) -> str:
+    """图生图：按用户选择构建"保留内容"约束提示词（人物/姿态/背景/构图任意组合）。"""
+    if not preserve:
+        return prompt
+    constraints = []
+    for key in preserve:
+        if key in PRESERVE_OPTIONS:
+            constraints.append(PRESERVE_OPTIONS[key][0])
+    if not constraints:
+        return prompt
+    return " ".join(constraints) + "Now apply this change: " + prompt
+
+
+def _pick_strength_by_preserve(strength: float, preserve: list | None) -> float:
+    """保留项越多 → 变化越小 → 强度越低（保留人物+背景时强制压制，防身份/场景漂移）。"""
+    if not preserve:
+        return strength
+    n = len([k for k in preserve if k in PRESERVE_OPTIONS])
+    if n >= 3:
+        return min(strength, 0.25)
+    if n == 2:
+        return min(strength, 0.35)
+    if n == 1:
+        return min(strength, 0.45)
+    return strength
+
+
 async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """图生图（同步/异步任务共用执行体，异步时回报进度）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
@@ -672,6 +707,9 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     model = payload.get("model") or IMAGE_MODEL
     project_id = payload.get("project_id") or ""
     negative = payload.get("negative") or ""
+    # 保留内容：person/pose/background/composition（可多选），空=自由发挥
+    raw_preserve = payload.get("preserve") or ""
+    preserve = [p.strip() for p in raw_preserve.split(",") if p.strip()] if isinstance(raw_preserve, str) else (raw_preserve or [])
     image_content = _read_file_field(payload, "image")
     if not image_content:
         raise HTTPException(400, "请上传参考图片")
@@ -681,19 +719,28 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     if not res["ok"]:
         raise HTTPException(400, "操作失败，请稍后重试")
 
+    # 按保留项构建约束提示词 + 自适应强度
+    api_prompt = _build_preserve_prompt(prompt, preserve)
+    api_strength = _pick_strength_by_preserve(strength, preserve)
+
     url = f"{AGNES_API_BASE}/images/generations"
     # 中转站 images/generations 仅支持 JSON body：图片以 base64 Data URI 传入（与短剧插画一致）
     headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
     body = {
         "model": model,
-        "prompt": prompt,
+        "prompt": api_prompt,
         "size": size,
-        "strength": strength,
+        "strength": api_strength,
         "n": 1,
         "image": "data:image/png;base64," + base64.b64encode(image_content).decode(),
     }
     if negative:
         body["negative_prompt"] = negative
+    # 人脸参考图：额外身份锁定（有参考时附加，供支持 reference 的中转站/模型使用）
+    face_content = _read_file_field(payload, "face_ref")
+    if face_content:
+        body["reference_image"] = "data:image/png;base64," + base64.b64encode(face_content).decode()
+        body["reference_type"] = "face"
 
     _report(20, "AI 正在基于参考图生成…")
     try:
@@ -713,14 +760,14 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
                 raise HTTPException(500, "生成失败，请稍后重试")
             filename = save_image(result_img)
             art_id = _save_artifact(
-                filename, project_id, prompt, {"size": size, "model": model, "strength": strength}
+                filename, project_id, api_prompt, {"size": size, "model": model, "strength": api_strength, "preserve": ",".join(preserve)}
             )
             _report(100, "生成完成")
             return {
                 "id": filename,
                 "artifact_id": art_id,
                 "url": f"/api/image-factory/images/{filename}",
-                "prompt": prompt,
+                "prompt": api_prompt,
                 "project_id": project_id,
             }
         raise HTTPException(500, "生成失败，请稍后重试")
@@ -740,6 +787,9 @@ async def image_to_image(
     model: str = Form(None, description="模型名，留空使用配置的图片模型（IMAGE_MODEL）"),
     project_id: str = Form(""),
     negative: str = Form("", description="负面提示词（不想要的元素）"),
+    keep_person: bool = Form(True, description="人物保持：自动锁定人物身份不变（默认开）"),
+    preserve: str = Form("", description="保留内容：person/pose/background/composition 逗号分隔（可多选，空=自由发挥）"),
+    face_ref: UploadFile | None = File(None, description="人脸参考图（可选，额外身份锁定）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
@@ -752,7 +802,10 @@ async def image_to_image(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative}
+    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative, "keep_person": keep_person, "preserve": preserve}
+    face_content = await face_ref.read() if face_ref else b""
+    if face_content:
+        payload["face_ref"] = base64.b64encode(face_content).decode()
     if sync:
         payload["image"] = base64.b64encode(image_content).decode()
         return await _image_i2i_worker(payload)
@@ -1738,6 +1791,8 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
     style = payload.get("style") or "casual"
     background = payload.get("background") or "beach"
     project_id = payload.get("project_id") or ""
+    keep_identity = bool(payload.get("keep_identity", True))
+    strength = float(payload.get("strength") or 0.45)
 
     try:
         _report(10, "正在识别衣物特征…")
@@ -1818,6 +1873,17 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         bg_prompt = background_prompts.get(background, background_prompts["beach"])
 
         # 调用 Agnes AI 多图合成 API（messages 多模态格式，理解更准确）
+        identity_lock_text = (
+            "IDENTITY LOCK - This is the ONLY person. This is the model/character who must appear "
+            "in the final image. CRITICAL: Preserve EXACTLY this same person - the face, facial "
+            "features, eyes, nose, mouth, hairstyle, hair color, skin tone, body shape, height, "
+            "and posture. Do NOT change, replace, morph, or generate a different person. "
+            "The face must remain recognizable as this exact person. "
+            "You will only replace their clothing with the garment shown in the next image."
+        ) if keep_identity else (
+            "This is the reference person. Keep the overall appearance and face similar, "
+            "but you may adjust pose and style to make the garment look natural."
+        )
         messages_content = [
             {
                 "type": "image_url",
@@ -1825,10 +1891,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             },
             {
                 "type": "text",
-                "text": (
-                    "This is the person. IMPORTANT: keep this exact same person — "
-                    "same face, body, hair, skin, pose, and identity. Do NOT change the person."
-                ),
+                "text": identity_lock_text,
             },
             {
                 "type": "image_url",
@@ -1839,10 +1902,11 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                 "text": (
                     f"This is the garment to wear ({style_prompt}). "
                     f"Exact garment details: {clothing_description}. "
-                    f"Dress the person from the first image in exactly this garment from the second image "
+                    f"Dress the SAME person from the first image in exactly this garment from the second image "
                     f"(match the described color, type and pattern precisely). "
                     f"New background: {bg_prompt}. "
-                    "Photorealistic, high resolution, the person looks natural wearing the garment."
+                    "Photorealistic, high resolution, the person looks natural wearing the garment. "
+                    + ("The person's face must stay identical to the first image." if keep_identity else "")
                 ),
             },
         ]
@@ -1910,6 +1974,7 @@ async def virtual_try_on(
     style: str = Form("casual"),  # casual, formal, sporty, fashion
     background: str = Form("beach"),  # beach, city, space, studio, etc.
     project_id: str = Form(""),
+    keep_identity: bool = Form(True, description="人物保持：严格锁定人物身份不变（默认开）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
@@ -1927,7 +1992,7 @@ async def virtual_try_on(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"description": description, "style": style, "background": background, "project_id": project_id}
+    payload = {"description": description, "style": style, "background": background, "project_id": project_id, "keep_identity": keep_identity}
     if sync:
         payload["person_image"] = base64.b64encode(person_content).decode()
         payload["clothing_image"] = base64.b64encode(clothing_content).decode()
@@ -1939,6 +2004,163 @@ async def virtual_try_on(
         "task_id": task["id"],
         "status": "pending",
         "message": "虚拟试衣任务已提交，后台执行中，可在任务中心查看进度",
+        "task": task,
+    }
+
+
+# ── 3D 转盘视频（人物 360° 旋转）API ────────────────────────────
+def _turntable_prompt(base_prompt: str = "") -> str:
+    """3D 转盘提示词：人物原地旋转，展示服装全角度。"""
+    return (
+        "The person in the image stands still on a rotating turntable platform, "
+        "spinning 360 degrees in place, turning from front to side to back to side, "
+        "showing their outfit from every angle. The camera stays fixed. "
+        "The person's face and identity remain exactly the same. "
+        "Smooth slow rotation, photorealistic, full body visible. "
+        + (base_prompt + ". " if base_prompt else "")
+    )
+
+
+async def _image_turntable_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
+    """3D 转盘视频：基于图片生成人物原地 360° 旋转视频（图生视频 ti2vid）。"""
+    from common.config import AGNES_API_BASE as _BASE
+
+    def _report(pct: float, stage: str) -> None:
+        _notify_progress(progress, pct, stage)
+
+    image_content = _read_file_field(payload, "image")
+    if not image_content:
+        raise HTTPException(400, "请上传要旋转的图片")
+    prompt = payload.get("prompt") or _turntable_prompt()
+    duration = int(payload.get("duration") or 5)
+    project_id = payload.get("project_id") or ""
+
+    # 视频宽高：保持 1:1 便于全身旋转展示
+    width = height = 1024
+    num_frames = min(duration * 24, 441)
+    if (num_frames - 1) % 8 != 0:
+        num_frames = ((num_frames - 1) // 8) * 8 + 1
+
+    body = {
+        "model": "agnes-video-v2.0",
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "num_frames": num_frames,
+        "frame_rate": 24,
+        "mode": "ti2vid",
+        "image": "data:image/png;base64," + base64.b64encode(image_content).decode(),
+    }
+
+    _report(10, "正在提交 3D 转盘任务…")
+    try:
+        resp = await asyncio.to_thread(
+            requests.post,
+            f"{_BASE}/videos",
+            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            json=body,
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(500, f"转盘任务提交失败（{resp.status_code}）")
+        data = resp.json()
+        vid = data.get("video_id") or data.get("task_id")
+        if not vid:
+            raise HTTPException(500, "转盘任务提交失败：未返回视频 ID")
+
+        _report(20, "任务已提交，云端生成中（约 1-5 分钟）…")
+        deadline = time.monotonic() + 30 * 60
+        consecutive_err = 0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(15)
+            try:
+                q = await asyncio.to_thread(
+                    requests.get,
+                    f"{_BASE}/agnesapi",
+                    params={"video_id": vid},
+                    headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
+                    timeout=30,
+                )
+                consecutive_err = 0
+                if q.status_code not in (200, 202):
+                    raise HTTPException(500, f"转盘状态查询失败（{q.status_code}）")
+                d = q.json()
+                status = d.get("status", "unknown")
+                if status == "completed":
+                    out = d.get("output", {}) or {}
+                    video_url = out.get("video_url") or out.get("url") or d.get("url") or d.get("video_url")
+                    if not video_url:
+                        raise HTTPException(500, "转盘生成完成但未返回视频地址")
+                    _report(90, "生成完成，正在保存视频…")
+                    # 下载视频到本地 uploads/videos（与 ai_video_api 同目录）
+                    vdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "videos")
+                    os.makedirs(vdir, exist_ok=True)
+                    filename = f"turntable_{generate_id()}.mp4"
+                    vresp = await asyncio.to_thread(requests.get, video_url, timeout=300)
+                    if vresp.status_code != 200 or len(vresp.content) < 1024:
+                        raise HTTPException(500, "转盘视频下载失败")
+                    with open(os.path.join(vdir, filename), "wb") as f:
+                        f.write(vresp.content)
+                    art_id = _save_artifact(
+                        filename, project_id, prompt,
+                        {"feature": "turntable", "duration": duration, "format": "video"},
+                    )
+                    _report(100, "完成")
+                    return {
+                        "id": filename,
+                        "artifact_id": art_id,
+                        "url": f"/uploads/videos/{filename}",
+                        "type": "video",
+                        "prompt": prompt,
+                        "project_id": project_id,
+                    }
+                if status == "failed":
+                    raise HTTPException(500, f"转盘生成失败：{d.get('error') or '未知错误'}")
+                prog = float(d.get("internal_progress") or d.get("progress") or 0)
+                _report(min(80, 20 + int(prog * 0.6)), "3D 转盘视频生成中…")
+            except HTTPException:
+                raise
+            except Exception as e:  # noqa: BLE001
+                consecutive_err += 1
+                if consecutive_err >= 3:
+                    raise HTTPException(500, f"转盘状态查询失败：{e}")
+                logger.warning(f"转盘轮询瞬时异常（{consecutive_err}/3）: {e}")
+        raise HTTPException(500, "转盘生成超时（>30 分钟），请稍后重试")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"3D 转盘失败：{api_error_detail(e)}")
+        raise HTTPException(500, "操作失败，请稍后重试") from e
+
+
+@router.post("/rotate/turntable")
+async def image_turntable(
+    image: UploadFile = File(...),
+    prompt: str = Form("", description="可选：旋转描述，留空使用内置提示词"),
+    duration: int = Form(5, description="视频时长（秒，5 或 10）"),
+    project_id: str = Form(""),
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """3D 转盘 - 上传人物照片，生成人物原地 360° 旋转视频（展示服装全角度）。"""
+    if not AGNES_API_KEY:
+        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    image_content = await image.read()
+    if not image_content:
+        raise HTTPException(400, "请上传要旋转的图片")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    payload = {"prompt": prompt or _turntable_prompt(), "duration": duration, "project_id": project_id}
+    if sync:
+        payload["image"] = base64.b64encode(image_content).decode()
+        return await _image_turntable_worker(payload)
+    payload["image"] = await _write_file_field(image_content)
+    task = create_task("image_turntable", payload, username=user, user_id=uid, role=role)
+    return {
+        "task_id": task["id"],
+        "status": "pending",
+        "message": "3D 转盘任务已提交，后台执行中，可在任务中心查看进度",
         "task": task,
     }
 
@@ -2756,6 +2978,7 @@ register_handler("image_t2i", _image_t2i_handler, user_limit=2)
 register_handler("image_i2i", _image_i2i_handler, user_limit=2)
 register_handler("image_template", _image_template_handler, user_limit=2)
 register_handler("image_tryon", _image_tryon_handler, user_limit=2)
+register_handler("image_turntable", _image_turntable_worker, user_limit=1, pool="long")
 
 
 def _render_rect_layer(layer: dict, canvas, draw, width: int, height: int) -> None:
