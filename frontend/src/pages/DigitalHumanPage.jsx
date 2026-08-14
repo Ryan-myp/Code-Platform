@@ -1978,7 +1978,7 @@ const fmtDaysLeft = (days) => {
                   {text.trim() ? '文案已就绪，可以生成' : '输入文案后即可生成'}
                 </div>
                 <div className="text-[11px] text-violet-600/70 mt-0.5">
-                  {avatar?.name || '数字人形象'} · {voice?.name || '音色'} · 视频质量等高级参数可展开调整
+                  {selectedAvatar?.name || '数字人形象'} · {selectedVoice?.name || '音色'} · 视频质量等高级参数可展开调整
                 </div>
               </div>
               <Button
