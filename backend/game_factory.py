@@ -20,11 +20,12 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
+from common.db import get_db
 from common.helpers import _notify_progress
 from common.llm import call_llm_async, log_usage, _safe_exc_msg
 from content_safety import check_text, quality_report
@@ -34,6 +35,10 @@ from task_queue import create_task, register_handler
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/games", tags=["小游戏工坊"])
+
+# 封面目录（保存游戏试玩画面截图，作为商用封面）
+COVER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "game_covers")
+os.makedirs(COVER_DIR, exist_ok=True)
 
 # 内置玩法模板：玩法说明注入生成 prompt，约束游戏逻辑
 TEMPLATES = [
@@ -611,7 +616,96 @@ def _qc_check(files: dict) -> dict:
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 
+def _ensure_cover_column(conn) -> None:
+    """幂等补列：game_projects.cover 存封面图路径。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+    if "cover" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN cover TEXT DEFAULT ''")
+        conn.commit()
+
+
+def _ensure_qc_column(conn) -> None:
+    """幂等补列：game_projects.qc 存质量门禁报告（JSON）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+    if "qc" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN qc TEXT DEFAULT ''")
+        conn.commit()
+
+
+def _ensure_history_column(conn) -> None:
+    """幂等补列：game_projects.iterations 存迭代历史（JSON）。"""
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+    if "iterations" not in cols:
+        conn.execute("ALTER TABLE game_projects ADD COLUMN iterations TEXT DEFAULT '[]'")
+        conn.commit()
+
+
 @router.get("/templates")
+
+
+@router.post("/{proj_id}/cover")
+async def save_project_cover(proj_id: str, payload: dict = Body(...), current_user: dict = require_auth()):
+    """保存游戏封面（canvas 截图 dataURL → 封面文件 → 写库）。"""
+    conn = get_db()
+    row = conn.execute("SELECT id FROM game_projects WHERE id=?", (proj_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "项目不存在")
+    cover = (payload or {}).get("cover", "")
+    if not cover or not cover.startswith("data:image/"):
+        conn.close()
+        raise HTTPException(400, "封面数据无效")
+    import base64 as _b64
+
+    try:
+        _meta, _b64data = cover.split(",", 1)
+        _ext = "png" if "png" in _meta else "jpg"
+        _raw = _b64.b64decode(_b64data)
+        _path = os.path.join(COVER_DIR, f"{proj_id}.{_ext}")
+        with open(_path, "wb") as _f:
+            _f.write(_raw)
+        # 清理旧封面（不同扩展名）
+        for _old in os.listdir(COVER_DIR):
+            if _old.startswith(proj_id + ".") and _old != f"{proj_id}.{_ext}":
+                try:
+                    os.remove(os.path.join(COVER_DIR, _old))
+                except OSError:
+                    pass
+        conn.execute("UPDATE game_projects SET cover=? WHERE id=?", (f"/api/games/{proj_id}/cover?ext={_ext}", proj_id))
+        conn.commit()
+        conn.close()
+        return {"ok": True, "cover": f"/api/games/{proj_id}/cover?ext={_ext}"}
+    except Exception as e:  # noqa: BLE001
+        conn.close()
+        raise HTTPException(500, f"保存封面失败：{e}") from e
+
+
+@router.get("/{proj_id}/cover")
+async def get_project_cover(proj_id: str, ext: str = "png"):
+    """读取游戏封面图片。"""
+    from fastapi.responses import FileResponse as _FR
+
+    _path = os.path.join(COVER_DIR, f"{proj_id}.{ext}")
+    if not os.path.exists(_path):
+        raise HTTPException(404, "封面不存在")
+    return _FR(_path, media_type=f"image/{ext}")
+
+
+@router.get("/deploy-guide")
+async def deploy_guide(current_user: dict = require_auth()):
+    """小游戏部署指引（Markdown 步骤）。"""
+    return {
+        "steps": [
+            "下载生成的发布包并解压，得到游戏网页包 / 微信小游戏包",
+            "网页版：将 dist 目录部署到任意静态托管（GitHub Pages / 云服务器 / OSS），访问 index.html 即可运行",
+            "微信小游戏：打开微信开发者工具 → 「导入项目」→ 选择小游戏包目录",
+            "AppID 选择「测试号」（无需注册）或填入自己的小游戏 AppID",
+            "点击「编译」在模拟器预览，确认玩法与音效正常",
+            "确认无误后：mp.weixin.qq.com → 管理 → 版本管理 → 提交审核 → 发布",
+        ],
+        "note": "网页版零成本上线（无需备案），适合快速分享；小游戏版适合微信生态分发。",
+    }
+
 
 
 @router.get("/projects")

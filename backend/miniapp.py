@@ -51,6 +51,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
+from common.db import get_db
 from common.llm import call_llm_async, log_usage, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import license_text, pack_dir_name
@@ -755,6 +756,7 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
     material = _review_material_md(files, name, template, app_cfg, checks, used_apis)
     return {"ok": ok, "checks": checks, "material": material}
 
+@router.get("/projects")
 async def list_projects(current_user: dict = require_auth()):
     conn = get_db()
     rows = conn.execute(
@@ -762,7 +764,6 @@ async def list_projects(current_user: dict = require_auth()):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 
 def _miniapp_ensure_appjson(files: dict, req) -> dict:
