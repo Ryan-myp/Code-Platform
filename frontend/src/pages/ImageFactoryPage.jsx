@@ -850,6 +850,7 @@ export default function ImageFactoryPage() {
   // 可用模型列表（含中转站导入的模型），供图片生成切换
   const [modelOptions, setModelOptions] = useState([])
   const [selectedModel, setSelectedModel] = useState('')
+  const [imageModelName, setImageModelName] = useState('系统配置')
   const [templates, setTemplates] = useState([])
   const [stats, setStats] = useState({ total_images: 0, total_templates: 0, api_configured: false })
   const [enhancing, setEnhancing] = useState(false) // v20：AI 润色提示词
@@ -977,6 +978,7 @@ export default function ImageFactoryPage() {
       const models = Array.isArray(res.data.models) ? res.data.models : []
       setModelOptions(models)
       setSelectedModel(res.data.image_model || '')
+      setImageModelName(res.data.image_model || '系统配置')
     } catch { /* 静默 */ }
   }, [])
 
