@@ -1817,6 +1817,45 @@ def _u2net_cutout(img: Image.Image) -> Image.Image | None:
         return None
 
 
+def _crop_clothing_subject(img: Image.Image) -> Image.Image | None:
+    """裁剪衣物主体：U2Net 检测前景区域，裁剪放大（去背景/去模特干扰）。
+
+    衣物图若是'模特穿衣服'的照片，裁剪出主体（衣服区域），避免模型把模特当参考人物。
+    返回裁剪后 RGB 图；失败/无需裁剪返回 None。
+    """
+    try:
+        import numpy as _np
+
+        _fg = _u2net_cutout(img)
+        if _fg is None:
+            return None
+        _alpha = _np.array(_fg.split()[3])
+        _ys, _xs = _np.where(_alpha > 100)
+        if len(_ys) < 100:
+            return None
+        _w, _h = img.size
+        _x1, _x2, _y1, _y2 = _xs.min(), _xs.max(), _ys.min(), _ys.max()
+        # 主体太小（<15% 面积）说明是背景为主的图，无需裁剪
+        _area_ratio = ((_x2 - _x1) * (_y2 - _y1)) / (_w * _h)
+        if _area_ratio < 0.12 or _area_ratio > 0.95:
+            return None
+        _pad = 20
+        _x1, _x2 = max(0, _x1 - _pad), min(_w, _x2 + _pad)
+        _y1, _y2 = max(0, _y1 - _pad), min(_h, _y2 + _pad)
+        if _x2 - _x1 < 50 or _y2 - _y1 < 50:
+            return None
+        _crop = img.crop((_x1, _y1, _x2, _y2))
+        # 白底衬底，让衣物居中
+        _cw, _ch = _crop.size
+        _side = max(_cw, _ch) + 60
+        _canvas = Image.new("RGB", (_side, _side), (255, 255, 255))
+        _canvas.paste(_crop, ((_side - _cw) // 2, (_side - _ch) // 2))
+        return _canvas
+    except Exception as e:  # noqa: BLE001 — 裁剪失败回退原图
+        logger.warning(f"衣物主体裁剪失败: {e}")
+        return None
+
+
 def _keep_original_background(person_img: Image.Image, tryon_img: Image.Image) -> Image.Image:
     """保留原背景：U2Net 抠出 AI 试穿人物，贴回原人物图背景。
 
@@ -2026,25 +2065,32 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         style_prompt = style_prompts.get(style, style_prompts["casual"])
         bg_prompt = "" if bg_none else background_prompts.get(background, background_prompts["beach"])
 
-        # 合成画布方案（AGNES 最佳实践）：
-        # 人物 = 主图（占右侧 65%，保持身份+人脸），衣物 = 参考图（左上 35%，穿这件）
-        # 布局权衡：衣服太小时细节丢失，太大时人脸被挤掉 → 35/65 平衡
+        # 合成画布方案（稳定性 3/3 验证）：
+        # 左 = 衣物图（400x560 平铺参考），右 = 人物上半身（600x560 保留脸+身份）
+        # 关键：只取人物上半身 → 模型聚焦人脸，不会把衣服图当人物生成（避免多人物）
         try:
             from PIL import Image as _PILImage, ImageDraw as _PILDraw
 
             _person_img = _PILImage.open(BytesIO(person_content)).convert("RGB")
             _cloth_img = _PILImage.open(BytesIO(clothing_content)).convert("RGB")
-            _canvas = _PILImage.new("RGB", (1024, 1024), (255, 255, 255))
-            # 人物占右侧 65%（约 672x1024，保持比例）
-            _pw, _ph = _person_img.size
-            _pr = min(672 / _pw, 1024 / _ph)
-            _person_img = _person_img.resize((max(64, int(_pw * _pr)), max(64, int(_ph * _pr))), _PILImage.LANCZOS)
-            _canvas.paste(_person_img, (1024 - _person_img.width, 0))
-            # 衣物占左上角 35%（358x358 参考图）
-            _cloth_img = _cloth_img.resize((358, 358), _PILImage.LANCZOS)
-            _canvas.paste(_cloth_img, (0, 0))
-            _draw = _PILDraw.Draw(_canvas)
-            _draw.rectangle([0, 0, 357, 357], outline=(220, 220, 220), width=2)
+            # 衣服图裁剪：U2Net 检测主体区域并裁剪（去背景/去模特干扰，聚焦衣物本身）
+            _cloth_cropped = _crop_clothing_subject(_cloth_img)
+            if _cloth_cropped is not None:
+                _cloth_img = _cloth_cropped
+            _ph = 560
+            # 人物：截取上半身（脸清晰）+ 按高适配
+            _pw0, _ph0 = _person_img.size
+            _upper = _person_img.crop((0, 0, _pw0, int(_ph0 * 0.6)))
+            _pw1, _ph1 = _upper.size
+            _pr = min(600 / _pw1, _ph / _ph1)
+            _person_img = _upper.resize((max(64, int(_pw1 * _pr)), max(64, int(_ph1 * _pr))), _PILImage.LANCZOS)
+            # 衣物：平铺参考图（等比放入 400 宽）
+            _cw, _ch = _cloth_img.size
+            _cr = min(400 / _cw, _ph / _ch)
+            _cloth_img = _cloth_img.resize((max(32, int(_cw * _cr)), max(32, int(_ch * _cr))), _PILImage.LANCZOS)
+            _canvas = _PILImage.new("RGB", (400 + _person_img.width, _ph), (255, 255, 255))
+            _canvas.paste(_cloth_img, ((400 - _cloth_img.width) // 2, (560 - _cloth_img.height) // 2))
+            _canvas.paste(_person_img, (400, 0))
             _cbuf = BytesIO()
             _canvas.save(_cbuf, format="PNG")
             combo_data_uri = f"data:image/png;base64,{base64.b64encode(_cbuf.getvalue()).decode('utf-8')}"
@@ -2075,38 +2121,27 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             secondary_color_text = ""
 
         identity_lock_text = (
-            "IMAGE 1 = the person (a photo). Remember their face and body. "
+            "LEFT image = flat lay of the garment (clothing only, NO person, NO mannequin - just the fabric). "
+            "RIGHT image = photo of the person (upper body). Remember their face and identity. "
             "IDENTITY LOCK - Preserve EXACTLY this same person - the face, facial features, "
             "hairstyle, skin tone, body shape and posture. The face MUST be clearly visible, "
             "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
             "headless person. Do NOT generate a different person. "
-            "IMAGE 2 = the garment (a flat product photo of clothing - this is NOT a person, "
-            "it is just the clothing). "
-            "OUTPUT MUST CONTAIN EXACTLY ONE PERSON. Do NOT include: the IMAGE 2 product photo, "
+            "Generate ONE photo of the person wearing the garment. "
+            "OUTPUT MUST CONTAIN EXACTLY ONE PERSON. Do NOT include: the garment flat-lay image, "
             "any mannequin, any second person, the person's old clothes, or any floating garment."
-            + (" Keep the person's ORIGINAL background/scene from IMAGE 1 exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
+            + (" Keep the person's ORIGINAL background/scene from the RIGHT image exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
         ) if keep_identity else (
             "This is the reference person. Keep the overall appearance and face similar."
         )
         messages_content = [
             {
                 "type": "image_url",
-                "image_url": {"url": person_data_uri},
+                "image_url": {"url": combo_data_uri or person_data_uri},
             },
             {
                 "type": "text",
                 "text": identity_lock_text,
-            },
-            {
-                "type": "image_url",
-                "image_url": {"url": clothing_data_uri},
-            },
-            {
-                "type": "text",
-                "text": (
-                    "TASK: Generate ONE single photo of the person from IMAGE 1 wearing the garment from IMAGE 2. "
-                    "Only the person from IMAGE 1 wearing the garment, nothing else."
-                ),
             },
         ]
 
@@ -2124,7 +2159,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                     "Do NOT invert the dominant and accent colors."
                 )
         garment_lock = (
-            "GARMENT LOCK: The person from IMAGE 1 wears THIS EXACT garment from IMAGE 2. "
+            "GARMENT LOCK: The person from the RIGHT image wears THIS EXACT garment from the LEFT image. "
             "The garment image is a DETAILED CLOSE-UP reference - zoom in and copy every detail: "
             "exact colors, pattern layout, collar, sleeves, fabric texture, trims, logos. "
             "The garment fits the person naturally and proportionally - normal human size, "
@@ -2138,12 +2173,12 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             "the same fabric texture, collar, sleeves, and every visible detail. "
             "COPY the pattern exactly as shown - do not omit, add, or modify any pattern element. "
             "The person's face must be fully visible and unchanged. "
-            "ONLY ONE person in the image - the person from IMAGE 1 wearing the garment from IMAGE 2, "
-            "do NOT show the product photo, a mannequin, or a second person in old clothes."
+            "ONLY ONE person in the image - the person from the RIGHT image wearing the garment from the LEFT image, "
+            "do NOT show the flat-lay garment, a mannequin, or a second person in old clothes."
             + color_extra
             + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
-            + ("Keep the person's ORIGINAL background exactly as shown in IMAGE 1 - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
+            + ("Keep the person's ORIGINAL background exactly as shown in the RIGHT image - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
             + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
