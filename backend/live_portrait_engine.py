@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from common.helpers import _notify_progress
 
 try:
     import numpy as np  # 轻量且 torch 必带；cv2/mediapipe/librosa 仍在函数内懒加载

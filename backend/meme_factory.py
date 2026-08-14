@@ -36,6 +36,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from common.artifacts import save_artifact
+from common.helpers import _notify_progress
 from common.auth import require_auth
 from common.config import load_config
 from common.llm import _safe_exc_msg

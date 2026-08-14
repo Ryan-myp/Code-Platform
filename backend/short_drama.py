@@ -58,7 +58,7 @@ CACHE_DIR = DRAMA_DIR / "cache"  # Pexels 下载缓存（按 URL 哈希去重）
 MUSIC_DIR = DRAMA_DIR / "music"  # 背景音乐目录（*.mp3/wav，可选）
 for _d in (MATERIALS_DIR, CACHE_DIR, MUSIC_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
 
 
 

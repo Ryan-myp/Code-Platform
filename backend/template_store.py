@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common.auth import require_auth
+from common.helpers import _notify_progress
 from common.config import load_config
 from common.db import get_db
 from common.llm import _safe_exc_msg

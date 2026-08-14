@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from common.auth import require_auth
+from common.helpers import _notify_progress
 from common.db import get_db
 from common.llm import call_llm_async, _safe_exc_msg
 from permissions import access_status, get_visibility_map, load_user_ctx

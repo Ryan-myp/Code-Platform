@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from common.helpers import _notify_progress
 
 import requests
 

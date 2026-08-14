@@ -36,7 +36,7 @@ VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── 视频生成通道（多通道 failover：按配置顺序尝试，未配置 key 的通道自动跳过）──
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
+from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
 
 def _available_channels() -> list[str]:
     """返回已配置 key 的视频通道（按 AI_VIDEO_CHANNELS 顺序）。"""

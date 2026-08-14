@@ -50,6 +50,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import save_artifact
+from common.helpers import _notify_progress
 from common.auth import require_auth
 from common.config import load_config
 from common.llm import api_error_detail, _safe_exc_msg

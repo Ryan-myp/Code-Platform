@@ -20,6 +20,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
+from common.helpers import _notify_progress
 from common.db import get_db_context
 from common.llm import call_llm_async, log_usage
 from task_queue import create_task, register_handler
