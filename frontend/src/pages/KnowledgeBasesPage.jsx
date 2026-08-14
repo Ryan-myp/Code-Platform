@@ -967,6 +967,7 @@ function KBDocsModal({ kb, onClose, onSearch }) {
             <Pagination
               items={docs.docs}
               pageSize={8}
+              gridClass="grid grid-cols-1 gap-1.5"
               label={`共 ${docs.count} 个文档`}
               renderItem={(doc) => (
                 <div

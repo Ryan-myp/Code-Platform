@@ -24,6 +24,7 @@ export default function Pagination({
   emptyComponent,
   label,
   className = '',
+  gridClass = '',
   onPageChange,
 }) {
   const [page, setPage] = useState(1)
@@ -49,11 +50,13 @@ export default function Pagination({
   }
 
   const start = (page - 1) * pageSize
+  // 默认网格 1 列（每项自带宽度），无 gridClass 时用基础网格
+  const grid = gridClass || 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
 
   return (
     <div className={className}>
       {/* 数据网格 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className={grid}>
         {currentPageItems.map((item, idx) => (
           <div key={idx}>{renderItem(item, start + idx)}</div>
         ))}

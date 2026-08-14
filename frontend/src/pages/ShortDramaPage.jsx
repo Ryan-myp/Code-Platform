@@ -1127,6 +1127,7 @@ export default function ShortDramaPage() {
             <Pagination
               items={items}
               pageSize={6}
+              gridClass="grid grid-cols-1 gap-3"
               label={`共 ${items.length} 部短剧`}
               renderItem={(it) => (
               <div

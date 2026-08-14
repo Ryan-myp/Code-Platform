@@ -148,6 +148,7 @@ export default function RecordsPage() {
             <Pagination
               items={tools}
               pageSize={5}
+              gridClass="grid grid-cols-1 gap-3"
               label={`共 ${tools.length} 条记录`}
               renderItem={(r) => (
               <div
