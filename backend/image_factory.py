@@ -1960,11 +1960,18 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             else:
                 _main = max(set(_px_all), key=_px_all.count)
             main_color_text = f"RGB{tuple(_main)}"
-            logger.info(f"衣物主色提取: {main_color_text}")
+            # 多色分析：主色 + 次色（辅助区分图案色/装饰色，防止主次色反转）
+            from collections import Counter as _Counter
+
+            _buckets = _Counter((_c[0] // 48 * 48, _c[1] // 48 * 48, _c[2] // 48 * 48) for _c in _non_bg)
+            _top = [b for b, _ in _buckets.most_common(4) if b != tuple(_main // 48 * 48 for _main in _main)][:2]
+            secondary_color_text = ", ".join(f"RGB{tuple(b)}" for b in _top) if _top else ""
+            logger.info(f"衣物主色: {main_color_text}, 次色: {secondary_color_text}")
         except Exception as e:  # noqa: BLE001 — 合成失败回退双图模式
             logger.warning(f"合成画布失败，回退双图: {e}")
             combo_data_uri = None
             main_color_text = ""
+            secondary_color_text = ""
 
         identity_lock_text = (
             "IDENTITY LOCK - This is the person on the RIGHT. This is the ONLY person. "
@@ -1988,8 +1995,19 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             },
         ]
 
-        # 衣物细节：结构化描述 + 精确色值注入（防色偏）
-        color_extra = f" The garment's main color is EXACTLY {main_color_text} (this exact RGB value) - do not lighten, darken, or shift the hue." if main_color_text else ""
+        # 衣物细节：结构化描述 + 精确色值注入（防色偏 + 防主次色反转）
+        color_extra = ""
+        if main_color_text:
+            color_extra += (
+                f" The garment's DOMINANT color is EXACTLY {main_color_text} - the main body of the garment "
+                "must be this color. Do not lighten, darken, or shift the hue. "
+            )
+            if secondary_color_text:
+                color_extra += (
+                    f" Secondary/accent colors are {secondary_color_text} (stripes, patterns, trims, logos). "
+                    "The dominant color covers the most surface area; accent colors are smaller details. "
+                    "Do NOT invert the dominant and accent colors."
+                )
         garment_lock = (
             "GARMENT LOCK: The person wears THIS EXACT garment from the LEFT image. "
             "The garment must remain the same type - if it is a shirt it stays a shirt, "
