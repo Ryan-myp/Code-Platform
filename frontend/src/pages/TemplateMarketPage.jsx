@@ -27,7 +27,7 @@ import {
   Zap,
   ExternalLink,
 } from 'lucide-react'
-import { PageHeader, Empty, SkeletonGrid, Modal, Button } from '../components/ui'
+import { PageHeader, Empty, SkeletonGrid, Modal, Button, Pagination } from '../components/ui'
 import { useToast } from '../lib/toast'
 import { api } from '../lib/api'
 
@@ -611,11 +611,12 @@ export default function TemplateMarketPage() {
               description="点击右上角「上传模板」分享你的模板"
             />
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {c2c
-                .filter((t) => !uploadForm.category || t.category === uploadForm.category)
-                .map(renderC2cCard)}
-            </div>
+            <Pagination
+              items={c2c.filter((t) => !uploadForm.category || t.category === uploadForm.category)}
+              pageSize={8}
+              label={`共 ${c2c.filter((t) => !uploadForm.category || t.category === uploadForm.category).length} 个模板`}
+              renderItem={(t) => renderC2cCard(t)}
+            />
           )}
           {c2c.length > 0 &&
             c2c.filter((t) => !uploadForm.category || t.category === uploadForm.category)
