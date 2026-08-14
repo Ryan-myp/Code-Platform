@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Shield, Clock, AlertCircle, CheckCircle, XCircle, User, Activity } from 'lucide-react'
 import { api } from '../lib/api'
+import Pagination from '../components/Pagination'
 
 const ACTION_LABELS = {
   login: '登录',
@@ -172,30 +173,35 @@ export default function AuditLogPage() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log, i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="px-4 py-3 text-gray-600 text-xs">
-                      {new Date(log.created_at).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 font-medium">{log.user_id}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs ${ACTION_COLORS[log.action] || 'bg-gray-100 text-gray-600'}`}>
-                        {ACTION_LABELS[log.action] || log.action}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{log.target_type || '-'}</td>
-                    <td className="px-4 py-3">
-                      {log.success ? (
-                        <CheckCircle className="w-4 h-4 text-emerald-500" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-red-500" />
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate">
-                      {log.error || log.details || '-'}
-                    </td>
-                  </tr>
-                ))}
+                <Pagination
+                  items={logs}
+                  pageSize={10}
+                  label={`共 ${logs.length} 条日志`}
+                  renderItem={(log, idx) => (
+                    <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-4 py-3 text-gray-600 text-xs">
+                        {new Date(log.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 font-medium">{log.user_id}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${ACTION_COLORS[log.action] || 'bg-gray-100 text-gray-600'}`}>
+                          {ACTION_LABELS[log.action] || log.action}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{log.target_type || '-'}</td>
+                      <td className="px-4 py-3">
+                        {log.success ? (
+                          <CheckCircle className="w-4 h-4 text-emerald-500" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-500" />
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs max-w-[200px] truncate">
+                        {log.error || log.details || '-'}
+                      </td>
+                    </tr>
+                  )}
+                />
               </tbody>
             </table>
           </div>

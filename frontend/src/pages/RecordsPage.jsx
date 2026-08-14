@@ -18,7 +18,7 @@ import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
-import { ErrorState } from '../components/ui'
+import { ErrorState, Pagination } from '../components/ui'
 
 /**
  * 统一记录中心：工具使用记录 + 分享记录。
@@ -145,60 +145,63 @@ export default function RecordsPage() {
               <p className="text-sm">还没有工具使用记录，去「效率工具箱」试试吧</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {tools.map((r) => (
-                <div
-                  key={r.id}
-                  className="bg-white rounded-2xl border border-ink-200/60 shadow-soft overflow-hidden"
+            <Pagination
+              items={tools}
+              pageSize={5}
+              label={`共 ${tools.length} 条记录`}
+              renderItem={(r) => (
+              <div
+                key={r.id}
+                className="bg-white rounded-2xl border border-ink-200/60 shadow-soft overflow-hidden"
+              >
+                <button
+                  onClick={() => setExpanded(expanded === r.id ? null : r.id)}
+                  className="w-full flex items-center gap-3 px-5 py-4 hover:bg-ink-50/50 transition-colors text-left"
                 >
-                  <button
-                    onClick={() => setExpanded(expanded === r.id ? null : r.id)}
-                    className="w-full flex items-center gap-3 px-5 py-4 hover:bg-ink-50/50 transition-colors text-left"
-                  >
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
-                      <Sparkles className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-ink-800 truncate">{r.tool_name}</p>
-                      <p className="text-xs text-ink-400 truncate mt-0.5">
-                        {r.input_text || '（无输入内容）'}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      {r.model && (
-                        <span className="hidden md:inline px-2 py-0.5 text-[10px] rounded-full bg-ink-100 text-ink-500 font-mono">
-                          {r.model}
-                        </span>
-                      )}
-                      <span className="text-xs text-ink-400 flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {r.created_at?.slice(5, 16)}
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <Sparkles className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-ink-800 truncate">{r.tool_name}</p>
+                    <p className="text-xs text-ink-400 truncate mt-0.5">
+                      {r.input_text || '（无输入内容）'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {r.model && (
+                      <span className="hidden md:inline px-2 py-0.5 text-[10px] rounded-full bg-ink-100 text-ink-500 font-mono">
+                        {r.model}
                       </span>
-                      <ChevronDown
-                        className={`w-4 h-4 text-ink-400 transition-transform ${expanded === r.id ? 'rotate-180' : ''}`}
-                      />
-                    </div>
-                  </button>
-                  {expanded === r.id && (
-                    <div className="px-5 pb-5 border-t border-ink-100">
-                      <div className="flex items-center justify-between pt-4 pb-2">
-                        <span className="text-xs text-ink-400">生成结果</span>
-                        <div className="flex items-center gap-1">
-                          <ShareButton content={r.result} title={`${r.tool_name} 生成结果`} />
-                          <ExportButton
-                            content={r.result}
-                            title={`${r.tool_name}-${r.created_at?.slice(0, 10)}`}
-                          />
-                        </div>
+                    )}
+                    <span className="text-xs text-ink-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {r.created_at?.slice(5, 16)}
+                    </span>
+                    <ChevronDown
+                      className={`w-4 h-4 text-ink-400 transition-transform ${expanded === r.id ? 'rotate-180' : ''}`}
+                    />
+                  </div>
+                </button>
+                {expanded === r.id && (
+                  <div className="px-5 pb-5 border-t border-ink-100">
+                    <div className="flex items-center justify-between pt-4 pb-2">
+                      <span className="text-xs text-ink-400">生成结果</span>
+                      <div className="flex items-center gap-1">
+                        <ShareButton content={r.result} title={`${r.tool_name} 生成结果`} />
+                        <ExportButton
+                          content={r.result}
+                          title={`${r.tool_name}-${r.created_at?.slice(0, 10)}`}
+                        />
                       </div>
-                      <div className="max-h-96 overflow-y-auto rounded-xl bg-ink-50/50 p-4">
-                        <MarkdownRenderer content={r.result} />
-                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div className="max-h-96 overflow-y-auto rounded-xl bg-ink-50/50 p-4">
+                      <MarkdownRenderer content={r.result} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              )}
+            />
           )}
         </>
       )}
