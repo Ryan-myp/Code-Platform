@@ -2075,26 +2075,37 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             secondary_color_text = ""
 
         identity_lock_text = (
-            "IDENTITY LOCK - The large image on the RIGHT is the person. This is the ONLY person. "
-            "CRITICAL: Preserve EXACTLY this same person - the face, facial features, "
+            "IMAGE 1 = the person (a photo). Remember their face and body. "
+            "IDENTITY LOCK - Preserve EXACTLY this same person - the face, facial features, "
             "hairstyle, skin tone, body shape and posture. The face MUST be clearly visible, "
             "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
             "headless person. Do NOT generate a different person. "
-            "The small image in the top-LEFT corner is the garment reference - the person wears it."
-            + (" Also keep the person's ORIGINAL background/scene from the right image exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
+            "IMAGE 2 = the garment (a flat product photo of clothing - this is NOT a person, "
+            "it is just the clothing). "
+            "OUTPUT MUST CONTAIN EXACTLY ONE PERSON. Do NOT include: the IMAGE 2 product photo, "
+            "any mannequin, any second person, the person's old clothes, or any floating garment."
+            + (" Keep the person's ORIGINAL background/scene from IMAGE 1 exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
         ) if keep_identity else (
             "This is the reference person. Keep the overall appearance and face similar."
         )
         messages_content = [
             {
                 "type": "image_url",
-                "image_url": {"url": combo_data_uri or person_data_uri},
+                "image_url": {"url": person_data_uri},
+            },
+            {
+                "type": "text",
+                "text": identity_lock_text,
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": clothing_data_uri},
             },
             {
                 "type": "text",
                 "text": (
-                    ("Top-LEFT small image: the exact garment reference. RIGHT large image: the person. " if combo_data_uri else "This is the person. ")
-                    + identity_lock_text
+                    "TASK: Generate ONE single photo of the person from IMAGE 1 wearing the garment from IMAGE 2. "
+                    "Only the person from IMAGE 1 wearing the garment, nothing else."
                 ),
             },
         ]
@@ -2113,23 +2124,26 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
                     "Do NOT invert the dominant and accent colors."
                 )
         garment_lock = (
-            "GARMENT LOCK: The person (large image on the right) wears THIS EXACT garment "
-            "from the small reference image in the top-left corner. "
-            "The small garment image is a DETAILED CLOSE-UP reference - zoom in and copy every detail: "
+            "GARMENT LOCK: The person from IMAGE 1 wears THIS EXACT garment from IMAGE 2. "
+            "The garment image is a DETAILED CLOSE-UP reference - zoom in and copy every detail: "
             "exact colors, pattern layout, collar, sleeves, fabric texture, trims, logos. "
             "The garment fits the person naturally and proportionally - normal human size, "
             "not oversized, not tiny. "
-            "The garment must remain the same type - if it is a shirt it stays a shirt, "
-            "if it is a jacket it stays a jacket, if it is pants they stay pants. "
-            "Do NOT change the garment type, do NOT change length or silhouette. "
+            "The garment must remain the same type - if it is a dress it stays a dress, "
+            "if it is a shirt it stays a shirt, if it is a jacket it stays a jacket, "
+            "if it is pants they stay pants. "
+            "Do NOT change the garment type (dress must stay a dress, not become a t-shirt), "
+            "do NOT change length or silhouette. "
             "Reproduce EXACTLY: the same color(s), the same pattern (stripes/dots/plaid/print layout), "
             "the same fabric texture, collar, sleeves, and every visible detail. "
             "COPY the pattern exactly as shown - do not omit, add, or modify any pattern element. "
             "The person's face must be fully visible and unchanged. "
+            "ONLY ONE person in the image - the person from IMAGE 1 wearing the garment from IMAGE 2, "
+            "do NOT show the product photo, a mannequin, or a second person in old clothes."
             + color_extra
             + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
-            + ("Keep the person's ORIGINAL background exactly as shown in the right image - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
+            + ("Keep the person's ORIGINAL background exactly as shown in IMAGE 1 - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
             + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
@@ -2170,11 +2184,8 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         else:
             raise HTTPException(500, "生成失败，请稍后重试")
 
-        # 无背景模式：U2Net 抠出 AI 试穿人物，贴回原人物图背景（背景 100% 保留）
-        if bg_none:
-            _person_img = Image.open(BytesIO(person_content)).convert("RGB")
-            result_img = await asyncio.to_thread(_keep_original_background, _person_img, result_img)
-            logger.info("保留原背景：U2Net 合成完成")
+        # 无背景模式：AGNES 双图模式已直接保留原背景（提示词强化），
+        # 不再做 U2Net 后处理（实测会残留原人物残影）
 
         filename = save_image(result_img)
         art_id = _save_artifact(
