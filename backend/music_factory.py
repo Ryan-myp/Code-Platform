@@ -213,6 +213,38 @@ def _music_meta(audio_id: str) -> tuple:
     return "", {}
 
 
+def _music_item_meta(url: str) -> tuple:
+    """列表项元数据：从 URL 提取 duration/thumbnail/style/title（无 artifact 时兜底）。"""
+    try:
+        _name = url.rsplit("/", 1)[-1]
+        _stem = _name.rsplit(".", 1)[0]
+        # 从 artifacts 表取元数据
+        from common.db import get_db
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT content, metadata FROM artifacts WHERE media_url=? AND active=1",
+            (url,),
+        ).fetchone()
+        if row:
+            try:
+                _meta = json.loads(row["metadata"] or "{}")
+                _duration = float(_meta.get("duration") or 0)
+                _style = str(_meta.get("style") or "")
+                _content = str(row["content"] or "")
+                _title = str(_meta.get("title") or _content[:40] or _stem)
+                _thumb = str(_meta.get("cover") or "")
+                conn.close()
+                return _duration, _thumb, _style, _title
+            except Exception:
+                pass
+        conn.close()
+        return 0.0, "", "", _stem
+    except Exception as e:
+        logger.debug(f"music_item_meta skipped: {e}")
+        return 0.0, "", "", _stem
+
+
 def _music_master_transcode(audio_path) -> tuple:
     """母带级转码：wav 16bit/44.1kHz + flac 无损。返回 (wav_data, flac_data)。"""
     wav_data, flac_data = b"", b""
