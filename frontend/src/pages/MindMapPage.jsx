@@ -13,7 +13,7 @@ import {
   FileText,
   X,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState, Modal, Badge } from '../components/ui'
+import { Card, Button, Empty, PageHeader, SkeletonList, ErrorState, Modal, Badge, Pagination } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import EnhancePromptButton from '../components/EnhancePromptButton'
 import RandomPromptButton from '../components/RandomPromptButton'
@@ -545,8 +545,12 @@ export default function MindMapPage() {
             ) : records.length === 0 ? (
               <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
             ) : (
-              <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                {records.slice(0, 10).map((r) => (
+              <Pagination
+                items={records}
+                pageSize={6}
+                gridClass="grid grid-cols-1 gap-1.5"
+                label={`共 ${records.length} 条记录`}
+                renderItem={(r) => (
                   <div
                     key={r.id}
                     className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
@@ -564,8 +568,8 @@ export default function MindMapPage() {
                       <Trash2 className="w-3 h-3" />
                     </button>
                   </div>
-                ))}
-              </div>
+                )}
+              />
             )}
           </Card>
         </div>

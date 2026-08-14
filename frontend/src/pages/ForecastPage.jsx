@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Settings2,
 } from 'lucide-react'
-import { Card, Button, Empty, PageHeader, Badge } from '../components/ui'
+import { Card, Button, Empty, PageHeader, Badge, Pagination } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
@@ -325,37 +325,39 @@ export default function ForecastPage() {
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{records.length}）
             </h3>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {records.length === 0 ? (
+            <Pagination
+              items={records}
+              pageSize={6}
+              gridClass="grid grid-cols-1 gap-1.5"
+              emptyComponent={
                 <div className="text-xs text-gray-400 text-center py-4">暂无记录</div>
-              ) : (
-                records.map((r) => (
-                  <div
-                    key={r.id}
-                    className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
-                  >
-                    <div>
-                      <div className="font-medium text-gray-700">{r.filename}</div>
-                      <div className="text-gray-400">
-                        {r.row_count}行 · {r.created_at?.slice(0, 10)}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge color={r.status === 'done' ? 'green' : 'gray'}>
-                        {r.status === 'done' ? '已分析' : '已上传'}
-                      </Badge>
-                      <button
-                        onClick={() => deleteRecord(r.id)}
-                        className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                        title="删除记录"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+              }
+              renderItem={(r) => (
+                <div
+                  key={r.id}
+                  className="flex items-center justify-between p-2 rounded-lg bg-gray-50 text-xs"
+                >
+                  <div>
+                    <div className="font-medium text-gray-700">{r.filename}</div>
+                    <div className="text-gray-400">
+                      {r.row_count}行 · {r.created_at?.slice(0, 10)}
                     </div>
                   </div>
-                ))
+                  <div className="flex items-center gap-2">
+                    <Badge color={r.status === 'done' ? 'green' : 'gray'}>
+                      {r.status === 'done' ? '已分析' : '已上传'}
+                    </Badge>
+                    <button
+                      onClick={() => deleteRecord(r.id)}
+                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                      title="删除记录"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
               )}
-            </div>
+            />
           </Card>
         </div>
 
