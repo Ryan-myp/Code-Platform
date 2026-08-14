@@ -1038,94 +1038,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* 真实成果案例墙：用户主动分享的成果（点击跳分享页，形成传播闭环）
-          无真实分享时展示系统精选示例成果（is_demo，点击直达工具页） */}
-      {showcase.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft overflow-hidden">
-          <div className="flex items-center justify-between px-5 pt-4 pb-3">
-            <div className="flex items-center gap-2">
-              <GalleryVerticalEnd className="w-5 h-5 text-brand-500" />
-              <h2 className="font-semibold text-gray-900">
-                {showcase.some((s) => s.is_demo) ? '精选成果案例' : '真实成果案例'}
-              </h2>
-              <span className="text-xs text-gray-400">
-                {showcase.some((s) => s.is_demo)
-                  ? '平台能力示例 · 点击体验同款创作'
-                  : '平台用户分享的生成结果 ·  点击围观'}
-              </span>
-            </div>
-            <button
-              onClick={() => navigate('/tools')}
-              className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium"
-            >
-              去创作自己的作品
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="flex gap-3 px-5 pb-5 overflow-x-auto pb-4 scrollbar-thin">
-            {showcase.map((s) => (
-              <a
-                key={s.is_demo ? `demo-${s.route}` : s.share_code}
-                href={s.is_demo ? s.route : `/share/${s.share_code}`}
-                target={s.is_demo ? '_self' : '_blank'}
-                rel="noreferrer"
-                className="group w-64 flex-shrink-0 rounded-xl border border-gray-200 hover:border-brand-300 hover:shadow-md transition-all overflow-hidden"
-              >
-                <div className="px-4 py-3 bg-gradient-to-br from-gray-50 to-brand-50/40">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="px-1.5 py-0.5 rounded-md bg-brand-100 text-brand-700 text-[10px] font-medium">
-                      {s.is_demo ? `${s.content_type} · 示例` : s.content_type}
-                    </span>
-                    {!s.is_demo && (
-                      <span className="flex items-center gap-1 text-[10px] text-gray-400">
-                        <Activity className="w-3 h-3" />
-                        {s.views} 浏览
-                      </span>
-                    )}
-                  </div>
-                  <p className="mt-2 text-sm font-medium text-gray-800 truncate">
-                    {s.title || '分享成果'}
-                  </p>
-                </div>
-                <div className="px-4 py-3">
-                  <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
-                    {s.preview || '（无预览内容）'}
-                  </p>
-                  <p className="mt-2 text-[10px] text-gray-300 group-hover:text-brand-500 transition-colors">
-                    {s.is_demo
-                      ? '点击进入对应工具 →'
-                      : `${s.created_at?.slice(0, 10)} · 点击查看完整内容 →`}
-                  </p>
-                </div>
-              </a>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 真实成果案例墙：空态引导（无分享时鼓励创作，形成分享闭环） */}
-      {showcase.length === 0 && (
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-soft px-5 py-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center">
-              <GalleryVerticalEnd className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="font-semibold text-gray-900">真实成果案例</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                暂无用户分享成果，去创作并分享，你的作品会成为大家的灵感
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => navigate('/tools')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-brand-500 to-indigo-600 text-white text-xs font-medium rounded-xl hover:opacity-90 transition-opacity flex-shrink-0"
-          >
-            <Sparkles className="w-3.5 h-3.5" /> 去创作第一个作品
-          </button>
-        </div>
-      )}
-
       {/* 特色创作工厂：平台主打卖点置顶专区 */}
       <div className="bg-gradient-to-br from-brand-500/5 via-white to-fuchsia-500/5 rounded-2xl border border-brand-100 p-5 shadow-soft">
         <div className="flex items-center gap-2 mb-4">
@@ -1179,15 +1091,15 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 最新创作墙：图片/视频工厂真实产出直显（封面图，点击直达同款创作） */}
+      {/* 精选作品墙：平台最新创作直显（点击直达同款创作） */}
       {factoryWorks.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-soft overflow-hidden">
           <div className="flex items-center justify-between px-5 pt-4 pb-3">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-brand-500" />
-              <h2 className="font-semibold text-gray-900">最新创作</h2>
+              <h2 className="font-semibold text-gray-900">精选作品</h2>
               <span className="text-xs text-gray-400">
-                平台用户最新生成的图片与视频 · 点击直达同款创作
+                平台用户最新生成的作品 · 点击直达同款创作
               </span>
             </div>
             <button
