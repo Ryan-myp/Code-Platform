@@ -847,6 +847,9 @@ export default function ImageFactoryPage() {
   const setArtStyle = (v) => setInputs((p) => ({ ...p, artStyle: v ?? '' }))
   const setNegativePrompt = (v) => setInputs((p) => ({ ...p, negativePrompt: v ?? '' }))
   const [images, setImages] = useState([])
+  // 可用模型列表（含中转站导入的模型），供图片生成切换
+  const [modelOptions, setModelOptions] = useState([])
+  const [selectedModel, setSelectedModel] = useState('')
   const [templates, setTemplates] = useState([])
   const [stats, setStats] = useState({ total_images: 0, total_templates: 0, api_configured: false })
   const [enhancing, setEnhancing] = useState(false) // v20：AI 润色提示词
@@ -968,6 +971,15 @@ export default function ImageFactoryPage() {
   const [isAutoRotate, setIsAutoRotate] = useState(false)
   const [rotationSpeed, setRotationSpeed] = useState(1)
 
+  const loadModels = useCallback(async () => {
+    try {
+      const res = await api.get('/api/config')
+      const models = Array.isArray(res.data.models) ? res.data.models : []
+      setModelOptions(models)
+      setSelectedModel(res.data.image_model || '')
+    } catch { /* 静默 */ }
+  }, [])
+
   const fetchStats = useCallback(async () => {
     try {
       const res = await api.get('/api/image-factory/stats')
@@ -1009,6 +1021,7 @@ export default function ImageFactoryPage() {
   useEffect(() => {
     fetchStats()
     fetchImages()
+    loadModels()
     fetchTemplates()
   }, [fetchStats, fetchImages, fetchTemplates])
 
@@ -1076,6 +1089,7 @@ export default function ImageFactoryPage() {
     form.append('size', selectedSize)
     form.append('batch_size', batchSize)
     form.append('n', 1)
+    if (selectedModel) form.append('model', selectedModel)
     if (negativePrompt.trim()) form.append('negative', negativePrompt.trim())
     await submitTask('/api/image-factory/generate/text-to-image', form, {
       onUpdate: (t) => setGenTask(t),
@@ -1933,6 +1947,28 @@ export default function ImageFactoryPage() {
                   </p>
                 )}
               </div>
+
+              {modelOptions.length > 0 && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-2 block">生成模型</label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none text-sm"
+                  >
+                    <option value="">默认（{imageModelName || '系统配置'}）</option>
+                    {modelOptions.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.name}
+                        {m.base_url ? '（中转站）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    可切换已接入的中转站图片模型；留空使用系统配置
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">艺术风格</label>
