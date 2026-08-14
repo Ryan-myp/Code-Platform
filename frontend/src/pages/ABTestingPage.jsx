@@ -38,8 +38,41 @@ function ScoreBar({ label, a, b }) {
   )
 }
 
+function buildABReportMd(result) {
+  const lines = [
+    '# A/B 测试分析报告',
+    '',
+    `- 实验目标：${result.objective || '-'}`,
+    `- 运行时间：${result.ran_at || '-'}`,
+    '',
+    `## 实验结果：方案 ${result.winner} 胜出（置信度 ${result.confidence}%）`,
+    '',
+  ]
+  if (result.generated_a) lines.push('### 方案 A', '', result.generated_a, '')
+  if (result.generated_b) lines.push('### 方案 B', '', result.generated_b, '')
+  if (result.scores?.length) {
+    lines.push('## 五维评分', '', '| 维度 | 方案A | 方案B |', '| --- | ---: | ---: |')
+    result.scores.forEach((s) => lines.push(`| ${s.dimension} | ${s.a} | ${s.b} |`))
+    lines.push('')
+  }
+  if (result.conclusion) lines.push('## 结论', '', result.conclusion, '')
+  if (result.analysis?.winner_reason) lines.push('## 胜出原因', '', result.analysis.winner_reason, '')
+  if (result.analysis?.risks?.length) {
+    lines.push('## 风险提示', '')
+    result.analysis.risks.forEach((r) => lines.push(`- ${r}`))
+    lines.push('')
+  }
+  if (result.analysis?.next_steps?.length) {
+    lines.push('## 下一步行动', '')
+    result.analysis.next_steps.forEach((n) => lines.push(`- ${n}`))
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
 function ResultPanel({ result, onClose }) {
   const [openGen, setOpenGen] = useState(false)
+  const toast = useToast()
   if (!result || result.status !== 'completed') {
     return (
       <Card className="p-8 text-center text-gray-400">
@@ -58,6 +91,34 @@ function ResultPanel({ result, onClose }) {
             实验结果：方案 {result.winner} 胜出
             <ColorBadge color={winner ? 'blue' : 'green'}>{`置信度 ${result.confidence}%`}</ColorBadge>
           </h3>
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(buildABReportMd(result))
+                  toast.success('报告已复制')
+                } catch { toast.error('复制失败') }
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] text-purple-600 hover:bg-purple-50 rounded-lg border border-purple-200"
+            >
+              📋 复制报告
+            </button>
+            <button
+              onClick={() => {
+                const md = buildABReportMd(result)
+                const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `AB测试报告-${new Date().toISOString().slice(0,10)}.md`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] text-purple-600 hover:bg-purple-50 rounded-lg border border-purple-200"
+            >
+              📄 下载报告
+            </button>
+          </div>
           {result.objective && <p className="text-xs text-gray-400 mt-1">实验目标：{result.objective}</p>}
         </div>
         <div className="flex items-center gap-2">

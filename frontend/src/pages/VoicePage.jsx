@@ -984,6 +984,18 @@ export default function VoicePage() {
                       >
                         <Download className="w-4 h-4" />
                       </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(item.text || '')
+                            toast.success('配音文本已复制')
+                          } catch { toast.error('复制失败') }
+                        }}
+                        title="复制文本"
+                        className="p-1.5 text-gray-300 hover:text-emerald-500 rounded-lg hover:bg-emerald-50"
+                      >
+                        📋
+                      </button>
                       <span onClick={(e) => e.stopPropagation()}>
                         <ShareButton
                           content={`# 配音作品：${item.title}\n\n文本：${item.text || ''}\n音色：${item.voice_name || ''} · 场景：${item.scene_label || ''}\n\n> 由小团智能平台 AI 配音工坊生成 · ${new Date().toLocaleString()}`}
