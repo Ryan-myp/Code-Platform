@@ -53,6 +53,14 @@ export default function ConfigPage() {
   const [addingModel, setAddingModel] = useState(false)
   const [deletingModel, setDeletingModel] = useState('')
   const [editingModel, setEditingModel] = useState(null) // 编辑弹窗
+  // 中转站管理（平台作为客户端接入外部中转站，如 One API / new-api）
+  const [relays, setRelays] = useState([])
+  const [newRelayName, setNewRelayName] = useState('')
+  const [newRelayUrl, setNewRelayUrl] = useState('')
+  const [newRelayKey, setNewRelayKey] = useState('')
+  const [relayBusy, setRelayBusy] = useState(false)
+  const [relayTesting, setRelayTesting] = useState('')
+  const [relayImporting, setRelayImporting] = useState('')
   const [savingModel, setSavingModel] = useState(false)
 
   // ── 通知渠道配置 ──
@@ -128,6 +136,10 @@ export default function ConfigPage() {
       setModels(Array.isArray(data.models) ? data.models : [])
       // 已配置则展示掩码占位，留空表示不修改
       setApiKey(data.api_key || data.agnes_api_key || '')
+      try {
+        const r = await api.get('/api/relay')
+        setRelays(r.data?.items || [])
+      } catch { /* 中转站功能不可用时静默 */ }
     } catch (e) {
       setError(e)
     } finally {
@@ -202,6 +214,73 @@ export default function ConfigPage() {
       toast.error(`连接测试失败：${e.message}`)
     } finally {
       setTesting(false)
+    }
+  }
+
+  const fetchRelays = useCallback(async () => {
+    try {
+      const r = await api.get('/api/relay')
+      setRelays(r.data?.items || [])
+    } catch { /* 静默 */ }
+  }, [])
+
+  const handleAddRelay = async () => {
+    if (!newRelayName.trim() || !newRelayUrl.trim() || !newRelayKey.trim()) {
+      toast.error('请填写中转站名称、地址和 API Key')
+      return
+    }
+    setRelayBusy(true)
+    try {
+      const res = await api.post('/api/relay', {
+        name: newRelayName.trim(),
+        base_url: newRelayUrl.trim(),
+        api_key: newRelayKey.trim(),
+      })
+      toast.success(res.data.message || '中转站已添加')
+      setNewRelayName('')
+      setNewRelayUrl('')
+      setNewRelayKey('')
+      fetchRelays()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '添加失败')
+    } finally {
+      setRelayBusy(false)
+    }
+  }
+
+  const handleTestRelay = async (id) => {
+    setRelayTesting(id)
+    try {
+      const res = await api.post(`/api/relay/${id}/test`)
+      toast.success(`连接成功：发现 ${res.data.count} 个模型`)
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '连接失败')
+    } finally {
+      setRelayTesting('')
+    }
+  }
+
+  const handleImportRelay = async (id) => {
+    setRelayImporting(id)
+    try {
+      const res = await api.post(`/api/relay/${id}/import-models`)
+      toast.success(`已导入 ${res.data.count} 个模型，可在下方模型列表查看`)
+      fetchConfig()
+    } catch (e) {
+      toast.error(e.response?.data?.detail || e.message || '导入失败')
+    } finally {
+      setRelayImporting('')
+    }
+  }
+
+  const handleDeleteRelay = async (id) => {
+    if (!window.confirm('确定删除该中转站吗？已导入的模型保留在模型列表中')) return
+    try {
+      await api.delete(`/api/relay/${id}`)
+      toast.success('中转站已删除')
+      fetchRelays()
+    } catch (e) {
+      toast.error(e.message || '删除失败')
     }
   }
 
@@ -342,6 +421,103 @@ export default function ConfigPage() {
               <p className="text-xs text-red-500 mt-1">{errors.apiUrl}</p>
             ) : (
               <p className="text-xs text-gray-500 mt-1">Agnes AI API 基础地址</p>
+            )}
+          </div>
+
+          {/* 中转站管理（平台作为客户端接入外部中转站，如 One API / new-api） */}
+          <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+              <div>
+                <div className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                  <Globe className="w-4 h-4 text-blue-500" />
+                  中转站接入
+                  <span className="text-[10px] text-gray-400 font-normal">
+                    一键接入 OpenAI 兼容中转站，自动拉取模型
+                  </span>
+                </div>
+              </div>
+              <button onClick={fetchRelays} className="text-gray-400 hover:text-blue-600">
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* 添加中转站 */}
+            <div className="p-3 bg-blue-50/40 border-b border-gray-100 space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  value={newRelayName}
+                  onChange={(e) => setNewRelayName(e.target.value)}
+                  placeholder="中转站名称（如 One API）"
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none"
+                />
+                <input
+                  value={newRelayUrl}
+                  onChange={(e) => setNewRelayUrl(e.target.value)}
+                  placeholder="地址（https://xxx/v1）"
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                />
+                <input
+                  value={newRelayKey}
+                  onChange={(e) => setNewRelayKey(e.target.value)}
+                  placeholder="中转站 API Key (sk-…)"
+                  type="password"
+                  className="px-3 py-2 rounded-lg border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500/20 outline-none font-mono"
+                />
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Plus}
+                loading={relayBusy}
+                onClick={handleAddRelay}
+              >
+                添加中转站
+              </Button>
+            </div>
+
+            {/* 中转站列表 */}
+            {relays.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-gray-400 text-center">
+                暂无中转站。添加后平台 LLM 调用可自动路由到外部中转站（支持 One API / new-api / 自建网关）
+              </p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {relays.map((r) => (
+                  <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                      <Globe className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-800 truncate">{r.name}</div>
+                      <div className="text-[11px] text-gray-400 truncate font-mono">
+                        {r.base_url}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      loading={relayTesting === r.id}
+                      onClick={() => handleTestRelay(r.id)}
+                    >
+                      测试
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      loading={relayImporting === r.id}
+                      onClick={() => handleImportRelay(r.id)}
+                    >
+                      导入模型
+                    </Button>
+                    <button
+                      onClick={() => handleDeleteRelay(r.id)}
+                      className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
