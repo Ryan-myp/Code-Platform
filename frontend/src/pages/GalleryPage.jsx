@@ -17,7 +17,8 @@ import {
   Copy,
   Play,
 } from 'lucide-react'
-import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid } from '../components/ui'
+import { PageHeader, Button, Empty, Badge, Modal, SkeletonGrid, Pagination,
+} from '../components/ui'
 import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
 import api, { API_BASE } from '../lib/api'
@@ -614,18 +615,23 @@ export default function GalleryPage() {
           description="先去图片工厂 / 视频工厂 / 配音工坊创作，作品会自动出现在这里"
         />
       ) : (
-        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
-          {works.map((w) => (
-            <WorkCard
-              key={w.id}
-              work={w}
-              onLike={toggleLike}
-              onComment={openComments}
-              onPreview={openPreview}
-              user={user}
-            />
-          ))}
-        </div>
+        <Pagination
+          items={works}
+          pageSize={8}
+          label={`共 ${works.length} 个作品`}
+          renderItem={(w) => (
+            <div className="mb-4 break-inside-avoid">
+              <WorkCard
+                key={w.id}
+                work={w}
+                onLike={toggleLike}
+                onComment={openComments}
+                onPreview={openPreview}
+                user={user}
+              />
+            </div>
+          )}
+        />
       )}
 
       {active && <CommentsPanel work={active} onClose={() => setActive(null)} user={user} />}
