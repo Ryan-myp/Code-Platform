@@ -18,6 +18,8 @@ import {
   Layers,
   ChevronDown,
   Sliders,
+  Upload,
+  X,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -221,6 +223,9 @@ export default function VideoFactoryPage() {
   const setMood = (v) => setInputs((p) => ({ ...p, mood: v ?? '' }))
   const [image, setImage] = useState('')
   const [imageError, setImageError] = useState(false) // 参考图预览失败提示
+  const [imageFile, setImageFile] = useState(null) // 图生视频：本地图片上传
+  const [imagePreview, setImagePreview] = useState('') // 本地图片预览 URL
+  const imageInputRef = useRef(null)
   const [creating, setCreating] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [enhancingPrompt, setEnhancingPrompt] = useState(false) // v20：AI 画质增强
@@ -477,19 +482,23 @@ export default function VideoFactoryPage() {
     form.append('duration', duration)
     form.append('mode', mode)
     if (mode === 'i2vid') {
-      // 图生视频：参考图必填且必须是可访问的 http/https 直链（提前校验，避免提交后失败）
-      const imgUrl = image.trim()
-      if (!imgUrl) {
-        toast.error('图生视频模式需要填写参考图片 URL')
-        setCreating(false)
-        return
+      // 图生视频：本地上传图片或 http/https 直链（二选一）
+      if (imageFile) {
+        form.append('image_upload', imageFile)
+      } else {
+        const imgUrl = image.trim()
+        if (!imgUrl) {
+          toast.error('图生视频模式需要参考图（可上传本地图片或填写 URL）')
+          setCreating(false)
+          return
+        }
+        if (!/^https?:\/\//.test(imgUrl)) {
+          toast.error('参考图片 URL 必须以 http:// 或 https:// 开头')
+          setCreating(false)
+          return
+        }
+        form.append('image', imgUrl)
       }
-      if (!/^https?:\/\//.test(imgUrl)) {
-        toast.error('参考图片 URL 必须以 http:// 或 https:// 开头')
-        setCreating(false)
-        return
-      }
-      form.append('image', imgUrl)
     }
     form.append('frame_rate', frameRate)
     const r = await submitTask('/api/video-factory/generate', form, {
@@ -1190,15 +1199,66 @@ export default function VideoFactoryPage() {
 
         {mode === 'i2vid' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">参考图片 URL</label>
-            <input
-              type="text"
-              value={image}
-              onChange={(e) => setImage(e.target.value)}
-              placeholder="https://example.com/image.jpg"
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
-            />
-            {image.trim() && (
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-sm font-medium text-gray-700">参考图</label>
+              <span className="text-[11px] text-gray-400">可上传本地图片或填 URL 直链</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    setImageFile(file)
+                    setImagePreview(URL.createObjectURL(file))
+                    setImage('') // 清空 URL 输入
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border text-sm transition-all flex-shrink-0 ${imageFile ? 'border-blue-400 bg-blue-50 text-blue-600' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 text-gray-600'}`}
+              >
+                <Upload className="w-4 h-4" />
+                {imageFile ? '已选本地图片' : '上传本地图片'}
+              </button>
+              <input
+                type="text"
+                value={image}
+                onChange={(e) => {
+                  setImage(e.target.value)
+                  if (e.target.value) {
+                    setImageFile(null)
+                    setImagePreview('')
+                  }
+                }}
+                placeholder="或粘贴图片 URL https://..."
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+            </div>
+            {(imageFile && imagePreview) ? (
+              <div className="mt-2 relative">
+                <img
+                  src={imagePreview}
+                  alt="本地参考图预览"
+                  className="max-h-40 rounded-lg border border-gray-200 object-contain bg-gray-50"
+                />
+                <button
+                  onClick={() => {
+                    setImageFile(null)
+                    setImagePreview('')
+                  }}
+                  className="absolute top-2 right-2 p-1 rounded-lg bg-black/60 text-white hover:bg-red-500 transition-colors"
+                  title="移除本地图片"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : image.trim() ? (
               <div className="mt-2">
                 <img
                   src={image.trim()}
@@ -1213,7 +1273,7 @@ export default function VideoFactoryPage() {
                   </p>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
         )}
 

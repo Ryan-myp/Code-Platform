@@ -4,6 +4,7 @@
 from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
 
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -13,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import requests
-from fastapi import APIRouter, Form, HTTPException, Query
+from fastapi import APIRouter, Form, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import derive_title, save_artifact
@@ -745,19 +746,27 @@ async def create_video_task(
     duration: int = Form(5),
     mode: str = Form("ti2vid"),
     image: str = Form(""),
+    image_upload: UploadFile | None = File(None, description="图生视频：本地图片上传（替代 image URL，自动转 base64 data URL）"),
     frame_rate: int = Form(24),
     project_id: str = Form(""),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
 ):
     """创建视频生成任务（默认异步任务，worker 内创建外部任务并轮询到完成）。"""
-    # i2vid 图生视频：参考图必填且必须是可访问的 http/https 直链（服务端校验，防直接调 API 绕过前端）
+    # i2vid 图生视频：参考图必填（本地上传自动转 base64，或 http/https 直链）
     is_i2vid = mode.strip().lower() in ("i2vid", "img2vid", "image")
     img_url = (image or "").strip()
     if is_i2vid:
-        if not img_url:
-            raise HTTPException(400, "图生视频模式需要填写参考图片 URL")
-        if not re.match(r"^https?://", img_url):
+        if image_upload:
+            # 本地图片 → base64 data URL（AGNES 云端支持，与数字人照片活化一致）
+            _raw = await image_upload.read()
+            if not _raw:
+                raise HTTPException(400, "上传的参考图片为空")
+            _mime = image_upload.content_type or "image/png"
+            img_url = f"data:{_mime};base64,{base64.b64encode(_raw).decode()}"
+        elif not img_url:
+            raise HTTPException(400, "图生视频模式需要参考图（可上传本地图片或填写 URL）")
+        elif not re.match(r"^https?://", img_url):
             raise HTTPException(400, "参考图片 URL 必须以 http:// 或 https:// 开头")
     if not _available_channels():
         raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
