@@ -1033,6 +1033,27 @@ export default function ImageFactoryPage() {
   }, [isAutoRotate, rotationSpeed])
 
   const applyTemplate = (tmpl) => setPrompt(tmpl.prompt)
+  // 我的提示词收藏（localStorage 持久化，个性化创作）
+  const [myPrompts, setMyPrompts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('image_factory_my_prompts') || '[]') } catch { return [] }
+  })
+  const saveMyPrompt = () => {
+    if (!prompt.trim()) { toast.error('请先输入提示词'); return }
+    setMyPrompts((prev) => {
+      if (prev.includes(prompt.trim())) { toast.info('该提示词已在收藏中'); return prev }
+      const next = [prompt.trim(), ...prev].slice(0, 20)
+      localStorage.setItem('image_factory_my_prompts', JSON.stringify(next))
+      toast.success('已收藏该提示词')
+      return next
+    })
+  }
+  const removeMyPrompt = (p) => {
+    setMyPrompts((prev) => {
+      const next = prev.filter((x) => x !== p)
+      localStorage.setItem('image_factory_my_prompts', JSON.stringify(next))
+      return next
+    })
+  }
 
   const handleDownload = async (image) => {
     try {
@@ -2114,6 +2135,32 @@ export default function ImageFactoryPage() {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-gray-500">我的提示词收藏</p>
+                  <button
+                    onClick={saveMyPrompt}
+                    className="text-[11px] text-violet-500 hover:text-violet-700"
+                  >
+                    ★ 收藏当前提示词
+                  </button>
+                </div>
+                {myPrompts.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {myPrompts.map((p, i) => (
+                      <span key={i} className="group inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs border border-violet-200 bg-violet-50/50 text-violet-700">
+                        <button onClick={() => setPrompt(p)} className="max-w-40 truncate hover:text-violet-900" title={p}>
+                          {p.slice(0, 24)}{p.length > 24 ? '…' : ''}
+                        </button>
+                        <button onClick={() => removeMyPrompt(p)} className="text-violet-300 hover:text-red-500" title="删除收藏">×</button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-gray-400">还没有收藏，点击「收藏当前提示词」保存常用创作模板</p>
+                )}
               </div>
 
               {generationError && (

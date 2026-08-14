@@ -498,6 +498,29 @@ export default function MemePage() {
     }
   }
 
+  // 我的文案收藏（localStorage 持久化）
+  const [myTexts, setMyTexts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('meme_my_texts') || '[]') } catch { return [] }
+  })
+  const saveMyText = () => {
+    const pair = `${topText.trim()} / ${bottomText.trim()}`
+    if (!topText.trim() && !bottomText.trim()) { toast.error('请先输入文案'); return }
+    setMyTexts((prev) => {
+      if (prev.includes(pair)) { toast.info('该文案已在收藏中'); return prev }
+      const next = [pair, ...prev].slice(0, 20)
+      localStorage.setItem('meme_my_texts', JSON.stringify(next))
+      toast.success('已收藏该文案')
+      return next
+    })
+  }
+  const removeMyText = (p) => {
+    setMyTexts((prev) => {
+      const next = prev.filter((x) => x !== p)
+      localStorage.setItem('meme_my_texts', JSON.stringify(next))
+      return next
+    })
+  }
+
   const toggleSelect = (id) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -820,6 +843,33 @@ export default function MemePage() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-medium text-gray-400">我的文案收藏</label>
+                    <button onClick={saveMyText} className="text-[11px] text-amber-500 hover:text-amber-700">
+                      ★ 收藏当前文案
+                    </button>
+                  </div>
+                  {myTexts.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {myTexts.map((p, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-50 border border-amber-100 text-[11px] text-amber-700">
+                          <button onClick={() => {
+                            const [top, bottom] = p.split(' / ')
+                            setTopText(top || '')
+                            setBottomText(bottom || '')
+                          }} className="truncate max-w-32" title={p}>
+                            {p}
+                          </button>
+                          <button onClick={() => removeMyText(p)} className="text-amber-300 hover:text-red-500">×</button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-gray-400">收藏常用文案，下次一键复用</p>
+                  )}
                 </div>
 
                 {style === 'ai' && (
