@@ -378,6 +378,20 @@ export default function DocQAPage() {
                 {messages.length > 0 && (
                   <>
                     <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(buildChatMd())
+                          toast.success('对话记录已复制')
+                        } catch {
+                          toast.error('复制失败')
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
+                      title="复制对话记录"
+                    >
+                      📋 复制
+                    </button>
+                    <button
                       onClick={exportChat}
                       className="flex items-center gap-1 px-2 py-1 text-xs text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"
                       title="导出对话记录"

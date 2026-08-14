@@ -458,6 +458,20 @@ export default function DataAnalyzerPage() {
                     <Button size="sm" variant="ghost" icon={Download} onClick={downloadConclusion}>
                       导出报告
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(buildConclusionMd())
+                          toast.success('分析报告已复制')
+                        } catch {
+                          toast.error('复制失败')
+                        }
+                      }}
+                    >
+                      📋 复制
+                    </Button>
                     <ShareButton
                       content={buildConclusionMd()}
                       title="数据分析报告"

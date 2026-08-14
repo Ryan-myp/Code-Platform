@@ -318,9 +318,9 @@ export default function MindMapPage() {
   }
 
   // v15：导出大纲 Markdown（本地生成，无需后端）
-  const exportOutlineMD = () => {
+  const buildOutlineMD = () => {
     const root = result?.root
-    if (!root) return
+    if (!root) return ''
     const lines = [`# ${result.title || root.name || '思维导图'}`, '']
     const walk = (node, level) => {
       if (!node?.name || level === 0) return
@@ -328,6 +328,24 @@ export default function MindMapPage() {
       ;(node.children || []).forEach((c) => walk(c, level + 1))
     }
     walk(root, 0)
+    return lines.join('\n')
+  }
+
+  const copyOutline = async () => {
+    const md = buildOutlineMD()
+    if (!md) return
+    try {
+      await navigator.clipboard.writeText(md)
+      toast.success('大纲已复制到剪贴板')
+    } catch {
+      toast.error('复制失败，请手动选择复制')
+    }
+  }
+
+  const exportOutlineMD = () => {
+    const root = result?.root
+    if (!root) return
+    const lines = buildOutlineMD().split('\n')
     const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -571,6 +589,13 @@ export default function MindMapPage() {
                     onClick={exportOutlineMD}
                   >
                     大纲MD
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={copyOutline}
+                  >
+                    📋 复制大纲
                   </Button>
                   <Button
                     variant="secondary"
