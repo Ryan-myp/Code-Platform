@@ -121,6 +121,13 @@ def _price_for(engine: str, resolution: str, pricing: dict | None = None) -> flo
 # ── 认证（复用 openai_gateway 的 OpenAI 风格错误） ─────────────────
 
 
+def _auth(request: Request):
+    """Bearer API Key 认证（OpenAI 兼容网关，与 openai_gateway 一致）。"""
+    from common.helpers import _auth_bearer
+
+    return _auth_bearer(request, _auth_by_api_key)
+
+
 def _err(status: int, message: str, code: str, **extra) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"message": message, "code": code, **extra}})
 
