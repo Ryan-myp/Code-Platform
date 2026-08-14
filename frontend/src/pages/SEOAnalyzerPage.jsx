@@ -1,4 +1,6 @@
 import React, { useState } from 'react'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 import {
   Search,
   Gauge,
@@ -44,6 +46,8 @@ export default function SEOAnalyzerPage() {
   const [keyword, setKeyword] = useState('')
   const [analyzeLoading, setAnalyzeLoading] = useState(false)
   const [analyzeResult, setAnalyzeResult] = useState(null)
+  const { history: seoHistory, add: addSeoHistory, remove: removeSeoHistory, clear: clearSeoHistory } =
+    useToolHistory('seo_analyzer_history_v1', 20)
 
   // 关键词研究表单
   const [seedKeyword, setSeedKeyword] = useState('')
@@ -69,6 +73,7 @@ export default function SEOAnalyzerPage() {
         target_keyword: keyword.trim(),
       })
       setAnalyzeResult(res.data)
+      addSeoHistory({ type: 'SEO', title, keyword, content: `${title} · ${keyword}` })
     } catch (e) {
       toast.error(e.message)
     } finally {
@@ -372,6 +377,19 @@ export default function SEOAnalyzerPage() {
                   </Card>
                 )}
               </>
+            )}
+            {seoHistory.length > 0 && (
+              <HistoryPanel
+                history={seoHistory}
+                onReuse={(item) => {
+                  if (item.title) setTitle(item.title)
+                  if (item.keyword) setKeyword(item.keyword)
+                  toast.success('已恢复SEO内容，可重新分析')
+                }}
+                onRemove={removeSeoHistory}
+                onClear={clearSeoHistory}
+                title="分析历史"
+              />
             )}
           </div>
         </div>

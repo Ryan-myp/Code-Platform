@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import useToolHistory from '../hooks/useToolHistory'
+import HistoryPanel from '../components/HistoryPanel'
 import {
   Flame,
   Lightbulb,
@@ -94,6 +96,8 @@ function HotspotsTab() {
   const [error, setError] = useState(null)
   const [suggesting, setSuggesting] = useState(null) // 正在选题的热点标题
   const [suggestions, setSuggestions] = useState(null)
+  const { history: topicHistory, add: addTopicHistory, remove: removeTopicHistory, clear: clearTopicHistory } =
+    useToolHistory('content_strategy_topics_v1', 20)
   const [platform, setPlatform] = useState('wechat')
 
   const fetchHotspots = useCallback(async () => {
@@ -123,6 +127,7 @@ function HotspotsTab() {
         source: hotspot.source,
       })
       setSuggestions(res.data)
+      addTopicHistory({ type: '选题', hotspot: res.data?.hotspot, platform: res.data?.platform, content: `${res.data?.hotspot} → ${res.data?.platform}` })
       toast.success('AI 选题完成')
     } catch (e) {
       toast.error(e.message)
@@ -252,6 +257,19 @@ function HotspotsTab() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {topicHistory.length > 0 && (
+            <div className="mt-3">
+              <HistoryPanel
+                history={topicHistory}
+                onReuse={(item) => {
+                  toast.success('已选择该选题热点')
+                }}
+                onRemove={removeTopicHistory}
+                onClear={clearTopicHistory}
+                title="选题历史"
+              />
             </div>
           )}
         </Card>
