@@ -643,6 +643,20 @@ export default function PDFToolPage() {
                   contentType="pdf"
                 />
                 <button
+                  onClick={async () => {
+                    const md = `# 合同审查报告：${contractTitle || '合同审查'}\n\n整体风险：${RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}\n${contractResult.summary || ''}\n\n${(contractResult.risks || [])
+                      .map((r) => `- 【${RISK_LABELS[r.risk] || r.risk}】${r.clause}：${r.issue}\n  建议：${r.suggestion}`)
+                      .join('\n')}`
+                    try {
+                      await navigator.clipboard.writeText(md)
+                      toast.success('审查报告已复制')
+                    } catch { toast.error('复制失败') }
+                  }}
+                  className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 border border-gray-200"
+                >
+                  📋 复制报告
+                </button>
+                <button
                   onClick={() => {
                     const md = `# 合同审查报告：${contractTitle || '合同审查'}\n\n整体风险：${RISK_LABELS[contractResult.risk_level] || contractResult.risk_level}\n${contractResult.summary || ''}\n\n${(contractResult.risks || [])
                       .map((r) => `- 【${RISK_LABELS[r.risk] || r.risk}】${r.clause}：${r.issue}\n  建议：${r.suggestion}`)
@@ -788,6 +802,20 @@ export default function PDFToolPage() {
                   title={`简历优化：${targetPosition || '简历'}`}
                   contentType="pdf"
                 />
+                <button
+                  onClick={async () => {
+                    const md = `# 简历优化报告：${targetPosition || '简历'}\n\n综合评分：${resumeResult.overall_score || '-'}\n${resumeResult.summary || ''}\n\n## 亮点\n${(resumeResult.highlights || []).map((h) => `- ${h}`).join('\n')}\n\n## 优化建议\n${(resumeResult.suggestions || [])
+                      .map((s) => `- 原文：${s.original}\n  改写：${s.rewrite}\n  理由：${s.reason}`)
+                      .join('\n')}`
+                    try {
+                      await navigator.clipboard.writeText(md)
+                      toast.success('优化报告已复制')
+                    } catch { toast.error('复制失败') }
+                  }}
+                  className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 border border-gray-200"
+                >
+                  📋 复制报告
+                </button>
                 <button
                   onClick={() => {
                     const md = `# 简历优化报告：${targetPosition || '简历'}\n\n综合评分：${resumeResult.overall_score || '-'}\n${resumeResult.summary || ''}\n\n## 亮点\n${(resumeResult.highlights || []).map((h) => `- ${h}`).join('\n')}\n\n## 优化建议\n${(resumeResult.suggestions || [])
