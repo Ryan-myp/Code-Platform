@@ -1298,6 +1298,31 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
     if r.returncode != 0 or not os.path.exists(out_path):
         _concat_videos(clip_paths, out_path)
         return
+    # v1.0.57：concat 后音轨完整性校验——dynseg 切分片段混流时 AAC 时间戳不齐
+    # 可能产生损坏帧（实测 12 场长片前段整段解码报错）。校验：全片 ffmpeg 解码，
+    # 若出现 "Error submitting packet"（AAC 损坏）则重编码音轨修复（视频 copy）。
+    try:
+        chk = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-i", out_path, "-f", "null", "-"],
+            capture_output=True, timeout=300,
+        )
+        if b"Error submitting packet" in (chk.stderr or b"") or b"Invalid data found" in (chk.stderr or b""):
+            logger.warning("拼接产物音轨损坏，重编码修复（视频 copy）")
+            _fix = out_path + ".fix.mp4"
+            r2 = subprocess.run(
+                [FFMPEG_BIN, "-nostdin", "-y", "-i", out_path,
+                 "-map", "0:v", "-map", "0:a",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                 "-af", "aresample=48000",
+                 _fix],
+                capture_output=True, timeout=600,
+            )
+            if r2.returncode == 0 and os.path.exists(_fix) and os.path.getsize(_fix) > 4096:
+                os.replace(_fix, out_path)
+            else:
+                logger.warning(f"音轨修复失败: {(r2.stderr or b'')[-120:]}")
+    except Exception:
+        pass
 
 def _pick_bgm() -> str | None:
     """选一首背景音乐：优先 drama_factory/music（用户自备），
@@ -1387,9 +1412,10 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             f"[0:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
             f"[1:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-            # v1.0.57：响度归一（EBU R128，短视频 -16 LUFS）——各镜配音/各场音量均衡，
-            # 消除 16dB 级响度跳变（红果漫剧全程音量一致）；loudnorm 双遍更准但单遍可接受
-            f"loudnorm=I=-16:TP=-1.5:LRA=11[a]",
+            # v1.0.57：响度均衡（dynaudnorm 动态压缩，单遍稳定）——各镜配音/各场音量
+            # 均衡，消除 16dB 级响度跳变（红果漫剧全程音量一致）。
+            # 注：loudnorm 单遍在长音频（>60s）aac 编码会 Conversion failed，改用 dynaudnorm。
+            f"dynaudnorm=f=150:g=15:p=0.9[a]",
             "-map", "1:v", "-map", "[a]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
             tmp_mix,
@@ -1399,6 +1425,11 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             os.replace(tmp_mix, out_path)
         else:
             logger.warning(f"BGM 混音失败（保留字幕版）: {(r.stderr or b'')[-150:]}")
+            try:
+                if os.path.exists(tmp_mix):
+                    os.remove(tmp_mix)  # v1.0.57：清理混音半成品，避免 .mix.mp4 残留
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"BGM 混音异常（保留字幕版）: {e}")
 
@@ -1465,6 +1496,19 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
         # 2-3s 短停顿是配音对白间隙，不算缺陷。
         if len(silences) > 3:
             findings.append(f"检测到 {len(silences)} 段超长静音（>3s），BGM 可能未混入或未循环")
+    except Exception:
+        pass
+    # v1.0.57：音轨解码完整性——dynseg 切分/AAC 时间戳不齐可能产出损坏帧
+    # （症状：Error submitting packet，播放器会出现杂音/跳音）。全片解码扫描。
+    try:
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-i", path, "-f", "null", "-"],
+            capture_output=True, timeout=300,
+        )
+        _err = (r.stderr or b"").decode(errors="replace")
+        _bad = _err.count("Error submitting packet") + _err.count("Invalid data found")
+        if _bad > 0:
+            findings.append(f"音轨解码异常（{_bad} 处），AAC 帧损坏")
     except Exception:
         pass
     return {"ok": len(findings) == 0, "findings": findings}
@@ -1765,6 +1809,22 @@ async def _drama_render_one(
         audio_path = os.path.join(tmpdir, f"seg_{i:03d}.mp3")
         with open(audio_path, "wb") as f:
             f.write(audio)
+        # v1.0.57：配音完整性校验——CosyVoice 首次热启动可能产出坏 AAC 帧
+        # （症状：该镜整段音轨解码报错，成片播放杂音）。损坏则重试一次（降级链路）。
+        for _tretry in range(2):
+            _chk = subprocess.run(
+                [FFMPEG_BIN, "-nostdin", "-i", audio_path, "-f", "null", "-"],
+                capture_output=True, timeout=60,
+            )
+            _chkerr = (_chk.stderr or b"").decode(errors="replace")
+            if b"Error submitting packet" not in (_chk.stderr or b"") and \
+               b"Invalid data found" not in (_chk.stderr or b"") and \
+               _probe_seconds(audio_path) > 0.3:
+                break
+            logger.warning(f"配音损坏（第 {i+1} 镜），重试 TTS（{_tretry+1}/2）")
+            audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
+            with open(audio_path, "wb") as f:
+                f.write(audio)
         dur = max(_probe_seconds(audio_path), float(sc.get("sec") or 5))
         if not illust_mode:
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
