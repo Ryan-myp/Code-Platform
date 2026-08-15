@@ -1801,7 +1801,10 @@ async def _drama_render_one(
                             if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
                                 sub_clips.append(sclip)
                         # v1.0.45 动态锚镜头：本场有台词/人物时，用主图生成 1 个 i2v
-                        # 动态片段（人物真动/口型），替换第一个静态子镜 → 画面"活"起来
+                        # 动态片段（人物真动/口型），替换情绪高潮子镜 → 画面"活"起来
+                        # v1.0.55：锚位从"固定第 1 子镜"改为"情绪聚焦子镜"——
+                        # 取 _shot_seq 中 close_zoom/closeup（特写聚焦=情绪高潮）的位置，
+                        # 无则取中部偏后（序列 60% 处），让人物动态出现在最该"动"的瞬间。
                         if dynamic_on and sc.get("dialogue") and len(sub_clips) >= 2:
                             _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：动态镜头生成中…")
                             dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}.mp4")
@@ -1815,8 +1818,20 @@ async def _drama_render_one(
                             if not dyn_ok:
                                 logger.warning(f"i2v 动态锚失败（第 {i+1} 镜），回退静态")
                             if dyn_ok and os.path.exists(dyn_clip) and os.path.getsize(dyn_clip) > 10000:
-                                # 动态锚替换第一个静态子镜，并把该子镜配音合入动态画面
-                                _dyn_audio = sub_audios[0] if len(sub_audios) >= 1 else None
+                                # 定位情绪高潮子镜下标（优先特写聚焦，其次 60% 处）
+                                _anchor_idx = 0
+                                _focus_idx = None
+                                for _si2, _st2 in enumerate(_shot_seq):
+                                    if _st2 in ("close_zoom", "zoom_in") and _si2 >= 1:
+                                        _focus_idx = _si2
+                                        break
+                                if _focus_idx is not None:
+                                    _anchor_idx = _focus_idx
+                                elif len(sub_clips) >= 3:
+                                    _anchor_idx = max(1, int(len(sub_clips) * 0.6))
+                                _anchor_idx = min(_anchor_idx, len(sub_clips) - 1)
+                                # 动态锚替换情绪高潮子镜，并把该子镜配音合入动态画面
+                                _dyn_audio = sub_audios[_anchor_idx] if _anchor_idx < len(sub_audios) else None
                                 _dyn_final = os.path.join(tmpdir, f"dyn_final_{i:03d}.mp4")
                                 _mux_ok = False
                                 if _dyn_audio and os.path.exists(_dyn_audio):
@@ -1824,9 +1839,9 @@ async def _drama_render_one(
                                         _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final,
                                     )
                                 if _mux_ok and os.path.exists(_dyn_final):
-                                    sub_clips[0] = _dyn_final
+                                    sub_clips[_anchor_idx] = _dyn_final
                                 else:
-                                    sub_clips[0] = dyn_clip
+                                    sub_clips[_anchor_idx] = dyn_clip
                         if len(sub_clips) >= 2:
                             _concat_sub_shots(sub_clips, clip)
                         elif sub_clips:
