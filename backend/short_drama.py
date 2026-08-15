@@ -912,21 +912,87 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
         return False
 
 
-def _concat_videos(clip_paths: list[str], out_path: str) -> None:
-    """concat demuxer 拼接镜头片段（编码参数一致可直接拼接）。"""
-    list_file = out_path + ".txt"
-    with open(list_file, "w", encoding="utf-8") as f:
-        for p in clip_paths:
-            f.write(f"file '{p}'\n")
-    r = subprocess.run(
-        [FFMPEG_BIN, "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
-        capture_output=True,
-        timeout=300,
-    )
-    os.remove(list_file)
-    if r.returncode != 0 or not os.path.exists(out_path):
-        raise RuntimeError("片段拼接失败: " + r.stderr.decode(errors="replace")[-200:])
+def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int] | None = None) -> None:
+    """拼接镜头片段：子镜头间硬切（快节奏），场次间交叉淡化（大段落转场）。
 
+    scene_bounds: 场次起始 clip 下标列表（如 [0, 5, 11] 表示第 0/5/11 个 clip 是新场次）。
+    场次边界用 xfade 交叉淡化（0.35s），其余硬切（concat demuxer，快速）。
+    """
+    if not scene_bounds or len(scene_bounds) < 2 or len(clip_paths) < 2:
+        list_file = out_path + ".txt"
+        with open(list_file, "w", encoding="utf-8") as f:
+            for pp in clip_paths:
+                f.write("file '" + pp + "'\n")
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+            capture_output=True,
+            timeout=300,
+        )
+        os.remove(list_file)
+        if r.returncode != 0 or not os.path.exists(out_path):
+            raise RuntimeError("片段拼接失败: " + r.stderr.decode(errors="replace")[-200:])
+        return
+    group_starts = set(scene_bounds)
+    groups: list[list[str]] = []
+    cur: list[str] = []
+    for i, c in enumerate(clip_paths):
+        if i in group_starts and cur:
+            groups.append(cur)
+            cur = [c]
+        else:
+            cur.append(c)
+    if cur:
+        groups.append(cur)
+    tmp_group = []
+    for gi, g in enumerate(groups):
+        if len(g) == 1:
+            tmp_group.append(g[0])
+        else:
+            gp = os.path.join(os.path.dirname(out_path), "grp_%d.mp4" % gi)
+            _concat_videos(g, gp)
+            tmp_group.append(gp)
+    if len(tmp_group) == 1:
+        _concat_videos(tmp_group, out_path)
+        return
+    inputs = []
+    for pp in tmp_group:
+        inputs += ["-i", pp]
+    group_durs = [_probe_seconds(pp) for pp in tmp_group]
+    offsets = []
+    acc = (group_durs[0] - 0.35) if group_durs else 0.0
+    for gi in range(1, len(tmp_group)):
+        offsets.append(max(0.0, acc))
+        if gi < len(group_durs):
+            acc = acc + (group_durs[gi] - 0.35)
+    f = ""
+    for gi in range(1, len(tmp_group)):
+        off = offsets[gi - 1] if gi - 1 < len(offsets) else 0.0
+        if gi == 1:
+            f += "[0:v][1:v]xfade=transition=fade:duration=0.35:offset=%.3f[v%d]" % (off, gi)
+        else:
+            f += "[v%d][%d:v]xfade=transition=fade:duration=0.35:offset=%.3f[v%d]" % (gi - 1, gi, off, gi)
+    for gi in range(1, len(tmp_group)):
+        if gi == 1:
+            f += "[0:a][1:a]acrossfade=d=0.35[a%d]" % gi
+        else:
+            f += "[a%d][%d:a]acrossfade=d=0.35[a%d]" % (gi - 1, gi, gi)
+    last = len(tmp_group) - 1
+    r = subprocess.run(
+        [FFMPEG_BIN, "-nostdin", "-y"] + inputs + ["-filter_complex", f,
+         "-map", "[v%d]" % last, "-map", "[a%d]" % last,
+         "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "128k", out_path],
+        capture_output=True, timeout=600,
+    )
+    for gp in tmp_group:
+        if gp.startswith(os.path.dirname(out_path) + os.sep + "grp_"):
+            try:
+                os.remove(gp)
+            except Exception:
+                pass
+    if r.returncode != 0 or not os.path.exists(out_path):
+        _concat_videos(clip_paths, out_path)
+        return
 
 def _pick_bgm() -> str | None:
     """随机选一首背景音乐（music 目录），目录为空/无音频返回 None。"""
@@ -1064,23 +1130,54 @@ def _srt_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{msec:03d}"
 
 
-def _make_srt(scenes: list[dict], durations: list[float], voice_durs: list[float], out_path: str) -> None:
-    """生成 SRT：每镜一条（旁白/台词合并为字幕文本）。
+def _split_sentences(text: str) -> list[str]:
+    """台词按句切分（句号/问号/感叹号/省略号；含旁白标记的行单独成句）。"""
+    import re as _re
 
-    v13.29 字幕时序收敛：字幕显示时长 = min(画面时长, 配音时长 + 0.6s)，
-    配音结束后字幕即消失，避免素材循环补足段"有字无声"；时间轴仍按画面时长推进。
+    parts = _re.split(r"(?<=[。！？…])", text or "")
+    out = [p.strip() for p in parts if p.strip()]
+    # 无标点大段（LLM 偶发）按最长 20 字硬切
+    final = []
+    for p in out:
+        while len(p) > 20:
+            final.append(p[:20])
+            p = p[20:]
+        if p:
+            final.append(p)
+    return final or ([text.strip()] if text.strip() else [])
+
+
+def _make_srt(scenes: list[dict], durations: list[float], voice_durs: list[float], out_path: str) -> None:
+    """生成 SRT：逐句字幕（红果漫剧标准——字幕跟随说话节奏，与快镜头切换同步）。
+
+    v13.29 字幕时序收敛：显示时长 = min(画面时长, 配音时长 + 0.6s)；
+    v1.0.43 逐句化：旁白/台词按句切分，每句按配音时长比例分配时间，
+    字幕逐句出现（长句不再一屏到底），观感跟随 2 秒镜头节奏。
     voice_durs 缺省时退化为整镜显示（数字人模式全镜有声）。
     """
 
     ts = _srt_ts
 
     lines, cursor = [], 0.0
+    idx = 1
     for i, (sc, dur) in enumerate(zip(scenes, durations, strict=False), 1):
-        text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
         vd = voice_durs[i - 1] if i - 1 < len(voice_durs) else dur
         show = min(max(dur, 1.0), max(float(vd) + 0.6, 1.2)) if vd else max(dur, 1.0)
         start = cursor
-        lines.append(f"{i}\n{ts(start)} --> {ts(start + show)}\n{text.strip()}\n")
+        text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
+        sents = _split_sentences(text)
+        if len(sents) <= 1:
+            lines.append(f"{idx}\n{ts(start)} --> {ts(start + show)}\n{text.strip()}\n")
+            idx += 1
+        else:
+            # 多句：按句长比例分配配音时长（每句至少 0.8s）
+            total_chars = max(1, sum(len(s) for s in sents))
+            t = start
+            for s in sents:
+                s_dur = max(0.8, show * len(s) / total_chars)
+                lines.append(f"{idx}\n{ts(t)} --> {ts(t + s_dur)}\n{s}\n")
+                idx += 1
+                t += s_dur
         cursor += max(dur, 1.0)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -1345,9 +1442,11 @@ async def _drama_render_one(
                                 win = (0.1, 0.0, 0.8, 0.8)   # 偏上起始，下移
                             else:
                                 win = (0.0, 0.0, 1.0, 1.0)   # 全图推拉
+                            # 每个子镜带 0.1s 微淡（平滑镜头切换，防取景窗口跳变生硬）；
+                            # 场首子镜用整场 fade_in、场末子镜用 fade_out
                             await asyncio.to_thread(
                                 _scene_video, img_path, sa, sclip, s_dur,
-                                shot_type, si == 0 and fade_in, si == len(sub_audios) - 1 and fade_out, win,
+                                shot_type, True, True, win,
                             )
                             if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
                                 sub_clips.append(sclip)
@@ -1394,6 +1493,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
                 char_refs[_cid] = _portrait
                 # 单角色立绘缓存到本地，跨集复用
                 _save_char_portrait(_cid, _char, _portrait, art_style)
+    scene_bounds: list[int] = []  # 每个场次第一个 clip 的下标（供场间转场）
     for i, sc in enumerate(scenes):
         _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
         text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
@@ -1410,11 +1510,16 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         )
         clip, audio_path, dh_off = result
         if clip:
+            if not clip_paths:
+                scene_bounds.append(0)
             clip_paths.append(clip)
             srt_durations.append(_probe_seconds(clip))
             vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
             voice_durations.append(vd)
-    return clip_paths, srt_durations, voice_durations
+        elif clip_paths:
+            # 本场无画面（异常跳过）→ 下一场从当前 clip 数开始（保持边界正确）
+            pass
+    return clip_paths, srt_durations, voice_durations, scene_bounds
 
 
 async def _drama_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
@@ -1445,16 +1550,16 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
 
         # 2. 逐镜配音 + 画面（三级回退）
         _report(15, "分镜配音与画面生成中…")
-        clip_paths, srt_durations, voice_durations = await _drama_render_scenes(
+        clip_paths, srt_durations, voice_durations, scene_bounds = await _drama_render_scenes(
             scenes, payload, user, uid, role, tmpdir, _report
         )
         if not clip_paths:
             raise HTTPException(502, "所有分镜合成失败，请重试")
 
-        # 3. 拼接 + 字幕
+        # 3. 拼接（场次间交叉淡化转场）+ 字幕
         _report(72, "片段拼接中…")
         raw_video = os.path.join(tmpdir, "merged.mp4")
-        await asyncio.to_thread(_concat_videos, clip_paths, raw_video)
+        await asyncio.to_thread(_concat_videos, clip_paths, raw_video, scene_bounds)
         stem = f"drama_{int(time.time() * 1000)}"
         srt_path = os.path.join(tmpdir, f"{stem}.srt")
         _make_srt(scenes[: len(srt_durations)], srt_durations, voice_durations, srt_path)
