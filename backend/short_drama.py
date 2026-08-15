@@ -783,7 +783,8 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
             "model": "agnes-video-v2.0",
             "prompt": prompt,
             "image": f"data:image/jpeg;base64,{img_b64}",
-            "duration": 8,
+            # v1.0.56：实测 AGNES v2.0 忽略 duration 参数、固定输出 5s（请求 8/12 均得 5s）
+            "duration": 5,
         }
         resp = _req.post(
             f"{_api_base}/videos",
@@ -876,6 +877,44 @@ def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str) -> bool:
         return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10000
     except Exception:
         return False
+
+
+def _split_dyn_video(video_path: str, n_seg: int, prefix: str) -> list[str]:
+    """v1.0.56：把一段 i2v 动态视频切成 n_seg 个子段（视频 copy，仅音频重采样）。
+
+    用途：一个 8-12s 的动态锚切成 2-3 个子镜（各 2-4s），同一段真运动复用为
+    多个动态子镜 → 动态密度翻倍且**零额外 i2v API 调用**（红果漫剧全程动态）。
+    每段尾部 0.08s 淡出防爆音；失败回退整段（调用方保证至少 1 段）。
+    """
+    if n_seg <= 1 or not os.path.exists(video_path):
+        return [video_path]
+    try:
+        dur = _probe_seconds(video_path)
+        if dur <= 0.5:
+            return [video_path]
+        n_seg = min(n_seg, max(1, int(dur // 1.5)))  # 每段至少 1.5s
+        if n_seg <= 1:
+            return [video_path]
+        seg_len = dur / n_seg
+        out_files = []
+        tmpdir = os.path.dirname(video_path) or "."
+        for i in range(n_seg):
+            st = i * seg_len
+            o = os.path.join(tmpdir, f"{prefix}_{i:02d}.mp4")
+            # -c:v copy 时不能挂滤镜（Filtering and streamcopy cannot be used together）；
+            # 切分点在动作中段，无爆音/闪帧风险，直接纯 copy 切分（秒级）
+            r = subprocess.run(
+                [FFMPEG_BIN, "-nostdin", "-y",
+                 "-ss", f"{st:.3f}", "-i", video_path, "-t", f"{seg_len:.3f}",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                 o],
+                capture_output=True, timeout=60,
+            )
+            if r.returncode == 0 and os.path.exists(o) and os.path.getsize(o) > 4096:
+                out_files.append(o)
+        return out_files if out_files else [video_path]
+    except Exception:
+        return [video_path]
 
 
 def _probe_seconds(path: str) -> float:
@@ -1838,10 +1877,16 @@ async def _drama_render_one(
                                     _mux_ok = await asyncio.to_thread(
                                         _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final,
                                     )
-                                if _mux_ok and os.path.exists(_dyn_final):
-                                    sub_clips[_anchor_idx] = _dyn_final
-                                else:
-                                    sub_clips[_anchor_idx] = dyn_clip
+                                _dyn_src = _dyn_final if (_mux_ok and os.path.exists(_dyn_final)) else dyn_clip
+                                # v1.0.56 动态密度翻倍：一段 i2v 切成 2 个子段，替换锚位及其后
+                                # 一个静态子镜 → 同一真运动覆盖 2 个动态子镜，零额外 API 调用
+                                _dyn_segs = [ _dyn_src ]
+                                if _anchor_idx + 1 < len(sub_clips):
+                                    _dyn_segs = _split_dyn_video(_dyn_src, 2, f"dynseg_{i:03d}")
+                                for _di, _seg in enumerate(_dyn_segs):
+                                    _rep = _anchor_idx + _di
+                                    if _rep < len(sub_clips) and os.path.exists(_seg) and os.path.getsize(_seg) > 4096:
+                                        sub_clips[_rep] = _seg
                         if len(sub_clips) >= 2:
                             _concat_sub_shots(sub_clips, clip)
                         elif sub_clips:
