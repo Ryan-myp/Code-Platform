@@ -1386,7 +1386,10 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             "-filter_complex",
             f"[0:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
-            f"[1:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+            f"[1:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+            # v1.0.57：响度归一（EBU R128，短视频 -16 LUFS）——各镜配音/各场音量均衡，
+            # 消除 16dB 级响度跳变（红果漫剧全程音量一致）；loudnorm 双遍更准但单遍可接受
+            f"loudnorm=I=-16:TP=-1.5:LRA=11[a]",
             "-map", "1:v", "-map", "[a]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
             tmp_mix,
