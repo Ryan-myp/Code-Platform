@@ -1279,13 +1279,14 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
     dur = _probe_seconds(path)
     if dur < min_duration:
         findings.append(f"成片时长过短（{dur:.1f}s < {min_duration:.0f}s）")
-    # 音轨存在
+    # 音轨存在（ffprobe 探测更稳：动态锚/i2v 音轨可能让 ffmpeg 解码探测误报）
     try:
         r = subprocess.run(
-            [FFMPEG_BIN, "-nostdin", "-i", path, "-map", "0:a:0", "-f", "null", "-"],
-            capture_output=True, timeout=60,
+            [FFPROBE_BIN, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
         )
-        if r.returncode != 0:
+        if r.returncode != 0 or not (r.stdout or "").strip():
             findings.append("成片缺少音轨")
     except Exception:
         findings.append("音轨检查失败")
