@@ -131,6 +131,15 @@ async def lifespan(app: FastAPI):
         conn.close()
     except Exception:
         pass
+    # 短剧系列/角色圣经表（short_drama._ensure_drama_tables，红果短剧升级）
+    try:
+        from short_drama import _ensure_drama_tables as _ensure_drama_series_tables
+
+        conn = get_db()
+        _ensure_drama_series_tables(conn)
+        conn.close()
+    except Exception:
+        pass
     from task_queue import start_workers  # noqa: E402
     start_workers()
     yield

@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -39,7 +40,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config, resolve_api_key, resolve_api_base
+from common.db import get_db
 from common.llm import call_llm_async
+from pydantic import BaseModel, Field
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -625,13 +628,14 @@ def _pick_bgm() -> str | None:
     return str(random.choice(tracks))
 
 
-def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None) -> None:
+def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None, margin_v: int = 24) -> None:
     """字幕烧录（subtitles 滤镜）+ 背景音乐混音（v13.25：合并一次 re-encode）。
 
     BGM 音量 12%（配音优先）+ 首尾 2s 淡入淡出；无 BGM 时保持原逻辑。
+    margin_v: 字幕底部安全区边距（红果竖屏规范：字幕不贴底、不挡脸）。
     """
     esc = srt_path.replace(":", "\\:").replace("'", "\\'")
-    subtitle_vf = f"subtitles='{esc}':force_style='FontName=PingFang SC,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,Outline=1,Shadow=0,MarginV=24'"
+    subtitle_vf = f"subtitles='{esc}':force_style='FontName=PingFang SC,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,Outline=1,Shadow=0,MarginV={int(margin_v)}'"
     if bgm_path and os.path.exists(bgm_path):
         total = max(_probe_seconds(video_path), 1.0)
         fade_st = max(0.0, total - 2.0)
@@ -657,6 +661,55 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
     r = subprocess.run(cmd, capture_output=True, timeout=600)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError("字幕烧录失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
+def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float = 10.0) -> dict:
+    """短剧成片 QC 质量门：时长/黑边/音频/字幕/画面完整性。
+
+    返回 {"ok": bool, "findings": [str]}；不阻塞成片，仅标记质量问题。
+    """
+    findings = []
+    path = str(final_path)
+    if not os.path.exists(path) or os.path.getsize(path) < 50_000:
+        return {"ok": False, "findings": ["成片文件缺失或过小"]}
+    # 时长
+    dur = _probe_seconds(path)
+    if dur < min_duration:
+        findings.append(f"成片时长过短（{dur:.1f}s < {min_duration:.0f}s）")
+    # 音轨存在
+    try:
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-i", path, "-map", "0:a:0", "-f", "null", "-"],
+            capture_output=True, timeout=60,
+        )
+        if r.returncode != 0:
+            findings.append("成片缺少音轨")
+    except Exception:
+        findings.append("音轨检查失败")
+    # 字幕文件存在且非空
+    if srt_path and os.path.exists(srt_path):
+        if os.path.getsize(srt_path) < 30:
+            findings.append("字幕文件为空")
+    elif srt_path:
+        findings.append("字幕文件缺失")
+    # 分辨率/黑边：竖屏 720x1280 期望（ffprobe 宽高）
+    try:
+        r = subprocess.run(
+            [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        parts = (r.stdout or "").strip().split(",")
+        if len(parts) == 2:
+            w, h = int(parts[0]), int(parts[1])
+            # 竖屏短剧应为 9:16（宽:高 ≈ 0.5625）；检测横屏 16:9（宽:高 ≈ 1.777）
+            if h > 0 and w > h and abs(w / h - 16 / 9) < 0.05:
+                findings.append(f"疑似横屏（{w}x{h}），竖屏短剧应为 9:16")
+            if h > 0 and (w % 2 != 0 or h % 2 != 0):
+                findings.append(f"分辨率非偶数（{w}x{h}），部分平台播放异常")
+    except Exception:
+        pass
+    return {"ok": len(findings) == 0, "findings": findings}
 
 
 def _extract_cover(video_path: str, out_jpg: str) -> None:
@@ -1028,12 +1081,17 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         final_name = f"{stem}.mp4"
         final_path = DRAMA_DIR / final_name
         _report(88, "字幕合成中…")
-        await asyncio.to_thread(_burn_subtitles, raw_video, srt_path, str(final_path), _pick_bgm())
+        # 竖屏字幕安全区：底部 5% 边距，字幕不贴底不挡脸（红果短剧规范）
+        await asyncio.to_thread(_burn_subtitles, raw_video, srt_path, str(final_path), _pick_bgm(), margin_v=36)
         shutil.copyfile(srt_path, DRAMA_DIR / f"{stem}.srt")
         cover_path = DRAMA_DIR / f"{stem}.jpg"
         preview_path = DRAMA_DIR / f"{stem}_preview.mp4"
         await asyncio.to_thread(_extract_cover, clip_paths[0], str(cover_path))
         await asyncio.to_thread(_make_preview, clip_paths[0], str(preview_path))
+
+        # 成片 QC 质量门（不阻塞，仅标记问题）
+        _report(94, "质量检查中…")
+        qc = await asyncio.to_thread(_qc_check, final_path, srt_path)
 
         duration = _probe_seconds(str(final_path))
         cover_url = f"/api/drama/covers/{stem}.jpg"
@@ -1067,6 +1125,7 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
             "duration": duration,
             "avatar_mode": avatar_mode,
             "engine": "dh" if avatar_mode else "local",
+            "qc": qc,
         }
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -1439,3 +1498,316 @@ async def list_dramas(current_user: dict = require_auth()):
             )
 
 
+
+
+# ══════════════════════════════════════════════════════════════
+# 红果短剧升级：① 小说原文转剧本 ② 角色圣经（跨集一致性）③ 系列连载
+# ══════════════════════════════════════════════════════════════
+
+_NOVEL_SYSTEM = """你是资深短剧编剧。把用户提供的小说/故事原文改编成节奏紧凑的竖屏短剧脚本。
+
+要求：
+1. 忠实原著：角色名、关键情节、人物关系必须沿用原文；删繁就简，聚焦 1-4 个核心角色和最有冲突感的主线
+2. 输出严格的 JSON（不要 markdown 代码块，不要多余文字）
+3. 结构：{"title": "剧名", "episode": 1, "characters": [{"id": "lin", "name": "林小满", "gender": "女", "age": "24岁", "appearance": "黑色长发齐刘海，圆脸大眼睛", "outfit": "白色连衣裙配红色围巾", "search": "young chinese woman black hair"}], "scenes": [{"id": 1, "chars": ["lin"], "shot": "镜头画面描述", "search": "英文素材关键词", "narrator": "旁白", "dialogue": "角色台词", "emotion": "情绪", "sec": 25}]}
+4. 角色一致性（最重要）：先定义 1-4 个主要角色 characters，每个角色性别/年龄/发型/发色/服装全剧固定；每镜 chars 列出场角色（1-2 个为宜）；每个角色首次出场安排单人镜定妆，后续沿用；shot 必须点名角色并沿用其外貌服装；search 以该镜主角英文特征词开头
+5. 场次与目标时长匹配：场次数 ≈ 目标秒数 ÷ 每场 25-30 秒（如 45 秒 → 2-3 场；300 秒 → 10-12 场；最多 28 场）；每场 sec 15-40 秒
+6. shot 必须是"画面能拍到的东西"；search 给 2-4 个对应英文关键词（如 night city rain neon），禁止抽象词
+7. 每场旁白+台词约 60-100 字；台词必须提到本镜画面里的具体元素，与 shot 强呼应
+8. 每镜标注情绪 emotion：happy/sad/angry/gentle/serious/neutral
+9. 剧情有起承转合，结尾留悬念钩子（为下一集铺垫）"""
+
+
+def _parse_characters(data: dict) -> list[dict]:
+    """解析剧本 JSON 里的角色表（兼容无角色表）。"""
+    chars = data.get("characters") or []
+    out = []
+    if isinstance(chars, list):
+        for c in chars:
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            out.append(
+                {
+                    "id": re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").strip().lower()) or f"c{len(out) + 1}",
+                    "name": str(c.get("name"))[:30],
+                    "gender": str(c.get("gender") or "女")[:10],
+                    "age": str(c.get("age") or "")[:10],
+                    "appearance": str(c.get("appearance") or "")[:100],
+                    "outfit": str(c.get("outfit") or "")[:100],
+                    "search": str(c.get("search") or "")[:80],
+                }
+            )
+    return out
+
+
+def _drama_parse_script(raw: str) -> dict:
+    """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音）。"""
+    text = raw.strip()
+    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    if m:
+        text = m.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("剧本输出不是 JSON")
+    data = json.loads(text[start : end + 1])
+    scenes = data.get("scenes") or []
+    if not scenes:
+        raise ValueError("剧本没有分镜")
+    for s in scenes:
+        if not s.get("shot") and not s.get("narrator") and not s.get("dialogue"):
+            raise ValueError(f"分镜 {s.get('id')} 内容为空")
+        s["sec"] = max(2, min(45, int(s.get("sec") or 5)))
+        emo = str(s.get("emotion") or "neutral").strip().lower()
+        if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
+            emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
+                   "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
+        s["emotion"] = emo
+        search = str(s.get("search") or "").strip()
+        search = re.sub(r"[\"'\[\]]", "", search)[:60]
+        if not search:
+            search = (s.get("shot") or "").strip()[:30]
+        s["search"] = search
+    return {"title": data.get("title") or "未命名短剧", "episode": data.get("episode") or 1, "scenes": scenes, "characters": _parse_characters(data)}
+
+
+@router.post("/novel-to-script")
+async def novel_to_script(
+    novel: str = Form(...),
+    title: str = Form("", description="剧名（空=LLM 根据原文起名）"),
+    duration: int = Form(120, description="单集目标时长（秒）"),
+    episode: int = Form(1, description="第几集（>1 时参考上一集角色表保持一致性）"),
+    series_id: str = Form("", description="所属系列 ID（连载剧集，复用角色库）"),
+    current_user: dict = require_auth(),
+):
+    """小说原文 → 短剧剧本分镜（红果短剧风格）。
+
+    - 粘贴小说/故事原文，LLM 提取核心角色表 + 分镜场景
+    - series_id 指定系列时，自动合并该系列已保存的角色圣经（跨集角色一致）
+    - 返回 scenes + characters，可直接进 /generate 或保存为系列
+    """
+    novel = novel.strip()
+    if len(novel) < 30:
+        raise HTTPException(400, "请粘贴更完整的小说/故事原文（至少 30 字）")
+    duration_hint = max(20, min(1800, int(duration) or 120))
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+
+    # 系列角色库：跨集一致性（角色圣经）
+    series_chars = []
+    if series_id:
+        conn = get_db()
+        try:
+            _ensure_drama_tables(conn)
+            rows = conn.execute(
+                "SELECT * FROM drama_characters WHERE series_id=? AND user_id=? ORDER BY idx",
+                (series_id, user),
+            ).fetchall()
+            series_chars = [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    chars_block = ""
+    if series_chars:
+        chars_block = (
+            "\n【本系列已确立的角色圣经（必须沿用，禁止改外貌服装）】\n"
+            + "\n".join(
+                f"- {c['name']}（{c['gender']} {c['age']}）：{c['appearance']}，{c['outfit']}；英文特征 {c['search']}"
+                for c in series_chars
+            )
+        )
+
+    ep_block = f"\n本集为第 {episode} 集，开头 5-10 秒要承接上一集结尾的悬念钩子。" if episode and int(episode) > 1 else ""
+
+    for attempt in range(3):
+        try:
+            raw = await call_llm_async(
+                _NOVEL_SYSTEM,
+                f"小说原文（可截取关键章节，总长约 {len(novel)} 字）：\n{novel[:12000]}\n\n"
+                f"目标单集时长约 {duration_hint} 秒。{chars_block}{ep_block}",
+                max_tokens=8000,
+                temperature=0.85,
+                timeout=300,
+            )
+            script = _drama_parse_script(raw)
+            break
+        except (ValueError, json.JSONDecodeError) as e:
+            if attempt == 2:
+                raise HTTPException(502, f"剧本解析失败：{e}") from e
+    # 系列角色库优先：LLM 可能改了角色，用已存角色表覆盖（保证跨集稳定）
+    if series_chars:
+        script["characters"] = series_chars
+    # 时长防御
+    from short_drama import _enforce_duration as _drama_enforce
+
+    script["scenes"] = _drama_enforce(script["scenes"], duration_hint)
+    return {
+        "title": title.strip() or script["title"],
+        "episode": int(episode or 1),
+        "scenes": script["scenes"],
+        "characters": script.get("characters") or [],
+        "series_id": series_id,
+        "message": "小说已转为剧本分镜，可编辑后生成，或保存为系列连载",
+    }
+
+
+def _now() -> str:
+    """当前时间 ISO。"""
+    return datetime.now().isoformat()
+
+
+def _ensure_drama_tables(conn) -> None:
+    """红果短剧升级：系列 + 角色圣经表。"""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS drama_series (
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
+            name TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            genre TEXT DEFAULT '',          -- 题材：都市/甜宠/战神/逆袭…
+            total_episodes INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS drama_characters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            series_id TEXT DEFAULT '',
+            user_id TEXT DEFAULT '',
+            idx INTEGER DEFAULT 0,
+            cid TEXT DEFAULT '',           -- 角色 id（lin）
+            name TEXT DEFAULT '',
+            gender TEXT DEFAULT '',
+            age TEXT DEFAULT '',
+            appearance TEXT DEFAULT '',
+            outfit TEXT DEFAULT '',
+            search TEXT DEFAULT '',        -- 英文特征词（素材/图生图锚定）
+            portrait_path TEXT DEFAULT '', -- 角色定妆参考图（本地路径）
+            portrait_url TEXT DEFAULT '',  -- 参考图访问 URL
+            created_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT ''
+        )"""
+    )
+
+
+class SeriesCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60, description="系列名")
+    description: str = Field("", max_length=300)
+    genre: str = Field("都市", max_length=20, description="题材")
+
+
+class CharacterSaveRequest(BaseModel):
+    characters: list[dict] = Field(default_factory=list, description="角色表（id/name/gender/age/appearance/outfit/search）")
+
+
+@router.post("/series")
+async def create_series(req: SeriesCreateRequest, current_user: dict = require_auth()):
+    """创建短剧系列（连载容器）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_drama_tables(conn)
+    try:
+        sid = f"ds_{uuid.uuid4().hex[:10]}"
+        conn.execute(
+            "INSERT INTO drama_series (id, user_id, name, description, genre, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (sid, user, req.name.strip(), req.description.strip(), req.genre.strip(), _now(), _now()),
+        )
+        conn.commit()
+        return {"ok": True, "id": sid, "message": f"系列「{req.name.strip()}」已创建"}
+    finally:
+        conn.close()
+
+
+@router.get("/series")
+async def list_series(current_user: dict = require_auth()):
+    """短剧系列列表（含每系列角色数）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_drama_tables(conn)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM drama_series WHERE user_id=? ORDER BY created_at DESC", (user,)
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            cnt = conn.execute(
+                "SELECT COUNT(*) c FROM drama_characters WHERE series_id=?", (d["id"],)
+            ).fetchone()["c"]
+            d["character_count"] = cnt
+            out.append(d)
+        return {"series": out}
+    finally:
+        conn.close()
+
+
+@router.delete("/series/{series_id}")
+async def delete_series(series_id: str, current_user: dict = require_auth()):
+    """删除系列及其角色库。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_drama_tables(conn)
+    try:
+        row = conn.execute(
+            "SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "系列不存在")
+        conn.execute("DELETE FROM drama_characters WHERE series_id=?", (series_id,))
+        conn.execute("DELETE FROM drama_series WHERE id=?", (series_id,))
+        conn.commit()
+        return {"ok": True, "message": "系列已删除"}
+    finally:
+        conn.close()
+
+
+@router.put("/series/{series_id}/characters")
+async def save_series_characters(series_id: str, req: CharacterSaveRequest, current_user: dict = require_auth()):
+    """保存系列角色圣经（跨集一致性核心）：覆盖该系列角色表。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_drama_tables(conn)
+    try:
+        row = conn.execute(
+            "SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "系列不存在")
+        if len(req.characters) > 10:
+            raise HTTPException(400, "单系列最多 10 个角色")
+        conn.execute("DELETE FROM drama_characters WHERE series_id=?", (series_id,))
+        now = _now()
+        for i, c in enumerate(req.characters):
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            cid = re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").strip().lower()) or f"c{i + 1}"
+            conn.execute(
+                """INSERT INTO drama_characters (series_id, user_id, idx, cid, name, gender, age, appearance, outfit, search, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    series_id, user, i, cid,
+                    str(c.get("name") or "")[:30], str(c.get("gender") or "女")[:10],
+                    str(c.get("age") or "")[:10], str(c.get("appearance") or "")[:100],
+                    str(c.get("outfit") or "")[:100], str(c.get("search") or "")[:80],
+                    now, now,
+                ),
+            )
+        conn.commit()
+        return {"ok": True, "saved": len(req.characters), "message": f"已保存 {len(req.characters)} 个角色圣经"}
+    finally:
+        conn.close()
+
+
+@router.get("/series/{series_id}/characters")
+async def get_series_characters(series_id: str, current_user: dict = require_auth()):
+    """读取系列角色圣经（跨集复用）。"""
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    conn = get_db()
+    _ensure_drama_tables(conn)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM drama_characters WHERE series_id=? AND user_id=? ORDER BY idx",
+            (series_id, user),
+        ).fetchall()
+        return {"characters": [dict(r) for r in rows]}
+    finally:
+        conn.close()
