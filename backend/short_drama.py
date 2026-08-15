@@ -1875,13 +1875,33 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
                     logger.warning(f"片头生成失败: {e}")
                     intro_clip = ""
 
-        # 3. 拼接（片头 + 场次间交叉淡化转场）+ 字幕
+        # 2.6 片尾卡（红果漫剧结尾：剧名 + 下集预告提示）
+        outro_clip = ""
+        if illust_mode:
+            try:
+                outro_path = await asyncio.to_thread(
+                    _make_intro_card, title, _intro_style,
+                    "本集完 · 下集更精彩",
+                )
+                if outro_path:
+                    outro_clip = os.path.join(tmpdir, "outro.mp4")
+                    await asyncio.to_thread(
+                        _scene_video, outro_path, None, outro_clip, 3.0,
+                        "slow_push", True, True, (0.0, 0.0, 1.0, 1.0),
+                    )
+            except Exception as e:
+                logger.warning(f"片尾生成失败: {e}")
+                outro_clip = ""
+
+        # 3. 拼接（片头 + 正片 + 片尾，场次间交叉淡化转场）+ 字幕
         _report(72, "片段拼接中…")
         raw_video = os.path.join(tmpdir, "merged.mp4")
         if intro_clip and os.path.exists(intro_clip):
             clip_paths.insert(0, intro_clip)
             scene_bounds = [b + 1 for b in scene_bounds]
             scene_bounds.insert(0, 0)
+        if outro_clip and os.path.exists(outro_clip):
+            clip_paths.append(outro_clip)
         await asyncio.to_thread(_concat_videos, clip_paths, raw_video, scene_bounds)
         stem = f"drama_{int(time.time() * 1000)}"
         srt_path = os.path.join(tmpdir, f"{stem}.srt")
