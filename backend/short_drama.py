@@ -662,8 +662,22 @@ def _probe_seconds(path: str) -> float:
         return 0.0
 
 
+# 子镜头机位类型（同一主图的不同取景方式 → 视觉上的镜头切换）
+_SUB_SHOT_TYPES = (
+    "zoom_in",      # 推近：从全景推至近景（聚焦）
+    "zoom_out",     # 拉远：从近景拉至全景（交代环境）
+    "pan_left",     # 左移：取景窗从左向右扫（环境过渡）
+    "pan_right",    # 右移：取景窗从右向左扫
+    "tilt_up",      # 上移：从下往上（强调高度/气场）
+    "tilt_down",    # 下移：从上往下（压迫/揭示）
+    "close_zoom",   # 特写放大：聚焦面部/细节（情绪戏）
+    "slow_push",    # 缓慢推进：情绪沉淀（温柔/悲伤）
+)
+
+
 def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
-                 motion: str = "zoom_in", fade_in: bool = True, fade_out: bool = True) -> None:
+                 motion: str = "zoom_in", fade_in: bool = True, fade_out: bool = True,
+                 win: tuple = (0, 0, 1.0, 1.0)) -> None:
     """单镜合成：背景图 + 配音 → mp4 片段（Ken Burns 运镜 + 可选首尾淡入淡出）。
 
     v13.31 插画镜流畅度：zoompan 运镜（motion 交替推近/拉远/横摇，静态图动起来）；
@@ -671,28 +685,65 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
     输入帧时全部输出帧共享 in=0，画面静止（素材模式旧代码踩过此坑）；
     fade_in/fade_out 按镜序控制（首镜淡入、末镜淡出、中间镜硬切），消除镜间黑场闪烁。
     无声段 apad 补静音到 -t 目标时长（v13.28 移除 -shortest，sec 画面保底生效）。
+
+    v1.0.41 子镜头：win=(nx,ny,nw,nh) 指定主图取景窗口（0-1 归一化），
+    不同子镜取不同区域+不同运动方向 → 同一主图也能切出多个镜头（视觉连续感）。
     """
     total = max(1, int(duration * FPS))
-    amp = 0.10 if total >= 250 else 0.06  # 短镜减速，避免急促
-    vf = "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2"
+    # 取景窗口（归一化）：默认全图；子镜头给局部区域
+    nx, ny, nw, nh = win
+    nw = max(0.3, min(1.0, nw)); nh = max(0.3, min(1.0, nh))
+    nx = max(0.0, min(1.0 - nw, nx)); ny = max(0.0, min(1.0 - nh, ny))
+    # 短镜（<8s）幅度加大、长镜放缓：保证 2-4s 子镜头也有可见运镜
+    amp = 0.14 if total < 200 else (0.10 if total < 400 else 0.06)
+    # 2x 放大防抖基础缩放：先裁取景窗口再放大
+    vf = "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560"
+    # 应用取景窗口（crop 到窗口区域，窗口比例保持 9:16 输出）
+    win_w = int(1440 * nw); win_h = int(2560 * nh)
+    win_x = int(1440 * nx); win_y = int(2560 * ny)
+    # 窗口先切出（保持 9:16 比例：以窗口中心为基准放大到满幅）
+    vf += f",crop={win_w}:{win_h}:{win_x}:{win_y}"
+    vf += ",scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560"
     if motion and motion != "still":
+        # 各机位：zoom 表达式 + 取景窗中心漂移方向
         if motion == "zoom_out":
-            zexpr, sway = f"{1 + amp}-{amp}*on/{total}", ""
-        elif motion == "pan_in":
-            zexpr, sway = f"1+{amp}*on/{total}", "+(iw*0.012)*sin(2*PI*on/" + str(total) + ")"
-        elif motion == "pan_out":
-            zexpr, sway = f"{1 + amp}-{amp}*on/{total}", "-(iw*0.012)*sin(2*PI*on/" + str(total) + ")"
+            zexpr = f"{1 + amp}-{amp}*on/{total}"
+            sx = sy = ""
+        elif motion == "pan_left":
+            zexpr = f"1+{amp * 0.3}*on/{total}"
+            sx = f"-(iw*{amp * 0.5})*on/{total}"
+            sy = ""
+        elif motion == "pan_right":
+            zexpr = f"1+{amp * 0.3}*on/{total}"
+            sx = f"+(iw*{amp * 0.5})*on/{total}"
+            sy = ""
+        elif motion == "tilt_up":
+            zexpr = f"1+{amp * 0.3}*on/{total}"
+            sx = ""
+            sy = f"-(ih*{amp * 0.5})*on/{total}"
+        elif motion == "tilt_down":
+            zexpr = f"1+{amp * 0.3}*on/{total}"
+            sx = ""
+            sy = f"+(ih*{amp * 0.5})*on/{total}"
+        elif motion == "close_zoom":
+            zexpr = f"{1 + amp * 1.4}-{amp * 0.8}*on/{total}"  # 从近景再推近
+            sx = sy = ""
+        elif motion == "slow_push":
+            zexpr = f"1+{amp * 0.6}*on/{total}"
+            sx = sy = ""
         else:  # zoom_in
-            zexpr, sway = f"1+{amp}*on/{total}", ""
-        # 2x 放大防抖 + zoompan 平滑运镜（s=720x1280 输出，fps 与全局 FPS 对齐便于 concat）
-        vf = (
-            "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
-            f"zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2){sway}':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS}"
+            zexpr = f"1+{amp}*on/{total}"
+            sx = sy = ""
+        vf += (
+            f",zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2){sx}':y='ih/2-(ih/zoom/2){sy}':d={total}:s=720x1280:fps={FPS}"
         )
+    else:
+        # 静止子镜也做微推（避免死画面）
+        vf += f",zoompan=z='1+{amp * 0.3}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS}"
     if fade_in:
-        vf += ",fade=t=in:st=0:d=0.25"
+        vf += ",fade=t=in:st=0:d=0.15"
     if fade_out:
-        vf += f",fade=t=out:st={max(0.25, duration - 0.25):.2f}:d=0.25"
+        vf += f",fade=t=out:st={max(0.15, duration - 0.15):.2f}:d=0.15"
     cmd = [
         FFMPEG_BIN, "-nostdin", "-y",
         "-loop", "1", "-i", img_path,
@@ -729,6 +780,53 @@ def _motion_for(sc: dict, idx: int) -> str:
     if m:
         return m
     return _SCENE_MOTIONS[idx % len(_SCENE_MOTIONS)]
+
+
+def _split_audio_segments(audio_path: str, seg_count: int) -> list[str]:
+    """把配音音频切成 seg_count 段（每段对应一个子镜头），返回段文件路径列表。
+
+    用 ffmpeg asplit+atrim 一次切出所有段，避免多次读文件；段间 30ms 微交叉
+    防爆音（afade in/out 各 15ms）。
+    """
+    if seg_count <= 1:
+        return [audio_path]
+    segs = []
+    dur = _probe_seconds(audio_path)
+    if dur <= 0:
+        return [audio_path]
+    seg_len = dur / seg_count
+    tmpdir = os.path.dirname(audio_path)
+    # 简单实现：逐段切（段数不多，逐次调用更稳）；afade 只做入淡防止段首爆音
+    out_files = []
+    for i in range(seg_count):
+        st = i * seg_len
+        o = os.path.join(tmpdir, f"subseg_{i:03d}.mp3")
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-y", "-ss", f"{st:.3f}", "-t", f"{seg_len:.3f}",
+             "-i", audio_path, "-af", "afade=t=in:st=0:d=0.015",
+             "-c:a", "libmp3lame", "-b:a", "128k", o],
+            capture_output=True, timeout=60,
+        )
+        if r.returncode == 0 and os.path.exists(o) and os.path.getsize(o) > 1024:
+            out_files.append(o)
+        else:
+            logger.warning(f"音频切段 {i} 失败: {(r.stderr or b'')[:120] if r else ''}")
+    return out_files if len(out_files) >= 2 else [audio_path]
+
+
+def _concat_sub_shots(seg_paths: list[str], out_path: str) -> None:
+    """拼接子镜头片段（逐段 concat，编码一致可直接拼接）。"""
+    list_file = out_path + ".txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        for p in seg_paths:
+            f.write("file '" + p + "'\n")
+    r = subprocess.run(
+        [FFMPEG_BIN, "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+        capture_output=True, timeout=300,
+    )
+    os.remove(list_file)
+    if r.returncode != 0 or not os.path.exists(out_path):
+        raise RuntimeError("子镜头拼接失败: " + r.stderr.decode(errors="replace")[-200:])
 
 
 def _material_scene_video(query: str, audio_path: str, out_path: str, duration: float,
@@ -1184,8 +1282,57 @@ async def _drama_render_one(
         if data:
             with open(img_path, "wb") as f:
                 f.write(data)
-            await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
-            ok = True
+            # v1.0.41 场次拆分子镜头：一场戏按目标镜头时长切成多个子镜头
+            # （同一主图 + 不同机位/取景窗口 → 视觉连续感，对标红果漫剧节奏）
+            try:
+                shot_dur = float(sc.get("sec") or dur)
+                # 目标子镜头 3.2s（短视频节奏），一场 15-40s → 5-12 个子镜
+                sub_target = 3.2
+                n_sub = max(1, min(12, int(round(shot_dur / sub_target))))
+                if n_sub <= 1:
+                    await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                else:
+                    sub_audios = _split_audio_segments(audio_path, n_sub)
+                    if len(sub_audios) < 2:
+                        await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                    else:
+                        sub_clips = []
+                        for si, sa in enumerate(sub_audios):
+                            sclip = os.path.join(tmpdir, f"shot_{i:03d}_{si:02d}.mp4")
+                            s_dur = max(_probe_seconds(sa), 2.0)
+                            # 机位轮换 + 取景窗口（不同子镜取主图不同区域）
+                            shot_type = _SUB_SHOT_TYPES[(si + i) % len(_SUB_SHOT_TYPES)]
+                            # 取景窗口：全图或局部（特写窗口偏上中、横移窗口偏左/右）
+                            if shot_type == "close_zoom":
+                                win = (0.15, 0.15, 0.7, 0.7)  # 中心偏上：面部
+                            elif shot_type == "pan_left":
+                                win = (0.0, 0.0, 0.8, 1.0)   # 左侧起始，右扫
+                            elif shot_type == "pan_right":
+                                win = (0.2, 0.0, 0.8, 1.0)   # 右侧起始，左扫
+                            elif shot_type == "tilt_up":
+                                win = (0.1, 0.2, 0.8, 0.8)   # 偏下起始，上移
+                            elif shot_type == "tilt_down":
+                                win = (0.1, 0.0, 0.8, 0.8)   # 偏上起始，下移
+                            else:
+                                win = (0.0, 0.0, 1.0, 1.0)   # 全图推拉
+                            await asyncio.to_thread(
+                                _scene_video, img_path, sa, sclip, s_dur,
+                                shot_type, si == 0 and fade_in, si == len(sub_audios) - 1 and fade_out, win,
+                            )
+                            if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
+                                sub_clips.append(sclip)
+                        if len(sub_clips) >= 2:
+                            _concat_sub_shots(sub_clips, clip)
+                        elif sub_clips:
+                            import shutil as _sh
+                            _sh.copyfile(sub_clips[0], clip)
+                        else:
+                            await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                ok = True
+            except Exception as e:
+                logger.warning(f"子镜头拆分失败，回退单镜: {e}")
+                await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                ok = True
         else:
             ok = await asyncio.to_thread(_make_scene_card, text, i, total, title, img_path, uid=uid)
             if ok:
