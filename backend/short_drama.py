@@ -337,7 +337,10 @@ def _parse_script(raw: str) -> dict:
         data = json.loads(candidate)
     except json.JSONDecodeError:
         cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
-        data = json.loads(cleaned)
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            data = json.loads(_repair_json_quotes(candidate))
     scenes = data.get("scenes") or []
     if not scenes:
         raise ValueError("剧本没有分镜")
@@ -1560,22 +1563,80 @@ def _parse_characters(data: dict) -> list[dict]:
     return out
 
 
+
+
+def _repair_json_quotes(candidate: str) -> str:
+    """修复 LLM 短剧 JSON 中台词/画面里的裸 ASCII 引号（如 写着"清欢"。）。
+
+    中文内容里混入英文引号会破坏 JSON 结构，此处将其替换为中文引号「」。
+    只在「已确定是值内部」时替换：简单策略是替换 { 和 } 之外的成对 ASCII 引号较复杂，
+    这里采用安全做法：把「中文语境下成对的 ASCII 引号」替换为中文引号。
+    """
+    # 成对 ASCII 引号 → 中文引号（只处理中文字符夹着的引号对）
+    import re as _re
+
+    # 模式：非 ASCII 引号开头的引号对（"xx"）且两侧是中文/标点 → 中文引号
+    out = []
+    i = 0
+    n = len(candidate)
+    while i < n:
+        ch = candidate[i]
+        if ch == '"':
+            # 向前找是否是「中文内容里的引号」：前一个字符是中文或中缀标点，且找到配对引号后跟中文
+            prev_is_cjk = i > 0 and (ord(candidate[i-1]) > 0x2E80 or candidate[i-1] in "，。！？、；：）】」…—")
+            if prev_is_cjk:
+                j = candidate.find('"', i + 1)
+                if j != -1:
+                    nxt = candidate[j+1] if j + 1 < n else ""
+                    next_is_cjk = nxt and (ord(nxt) > 0x2E80 or nxt in "，。！？、；：）】」…—")
+                    if next_is_cjk:
+                        out.append("\u201c")
+                        out.append(candidate[i+1:j].replace('\\"', '"'))
+                        out.append("\u201d")
+                        i = j + 1
+                        continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _drama_parse_script(raw: str) -> dict:
     """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音/尾随逗号）。"""
     text = raw.strip()
-    m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.S)
     if m:
         text = m.group(1)
+    # 兼容：直接输出分镜数组 [{...}]（分块生成时 LLM 可能省略外层对象）
+    data = None
     start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
+    arr_s, arr_e = text.find("["), text.rfind("]")
+    candidates = []
+    if start >= 0 and end > start:
+        candidates.append(text[start : end + 1])
+    if arr_s >= 0 and arr_e > arr_s:
+        candidates.append(text[arr_s : arr_e + 1])
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+            break
+        except json.JSONDecodeError:
+            try:
+                cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
+                data = json.loads(cleaned)
+                break
+            except json.JSONDecodeError:
+                # 中文引号修复后重试（LLM 台词里混入 ASCII 引号）
+                try:
+                    data = json.loads(_repair_json_quotes(candidate))
+                    break
+                except json.JSONDecodeError:
+                    continue
+    if data is None:
         raise ValueError("剧本输出不是 JSON")
-    candidate = text[start : end + 1]
-    try:
-        data = json.loads(candidate)
-    except json.JSONDecodeError:
-        # 长剧本 LLM 偶发尾随逗号，清洗后重试
-        cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
-        data = json.loads(cleaned)
+    if isinstance(data, list):
+        # 直接是分镜数组 → 包一层
+        scenes = data
+        data = {"scenes": scenes, "characters": []}
     scenes = data.get("scenes") or []
     if not scenes:
         raise ValueError("剧本没有分镜")
@@ -1662,6 +1723,7 @@ async def novel_to_script(
             f"{chars_block}{ep_block}\n"
             f"第 1 块需输出完整 characters 角色表；后续块可省略 characters（沿用第 1 块）。"
             f"剧情需连贯：第 {start_idx} 镜承接上一块结尾，本块结尾留悬念。"
+            f"\n重要：直接输出 JSON（不要 markdown 代码块、不要任何解释文字、不要省略号结尾）。"
         )
         ok_block = False
         for attempt in range(3):
@@ -1669,10 +1731,12 @@ async def novel_to_script(
                 raw = await call_llm_async(
                     _NOVEL_SYSTEM,
                     block_prompt,
-                    max_tokens=8000,
+                    max_tokens=16000,
                     temperature=0.85,
                     timeout=300,
                 )
+                if not raw or len(raw.strip()) < 20:
+                    raise ValueError("LLM 输出为空")
                 partial = _drama_parse_script(raw)
                 # 本块 scenes 的 id 从 1 起，需要偏移到全局序号
                 for s in partial["scenes"]:
@@ -1686,6 +1750,12 @@ async def novel_to_script(
                 ok_block = True
                 break
             except (ValueError, json.JSONDecodeError) as e:
+                logger.warning(f"剧本分块 {bi + 1} 解析失败: {e} | raw前200: {raw[:200]!r}")
+                try:
+                    with open(f"/tmp/raw_block_{bi}.txt", "w", encoding="utf-8") as _f:
+                        _f.write(raw or "")
+                except Exception:
+                    pass
                 if attempt == 2:
                     raise HTTPException(502, f"剧本解析失败（第 {bi + 1} 块）：{e}") from e
         if not ok_block:
