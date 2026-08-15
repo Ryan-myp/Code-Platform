@@ -1382,6 +1382,34 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
         # 兜底：无字幕直接复制（不抛错，保证出片）
         shutil.copy(video_path, out_path)
         return
+    # v1.0.59：字幕步后音轨完整性校验——混合采样率片段（配音 24kHz mono + i2v/
+    # dynseg 48kHz stereo）concat 会产生 AAC 损坏帧（实测 77 处/段），QC 会检出但
+    # 已晚；这里在 BGM 混音前拦截：损坏则视频 copy + 音轨重编码修复（aresample 统一
+    # 采样率，对 concat 型损坏有效；源数据损坏无法修复，由 QC 标记）。
+    try:
+        chk = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-i", out_path, "-f", "null", "-"],
+            capture_output=True, timeout=300,
+        )
+        _err = (chk.stderr or b"").decode(errors="replace")
+        if "Error submitting packet" in _err or "Invalid data found" in _err:
+            logger.warning("字幕产物音轨损坏，重编码修复（视频 copy）")
+            _fix = out_path + ".fix.mp4"
+            r2 = subprocess.run(
+                [FFMPEG_BIN, "-nostdin", "-y", "-i", out_path,
+                 "-map", "0:v", "-map", "0:a",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+                 "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0",
+                 _fix],
+                capture_output=True, timeout=600,
+            )
+            if r2.returncode == 0 and os.path.exists(_fix) and os.path.getsize(_fix) > 4096:
+                os.replace(_fix, out_path)
+                logger.info("音轨修复完成")
+            else:
+                logger.warning(f"音轨修复失败（由 QC 标记）: {(r2.stderr or b'')[-120:]}")
+    except Exception:
+        pass
     if not (bgm_path and os.path.exists(bgm_path)):
         return
     # BGM 混音（系统 ffmpeg，视频 copy）
