@@ -481,7 +481,7 @@ def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "")
         body = {
             "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
             "prompt": prompt,
-            "size": "1K",
+            "size": "1024x1792",
             "ratio": "9:16",
             "n": 1,
             "extra_body": {"response_format": "url"},
@@ -546,28 +546,14 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         body = {
             "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
             "prompt": prompt,
-            "size": "1K",
+            "size": "1024x1792",
             "ratio": "9:16",
             "n": 1,
             "extra_body": {"response_format": "url"},
         }
         if refs:
-            if len(refs) == 1:
-                body["image"] = ["data:image/jpeg;base64," + base64.b64encode(refs[0]).decode()]
-            else:
-                # 多角色同框：立绘水平拼接成一张参考图（左=角色A，右=角色B），
-                # 模型看到"多人并排"参考 → 同框时能分辨各角色形象
-                _ims = [Image.open(io.BytesIO(r)).convert("RGB") for r in refs[:2]]
-                _w = sum(im.width for im in _ims)
-                _h = max(im.height for im in _ims)
-                _canvas = Image.new("RGB", (_w, _h), (255, 255, 255))
-                _x = 0
-                for _im in _ims:
-                    _canvas.paste(_im, (_x, (_h - _im.height) // 2))
-                    _x += _im.width
-                _cbuf = io.BytesIO()
-                _canvas.save(_cbuf, format="JPEG", quality=85)
-                body["image"] = ["data:image/jpeg;base64," + base64.b64encode(_cbuf.getvalue()).decode()]
+            # AGNES 支持多图 reference：直接传各角色立绘 + prompt 描述位置区分
+            body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs[:3]]
         r = requests.post(
             f"{resolve_api_base()}/images/generations",
             headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
@@ -673,6 +659,41 @@ _SUB_SHOT_TYPES = (
     "close_zoom",   # 特写放大：聚焦面部/细节（情绪戏）
     "slow_push",    # 缓慢推进：情绪沉淀（温柔/悲伤）
 )
+
+
+def _shot_sequence(emotion: str, n: int, scene_idx: int) -> list[str]:
+    """场次内机位递进序列（专业剪辑：景别渐进产生情绪递进）。
+
+    结构：交代/进入（全景移动）→ 中景对话 → 特写聚焦 → 收尾（按情绪）
+    - happy/angry：收尾快速推近（情绪高涨）
+    - sad/gentle：收尾缓慢拉远（留白余韵）
+    - serious：收尾缓慢推进（悬而未决）
+    """
+    emo = (emotion or "neutral").strip().lower()
+    # 基础递进模板
+    base = []
+    if n >= 4:
+        base += ["zoom_out", "pan_left", "pan_right", "zoom_in"]
+    elif n == 3:
+        base = ["zoom_out", "zoom_in", "slow_push"]
+    elif n == 2:
+        base = ["zoom_out", "zoom_in"]
+    else:
+        base = ["slow_push"]
+    # 补足到 n：中间插入 close_zoom/tilt（情绪戏）
+    extra = ["close_zoom", "tilt_up", "tilt_down", "pan_left", "pan_right"]
+    while len(base) < n:
+        base.insert(len(base) - 1, extra[(scene_idx + len(base)) % len(extra)])
+    base = base[:n]
+    # 收尾机位按情绪
+    if len(base) >= 2:
+        if emo in ("happy", "angry"):
+            base[-1] = "close_zoom" if n >= 4 else "zoom_in"
+        elif emo in ("sad", "gentle"):
+            base[-1] = "zoom_out"
+        elif emo == "serious":
+            base[-1] = "slow_push"
+    return base
 
 
 def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
@@ -1276,7 +1297,15 @@ async def _drama_render_one(
         data = None
         if shot:
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
-            anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
+            _sc = [c for c in scene_chars if char_map[c].get("anchor")]
+            if len(_sc) >= 2:
+                # 多角色同框：按出场顺序标注位置（左/右），模型对位参考图
+                _pos = ["左边", "右边", "中间"][:len(_sc)]
+                anchors = "；".join(
+                    f"{_pos[i]}的是{char_map[c]['name']}（{char_map[c]['anchor']}）" for i, c in enumerate(_sc)
+                )
+            else:
+                anchors = "、".join(char_map[c]["anchor"] for c in _sc)
             refs = [char_refs[c] for c in scene_chars if c in char_refs]
             data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs, uid, art_style, sc.get("dialogue") or "", sc.get("shot_size") or "")
         if data:
@@ -1297,11 +1326,12 @@ async def _drama_render_one(
                         await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
                     else:
                         sub_clips = []
+                        _shot_seq = _shot_sequence(sc.get("emotion") or "", len(sub_audios), i)
                         for si, sa in enumerate(sub_audios):
                             sclip = os.path.join(tmpdir, f"shot_{i:03d}_{si:02d}.mp4")
                             s_dur = max(_probe_seconds(sa), 2.0)
-                            # 机位轮换 + 取景窗口（不同子镜取主图不同区域）
-                            shot_type = _SUB_SHOT_TYPES[(si + i) % len(_SUB_SHOT_TYPES)]
+                            # 机位递进（场次内景别渐进：交代→进入→聚焦→收尾）
+                            shot_type = _shot_seq[si % len(_shot_seq)]
                             # 取景窗口：全图或局部（特写窗口偏上中、横移窗口偏左/右）
                             if shot_type == "close_zoom":
                                 win = (0.15, 0.15, 0.7, 0.7)  # 中心偏上：面部
