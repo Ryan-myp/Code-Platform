@@ -116,6 +116,7 @@ class TestI2vidUrlValidation:
                 duration=5,
                 mode=mode,
                 image=image,
+                image_upload=None,  # 直接调用需显式传 None（File(None) 默认值非 None）
                 frame_rate=24,
                 sync=False,
                 current_user={"user_id": "u1", "username": "u1", "role": "user"},

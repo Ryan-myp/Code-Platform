@@ -42,10 +42,35 @@ def _quick_tts(*args, **kwargs):
     return _QUICK_TTS_BYTES
 
 
+_QUICK_MP4_BYTES = None
+
+
 def _fake_render(*args, **kwargs):
-    """假渲染：写一个真实小文件到 output_path（download 可打包）。"""
+    """假渲染：写一个真实有效 MP4 到 output_path（须通过 ffprobe 校验）。
+
+    与 _quick_tts 同理：纯假数据会被 _dh_validate_video 的 ffprobe 校验拒绝。
+    """
+    global _QUICK_MP4_BYTES
+    if _QUICK_MP4_BYTES is None:
+        import os
+        import subprocess
+        import tempfile
+
+        tmp = tempfile.mktemp(suffix=".mp4")
+        subprocess.run(
+            ["ffmpeg", "-y",
+             "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1",
+             "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+             "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "64k", tmp],
+            capture_output=True,
+            check=True,
+        )
+        with open(tmp, "rb") as f:
+            _QUICK_MP4_BYTES = f.read()
+        os.unlink(tmp)
     with open(kwargs["output_path"], "wb") as f:
-        f.write(b"FAKE_MP4" * 64)
+        f.write(_QUICK_MP4_BYTES)
 
 
 class TestBatchPipeline:

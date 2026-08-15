@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.helpers import _notify_progress
 from common.auth import require_auth
-from common.config import load_config
+from common.config import load_config, resolve_api_key, resolve_api_base
 from common.llm import _safe_exc_msg
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -465,18 +465,18 @@ async def get_style_preview(filename: str):
     return FileResponse(path, media_type="image/png")
 
 
-def _ai_bg(prompt: str) -> Image.Image:
+def _ai_bg(prompt: str, uid: str = "") -> Image.Image:
     """文生图生成表情包背景，失败抛异常。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-    from common.config import IMAGE_MODEL
+    from common.config import IMAGE_MODEL, require_model, resolve_feature_model
 
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY，AI 模式不可用（可先使用经典模板模式）")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key，AI 模式不可用（可先使用经典模板模式）")
     resp = requests.post(
-        f"{AGNES_API_BASE}/images/generations",
-        headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+        f"{resolve_api_base()}/images/generations",
+        headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
         json={
-            "model": IMAGE_MODEL,
+            "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "表情包"),
             "prompt": prompt,
             "size": "1024x1024",
             "n": 1,
@@ -623,7 +623,7 @@ async def _meme_render_bg(params: dict, _report) -> tuple:
         )
         if params["character"]:
             scene += f"，角色设定（全套必须完全一致）：{params['character']}；所有画面中的角色形象、服装、画风保持一致"
-        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}")
+        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}", payload.get("user_id") or "")
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
         if params["top_text"]:
@@ -712,6 +712,7 @@ async def generate_meme(
         "ai_prompt": ai_prompt,
         "ai_style": ai_style,
         "bg_upload": bg_upload,
+        "user_id": uid,
         "decoration": decoration,
         "template_id": template_id,
     }
@@ -1182,3 +1183,300 @@ async def _meme_generate_set_handler(task_id: str, payload: dict, update: Callab
 
 register_handler("meme_generate", _meme_generate_handler, user_limit=2)
 register_handler("meme_generate_set", _meme_generate_set_handler, user_limit=1)
+
+
+# ══════════════════════════════════════════════════════════════
+# 表情包工坊 v2 增强：GIF 动图生成 + 微信动表情打包
+# ══════════════════════════════════════════════════════════════
+
+
+# ── GIF 动图生成 ─────────────────────────────────────────────
+
+def _make_meme_gif(
+    base_img: Image.Image,
+    top_text: str,
+    bottom_text: str,
+    style: str,
+    frame_count: int = 8,
+    fps: int = 10,
+) -> bytes:
+    """将静态表情包渲染为 GIF 动图（文字缩放脉冲 + 轻微震动效果）。"""
+    frames = []
+    w, h = base_img.size
+
+    for i in range(frame_count):
+        # 每帧：文字大小脉冲 + 整体轻微平移模拟震动
+        progress = (i / max(frame_count - 1, 1)) * 2 * 3.14159  # 一个完整正弦周期
+        scale_factor = 1.0 + 0.03 * abs(progress)  # 文字 ±3% 缩放
+        shift_x = int(1.5 * (i % 2 == 0) - 0.75)
+        shift_y = int(1.0 * ((-1) ** i))
+
+        frame = base_img.copy()
+        draw = ImageDraw.Draw(frame)
+
+        # 缩放渲染文字（模拟脉冲）
+        try:
+            font_big = get_font(int(48 * scale_factor))
+            font_small = get_font(int(36 * scale_factor))
+        except Exception:
+            font_big = get_font(48)
+            font_small = get_font(36)
+
+        margin = 16
+        max_w = w - margin * 2
+
+        # 顶部文字（居中，带阴影偏移）
+        if top_text:
+            lines = _wrap_text(draw, top_text, font_big, max_w, max_lines=2)
+            text_h = sum(draw.textlength(ln, font=font_big) for ln in lines) if hasattr(draw, 'textlength') else h // 3
+            y_start = margin + shift_y
+            for ln in lines:
+                txt_w = draw.textlength(ln, font=font_big) if hasattr(draw, 'textlength') else len(ln) * font_big.size * 0.6
+                x = (w - txt_w) // 2 + shift_x
+                _draw_centered_label(frame, ln, y_start, "#FFFFFF", "#000000")
+                y_start += font_big.size + 4
+
+        # 底部文字
+        if bottom_text:
+            lines = _wrap_text(draw, bottom_text, font_small, max_w, max_lines=2)
+            y_start = h - margin - font_small.size * len(lines) - shift_y
+            for ln in lines:
+                txt_w = draw.textlength(ln, font=font_small) if hasattr(draw, 'textlength') else len(ln) * font_small.size * 0.5
+                x = (w - txt_w) // 2 - shift_x
+                _draw_centered_label(frame, ln, y_start, "#FFFFFF", "#000000")
+                y_start += font_small.size + 4
+
+        # 轻微整体裁切模拟震动
+        if shift_x or shift_y:
+            frame = frame.crop((-abs(shift_x), -abs(shift_y), w + abs(shift_x), h + abs(shift_y)))
+            if frame.size != (w, h):
+                new_frame = Image.new("RGBA" if base_img.mode == "RGBA" else "RGB", (w, h), (255, 255, 255, 0))
+                new_frame.paste(frame, (max(shift_x, 0), max(shift_y, 0)))
+                frame = new_frame
+
+        frames.append(frame)
+
+    # 保存为 GIF
+    buf = io.BytesIO()
+    if frames:
+        first = frames[0]
+        others = frames[1:]
+        first.save(
+            buf,
+            format="GIF",
+            save_all=True,
+            append_images=others,
+            duration=int(1000 / fps),
+            loop=0,
+            optimize=True,
+        )
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@router.post("/generate/gif")
+async def generate_meme_gif(
+    top_text: str = Form(""),
+    bottom_text: str = Form(""),
+    style: str = Form("yellow"),
+    frame_count: int = Form(8, ge=4, le=16, description="动图帧数（4-16）"),
+    fps: int = Form(10, ge=5, le=24, description="帧率（5-24 FPS）"),
+    current_user: dict = require_auth(),
+):
+    """生成 GIF 动图版表情包：静态图 + 文字脉冲震动动画。
+
+    v20：在现有静态表情包基础上，额外生成循环动图（GIF），
+    适合微信/Telegram/WhatsApp 聊天场景的动态表情。
+    """
+    top_text = (top_text or "").strip()
+    bottom_text = (bottom_text or "").strip()
+    if not top_text and not bottom_text:
+        raise HTTPException(400, "请输入至少一行文字")
+    if style not in {s["id"] for s in STYLES}:
+        raise HTTPException(400, "无效的风格类型")
+
+    # 先生成静态底图
+    temp_dir = MEME_DIR / ".temp_gif"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_png = temp_dir / f"gtmp_{int(time.time() * 1000)}.png"
+
+    try:
+        # 复用现有渲染逻辑生成静态图
+        params = {"top_text": top_text, "bottom_text": bottom_text, "style": style}
+        static_img = await _meme_render_bg(params, None)
+        base = static_img[0] if isinstance(static_img, tuple) else static_img
+        if isinstance(base, str):
+            base = Image.open(base)
+        elif not isinstance(base, Image.Image):
+            base = Image.new("RGB", (400, 400), (255, 255, 255))
+
+        gif_data = _make_meme_gif(base, top_text, bottom_text, style, frame_count, fps)
+
+        # 保存 GIF
+        gif_filename = f"meme_gif_{int(time.time() * 1000)}.gif"
+        gif_path = MEME_DIR / gif_filename
+        gif_path.write_bytes(gif_data)
+
+        # 保存到 artifacts
+        meta = {
+            "top_text": top_text,
+            "bottom_text": bottom_text,
+            "style": style,
+            "type": "gif",
+            "frame_count": frame_count,
+            "fps": fps,
+            "created_at": datetime.now().isoformat(),
+        }
+        save_artifact("meme", gif_filename, json.dumps(meta, ensure_ascii=False), extra={"style_label": style})
+
+        return {
+            "url": f"/api/meme/images/{gif_filename}",
+            "filename": gif_filename,
+            "format": "gif",
+            "size_bytes": len(gif_data),
+            "frames": frame_count,
+            "fps": fps,
+        }
+    finally:
+        # 清理临时文件
+        try:
+            tmp_png.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+# ── 微信动表情打包（Animated Sticker Pack）──────────────────
+WECHAT_ANIMATED_SPECS = [
+    {"name": "主图", "value": "GIF 动图（≤3MB）", "desc": "微信动表情主图，支持动画"},
+    {"name": "缩略图", "value": "PNG 静帧 120×120", "desc": "聊天列表预览图"},
+    {"name": "图标", "value": "PNG 50×50", "desc": "表情面板图标"},
+    {"name": "横幅", "value": "PNG 750×400", "desc": "详情页 Banner"},
+    {"name": "上限", "value": "每套 16 张动图", "desc": "超出自动拆分多套"},
+]
+WECHAT_ANIMATED_NOTES = [
+    "动表情审核比静态表情更严格，确保内容健康、动画流畅无闪烁",
+    "单个 GIF 文件 ≤ 3MB，帧率建议 10-15fps 保证流畅与体积平衡",
+    "动表情需要单独审核，提交时勾选「动态表情」类别",
+    "动表情上架后可设置付费（最低定价 ¥1.00）",
+]
+
+
+@router.post("/publish-pack/animated")
+async def meme_publish_animated_pack(
+    ids: list[str] = Form(...),
+    pack_title: str = Form("我的动表情"),
+    pack_desc: str = Form("AI 生成趣味动表情"),
+    current_user: dict = require_auth(),
+):
+    """微信动表情发布包：筛选 GIF 动图打包为微信表情开放平台动表情格式。
+
+    v20：支持 GIF 动图的微信动表情打包，含上传指南与平台规格说明。
+    """
+    from pathlib import Path as _Path
+
+    gif_ids = [f for f in ids if f.endswith(".gif") and _Path(MEME_DIR, f).exists()]
+    if not gif_ids:
+        raise HTTPException(400, "没有找到有效的 GIF 动图（请先用 /generate/gif 生成动表情）")
+
+    sets = split_pack_sets(gif_ids)
+    sets = [[f for f in s if _Path(MEME_DIR, f).exists()] for s in sets]
+    sets = [s for s in sets if s]
+    if not sets:
+        raise HTTPException(400, "没有可打包的动表情文件")
+
+    meta = _artifact_meta()
+    root = pack_dir_name("wechat_animated_meme")
+    entries: dict = {}
+    set_total = len(sets)
+
+    for idx, s in enumerate(sets, 1):
+        set_root = f"{root}/动表情第{idx}套" if set_total > 1 else root
+        for fname in s:
+            fpath = _Path(MEME_DIR) / fname
+            if fpath.exists():
+                entries[f"{set_root}/{fname}"] = str(fpath)
+
+    # 生成缩略图（从 GIF 取第一帧）
+    thumb_buf = io.BytesIO()
+    icon_buf = io.BytesIO()
+    banner_buf = io.BytesIO()
+    try:
+        with Image.open(_Path(MEME_DIR) / gif_ids[0]) as img:
+            # 动图取第一帧做缩略图
+            thumb_img = img.convert("RGBA") if img.mode != "RGBA" else img.copy()
+            thumb_img.thumbnail((120, 120), Image.LANCZOS)
+            thumb_img.save(thumb_buf, "PNG")
+            icon_img = thumb_img.resize((50, 50), Image.LANCZOS)
+            icon_img.save(icon_buf, "PNG")
+    except Exception:
+        # fallback：用纯色图
+        fallback = Image.new("RGBA", (120, 120), (100, 100, 255, 255))
+        fallback.save(thumb_buf, "PNG")
+        fallback.resize((50, 50)).save(icon_buf, "PNG")
+
+    # 生成横幅
+    try:
+        with Image.open(_Path(MEME_DIR) / gif_ids[0]) as img:
+            banner_img = img.copy().convert("RGBA")
+            banner_img.thumbnail((750, 400), Image.LANCZOS)
+            banner_img.save(banner_buf, "PNG")
+    except Exception:
+        banner_buf = thumb_buf  # fallback 复用
+
+    entries[f"{root}/thumb_120x120.png"] = thumb_buf.getvalue()
+    entries[f"{root}/icon_50x50.png"] = icon_buf.getvalue()
+    entries[f"{root}/banner_750x400.png"] = banner_buf.getvalue()
+
+    total = sum(len(s) for s in sets)
+    entries[f"{root}/上传指南_微信动表情开放平台.md"] = (
+        "# 微信动表情开放平台上传指南（v20）\n\n"
+        "1. 注册登录表情开放平台：https://sticker.weixin.qq.com\n"
+        "2. 选择「上传表情」→「动态表情」→ 填写表情名称/介绍/版权信息\n"
+        "3. 依次上传 GIF 动图主图（≤3MB/张），本包已按规格生成缩略图/图标/横幅\n"
+        "4. 动表情审核时间约 3-5 个工作日，比静态表情审核周期更长\n"
+        "5. 审核通过后即可上架，动表情支持付费销售（最低 ¥1.00）"
+        + (f"（共 {set_total} 套，每套独立提交）" if set_total > 1 else "")
+        + "\n\n## 注意事项\n"
+        "- 动表情内容需健康向上，避免暴力/色情/低俗动画\n"
+        "- 单个 GIF ≤ 3MB，推荐帧率 10-15fps\n"
+        "- 动表情与静态表情需分别提交审核"
+    )
+    entries[f"{root}/规格说明.md"] = platform_spec_text(
+        "微信动表情开放平台", WECHAT_ANIMATED_SPECS, WECHAT_ANIMATED_NOTES
+    )
+    entries[f"{root}/LICENSE.txt"] = license_text(f"微信动表情包《{pack_title}》")
+
+    # 质量自检
+    try:
+        gif_sizes = []
+        for fname in gif_ids:
+            fpath = _Path(MEME_DIR) / fname
+            if fpath.exists():
+                gif_sizes.append(fpath.stat().st_size)
+        avg_size_kb = sum(gif_sizes) / max(len(gif_sizes), 1) / 1024
+        over_limit = sum(1 for s in gif_sizes if s > 3 * 1024 * 1024)
+        entries[f"{root}/质量自检报告.md"] = quality_report(
+            f"微信动表情包《{pack_title}》",
+            text_check=None,
+            image_quality=None,
+            extra=[
+                f"动表情张数：{total} 张（{set_total} 套）",
+                f"平均大小：{avg_size_kb:.0f} KB/张",
+                f"超限（>3MB）：{over_limit} 张",
+                "规格合规：GIF ≤ 3MB / 缩略图 120×120 / 图标 50×50 / 横幅 750×400",
+            ],
+        )
+    except Exception:
+        pass
+
+    buf = build_publish_zip(entries, "wechat_animated_meme")
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue()),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="wechat_animated_pack_{int(time.time())}.zip"',
+        },
+    )
+
+
+__all__ = ["router"]

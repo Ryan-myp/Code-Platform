@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
-from common.config import load_config, resolve_api_key
+from common.config import load_config, resolve_api_key, resolve_api_base
 from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -454,12 +454,13 @@ async def get_stats(current_user: dict = require_auth()):
 def _parse_video_params(payload: dict) -> dict:
     """解析视频生成参数：校验 prompt，按 8n+1 规则计算帧数（最大 441 帧）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-    from common.config import VIDEO_MODEL
+    from common.config import VIDEO_MODEL, require_model, resolve_feature_model
 
     prompt = (payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "请输入画面描述")
-    model = payload.get("model") or VIDEO_MODEL
+    _uid = payload.get("user_id") or ""
+    model = require_model(payload.get("model") or resolve_feature_model(_uid, "video", VIDEO_MODEL), "视频")
     width = int(payload.get("width") or 1152)
     height = int(payload.get("height") or 768)
     duration = int(payload.get("duration") or 5)
@@ -523,7 +524,7 @@ async def _create_video_task(api_payload: dict, report: Callable, channel: str =
     try:
         response = await asyncio.to_thread(
             requests.post,
-            f"{AGNES_API_BASE}/videos",
+            f"{resolve_api_base()}/videos",
             headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json=api_payload,
             timeout=60,
@@ -590,7 +591,7 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
         try:
             resp = await asyncio.to_thread(
                 requests.get,
-                f"{AGNES_API_BASE}/agnesapi",
+                f"{resolve_api_base()}/agnesapi",
                 params={"video_id": video_id},
                 headers={"Authorization": f"Bearer {resolve_api_key()}"},
                 timeout=30,
@@ -809,6 +810,7 @@ async def create_video_task(
         "mode": mode,
         "image": img_url,
         "frame_rate": frame_rate,
+        "user_id": uid,
         "project_id": project_id,
     }
     if sync:
@@ -835,7 +837,7 @@ async def get_video_result(video_id: str, project_id: str = "", current_user: di
     try:
         response = await asyncio.to_thread(
             requests.get,
-            f"{AGNES_API_BASE}/agnesapi",
+            f"{resolve_api_base()}/agnesapi",
             params={"video_id": video_id},
             headers={"Authorization": f"Bearer {resolve_api_key()}"},
             timeout=30,
@@ -1651,7 +1653,7 @@ async def auto_generate_subtitle(
 
             # 调用 OpenAI 兼容的 Whisper API
             api_key = resolve_api_key()
-            api_base = AGNES_API_BASE.rstrip("/")
+            api_base = resolve_api_base().rstrip("/")
             async with httpx.AsyncClient(timeout=120) as client:
                 with open(audio_path, "rb") as f:
                     resp = await client.post(

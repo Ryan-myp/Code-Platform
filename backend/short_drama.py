@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import save_artifact
 from common.auth import require_auth
-from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config
+from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config, resolve_api_key, resolve_api_base
 from common.llm import call_llm_async
 from task_queue import create_task, register_handler
 
@@ -359,7 +359,7 @@ def _anchor_search(char: dict | None, search: str) -> str:
     return q
 
 
-def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None) -> bytes | None:
+def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "") -> bytes | None:
     """AGNES 文生图/图生图镜头插画（v13.30 角色一致性）。
 
     参考图 refs（按出场角色顺序，每角色最近一张单人插画）非空 → 图生图/多图合成
@@ -367,7 +367,7 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
     无参考图 → 纯文生图（文字锚定兜底）。统一 scale+crop 到 720x1280；
     无 key/超时/接口异常一律返回 None，由调用方静默回退渐变卡片，不阻塞主链路。
     """
-    if not shot or not AGNES_API_KEY:
+    if not shot or not resolve_api_key():
         return None
     try:
         import base64
@@ -375,7 +375,7 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         import requests
         from PIL import Image
         # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-        from common.config import IMAGE_MODEL
+        from common.config import IMAGE_MODEL, require_model, resolve_feature_model
         from common.llm import api_error_detail
 
         prompt = (
@@ -384,7 +384,7 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
             + shot
         )
         body = {
-            "model": IMAGE_MODEL,
+            "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
             "prompt": prompt,
             "size": "1K",
             "ratio": "9:16",
@@ -394,8 +394,8 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         if refs:
             body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs]
         r = requests.post(
-            f"{AGNES_API_BASE}/images/generations",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            f"{resolve_api_base()}/images/generations",
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json=body,
             timeout=90,
         )
@@ -420,14 +420,14 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         return None
 
 
-def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, shot: str = "") -> bool:
+def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, shot: str = "", uid: str = "") -> bool:
     """PIL 生成镜头背景图：优先 AGNES 插画（shot 画面描述），失败回退渐变海报。
 
     v13.29 去"大字报"：渐变底不再印整段台词（字幕才是文字载体，避免画面=字幕），
     只保留剧名 + 镜头序号 + 短标题；插画失败静默回退，不阻塞主链路。
     """
     if shot:
-        data = _generate_scene_image(shot)
+        data = _generate_scene_image(shot, uid=uid)
         if data:
             try:
                 with open(path, "wb") as f:
@@ -692,6 +692,15 @@ def _make_preview(video_path: str, out_mp4: str) -> None:
         logger.warning(f"预览视频生成失败: {e}")
 
 
+def _srt_ts(seconds: float) -> str:
+    """秒数 → SRT 时间戳（HH:MM:SS,mmm）。"""
+    ms = int(round(seconds * 1000))
+    h, rem = divmod(ms, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, msec = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{msec:03d}"
+
+
 def _make_srt(scenes: list[dict], durations: list[float], voice_durs: list[float], out_path: str) -> None:
     """生成 SRT：每镜一条（旁白/台词合并为字幕文本）。
 
@@ -853,7 +862,7 @@ def _drama_quota_check(uid: str, avatar_mode: bool) -> None:
         if not quota.get("allowed"):
             raise HTTPException(
                 402,
-                "今日短剧生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+                "今日短剧生成次数已用完，可在次日 0 点自动恢复",
             )
 
 
@@ -935,7 +944,7 @@ async def _drama_render_one(
             if len(scene_chars) == 1:
                 char_refs[scene_chars[0]] = data
         else:
-            ok = await asyncio.to_thread(_make_scene_card, text, i, total, title, img_path)
+            ok = await asyncio.to_thread(_make_scene_card, text, i, total, title, img_path, uid=uid)
             if ok:
                 await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
     return (clip if ok else None), audio_path, dh_off
@@ -1217,7 +1226,7 @@ async def export_shot_sheet(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, "服务异常，请稍后重试") from e
+        raise HTTPException(400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构") from e
     characters = []
     if characters_json:
         try:
@@ -1251,7 +1260,7 @@ async def material_manifest(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, "服务异常，请稍后重试") from e
+        raise HTTPException(400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构") from e
     return build_material_manifest(scenes)
 
 
@@ -1428,87 +1437,5 @@ async def list_dramas(current_user: dict = require_auth()):
                     "created_at": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime)),
                 }
             )
-    return {"items": items}
 
 
-async def _generate_script(scene_data: dict) -> str:
-    """生成剧本台词。"""
-    scene = scene_data.get("scene", "")
-    characters = scene_data.get("characters", [])
-    
-    # 简化的剧本生成逻辑
-    script = f"场景：{scene}"
-    
-    for char in characters:
-        name = char.get("name", "角色")
-        script += f"{name}：（台词待生成）"
-    
-    return script
-
-
-async def _generate_scene_image(prompt: str, style: str = "cinematic") -> str:
-    """生成场景图片。"""
-    # 调用图片生成 API
-    try:
-        from common.image_gen import generate_image
-        result = await generate_image(prompt, style=style)
-        return result.get("url", "")
-    except Exception as e:
-        print(f"场景图片生成失败: {e}")
-        return ""
-
-
-async def _generate_character_audio(text: str, voice_id: str = "default") -> str:
-    """生成角色配音。"""
-    # 调用 TTS 引擎
-    try:
-        import edge_tts
-        import asyncio
-        
-        voice_map = {
-            "default": "zh-CN-XiaoxiaoNeural",
-            "male": "zh-CN-YunxiNeural",
-            "female": "zh-CN-XiaoxiaoNeural"
-        }
-        
-        voice = voice_map.get(voice_id, "zh-CN-XiaoxiaoNeural")
-        communicate = edge_tts.Communicate(text, voice)
-        output_file = f"/tmp/audio_{id(asyncio.get_event_loop())}.mp3"
-        
-        await communicate.save(output_file)
-        return output_file
-    except Exception as e:
-        print(f"配音生成失败: {e}")
-        return ""
-
-
-async def _assemble_drama_video(scenes: list[dict]) -> str:
-    """组装剧情视频。"""
-    import subprocess
-    import os
-    
-    output_path = f"/tmp/drama_{id(asyncio.get_event_loop())}.mp4"
-    
-    # 使用 ffmpeg 拼接视频片段
-    list_file = f"/tmp/scenes_{id(asyncio.get_event_loop())}.txt"
-    with open(list_file, 'w') as f:
-        for scene in scenes:
-            video = scene.get("video", "")
-            audio = scene.get("audio", "")
-            if video:
-                f.write(f"file '{video}'")
-                if audio:
-                    f.write(f"file '{audio}'")
-    
-    cmd = [
-        "ffmpeg", "-f", "concat", "-safe", "0",
-        "-i", list_file,
-        "-c", "copy",
-        output_path
-    ]
-    
-    result = subprocess.run(cmd, capture_output=True, timeout=300)
-    if result.returncode == 0:
-        return output_path
-    
-    return ""

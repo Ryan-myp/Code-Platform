@@ -34,7 +34,11 @@ def _wrap(fn):
             raise
         except Exception as e:
             logger.exception("接口异常: %s.%s", fn.__module__, fn.__name__)
-            raise HTTPException(500, "服务异常，请稍后重试") from e
+            # v22.2：详情附带原始异常信息（截断防泄漏），便于前端定位与用户反馈
+            detail = str(e) or e.__class__.__name__
+            if len(detail) > 200:
+                detail = detail[:200] + "…"
+            raise HTTPException(500, f"服务异常，请稍后重试（{detail}）") from e
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -44,7 +48,10 @@ def _wrap(fn):
             raise
         except Exception as e:
             logger.exception("接口异常: %s.%s", fn.__module__, fn.__name__)
-            raise HTTPException(500, "服务异常，请稍后重试") from e
+            detail = str(e) or e.__class__.__name__
+            if len(detail) > 200:
+                detail = detail[:200] + "…"
+            raise HTTPException(500, f"服务异常，请稍后重试（{detail}）") from e
 
     return awrapper if inspect.iscoroutinefunction(fn) else wrapper
 

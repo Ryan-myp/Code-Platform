@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  Globe,
 } from 'lucide-react'
 import { Card, Button, Badge, Empty, PageHeader, Modal, Pagination,
 } from '../components/ui'
@@ -289,6 +290,27 @@ export default function MiniAppPage() {
       toast.success('发布包已下载（项目代码 + 介绍 + 审核清单 + 质量报告）')
     } catch (e) {
       toast.error(`下载失败：${e.message}`)
+    }
+  }
+
+  // v22：服务端在线预览（wxml→html + Mock 数据注入 + 页面 Tab 切换）
+  const [serverPreviewBusy, setServerPreviewBusy] = useState(false)
+  const serverPreview = async () => {
+    if (!viewing) return
+    setServerPreviewBusy(true)
+    try {
+      const res = await api.get(`/api/miniapp/preview-html/${viewing.id}`)
+      const url = res.data.url
+      const win = window.open(`/miniapp-preview${url.replace('/api/miniapp/preview', '')}`, '_blank')
+      if (!win) {
+        // 弹窗被拦截时降级：直接打开
+        window.location.href = `/miniapp-preview${url.replace('/api/miniapp/preview', '')}`
+      }
+      toast.success('服务端预览已生成（含 Mock 数据）')
+    } catch (e) {
+      toast.error(`预览生成失败：${e.message}`)
+    } finally {
+      setServerPreviewBusy(false)
     }
   }
 
@@ -603,6 +625,9 @@ export default function MiniAppPage() {
             </Button>
             <Button variant="secondary" icon={Rocket} onClick={loadGuide}>
               部署指引
+            </Button>
+            <Button variant="secondary" icon={Globe} loading={serverPreviewBusy} onClick={serverPreview}>
+              在线预览（服务端）
             </Button>
             <Button variant="secondary" icon={Download} onClick={downloadZip}>
               下载发布包

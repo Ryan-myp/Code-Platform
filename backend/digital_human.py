@@ -484,10 +484,11 @@ def _get_portrait_url(avatar_id: str) -> str:
     return f"/api/image-factory/avatars/{avatar_id}.jpg"
 
 
-def _generate_portrait(avatar_id: str) -> str | None:
+def _generate_portrait(avatar_id: str, uid: str = "") -> str | None:
     """调用 AI 图片生成 API 为指定数字人生成写真肖像。
 
     返回本地文件路径，失败返回 None。
+    uid: 用户 id，用于回退用户图片模型偏好（本地版不写死模型）。
     """
     avatar = next((a for a in AVATARS if a["id"] == avatar_id), None)
     if not avatar:
@@ -512,11 +513,11 @@ def _generate_portrait(avatar_id: str) -> str | None:
         "style, shallow depth of field, 8k uhd, hyper-realistic detail"
     )
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL
+    from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL, require_model, resolve_api_key, resolve_api_base
     from common.llm import api_error_detail
 
-    if not AGNES_API_KEY:
-        logger.warning("未配置 AGNES_API_KEY，无法生成数字人写真")
+    if not resolve_api_key():
+        logger.warning("未配置中转站 API Key，无法生成数字人写真")
         return None
 
     # 竖版尺寸（4:5）更贴近半身像构图；API 不支持时降级回方形
@@ -524,10 +525,12 @@ def _generate_portrait(avatar_id: str) -> str | None:
         try:
             import requests as _req
 
-            url = f"{AGNES_API_BASE}/images/generations"
-            headers = {"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"}
+            url = f"{resolve_api_base()}/images/generations"
+            headers = {"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"}
+            from common.config import resolve_feature_model
+
             payload = {
-                "model": IMAGE_MODEL,
+                "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
                 "prompt": prompt,
                 "size": size,
                 "n": 1,
@@ -921,6 +924,247 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
         return [min(v / mx, 1.0) for v in curve]
     except Exception:
         return []
+
+
+# ══════════════════════════════════════════════════════════════
+# 数字人 lip-sync v2 增强：音频驱动 + 字级双源融合
+# ══════════════════════════════════════════════════════════════
+
+# 扩展版韵母口型表（v20：增加更多音标分类，覆盖常见拼音韵母）
+_ENHANCED_MOUTH_SHAPES = {
+    # 单韵母
+    "a": (1.0, 0.5),   # 大口
+    "o": (0.75, 0.95),  # 圆嘴
+    "e": (0.55, 0.65),  # 半开
+    "i": (0.45, 0.25),  # 扁嘴
+    "u": (0.55, 1.0),   # 嘟嘴
+    "v": (0.6, 0.8),    # ü 扁圆
+    "er": (0.65, 0.7),  # 儿化
+    # 鼻韵母
+    "an": (0.8, 0.4),   # 前鼻音
+    "en": (0.6, 0.5),
+    "ang": (0.9, 0.3),  # 后鼻音
+    "eng": (0.7, 0.4),
+    "ing": (0.5, 0.3),
+    "ong": (0.7, 0.85),
+    "ian": (0.75, 0.35),
+    "in": (0.6, 0.4),
+    "ün": (0.65, 0.75),
+    "ions": (0.5, 0.5),
+    # 闭口音
+    "n": (0.15, 0.4),   # 鼻音收尾
+    "ng": (0.2, 0.45),
+    # 默认
+    "": (0.0, 0.5),
+}
+
+
+def _audio_driven_mouth(path: str, fps: float, duration: float) -> list:
+    """音频驱动口型曲线：从音频能量包络中提取开合度，与字级口型融合。
+
+    v20 增强：不仅依赖文字，还分析音频的实际能量变化，在重音处加大开合，
+    静音段保持闭口，使嘴型更贴合实际语音节奏。
+    """
+    energy_curve = _audio_energy_curve(path, duration, fps)
+    if not energy_curve:
+        return []
+
+    # 能量 → 开合度映射（非线性：低能量→小开合，高能量→大开合）
+    mouth_curve = []
+    for e in energy_curve:
+        # 软阈值：低于 20% 能量时保持接近闭口
+        if e < 0.2:
+            open_val = e * 0.5  # 轻微张开
+        else:
+            open_val = 0.3 + 0.7 * ((e - 0.2) / 0.8)  # 线性映射到 0.3~1.0
+        open_val = min(max(open_val, 0.0), 1.0)
+        mouth_curve.append((open_val, 0.5))  # roundness 默认中性
+
+    return mouth_curve
+
+
+def _blend_mouth_shapes(script_curve: list, audio_curve: list, alpha: float = 0.6) -> list:
+    """混合脚本驱动口型（alpha=0.6）与音频驱动口型（1-alpha=0.4）。
+
+    alpha 越高，越依赖文字读音；越低，越跟随实际音频能量。
+    """
+    if not audio_curve:
+        return script_curve
+    if not script_curve:
+        return audio_curve
+
+    len_script = len(script_curve)
+    len_audio = len(audio_curve)
+    min_len = min(len_script, len_audio)
+    max_len = max(len_script, len_audio)
+
+    result = []
+    for i in range(max_len):
+        sc = script_curve[i] if i < len_script else (0.0, 0.5)
+        ac = audio_curve[i] if i < len_audio else (0.0, 0.5)
+        blended_open = alpha * sc[0] + (1 - alpha) * ac[0]
+        blended_round = alpha * sc[1] + (1 - alpha) * ac[1]
+        result.append((blended_open, blended_round))
+    return result
+
+
+def _build_script_timeline_v2(text: str, duration: float, audio_path: str = "", fps: float = 25) -> list:
+    """v2 字级口型时间轴：文字读音 + 可选音频能量融合。
+
+    比原版 _build_script_timeline 多了音频能量融合能力。
+    """
+    import re
+    from pypinyin import Style, pinyin
+
+    hanzi = re.compile(r"[\u4e00-\u9fff]")
+    units = []
+    for ch in text:
+        if hanzi.match(ch):
+            units.append((ch, 1.0))
+        else:
+            units.append((ch, 0.5))
+    total = sum(u[1] for u in units) or 1.0
+    unit_dur = duration / total
+    timeline = []
+    cur = 0.0
+    for ch, w in units:
+        start, end = cur, cur + w * unit_dur
+        if hanzi.match(ch):
+            try:
+                final = pinyin(ch, style=Style.FINALS, errors="default", heteronym=False)[0][0]
+            except Exception:
+                final = ""
+            key = final[0] if final else "n"
+            open_, round_ = _ENHANCED_MOUTH_SHAPES.get(key, _ENHANCED_MOUTH_SHAPES["e"])
+        else:
+            open_, round_ = 0.0, 0.5
+        timeline.append((ch, start, end, open_, round_))
+        cur = end
+
+    # 如果有音频，融合音频驱动的口型
+    if audio_path:
+        try:
+            audio_mouth = _audio_driven_mouth(audio_path, fps, duration)
+            if audio_mouth:
+                timeline_audio = []
+                audio_idx = 0
+                audio_step = len(audio_mouth) / max(len(timeline), 1)
+                for ch, start, end, op, ro in timeline:
+                    # 取该时间段内的平均音频口型
+                    segment_end_idx = int((end / duration) * len(audio_mouth))
+                    segment_start_idx = int((start / duration) * len(audio_mouth))
+                    segment = audio_mouth[segment_start_idx:segment_end_idx]
+                    if segment:
+                        avg_open = sum(s[0] for s in segment) / len(segment)
+                        avg_round = sum(s[1] for s in segment) / len(segment)
+                        # 在时间段内均匀插入音频口型点
+                        n_points = max(1, int((end - start) * fps))
+                        for j in range(n_points):
+                            t_frac = j / max(n_points - 1, 1)
+                            t = start + (end - start) * t_frac
+                            # 原始文字口型按包络调制
+                            prog = t_frac
+                            if op <= 0.01:
+                                blended = (0.0, 0.5)
+                            else:
+                                if prog < 0.15:
+                                    env = prog / 0.15
+                                elif prog > 0.85:
+                                    env = (1 - prog) / 0.15
+                                else:
+                                    env = 1.0
+                                text_open = op * env
+                                audio_weight = 0.35  # 音频贡献权重
+                                blended = (
+                                    (1 - audio_weight) * text_open + audio_weight * avg_open,
+                                    (1 - audio_weight) * ro + audio_weight * avg_round,
+                                )
+                            timeline_audio.append((ch, t, t + 1.0 / fps, blended[0], blended[1]))
+                return timeline_audio
+        except Exception as e:
+            logger.debug(f"音频口型融合失败，回退纯文字驱动: {e}")
+
+    return timeline
+
+
+def _mouth_shape_at_v2(timeline: list, t: float, smooth: float = 0.025) -> tuple:
+    """v2 平滑口型查询：支持帧级时间轴（由 _build_script_timeline_v2 生成）。"""
+    def _shape_at(t0: float) -> tuple:
+        for _, _, _, open_, round_ in timeline:
+            if open_ <= 0.01:
+                return (0.0, 0.5)
+            # 找到包含 t0 的时间段
+            # 由于 v2 timeline 是帧级别的，用最近邻
+        # 遍历所有帧，找最接近的
+        best = (0.0, 0.5)
+        best_dist = float("inf")
+        for _, t_start, t_end, op, ro in timeline:
+            if t_start <= t0 <= t_end:
+                return (op, ro)
+            dist = abs(t0 - (t_start + t_end) / 2)
+            if dist < best_dist:
+                best_dist = dist
+                best = (op, ro)
+        return best
+
+    if smooth <= 0:
+        return _shape_at(t)
+    half = smooth / 2.0
+    a, b, c = _shape_at(t - half), _shape_at(t), _shape_at(t + half)
+    return ((a[0] + 2 * b[0] + c[0]) / 4.0, (a[1] + 2 * b[1] + c[1]) / 4.0)
+
+
+def _lip_sync_quality(audio_path: str, script_text: str, duration: float, fps: int = 25) -> dict:
+    """评估 lip-sync 质量（用于用户预览反馈）。
+
+    指标：
+    - energy_match: 音频能量峰值与脚本关键音节的重合度（0~1）
+    - silence_gaps: 静音段数（越多说明停顿时嘴型闭合越好）
+    - open_range: 开合度动态范围（越大说明嘴动越丰富）
+    """
+    try:
+        energy = _audio_energy_curve(audio_path, duration, fps)
+        if not energy:
+            return {"status": "no_audio", "energy_match": 0.0, "open_range": 0.0}
+
+        # 计算开合度范围
+        open_range = max(energy) - min(energy) if energy else 0.0
+
+        # 静音段统计（能量 < 15% 的连续段）
+        silence_count = 0
+        in_silence = False
+        for e in energy:
+            if e < 0.15:
+                if not in_silence:
+                    silence_count += 1
+                    in_silence = True
+            else:
+                in_silence = False
+
+        # 能量峰值与脚本重音匹配（简化：取能量最高的 10% 帧占比）
+        peak_ratio = sum(1 for e in energy if e > 0.7) / max(len(energy), 1)
+
+        # 综合评分
+        score = 0.0
+        if open_range > 0.3:
+            score += 0.4  # 开合度足够
+        if silence_count > 2:
+            score += 0.3  # 有自然的停顿
+        if 0.05 < peak_ratio < 0.3:
+            score += 0.3  # 峰值比例合理
+
+        return {
+            "status": "ok",
+            "score": round(score * 100),
+            "open_range": round(open_range, 3),
+            "silence_gaps": silence_count,
+            "peak_ratio": round(peak_ratio, 3),
+            "frame_count": len(energy),
+            "duration_sec": round(duration, 1),
+        }
+    except Exception as e:
+        logger.debug(f"lip-sync 质量评估失败: {e}")
+        return {"status": "error", "error": str(e)}
 
 
 # 口型形状表：拼音韵母首音 → (开度 0~1, 圆度 0~1)
@@ -1667,9 +1911,10 @@ def _draw_portrait_region(img, draw, portrait, t, energy, S, width, height, talk
     img.paste(glow_layer, (px - 60, py - 55), glow_layer)
 
 
-def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, avatar) -> None:
+def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, avatar, fonts) -> None:
     """无人物时的兜底画面（云朵/光斑/表情）。"""
     import math
+    glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))  # 呼吸光晕透明度（与主画像函数一致）
     # fallback：emoji 大头像（有真实人物感）
     float_offset = int(math.sin(t * 1.3) * 8 * S)
     sway_offset = int(math.sin(t * 0.9) * 5 * S)
@@ -1794,7 +2039,7 @@ def _render_frame(  # noqa: C901
         )
     else:
         _draw_portrait_region_fallback(
-            img, draw, portrait, t, S, width, height, avatar,
+            img, draw, portrait, t, S, width, height, avatar, fonts,
         )
 
     # ── 5. 人物名片（右上）+ 卡拉OK逐字字幕（right=名片下 / center=底部居中大字）──
@@ -2786,13 +3031,13 @@ class GenerateRequest(BaseModel):
     speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
-    watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+    watermark: bool | None = Field(None, description="水印：本地版由用户开关自由控制")
     engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
     emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或 neutral/happy/sad/angry/gentle/serious 手动指定")
 
 
-# 商业水印：免费用户生成视频带平台水印（会员/管理员自动去除）
-WATERMARK_TEXT = "AI 数字人 · 小团智能"
+# 本地免费版：水印由用户开关控制
+WATERMARK_TEXT = "AI 星火 · 数字人"
 
 # 数字人硬拦截词：行为违规（营销诱导/诈骗/赌博/违禁），命中直接拒绝生成。
 # 广告法极限词（最/第一/顶级等）仅作提示不拦截——口语叙事中"第一次/最好"
@@ -3019,7 +3264,8 @@ async def generate_portrait(avatar_id: str, current_user: dict = require_auth())
             "message": f"{avatar['name']} 写真已存在，直接使用缓存",
         }
 
-    result = await asyncio.to_thread(_generate_portrait, avatar_id)
+    _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    result = await asyncio.to_thread(_generate_portrait, avatar_id, _uid)
     if result:
         return {
             "avatar_id": avatar_id,
@@ -3048,7 +3294,8 @@ async def generate_all_portraits(current_user: dict = require_auth()):
                 }
             )
             continue
-        path = await asyncio.to_thread(_generate_portrait, avatar["id"])
+        _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+        path = await asyncio.to_thread(_generate_portrait, avatar["id"], _uid)
         results.append(
             {
                 "avatar_id": avatar["id"],
@@ -3186,18 +3433,18 @@ def _dh_validate_resources(req, user: str) -> tuple:
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
     if not avatar:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"数字人形象不存在（{req.avatar_id}），请重新选择")
     if not voice:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"配音音色不存在（{req.voice_id}），请重新选择")
     bg = next((b for b in BACKGROUNDS if b["id"] == req.background_id), None)
     if not bg:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"背景场景不存在（{req.background_id}），请重新选择")
     if req.engine in ("live_portrait", "sadtalker"):
         if not (avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])):
             raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
     template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
     if req.template_id and not template:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"未知行业模板（{req.template_id}），请重新选择")
     return avatar, voice, bg, template
 
 
@@ -3226,21 +3473,21 @@ def _dh_generate_audio(voice: dict, req, optimized_text: str, emotion: str, _rep
 
 
 def _dh_quota_setup(uid: str, req, role: str) -> tuple:
-    """商业配额扣费 + 记录ID + 水印策略。返回 (quota, record_id, conn, use_watermark)。"""
+    """额度扣费 + 记录ID + 水印策略。返回 (quota, record_id, conn, use_watermark)。"""
     from common.auth import consume_quota, get_quota_info
 
     quota = consume_quota(uid)
     if not quota.get("allowed"):
         raise HTTPException(
             402,
-            "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）",
+            "今日数字人生成次数已用完，可在次日 0 点自动恢复",
         )
     quota_info = get_quota_info(uid)
     record_id = f"dh_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     _ensure_tables(conn)
-    membership = quota_info.get("membership", "free") if isinstance(quota_info, dict) else "free"
-    use_watermark = (membership == "free" and role != "admin") or bool(req.watermark)
+    # 本地免费版：水印完全由用户开关控制（无会员水印策略）
+    use_watermark = bool(req.watermark)
     return quota, record_id, conn, use_watermark
 
 
@@ -3455,17 +3702,17 @@ def _precheck_generate(req: GenerateRequest, uid: str, user: str) -> None:  # no
     qi = get_quota_info(uid) or {}
     remaining = qi.get("remaining_today")
     if remaining is not None and remaining <= 0:
-        raise HTTPException(402, "今日数字人生成次数已用完，升级会员获取更多额度（专业版每日 200 次，至尊版不限量）")
+        raise HTTPException(402, "今日数字人生成次数已用完，可在次日 0 点自动恢复")
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
     voice = _lookup_voice(user, req.voice_id)
     if not avatar and req.avatar_id.startswith("custom_"):
         avatar = _load_custom_avatars(user).get(req.avatar_id)
     if not avatar:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"数字人形象不存在（{req.avatar_id}），请重新选择")
     if not voice:
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"未知声音（{req.voice_id}），请重新选择")
     if not next((b for b in BACKGROUNDS if b["id"] == req.background_id), None):
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, f"背景场景不存在（{req.background_id}），请重新选择")
     # 照片数字人引擎：必须使用照片形象（photo-avatar 创建，带本地原图）
     if req.engine == "live_portrait":
         if not (avatar.get("is_custom") and avatar.get("local_image_path")):
@@ -3643,7 +3890,7 @@ class BatchGenerateRequest(BaseModel):
     speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
-    watermark: bool | None = Field(None, description="水印：None=按会员等级（免费用户加水印）")
+    watermark: bool | None = Field(None, description="水印：本地版由用户开关自由控制")
     engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
     emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或手动指定")
 
@@ -3901,7 +4148,7 @@ async def create_batch(req: BatchGenerateRequest, current_user: dict = require_a
     qi = get_quota_info(uid) or {}
     remaining = qi.get("remaining_today")
     if remaining is not None and remaining <= 0:
-        raise HTTPException(402, "今日生成次数已用完，升级会员获取更多额度")
+        raise HTTPException(402, "今日生成次数已用完，可在次日 0 点自动恢复")
     # 形象名校验（zip 打包文件名使用）
     avatar = next((a for a in AVATARS if a["id"] == req.avatar_id), None)
     avatar_name = avatar["name"] if avatar else req.avatar_id
@@ -4174,10 +4421,16 @@ def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth())
         f"主题：{req.topic}；场景：{scene_style}{structure}；平台：{platform_name}；风格：{req.tone}。"
         "请生成3版不同切入角度的口播文案。"
     )
+    from common.config import resolve_feature_model
+
+    _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     scripts = []
     ok = False
     try:
-        raw = call_llm(system, user_prompt, max_tokens=1500, temperature=0.9, timeout=60)
+        raw = call_llm(
+            system, user_prompt, max_tokens=1500, temperature=0.9, timeout=60,
+            model=resolve_feature_model(_uid, "dh", ""),
+        )
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
@@ -4423,7 +4676,8 @@ async def regenerate_portraits(current_user: dict = require_auth()):
     ok, failed = [], []
     for avatar in AVATARS:
         try:
-            if await asyncio.to_thread(_generate_portrait, avatar["id"]):
+            _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+            if await asyncio.to_thread(_generate_portrait, avatar["id"], _uid):
                 ok.append(avatar["id"])
             else:
                 failed.append(avatar["id"])
@@ -4523,3 +4777,118 @@ def _dh_voice_clone_handler(task_id: str, payload: dict, update: Callable, ctx: 
 
 
 register_handler("dh_voice_clone", _dh_voice_clone_handler, user_limit=1)
+
+
+# ══════════════════════════════════════════════════════════════
+# 数字人 lip-sync v2 端点：质量评估 + 口型曲线预览
+# ══════════════════════════════════════════════════════════════
+
+@router.post("/lip-sync/quality")
+async def check_lip_sync_quality(
+    audio_path: str = Form(..., description="音频文件路径（相对于 DIGITAL_HUMAN_DIR）"),
+    script_text: str = Form("", description="口播文案（可选，用于文字驱动口型对比）"),
+    fps: int = Form(25, ge=15, le=30),
+    current_user: dict = require_auth(),
+):
+    """评估数字人 lip-sync 质量：音频能量与脚本文字的口型匹配度。
+
+    v20：支持文本+音频双源融合评估，返回各项质量指标。
+    """
+    import os as _os
+    from pathlib import Path
+    logger.warning(f"[lip-sync-debug] audio_path={audio_path!r} file={__file__}")
+
+    # 支持三种路径：绝对路径 / uploads 相对路径（audio_url） / digital_human 目录相对路径
+    audio_path = (audio_path or "").strip()
+    candidates = []
+    if audio_path.startswith("/uploads/"):
+        # 平台内 /uploads 路径 → 映射到实际存储目录（注意：isabs 会误判为绝对路径，须先判断）
+        candidates.append(Path(__file__).parent / audio_path.lstrip("/"))
+    elif _os.path.isabs(audio_path):
+        candidates.append(Path(audio_path))
+    else:
+        dh_dir = Path(__file__).parent / "digital_human"
+        candidates.append(dh_dir / audio_path)
+        candidates.append(Path(__file__).parent / "uploads" / "audio" / audio_path)
+    full_audio = next((p for p in candidates if p.exists()), None)
+    if full_audio is None:
+        logger.warning(f"lip-sync quality 音频不存在，candidates: {[str(c) for c in candidates]}")
+        raise HTTPException(404, "音频文件不存在")
+
+    # 获取音频时长
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(full_audio)],
+            capture_output=True, text=True, timeout=15,
+        )
+        duration = float(probe.stdout.strip()) if probe.stdout.strip() else 5.0
+    except Exception:
+        duration = 5.0
+
+    result = _lip_sync_quality(str(full_audio), script_text, duration, fps)
+    return result
+
+
+@router.post("/lip-sync/curve")
+async def get_mouth_curve(
+    audio_path: str = Form(...),
+    script_text: str = Form(""),
+    fps: int = Form(25, ge=15, le=30),
+    blend_alpha: float = Form(0.6, ge=0.0, le=1.0, description="文字驱动权重（0=纯音频，1=纯文字）"),
+    current_user: dict = require_auth(),
+):
+    """获取融合口型曲线（用于前端可视化预览）。
+
+    返回帧级 (open, round) 数据，前端可绘制为波形图。
+    """
+    import os as _os
+    from pathlib import Path
+    logger.warning(f"[lip-sync-debug] audio_path={audio_path!r} file={__file__}")
+
+    # 支持三种路径：绝对路径 / uploads 相对路径（audio_url） / digital_human 目录相对路径
+    audio_path = (audio_path or "").strip()
+    candidates = []
+    if audio_path.startswith("/uploads/"):
+        # 平台内 /uploads 路径 → 映射到实际存储目录（注意：isabs 会误判为绝对路径，须先判断）
+        candidates.append(Path(__file__).parent / audio_path.lstrip("/"))
+    elif _os.path.isabs(audio_path):
+        candidates.append(Path(audio_path))
+    else:
+        dh_dir = Path(__file__).parent / "digital_human"
+        candidates.append(dh_dir / audio_path)
+        candidates.append(Path(__file__).parent / "uploads" / "audio" / audio_path)
+    full_audio = next((p for p in candidates if p.exists()), None)
+    if full_audio is None:
+        logger.warning(f"lip-sync quality 音频不存在，candidates: {[str(c) for c in candidates]}")
+        raise HTTPException(404, "音频文件不存在")
+
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(full_audio)],
+            capture_output=True, text=True, timeout=15,
+        )
+        duration = float(probe.stdout.strip()) if probe.stdout.strip() else 5.0
+    except Exception:
+        duration = 5.0
+
+    # 生成文字驱动时间轴
+    script_timeline = _build_script_timeline_v2(script_text, duration, str(full_audio), fps)
+    # 生成音频驱动曲线
+    audio_curve = _audio_driven_mouth(str(full_audio), fps, duration)
+    # 融合
+    blended = _blend_mouth_shapes(script_timeline, audio_curve, alpha=blend_alpha)
+
+    # 下采样：每 2 帧取 1 个点，最多 500 点（避免响应过大）
+    step = max(1, len(blended) // 500)
+    sampled = blended[::step]
+
+    return {
+        "frames": len(blended),
+        "sampled_frames": len(sampled),
+        "fps": fps,
+        "duration_sec": round(duration, 2),
+        "alpha": blend_alpha,
+        "curve": sampled,
+    }

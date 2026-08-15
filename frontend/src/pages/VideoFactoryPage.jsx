@@ -20,6 +20,9 @@ import {
   Sliders,
   Upload,
   X,
+  ScanLine,
+  ScanSearch,
+  Palette,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -262,6 +265,14 @@ export default function VideoFactoryPage() {
   const [transcodeWidth, setTranscodeWidth] = useState('')
   const [transcodeHeight, setTranscodeHeight] = useState('')
   const [transcodeCrf, setTranscodeCrf] = useState(23)
+  // v22：AI 后期增强（自动字幕 / 智能分析 / 视频滤镜）
+  const [aiPostMode, setAiPostMode] = useState(null) // 'auto-subtitle' | 'analyze' | 'filter'
+  const [aiPostBusy, setAiPostBusy] = useState(false)
+  const [aiPostVideo, setAiPostVideo] = useState('')
+  const [subtitleLang, setSubtitleLang] = useState('zh')
+  const [filterType, setFilterType] = useState('sepia')
+  const [filterIntensity, setFilterIntensity] = useState(0.5)
+  const [aiPostResult, setAiPostResult] = useState(null) // { mode, url, filename, ... }
   // v15：脚本文案模板库（口播/剧情/科普）
   const [scriptTemplates, setScriptTemplates] = useState([])
   const [scriptCategory, setScriptCategory] = useState('全部')
@@ -702,6 +713,78 @@ export default function VideoFactoryPage() {
       toast.error(`字幕烧录失败：${e.message}`)
     } finally {
       setPostBusy(false)
+    }
+  }
+
+  // ── v22 AI 后期增强：自动字幕 / 智能分析 / 视频滤镜 ──
+  const openAiPost = (mode) => {
+    setAiPostMode(mode)
+    setAiPostResult(null)
+    setAiPostVideo(videos[0]?.filename || '')
+  }
+
+  const handleAiAutoSubtitle = async () => {
+    if (!aiPostVideo) {
+      toast.error('请选择目标视频')
+      return
+    }
+    setAiPostBusy(true)
+    setAiPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('video', aiPostVideo)
+      form.append('language', subtitleLang)
+      const res = await api.post('/api/video-factory/tools/auto-subtitle', form, { timeout: 600000 })
+      setAiPostResult({ mode: 'auto-subtitle', ...res.data })
+      toast.success('自动字幕生成完成')
+      fetchVideos()
+    } catch (e) {
+      toast.error(`自动字幕失败：${friendlyError(e) || e.message}`)
+    } finally {
+      setAiPostBusy(false)
+    }
+  }
+
+  const handleAiAnalyze = async () => {
+    if (!aiPostVideo) {
+      toast.error('请选择目标视频')
+      return
+    }
+    setAiPostBusy(true)
+    setAiPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('video', aiPostVideo)
+      form.append('analysis_type', 'general')
+      const res = await api.post('/api/video-factory/tools/analyze', form, { timeout: 300000 })
+      setAiPostResult({ mode: 'analyze', ...res.data })
+    } catch (e) {
+      toast.error(`智能分析失败：${friendlyError(e) || e.message}`)
+    } finally {
+      setAiPostBusy(false)
+    }
+  }
+
+  const handleAiFilter = async () => {
+    if (!aiPostVideo) {
+      toast.error('请选择目标视频')
+      return
+    }
+    setAiPostBusy(true)
+    setAiPostResult(null)
+    try {
+      const form = new FormData()
+      form.append('video', aiPostVideo)
+      form.append('filter_type', filterType)
+      form.append('intensity', String(filterIntensity))
+      const res = await api.post('/api/video-factory/tools/filters', form, { timeout: 600000 })
+      setAiPostResult({ mode: 'filter', ...res.data })
+      toast.success('滤镜应用完成')
+      fetchVideos()
+    } catch (e) {
+      toast.error(`滤镜应用失败：${friendlyError(e) || e.message}`)
+    } finally {
+      setAiPostBusy(false)
     }
   }
 
@@ -1441,6 +1524,35 @@ export default function VideoFactoryPage() {
             <div className="text-xs text-gray-500 mt-1">统一 H.264 格式，可选分辨率</div>
           </button>
         </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+          <button
+            onClick={() => openAiPost('auto-subtitle')}
+            className="p-4 rounded-xl border border-purple-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-center"
+          >
+            <ScanLine className="w-6 h-6 mx-auto text-purple-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">自动字幕</div>
+            <div className="text-xs text-gray-500 mt-1">AI 语音识别自动生成 SRT 字幕并烧录</div>
+          </button>
+          <button
+            onClick={() => openAiPost('analyze')}
+            className="p-4 rounded-xl border border-purple-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-center"
+          >
+            <ScanSearch className="w-6 h-6 mx-auto text-purple-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">智能分析</div>
+            <div className="text-xs text-gray-500 mt-1">多帧提取 + AI 解读内容/情感/标签</div>
+          </button>
+          <button
+            onClick={() => openAiPost('filter')}
+            className="p-4 rounded-xl border border-purple-200 hover:border-purple-400 hover:bg-purple-50/50 transition-all text-center"
+          >
+            <Palette className="w-6 h-6 mx-auto text-purple-500 mb-2" />
+            <div className="font-medium text-sm text-gray-900">视频滤镜</div>
+            <div className="text-xs text-gray-500 mt-1">复古/黑白/暖冷等 6 种风格一键套用</div>
+          </button>
+        </div>
+        <p className="text-xs text-purple-500 mt-3">
+          ✨ AI 后期增强（v22）：自动字幕走 Whisper 转录 + LLM 兜底，分析提取 6 关键帧，滤镜基于 ffmpeg 色彩链
+        </p>
       </div>
 
       {/* 视频库 */}
@@ -1919,6 +2031,146 @@ export default function VideoFactoryPage() {
             </Button>
           </div>
         )}
+      </Modal>
+
+      {/* v22 AI 后期增强 Modal：自动字幕 / 智能分析 / 视频滤镜 */}
+      <Modal
+        open={!!aiPostMode}
+        onClose={() => setAiPostMode(null)}
+        title={
+          aiPostMode === 'auto-subtitle'
+            ? '自动字幕生成'
+            : aiPostMode === 'analyze'
+              ? '视频智能分析'
+              : '视频滤镜'
+        }
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">目标视频</label>
+            <select
+              value={aiPostVideo}
+              onChange={(e) => setAiPostVideo(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none"
+            >
+              <option value="">请选择视频</option>
+              {videos.map((v) => (
+                <option key={v.filename} value={v.filename}>
+                  {v.title || v.filename}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {aiPostMode === 'auto-subtitle' && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">字幕语言</label>
+              <select
+                value={subtitleLang}
+                onChange={(e) => setSubtitleLang(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 outline-none"
+              >
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-2">
+                Whisper 语音识别生成字幕并烧录进画面；识别不可用时自动切换 LLM 生成结构化字幕
+              </p>
+            </div>
+          )}
+
+          {aiPostMode === 'filter' && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">滤镜风格</label>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'sepia', label: '怀旧棕褐' },
+                  { id: 'black_white', label: '经典黑白' },
+                  { id: 'vintage', label: '复古胶片' },
+                  { id: 'warm', label: '暖阳' },
+                  { id: 'cool', label: '冷冽' },
+                  { id: 'fade', label: '淡入淡出' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFilterType(f.id)}
+                    className={`p-2.5 rounded-lg border text-sm transition-all ${
+                      filterType === f.id
+                        ? 'border-purple-500 bg-purple-50 text-purple-700 font-medium'
+                        : 'border-gray-200 hover:border-purple-300 text-gray-600'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button
+            variant="gradient"
+            icon={aiPostMode === 'analyze' ? ScanSearch : aiPostMode === 'filter' ? Palette : ScanLine}
+            loading={aiPostBusy}
+            disabled={!aiPostVideo}
+            onClick={
+              aiPostMode === 'auto-subtitle'
+                ? handleAiAutoSubtitle
+                : aiPostMode === 'analyze'
+                  ? handleAiAnalyze
+                  : handleAiFilter
+            }
+            className="w-full"
+          >
+            {aiPostMode === 'analyze' ? '开始分析' : '开始处理'}
+          </Button>
+
+          {aiPostResult && (
+            <div className="mt-2 p-3 rounded-xl bg-purple-50 border border-purple-100">
+              {aiPostResult.mode === 'analyze' ? (
+                <div className="text-sm space-y-2">
+                  <p className="font-medium text-purple-700">
+                    分析完成：{aiPostResult.analysis?.summary || '（摘要生成中）'}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(aiPostResult.analysis?.keywords || []).slice(0, 6).map((kw, i) => (
+                      <Badge key={i} variant="purple">{kw}</Badge>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    情感：{aiPostResult.analysis?.sentiment || 'neutral'} ｜ 规格：
+                    {aiPostResult.spec?.width}×{aiPostResult.spec?.height} ｜ 时长{' '}
+                    {aiPostResult.spec?.duration_sec}s
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-purple-700">
+                      {aiPostResult.mode === 'auto-subtitle' ? '字幕视频已生成' : '滤镜视频已生成'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {aiPostResult.subtitle_source === 'whisper' ? 'Whisper 转录' : ''}
+                      {aiPostResult.frames ? `｜ ${aiPostResult.frames} 帧动画` : ''}
+                    </p>
+                  </div>
+                  {aiPostResult.url && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={Play}
+                      onClick={() => window.open(absUrl(aiPostResult.url), '_blank')}
+                    >
+                      预览
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </Modal>
 
       {/* v21 视频模板渲染 Modal：预览 + 变量编辑 + 购买授权 + 一键成片 */}

@@ -413,13 +413,32 @@ export default function ToolRunPage() {
                             onChange={(e) => handleParamChange(key, e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                           />
+                        ) : config.type === 'number' ? (
+                          <input
+                            type="number"
+                            value={params[key] ?? config.default ?? ''}
+                            min={config.min}
+                            max={config.max}
+                            onChange={(e) => handleParamChange(key, e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        ) : config.type === 'bool' ? (
+                          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(params[key] ?? config.default)}
+                              onChange={(e) => handleParamChange(key, e.target.checked)}
+                              className="w-4 h-4 accent-brand-500"
+                            />
+                            启用
+                          </label>
                         ) : (
                           <select
                             value={params[key] || config.default}
                             onChange={(e) => handleParamChange(key, e.target.value)}
                             className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500"
                           >
-                            {config.options.map((opt) => (
+                            {(config.options || []).map((opt) => (
                               <option key={opt} value={opt}>
                                 {opt}
                               </option>
@@ -542,7 +561,7 @@ export default function ToolRunPage() {
                 )}
                 <Button onClick={handleRun} loading={loading} className="w-full" size="lg">
                   <Play className="w-4 h-4 mr-2" />
-                  {loading ? '生成中...' : '开始生成'}
+                  {loading ? '执行中...' : tool.type === 'compute' ? '执行计算' : '开始生成'}
                 </Button>
               </div>
             </Card>

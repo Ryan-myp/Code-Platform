@@ -786,7 +786,7 @@ def _patch_dh_deps(tmp_path, monkeypatch):
     return digital_human
 
 
-def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
+def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """TTS 第一次失败、第二次成功 → 生成成功；配额只扣一次、不重复扣费。"""
     import digital_human
 
@@ -797,7 +797,7 @@ def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
         calls["tts"] += 1
         if calls["tts"] == 1:
             raise RuntimeError("edge-tts 网络抖动")
-        return b"x" * 2048  # ≥512 字节才被视为有效音频
+        return valid_mp3_bytes
 
     def fake_quota(uid):
         calls["quota"] += 1
@@ -806,7 +806,7 @@ def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
     def fake_render(**k):
         calls["render"] += 1
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake mp4")
+            f.write(valid_mp4_bytes)
 
     from unittest.mock import patch
 
@@ -823,7 +823,7 @@ def test_tts_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
     assert calls["render"] == 1
 
 
-def test_render_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
+def test_render_failure_auto_retry(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """渲染第一次失败、第二次成功 → 成功；音频复用，不重复 TTS。"""
     import digital_human
 
@@ -832,14 +832,14 @@ def test_render_failure_auto_retry(test_db_path, tmp_path, monkeypatch):
 
     def fake_tts(*a, **k):
         calls["tts"] += 1
-        return b"x" * 2048
+        return valid_mp3_bytes
 
     def fake_render(**k):
         calls["render"] += 1
         if calls["render"] == 1:
             raise RuntimeError("视频编码失败（ffmpeg exit 1）")
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake mp4")
+            f.write(valid_mp4_bytes)
 
     from unittest.mock import patch
 
@@ -875,7 +875,7 @@ def test_tts_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
     assert "[stage:tts]" in (result.get("error") or "")
 
 
-def test_render_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
+def test_render_failure_stage_marker(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes):
     """渲染连续失败 → status=audio_only 且 error 带 [stage:render] 前缀。"""
     import digital_human
 
@@ -884,7 +884,7 @@ def test_render_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
     from unittest.mock import patch
 
     def fake_tts(*a, **k):
-        return b"x" * 2048
+        return valid_mp3_bytes
 
     def fake_render(**k):
         raise RuntimeError("帧渲染超时")
@@ -901,7 +901,7 @@ def test_render_failure_stage_marker(test_db_path, tmp_path, monkeypatch):
     assert result.get("audio_url")  # 音频已生成
 
 
-def test_tts_health_check_switch(monkeypatch):
+def test_tts_health_check_switch(monkeypatch, valid_mp3_bytes):
     """健康检查：edge 通道失败标记不可用，恢复后重新可用。"""
     import voice_factory
 
@@ -911,7 +911,7 @@ def test_tts_health_check_switch(monkeypatch):
         raise RuntimeError("edge-tts 不可用")
 
     def fake_edge_ok(*a, **k):
-        return b"x" * 512
+        return valid_mp3_bytes
 
     monkeypatch.setattr(voice_factory, "_tts_edge", fake_edge_fail)
     assert voice_factory._tts_health_check(force=True) is False
@@ -940,7 +940,7 @@ def _make_photo_avatar(tmp_path) -> dict:
     }
 
 
-def test_live_portrait_requires_photo_avatar(test_db_path, tmp_path, monkeypatch):
+def test_live_portrait_requires_photo_avatar(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """engine=live_portrait 必须使用照片形象，内置形象/普通自定义形象直接 400。"""
     import digital_human
 
@@ -963,14 +963,14 @@ def test_live_portrait_requires_photo_avatar(test_db_path, tmp_path, monkeypatch
     with patch(
         "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
     ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
-        "voice_factory._tts_one", return_value=b"x" * 2048
+        "voice_factory._tts_one", return_value=valid_mp3_bytes
     ), patch(
         "digital_human._render_video"
     ) as fake_render:
         # 手动渲染成功（写假 mp4），避免触发真实生成
         def _fake_render(**k):
             with open(k["output_path"], "wb") as f:
-                f.write(b"fake mp4")
+                f.write(valid_mp4_bytes)
 
         fake_render.side_effect = _fake_render
         result = digital_human._generate_one(
@@ -979,7 +979,7 @@ def test_live_portrait_requires_photo_avatar(test_db_path, tmp_path, monkeypatch
     assert result["status"] == "done"
 
 
-def test_live_portrait_success(test_db_path, tmp_path, monkeypatch):
+def test_live_portrait_success(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """engine=live_portrait 且照片引擎成功 → done，记录 engine=live_portrait。"""
     import digital_human
 
@@ -991,13 +991,13 @@ def test_live_portrait_success(test_db_path, tmp_path, monkeypatch):
     def fake_photo_engine(**k):
         # 照片引擎成功产出视频
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake live portrait mp4")
+            f.write(valid_mp4_bytes)
         return {"duration": 8.0, "frames": 200, "fps": 25}
 
     with patch(
         "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
     ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
-        "voice_factory._tts_one", return_value=b"x" * 2048
+        "voice_factory._tts_one", return_value=valid_mp3_bytes
     ), patch(
         "live_portrait_engine.generate_from_photo", side_effect=fake_photo_engine
     ), patch("digital_human._render_video") as fake_2d:
@@ -1010,7 +1010,7 @@ def test_live_portrait_success(test_db_path, tmp_path, monkeypatch):
     fake_2d.assert_not_called()  # 2D 引擎未使用
 
 
-def test_live_portrait_fallback_to_2d(test_db_path, tmp_path, monkeypatch):
+def test_live_portrait_fallback_to_2d(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """照片引擎失败 → 自动降级 2D 基础引擎，仍然出片（engine 记录实际值 2d）。"""
     import digital_human
 
@@ -1024,12 +1024,12 @@ def test_live_portrait_fallback_to_2d(test_db_path, tmp_path, monkeypatch):
 
     def fake_render(**k):
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake 2d mp4")
+            f.write(valid_mp4_bytes)
 
     with patch(
         "common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}
     ), patch("common.auth.get_quota_info", return_value={"membership": "pro"}), patch(
-        "voice_factory._tts_one", return_value=b"x" * 2048
+        "voice_factory._tts_one", return_value=valid_mp3_bytes
     ), patch(
         "live_portrait_engine.generate_from_photo", side_effect=fake_photo_engine
     ), patch("digital_human._render_video", side_effect=fake_render):
@@ -1304,7 +1304,7 @@ def test_voice_clone_handler_failure_cleans_sample(test_db_path, tmp_path, monke
     assert not sample.exists()  # 失败清理
 
 
-def test_voice_clone_generate_pitch_passthrough(test_db_path, tmp_path, monkeypatch):
+def test_voice_clone_generate_pitch_passthrough(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """克隆声音生成：TTS 收到匹配音色 + pitch 补偿（不用样本直配），成功出片。"""
     from unittest.mock import patch
 
@@ -1322,13 +1322,13 @@ def test_voice_clone_generate_pitch_passthrough(test_db_path, tmp_path, monkeypa
 
     def fake_render(**k):
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake mp4")
+            f.write(valid_mp4_bytes)
 
     calls = {}
 
     def fake_tts(text, voice, speed, pitch=0, emotion=""):
         calls.update(voice=voice, speed=speed, pitch=pitch)
-        return b"x" * 2048
+        return valid_mp3_bytes
 
     with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
         "common.auth.get_quota_info", return_value={"membership": "pro"}
@@ -1432,7 +1432,7 @@ def test_templates_api_returns_five_industries(auth_headers):
         assert t["script_sample"] and len(t["script_sample"]) > 30
 
 
-def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatch):
+def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """选模板生成：_render_video 收到字幕样式/片头片尾，记录落库 template_id。"""
     from unittest.mock import patch
 
@@ -1449,10 +1449,10 @@ def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatc
             closing=k.get("closing"),
         )
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake mp4")
+            f.write(valid_mp4_bytes)
 
     def fake_tts(text, voice, speed, pitch=0, emotion=""):
-        return b"x" * 2048
+        return valid_mp3_bytes
 
     with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
         "common.auth.get_quota_info", return_value={"membership": "pro"}
@@ -1472,7 +1472,7 @@ def test_generate_with_template_passes_styles(test_db_path, tmp_path, monkeypatc
     assert row and row["template_id"] == "live_shopping"
 
 
-def test_generate_without_template_keeps_default(test_db_path, tmp_path, monkeypatch):
+def test_generate_without_template_keeps_default(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes, valid_mp4_bytes):
     """未选模板：_render_video 收到 None 样式（保持原渲染，不回归）。"""
     from unittest.mock import patch
 
@@ -1484,11 +1484,11 @@ def test_generate_without_template_keeps_default(test_db_path, tmp_path, monkeyp
     def fake_render(**k):
         calls["subtitle_style"] = k.get("subtitle_style")
         with open(k["output_path"], "wb") as f:
-            f.write(b"fake mp4")
+            f.write(valid_mp4_bytes)
 
     with patch("common.auth.consume_quota", return_value={"allowed": True, "remaining": 9}), patch(
         "common.auth.get_quota_info", return_value={"membership": "pro"}
-    ), patch("voice_factory._tts_one", return_value=b"x" * 2048), patch(
+    ), patch("voice_factory._tts_one", return_value=valid_mp3_bytes), patch(
         "digital_human._render_video", side_effect=fake_render
     ):
         result = digital_human._generate_one(_make_dh_req(), "tester", "uid_tpl2")
@@ -1584,7 +1584,7 @@ def test_script_assist_uses_template_structure():
 # ══════════════════════════════════════════════════════════════
 
 
-def test_tts_cache_reuses_same_key(test_db_path, tmp_path, monkeypatch):
+def test_tts_cache_reuses_same_key(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes):
     """音频缓存：同文案+同音色+同语速第二次命中，不重复合成。"""
     import os
 
@@ -1595,7 +1595,7 @@ def test_tts_cache_reuses_same_key(test_db_path, tmp_path, monkeypatch):
 
     def fake_tts(*a, **k):
         calls["tts"] += 1
-        return b"\xff\xfb" * 2048
+        return valid_mp3_bytes
 
     from unittest.mock import patch
 
@@ -1608,7 +1608,7 @@ def test_tts_cache_reuses_same_key(test_db_path, tmp_path, monkeypatch):
     assert "tts_cache" in u1
 
 
-def test_tts_cache_distinct_key_separate(test_db_path, tmp_path, monkeypatch):
+def test_tts_cache_distinct_key_separate(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes):
     """音频缓存：音色/语速任一不同 → 各自合成，互不串用。"""
     import digital_human
 
@@ -1617,7 +1617,7 @@ def test_tts_cache_distinct_key_separate(test_db_path, tmp_path, monkeypatch):
 
     def fake_tts(*a, **k):
         calls["tts"] += 1
-        return b"\xff\xfb" * 2048
+        return valid_mp3_bytes
 
     from unittest.mock import patch
 
@@ -1629,7 +1629,7 @@ def test_tts_cache_distinct_key_separate(test_db_path, tmp_path, monkeypatch):
     assert calls["tts"] == 4
 
 
-def test_tts_cache_clears_stale_rows(test_db_path, tmp_path, monkeypatch):
+def test_tts_cache_clears_stale_rows(test_db_path, tmp_path, monkeypatch, valid_mp3_bytes):
     """缓存行数超限：按最后命中时间清理最旧条目（连同文件）。"""
     import os
 
@@ -1639,7 +1639,7 @@ def test_tts_cache_clears_stale_rows(test_db_path, tmp_path, monkeypatch):
     monkeypatch.setattr(digital_human, "_TTS_CACHE_MAX_ROWS", 2)
     from unittest.mock import patch
 
-    with patch("voice_factory._tts_one", return_value=b"\xff\xfb" * 2048):
+    with patch("voice_factory._tts_one", return_value=valid_mp3_bytes):
         p1, _ = digital_human._tts_cached("文案一：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
         p2, _ = digital_human._tts_cached("文案二：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
         p3, _ = digital_human._tts_cached("文案三：缓存清理测试", "zh-CN-XiaoxiaoNeural", 1.0)
@@ -1701,7 +1701,7 @@ def test_render_frame_subtitle_layer_cache():
     assert sub_cache["layer"] is not first_layer
 
 
-def test_batch_worker_prefetches_tts(test_db_path, auth_headers):
+def test_batch_worker_prefetches_tts(test_db_path, auth_headers, valid_mp4_bytes):
     """批量流水线：渲染前并行预热全部文案 TTS（预热 + 命中覆盖全部合法文案）。"""
     import time
     from unittest.mock import patch
@@ -1722,7 +1722,7 @@ def test_batch_worker_prefetches_tts(test_db_path, auth_headers):
 
     def fake_render(**k):
         with open(k["output_path"], "wb") as f:
-            f.write(b"FAKE_MP4" * 64)
+            f.write(valid_mp4_bytes)
 
     texts = [f"批量预热文案第{i}条，内容足够长用于生成测试。" for i in range(4)]
     with (

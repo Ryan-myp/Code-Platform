@@ -3858,12 +3858,12 @@ def _pptx_make_renderers(tpl: dict):
             slide.notes_slide.notes_text_frame.text = content
 
     renderers = {
-        "cover": lambda s, t, sub, meta: _pptx_cover(s, t, sub, meta, rect, text, colors),
+        "cover": lambda s, t, sub, c, cs=None: _pptx_cover(s, t, sub, c, rect, text, colors),
         "thanks": lambda s, t, sub, c, cs=None: _pptx_thanks(s, t, sub, rect, text, colors),
-        "toc": lambda s, t, c, cs=None: _pptx_toc(s, t, c, rect, text, colors),
-        "case": lambda s, t, c, cs: _pptx_case(s, t, c, cs, rect, text, bullets, colors),
-        "data": lambda s, t, sub, c, cs: _pptx_data(s, t, sub, c, cs, rect, text, bullets, colors),
-        "content": lambda s, t, sub, c, cs: _pptx_content(s, t, sub, c, cs, rect, text, bullets, colors),
+        "toc": lambda s, t, sub, c, cs=None: _pptx_toc(s, t, c, rect, text, colors),
+        "case": lambda s, t, sub, c, cs=None: _pptx_case(s, t, c, cs, rect, text, bullets, colors),
+        "data": lambda s, t, sub, c, cs=None: _pptx_data(s, t, sub, c, cs, rect, text, bullets, colors),
+        "content": lambda s, t, sub, c, cs=None: _pptx_content(s, t, sub, c, cs, rect, text, bullets, colors),
     }
 
     def page_footer(slide, page_no: int, total: int, dark: bool = False):
@@ -3902,7 +3902,11 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
         slide = prs.slides.add_slide(blank)
 
         render = renderers.get(stype, renderers["content"])
-        render(slide, title_text, subtitle, content, s.get("chart_suggestion"))
+        # cover/thanks 版式第 4 参为 outline meta（dict），其余为 content（list）
+        if stype in ("cover", "thanks"):
+            render(slide, title_text, subtitle, meta, s.get("chart_suggestion"))
+        else:
+            render(slide, title_text, subtitle, content, s.get("chart_suggestion"))
         page_footer(slide, i + 1, len(slides), dark=stype in ("cover", "thanks"))
         notes(slide, s.get("notes") or "")
 

@@ -30,9 +30,9 @@ def _insert_artifact(conn, art_id: str, atype: str, author: str, prompt: str = "
             art_id,
             atype,
             author,
-            json.dumps({"prompt": prompt}),
+            json.dumps({"prompt": prompt}, ensure_ascii=False),
             f"/api/x/{art_id}",
-            json.dumps(meta),
+            json.dumps(meta, ensure_ascii=False),
             "2026-01-01T09:00:00",
         ),
     )
@@ -169,5 +169,7 @@ class TestGlobalSearchEndpoint:
         from search_api import global_search
 
         res = global_search({"query": "  ", "types": ["works"], "limit": 5}, current_user=USER)
-        # query 会被 strip，空白查询返回空结果
-        assert res == {"results": [], "total": 0, "query": ""}
+        # query 会被 strip，空白查询返回空结果（含 suggestions 搜索建议字段）
+        assert res["results"] == []
+        assert res["total"] == 0
+        assert res["query"] == ""

@@ -33,6 +33,7 @@ import {
   Wrench,
   Undo2,
   SkipForward,
+  Building2,
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
@@ -1169,6 +1170,8 @@ export default function AIWorkspacePage() {
         const result = await callApi('/api/prd/review', {
           prd_text: stripImages(s.prdText),
           repo_path: s.repoPath,
+          domain: s.reviewDomain || 'general',
+          structured_output: true,
         })
         addMessage('user', s.prdText)
         addMessage('assistant', result)
@@ -2078,6 +2081,25 @@ export default function AIWorkspacePage() {
               onChange={(e) => update({ repoPath: e.target.value })}
               placeholder="/path/to/repo"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              <Building2 className="w-4 h-4 inline mr-1" />
+              业务领域（可选，注入专项审查）
+            </label>
+            <select
+              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm outline-none`}
+              value={s.reviewDomain || 'general'}
+              onChange={(e) => update({ reviewDomain: e.target.value })}
+            >
+              <option value="general">通用（默认）</option>
+              <option value="e-commerce">电商</option>
+              <option value="social">社交</option>
+              <option value="tools">工具类</option>
+              <option value="adtech">广告技术</option>
+              <option value="fin-tech">金融科技</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1">选择后审查将注入该领域的专项检查点（竞价/合规/风控等）</p>
           </div>
         </>
       )

@@ -52,7 +52,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from common.artifacts import save_artifact
 from common.helpers import _notify_progress
 from common.auth import require_auth
-from common.config import load_config
+from common.config import load_config, resolve_api_key
 from common.llm import api_error_detail, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -175,11 +175,14 @@ def _music_custom_cover(cover_image, audio_id: str, stem: str) -> tuple:
     cover_label = "AI 生成封面"
     if cover_image is not None and (cover_image.filename or "").strip():
         data = io.BytesIO(cover_image.file.read())
-        if len(data) > 8 * 1024 * 1024:
+        if data.getbuffer().nbytes > 8 * 1024 * 1024:
             raise HTTPException(400, "封面图片不能超过 8MB")
-        from PIL import Image, ImageOps
+        from PIL import Image, ImageOps, UnidentifiedImageError
 
-        img = Image.open(io.BytesIO(data))
+        try:
+            img = Image.open(data)
+        except UnidentifiedImageError:
+            raise HTTPException(400, "封面图片格式无效，请上传 JPG/PNG/WebP 图片") from None
         img = ImageOps.exif_transpose(img).convert("RGB")
         w, h = img.size
         side = min(w, h)
@@ -435,8 +438,8 @@ def parse_lyrics_sections(text: str) -> list[dict]:
 
 async def _music_lyrics_worker(payload: dict, progress: Callable | None = None) -> dict:
     """生成歌词（同步/异步任务共用执行体，异步时回报进度）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key")
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
@@ -523,7 +526,7 @@ v20 内容丰富度要求（必须全部满足）：
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/chat/completions",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json={
                 "model": MODEL_NAME,
                 "messages": [
@@ -597,8 +600,8 @@ async def generate_lyrics(
     current_user: dict = require_auth(),
 ):
     """生成歌词（默认异步任务，立即返回 task_id）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
@@ -1887,8 +1890,8 @@ async def _music_sing_worker(payload: dict, progress: Callable | None = None) ->
     双通道：优先 agnes /audio/speech（线上 TTS），失败自动回退 edge-tts 本地合成
     （与音乐合成同款子进程链路），不依赖第三方通道是否开通。
     """
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key")
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
@@ -1910,7 +1913,7 @@ async def _music_sing_worker(payload: dict, progress: Callable | None = None) ->
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/audio/speech",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json={"model": "tts-1", "input": text, "voice": tts_voice, "speed": 1.0},
             timeout=60,
         )
@@ -1971,8 +1974,8 @@ async def generate_vocal(
     current_user: dict = require_auth(),
 ):
     """生成虚拟人声 TTS（默认异步任务，立即返回 task_id）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""

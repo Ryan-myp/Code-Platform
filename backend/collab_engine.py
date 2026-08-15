@@ -177,7 +177,7 @@ async def read_skill_file(skill_id: str, path: str = ""):
     try:
         return skills_store.read_file(skill_id, path)
     except FileNotFoundError as e:
-        raise HTTPException(400, "请求参数错误") from e
+        raise HTTPException(404, "Skill 文件不存在") from e
     except ValueError as e:
         raise HTTPException(400, "请求参数错误") from e
 
@@ -224,7 +224,7 @@ async def delete_skill_file(skill_id: str, path: str = ""):
     try:
         skills_store.delete_path(skill_id, rel)
     except FileNotFoundError as e:
-        raise HTTPException(400, "请求参数错误") from e
+        raise HTTPException(404, "Skill 文件不存在") from e
     except ValueError as e:
         raise HTTPException(400, "请求参数错误") from e
     return {"success": True}

@@ -19,6 +19,7 @@ import {
   Wand2,
   Copy,
   Package,
+  Film,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge, SkeletonGrid,
   Pagination} from '../components/ui'
@@ -271,6 +272,37 @@ export default function MemePage() {
       toast.error(`加载失败：${e.message}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // v22：生成 GIF 动图版表情包（文字脉冲 + 震动动画，4-16 帧可调）
+  const [gifBusy, setGifBusy] = useState(false)
+  const generateGif = async () => {
+    if (!topText.trim() && !bottomText.trim()) {
+      toast.error('请输入至少一行文字')
+      return
+    }
+    setGifBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('top_text', topText.trim())
+      fd.append('bottom_text', bottomText.trim())
+      fd.append('style', style === 'ai' ? 'yellow' : style) // AI 背景在 GIF 链路先回退经典底色
+      fd.append('frame_count', '10')
+      fd.append('fps', '12')
+      const res = await api.post('/api/meme/generate/gif', fd, { timeout: 300000 })
+      toast.success('GIF 动图生成完成')
+      addGenHistory({
+        type: 'GIF动图',
+        top: topText.trim(),
+        bottom: bottomText.trim(),
+        content: `${topText.trim()} / ${bottomText.trim()}（GIF）`,
+      })
+      await loadList()
+    } catch (e) {
+      toast.error(`GIF 生成失败：${e.message}`)
+    } finally {
+      setGifBusy(false)
     }
   }
 
@@ -991,6 +1023,15 @@ export default function MemePage() {
                 >
                   {generating ? '生成任务执行中（后台）…' : '生成表情包'}
                 </Button>
+                <button
+                  onClick={generateGif}
+                  disabled={generating || (!topText.trim() && !bottomText.trim())}
+                  className="w-full mt-2 p-3 rounded-xl border-2 border-dashed border-purple-300 hover:border-purple-500 hover:bg-purple-50/50 transition-all text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Film className="w-5 h-5 mx-auto text-purple-500 mb-1" />
+                  <div className="text-sm font-medium text-purple-600">生成 GIF 动图版</div>
+                  <div className="text-xs text-gray-400 mt-0.5">文字脉冲缩放 + 震动动画，微信聊天更吸睛</div>
+                </button>
                 {genHistory.length > 0 && (
                   <div className="mt-3">
                     <HistoryPanel

@@ -16,6 +16,9 @@ import {
   TrendingUp,
   User as UserIcon,
   Zap,
+  KeyRound,
+  ShieldCheck,
+  CheckCircle2,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -57,6 +60,75 @@ export default function ProfilePage({ user, onUserUpdate }) {
   const [avatar, setAvatar] = useState('')
   const [email, setEmail] = useState('')
   const [saving, setSaving] = useState(false)
+  // v23 中转站 Key（模式 B：用户自带中转站 token，平台卖 token 盈利）
+  const [relayKey, setRelayKey] = useState('')
+  const [relayConfigured, setRelayConfigured] = useState(false)
+  const [relayMasked, setRelayMasked] = useState('')
+  const [relaySaving, setRelaySaving] = useState(false)
+  const [relayVerifying, setRelayVerifying] = useState(false)
+  const [relayBase, setRelayBase] = useState('')
+
+  // ── 中转站 Key（模式 B） ──
+  const loadRelay = async () => {
+    try {
+      const res = await api.get('/api/relay/me')
+      setRelayConfigured(res.data.configured)
+      setRelayMasked(res.data.api_key_masked)
+      setRelayBase(res.data.api_base || res.data.default_base)
+    } catch {
+      /* 静默 */
+    }
+  }
+  useEffect(() => {
+    loadRelay()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const saveRelay = async () => {
+    if (!relayKey.trim()) {
+      toast.error('请输入中转站 API Key')
+      return
+    }
+    setRelaySaving(true)
+    try {
+      const res = await api.put('/api/relay/me', { api_key: relayKey.trim() })
+      setRelayConfigured(true)
+      setRelayMasked(res.data.api_key_masked)
+      setRelayKey('')
+      toast.success(res.data.message)
+    } catch (e) {
+      toast.error(e.message || '保存失败，请确认是本站签发的 Key')
+    } finally {
+      setRelaySaving(false)
+    }
+  }
+
+  const verifyRelay = async () => {
+    if (!relayKey.trim()) {
+      toast.error('请输入要校验的 API Key')
+      return
+    }
+    setRelayVerifying(true)
+    try {
+      const res = await api.post('/api/relay/verify', { api_key: relayKey.trim() })
+      toast.success(res.data.message)
+    } catch (e) {
+      toast.error(e.message || 'Key 无效')
+    } finally {
+      setRelayVerifying(false)
+    }
+  }
+
+  const clearRelay = async () => {
+    try {
+      await api.delete('/api/relay/me')
+      setRelayConfigured(false)
+      setRelayMasked('')
+      toast.success('已清除中转站 Key，回退平台默认计费')
+    } catch (e) {
+      toast.error(e.message || '清除失败')
+    }
+  }
 
   // 密码表单
   const [oldPwd, setOldPwd] = useState('')
@@ -488,6 +560,69 @@ export default function ProfilePage({ user, onUserUpdate }) {
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* 中转站 API Key（模式 B：AI 功能使用用户自带的中转站 token） */}
+          <div className="mt-6 bg-white rounded-2xl border border-amber-200 p-5">
+            <h3 className="text-base font-semibold text-ink-900 mb-1 flex items-center gap-2">
+              <KeyRound className="w-4.5 h-4.5 text-amber-500" />
+              中转站 API Key
+            </h3>
+            <p className="text-xs text-ink-400 mb-4">
+              填写本站签发的 API Key 后，AI 功能（对话/图片/视频/配音）将使用你的 Key 计费。
+              未填写时使用平台默认额度。中转站地址由平台固定，不可更改。
+            </p>
+
+            {relayConfigured && (
+              <div className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm text-emerald-700">
+                  <CheckCircle2 className="w-4 h-4" />
+                  已配置：<code className="font-mono">{relayMasked}</code>
+                  <span className="text-xs text-emerald-500">（{relayBase}）</span>
+                </div>
+                <button
+                  onClick={clearRelay}
+                  className="text-xs text-red-500 hover:text-red-700 font-medium"
+                >
+                  清除
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-ink-700 mb-1.5">API Key</label>
+                <input
+                  type="password"
+                  value={relayKey}
+                  onChange={(e) => setRelayKey(e.target.value)}
+                  placeholder="sk- 开头的中转站 Key"
+                  className={inputCls}
+                  autoComplete="off"
+                />
+                <p className="text-xs text-ink-400 mt-1.5">
+                  如何获取：注册中转站 → 个人中心创建 API Key（本站签名校验）
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={saveRelay}
+                  disabled={relaySaving || !relayKey.trim()}
+                  className="px-5 py-2.5 bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 disabled:opacity-50 transition-all flex items-center gap-2"
+                >
+                  {relaySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                  保存并启用
+                </button>
+                <button
+                  onClick={verifyRelay}
+                  disabled={relayVerifying || !relayKey.trim()}
+                  className="px-5 py-2.5 bg-ink-100 text-ink-700 rounded-xl font-medium hover:bg-ink-200 disabled:opacity-50 transition-all flex items-center gap-2"
+                >
+                  {relayVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  仅校验
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

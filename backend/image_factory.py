@@ -2214,9 +2214,10 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
-        from common.config import require_model
+        from common.config import require_model, resolve_feature_model
 
-        _tryon_model = require_model(IMAGE_MODEL, "AI 试衣")
+        _tryon_uid = payload.get("user_id") or ""
+        _tryon_model = require_model(resolve_feature_model(_tryon_uid, "image", IMAGE_MODEL), "AI 试衣")
         tryon_request = {
             "model": _tryon_model,
             "prompt": garment_lock,
@@ -2304,7 +2305,7 @@ async def virtual_try_on(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"description": description, "style": style, "background": background, "project_id": project_id, "keep_identity": keep_identity}
+    payload = {"description": description, "style": style, "background": background, "project_id": project_id, "keep_identity": keep_identity, "user_id": uid}
     if sync:
         payload["person_image"] = base64.b64encode(person_content).decode()
         payload["clothing_image"] = base64.b64encode(clothing_content).decode()
@@ -2353,9 +2354,10 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
     if (num_frames - 1) % 8 != 0:
         num_frames = ((num_frames - 1) // 8) * 8 + 1
 
-    from common.config import VIDEO_MODEL, require_model
+    from common.config import VIDEO_MODEL, require_model, resolve_feature_model
 
-    _turntable_vid_model = require_model(payload.get("model") or VIDEO_MODEL, "视频")
+    _turntable_uid = payload.get("user_id") or ""
+    _turntable_vid_model = require_model(payload.get("model") or resolve_feature_model(_turntable_uid, "video", VIDEO_MODEL), "视频")
     body = {
         "model": _turntable_vid_model,
         "prompt": prompt,
@@ -2466,7 +2468,7 @@ async def image_turntable(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt or _turntable_prompt(), "duration": duration, "project_id": project_id}
+    payload = {"prompt": prompt or _turntable_prompt(), "duration": duration, "project_id": project_id, "user_id": uid}
     if sync:
         payload["image"] = base64.b64encode(image_content).decode()
         return await _image_turntable_worker(payload)
@@ -2493,6 +2495,7 @@ async def replace_background(
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
     from common.config import IMAGE_MODEL
 
+    _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     try:
         content = await image.read()
         img = Image.open(BytesIO(content))
@@ -2508,7 +2511,7 @@ async def replace_background(
                     f"{resolve_api_base()}/images/generations",
                     headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
                     json={
-                        "model": require_model(IMAGE_MODEL, "图片"),
+                        "model": require_model(resolve_feature_model(_uid, "image", IMAGE_MODEL), "图片"),
                         "prompt": f"{ai_background.strip()}, wide background, no people, no text, soft lighting",
                         "size": f"{w}x{h}",
                         "n": 1,

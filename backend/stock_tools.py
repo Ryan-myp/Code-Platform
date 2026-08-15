@@ -31,20 +31,32 @@ def _calculate_returns_simple(closes: list) -> list:
         prev = c
     return returns
 
-def _calculate_drawdown_simple(closes: list) -> dict:
-    """简化版计算回撤。"""
+def _calculate_drawdown_simple(points: list) -> dict:
+    """简化版计算回撤（含谷底日期）。兼容 dict 序列（含 close/date）或数字序列。"""
     running_max = None
     max_drawdown_pct = None
-    for c in closes:
+    trough_date = None
+    peak_date = None
+    for p in points:
+        if p is None:
+            continue
+        c = p.get("close") if isinstance(p, dict) else p
         if c is None:
             continue
         if running_max is None or c > running_max:
             running_max = c
+            peak_date = p.get("date") if isinstance(p, dict) else None
         if running_max and running_max > 0:
             dd = (running_max - c) / running_max
             if max_drawdown_pct is None or dd > max_drawdown_pct:
                 max_drawdown_pct = dd
-    return {"max_drawdown_pct": max_drawdown_pct}
+                trough_date = p.get("date") if isinstance(p, dict) else None
+    # _pct 字段按百分比返回（0.3 → 30.0）
+    return {
+        "max_drawdown_pct": (max_drawdown_pct * 100) if max_drawdown_pct is not None else None,
+        "drawdown_trough_date": trough_date,
+        "drawdown_peak_date": peak_date,
+    }
 
 def _compute_risk_simple(portfolio: dict, market_data: dict) -> dict:
     """简化版风险计算。"""
@@ -394,8 +406,9 @@ def compute_risk_metrics(data: dict | None) -> dict:
     returns = _calculate_returns_simple(closes)
     volatility_pct = round(statistics.stdev(returns) * (252**0.5) * 100, 2) if len(returns) >= 2 else None
     
-    dd_result = _calculate_drawdown_simple(closes)
+    dd_result = _calculate_drawdown_simple(points)
     max_drawdown_pct = dd_result.get("max_drawdown_pct")
+    drawdown_trough_date = dd_result.get("drawdown_trough_date")
     
     # 流动性（日均成交量）
     valid_volumes = [v for v in volumes if v is not None]
@@ -416,7 +429,7 @@ def compute_risk_metrics(data: dict | None) -> dict:
     elif max_drawdown_pct and dd_level == "中":
         warnings.append(f"区间最大回撤 {max_drawdown_pct}%，回撤风险需关注")
     if liq_level == "低迷":
-        warnings.append("日均成交量偏低，注意买卖价差")
+        warnings.append("日均成交量偏低，注意滑点与买卖价差成本")
     if not warnings:
         warnings.append("未发现显著风险信号")
 
@@ -424,6 +437,7 @@ def compute_risk_metrics(data: dict | None) -> dict:
         "volatility_pct": volatility_pct,
         "volatility_level": vol_level,
         "max_drawdown_pct": max_drawdown_pct,
+        "drawdown_trough_date": drawdown_trough_date,
         "avg_volume": avg_volume,
         "liquidity_level": liq_level,
         "risk_level": risk_level,

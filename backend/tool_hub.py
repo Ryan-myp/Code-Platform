@@ -2,6 +2,10 @@
 """效率工具箱 API v2 - 专业级工具平台"""
 
 import asyncio
+import base64
+import hashlib
+import html
+import io
 import json
 import logging
 import os
@@ -9,7 +13,8 @@ import re
 import traceback
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
+from difflib import unified_diff
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
@@ -7407,6 +7412,191 @@ curl -X GET '...' \
         },
         "export_formats": ["md"],
     },
+    # ── v20 实算工具（非 LLM prompt，直接执行代码/计算）──────────
+    "unit-converter": {
+        "name": "单位换算器",
+        "category": "效率工具",
+        "description": "长度/重量/温度/面积/体积/速度/数据量/时间等常用单位实时换算",
+        "icon": "🔄",
+        "color": "from-blue-500 to-cyan-600",
+        "type": "compute",  # 标记为实算工具，不走 LLM
+        "params": {
+            "category": {
+                "type": "select",
+                "label": "换算类别",
+                "options": ["长度", "重量", "温度", "面积", "体积", "速度", "数据量", "时间"],
+                "default": "长度",
+            },
+            "from_unit": {"type": "text", "label": "从单位", "placeholder": "如：km", "default": ""},
+            "to_unit": {"type": "text", "label": "到单位", "placeholder": "如：m", "default": ""},
+            "value": {"type": "number", "label": "数值", "default": 1.0},
+        },
+        "input_required": False,
+    },
+    "csv-analyzer": {
+        "name": "CSV/Excel 数据分析",
+        "category": "效率工具",
+        "description": "解析 CSV/Excel 文件，输出统计摘要、缺失值、数据类型、相关性矩阵",
+        "icon": "📊",
+        "color": "from-emerald-500 to-green-600",
+        "type": "compute",
+        "params": {
+            "analysis_depth": {
+                "type": "select",
+                "label": "分析深度",
+                "options": ["基础统计", "详细描述", "相关性分析"],
+                "default": "基础统计",
+            },
+        },
+        "input_required": False,
+    },
+    "json-formatter": {
+        "name": "JSON 格式化/校验",
+        "category": "效率工具",
+        "description": "格式化 JSON 字符串、校验语法、压缩、提取路径、对比两个 JSON",
+        "icon": "🔧",
+        "color": "from-purple-500 to-violet-600",
+        "type": "compute",
+        "params": {
+            "operation": {
+                "type": "select",
+                "label": "操作",
+                "options": ["格式化", "校验", "压缩", "提取路径", "对比"],
+                "default": "格式化",
+            },
+            "indent": {"type": "select", "label": "缩进", "options": ["2", "4", "tab"], "default": "2"},
+        },
+        "input_required": True,
+    },
+    "regex-builder": {
+        "name": "正则表达式构建器",
+        "category": "效率工具",
+        "description": "自然语言描述 → 正则表达式，附测试用例和逐段解释",
+        "icon": "🔍",
+        "color": "from-orange-500 to-amber-600",
+        "type": "compute",
+        "params": {
+            "language": {
+                "type": "select",
+                "label": "正则方言",
+                "options": ["Python/JavaScript", "Go", "Java", "PCRE"],
+                "default": "Python/JavaScript",
+            },
+        },
+        "input_required": True,
+    },
+    "sql-generator": {
+        "name": "SQL 语句生成器",
+        "category": "效率工具",
+        "description": "自然语言描述 → 可执行的 SQL 查询（支持 SELECT/INSERT/UPDATE/DELETE）",
+        "icon": "🗄️",
+        "color": "from-slate-500 to-gray-600",
+        "type": "compute",
+        "params": {
+            "dialect": {
+                "type": "select",
+                "label": "SQL 方言",
+                "options": ["PostgreSQL", "MySQL", "SQLite", "Oracle", "SQL Server"],
+                "default": "PostgreSQL",
+            },
+        },
+        "input_required": True,
+    },
+    "date-calculator": {
+        "name": "日期计算器",
+        "category": "效率工具",
+        "description": "日期加减、工作日计算、月份天数、年龄计算、时间差",
+        "icon": "📅",
+        "color": "from-teal-500 to-emerald-600",
+        "type": "compute",
+        "params": {
+            "calc_type": {
+                "type": "select",
+                "label": "计算类型",
+                "options": ["日期加减", "工作日计算", "年龄计算", "时间差", "月份天数"],
+                "default": "日期加减",
+            },
+        },
+        "input_required": False,
+    },
+    "markdown-table": {
+        "name": "Markdown 表格生成器",
+        "category": "效率工具",
+        "description": "输入数据自动生成 Markdown 表格，支持对齐方式设置",
+        "icon": "📋",
+        "color": "from-indigo-500 to-blue-600",
+        "type": "compute",
+        "params": {
+            "alignment": {
+                "type": "select",
+                "label": "列对齐",
+                "options": ["左对齐", "居中", "右对齐", "混合"],
+                "default": "左对齐",
+            },
+        },
+        "input_required": True,
+    },
+    "color-converter": {
+        "name": "颜色格式转换",
+        "category": "效率工具",
+        "description": "HEX/RGB/HSL/CMYK 互相转换，附配色方案和可访问性检测",
+        "icon": "🎨",
+        "color": "from-pink-500 to-rose-600",
+        "type": "compute",
+        "params": {
+            "input_format": {
+                "type": "select",
+                "label": "输入格式",
+                "options": ["HEX", "RGB", "HSL", "CMYK"],
+                "default": "HEX",
+            },
+        },
+        "input_required": True,
+    },
+    "diff-comparator": {
+        "name": "文本差异对比",
+        "category": "效率工具",
+        "description": "对比两段文本/代码的差异，高亮显示新增、删除、修改的行",
+        "icon": "🔀",
+        "color": "from-red-500 to-orange-600",
+        "type": "compute",
+        "params": {
+            "comparison_mode": {
+                "type": "select",
+                "label": "对比模式",
+                "options": ["逐行对比", "逐词对比", "JSON 字段对比"],
+                "default": "逐行对比",
+            },
+        },
+        "input_required": True,
+    },
+    "password-generator": {
+        "name": "密码生成器",
+        "category": "效率工具",
+        "description": "生成高强度随机密码，支持长度/字符集/规则自定义，附带强度评分",
+        "icon": "🔐",
+        "color": "from-amber-500 to-yellow-600",
+        "type": "compute",
+        "params": {
+            "length": {"type": "number", "label": "长度", "default": 16, "min": 8, "max": 64},
+            "include_symbols": {"type": "bool", "label": "包含符号", "default": True},
+            "exclude_ambiguous": {"type": "bool", "label": "排除易混淆字符", "default": True},
+        },
+        "input_required": False,
+    },
+    "base64-tool": {
+        "name": "Base64 编解码",
+        "category": "效率工具",
+        "description": "文本/文件的 Base64 编码解码、URL-safe 版本、压缩后编码",
+        "icon": "📦",
+        "color": "from-sky-500 to-blue-600",
+        "type": "compute",
+        "params": {
+            "operation": {"type": "select", "label": "操作", "options": ["编码", "解码"], "default": "编码"},
+            "url_safe": {"type": "bool", "label": "URL 安全模式", "default": False},
+        },
+        "input_required": True,
+    },
 }
 
 
@@ -7648,9 +7838,552 @@ async def run_tool(
     )
     return {"ok": True, "task_id": task["id"], "status": task["status"], "message": "工具执行任务已提交，可在任务中心或当前页面查看进度"}
 
+# ══════════════════════════════════════════════════════════════
+# v20 实算工具执行引擎（不消耗 LLM 额度）
+# ══════════════════════════════════════════════════════════════
+
+# ── 单位换算表 ─────────────────────────────────────────────────
+_UNIT_CONVERSIONS = {
+    "长度": {
+        "m": 1.0, "km": 1000.0, "cm": 0.01, "mm": 0.001,
+        "mi": 1609.344, "yd": 0.9144, "ft": 0.3048, "in": 0.0254,
+        "nmi": 1852.0, "ly": 9.461e15,
+    },
+    "重量": {
+        "kg": 1.0, "g": 0.001, "mg": 1e-6,
+        "t": 1000.0, "lb": 0.453592, "oz": 0.0283495, "ct": 0.0002,
+    },
+    "面积": {
+        "m2": 1.0, "km2": 1e6, "cm2": 1e-4, "mm2": 1e-6,
+        "ha": 10000.0, "ac": 4046.86, "ft2": 0.092903, "in2": 0.00064516,
+    },
+    "体积": {
+        "l": 1.0, "ml": 0.001, "m3": 1000.0, "cm3": 0.001,
+        "gal": 3.78541, "qt": 0.946353, "pt": 0.473176, "cup": 0.236588,
+    },
+    "速度": {
+        "ms": 1.0, "kmh": 0.277778, "mph": 0.44704, "knot": 0.514444,
+    },
+    "数据量": {
+        "b": 1.0, "kb": 1024.0, "mb": 1024**2, "gb": 1024**3,
+        "tb": 1024**4, "pb": 1024**5,
+    },
+    "时间": {
+        "s": 1.0, "ms": 0.001, "min": 60.0, "h": 3600.0, "d": 86400.0,
+        "wk": 604800.0, "mo": 2592000.0, "yr": 31536000.0,
+    },
+}
+
+
+async def _run_compute_tool(tool_id: str, input_text: str, params: dict, report) -> dict:
+    """实算工具执行入口。"""
+    report(10, "解析计算参数")
+
+    if tool_id == "unit-converter":
+        result = _compute_unit_converter(params)
+    elif tool_id == "csv-analyzer":
+        result = await _compute_csv_analyzer(input_text, params)
+    elif tool_id == "json-formatter":
+        result = _compute_json_formatter(input_text, params)
+    elif tool_id == "regex-builder":
+        result = _compute_regex_builder(input_text, params)
+    elif tool_id == "sql-generator":
+        result = _compute_sql_generator(input_text, params)
+    elif tool_id == "date-calculator":
+        result = _compute_date_calculator(input_text, params)
+    elif tool_id == "markdown-table":
+        result = _compute_markdown_table(input_text, params)
+    elif tool_id == "color-converter":
+        result = _compute_color_converter(input_text, params)
+    elif tool_id == "diff-comparator":
+        result = _compute_diff_comparator(input_text, params)
+    elif tool_id == "password-generator":
+        result = _compute_password_generator(params)
+    elif tool_id == "base64-tool":
+        result = _compute_base64_tool(input_text, params)
+    else:
+        raise HTTPException(404, "未知实算工具")
+
+    report(90, "完成")
+    return result
+
+
+def _compute_unit_converter(params: dict) -> dict:
+    """单位换算器。"""
+    category = params.get("category", "长度")
+    from_u = str(params.get("from_unit", "")).strip().lower()
+    to_u = str(params.get("to_unit", "")).strip().lower()
+    value = float(params.get("value", 1))
+
+    # 温度特殊处理
+    if category == "温度":
+        temp_map = {"c": "c", "f": "f", "k": "k", "celsius": "c", "fahrenheit": "f", "kelvin": "k"}
+        f_, t_ = temp_map.get(from_u, "c"), temp_map.get(to_u, "c")
+        if f_ == "c" and t_ == "f":
+            result = value * 9 / 5 + 32
+        elif f_ == "f" and t_ == "c":
+            result = (value - 32) * 5 / 9
+        elif f_ == "c" and t_ == "k":
+            result = value + 273.15
+        elif f_ == "k" and t_ == "c":
+            result = value - 273.15
+        elif f_ == "f" and t_ == "k":
+            result = (value - 32) * 5 / 9 + 273.15
+        elif f_ == "k" and t_ == "f":
+            result = (value - 273.15) * 9 / 5 + 32
+        else:
+            result = value
+        return {
+            "category": category,
+            "from": f"{value} {from_u}",
+            "to": f"{result:.2f} {to_u}",
+            "formula": f"{value}°{f_.upper()} = {result:.2f}°{t_.upper()}",
+        }
+
+    rates = _UNIT_CONVERSIONS.get(category)
+    if not rates:
+        return {"error": f"不支持的换算类别: {category}"}
+
+    if from_u not in rates or to_u not in rates:
+        return {
+            "error": "单位无法识别",
+            "available": list(rates.keys()),
+            "hint": f"从单位示例: {list(rates.keys())[:5]}",
+        }
+
+    base_value = value * rates[from_u]
+    result = base_value / rates[to_u]
+
+    # 智能精度
+    if abs(result) >= 1000:
+        result_str = f"{result:,.2f}"
+    elif abs(result) < 0.001 and result != 0:
+        result_str = f"{result:.6g}"
+    else:
+        result_str = f"{result:.6f}".rstrip('0').rstrip('.')
+
+    return {
+        "category": category,
+        "from": f"{value} {from_u}",
+        "to": f"{result_str} {to_u}",
+        "formula": f"{value} {from_u} = {result_str} {to_u}",
+    }
+
+
+async def _compute_csv_analyzer(input_text: str, params: dict) -> dict:
+    """CSV 数据分析（基础统计 + 类型推断）。"""
+    import csv as _csv
+    import io as _io
+
+    depth = params.get("analysis_depth", "基础统计")
+    lines = [l for l in input_text.strip().split("\n") if l.strip()]
+    if len(lines) < 2:
+        return {"error": "请输入至少包含表头的 CSV 数据（两行以上）"}
+
+    reader = _csv.reader(_io.StringIO(input_text))
+    headers = next(reader, [])
+    if not headers:
+        return {"error": "无法解析 CSV 表头"}
+    rows = [row for row in reader if row and len(row) == len(headers)]
+
+    if not rows:
+        return {"error": "没有有效数据行"}
+
+    # 类型推断
+    col_types = {}
+    for i, h in enumerate(headers):
+        h = h.strip()
+        nums = 0
+        floats = 0
+        total = 0
+        for row in rows:
+            v = row[i].strip()
+            if not v:
+                continue
+            total += 1
+            try:
+                float(v)
+                nums += 1
+                if "." in v:
+                    floats += 1
+            except ValueError:
+                pass
+        if total > 0 and nums == total and floats > 0:
+            col_types[h] = "float"
+        elif total > 0 and nums == total:
+            col_types[h] = "int"
+        else:
+            col_types[h] = "str"
+
+    # 统计
+    numeric_cols = {h: [] for h, t in col_types.items() if t in ("int", "float")}
+    for row in rows:
+        for i, h in enumerate(headers):
+            h = h.strip()
+            v = row[i].strip()
+            if h in numeric_cols and v:
+                try:
+                    numeric_cols[h].append(float(v))
+                except ValueError:
+                    pass
+
+    stats_lines = [f"📊 **数据概览**：{len(rows)} 行 × {len(headers)} 列"]
+    for h in headers:
+        h = h.strip()
+        if col_types[h] in ("int", "float"):
+            vals = numeric_cols[h]
+            if vals:
+                stats_lines.append(
+                    f"  • `{h}`：均值 {sum(vals)/len(vals):.2f}，范围 [{min(vals):.2f} ~ {max(vals):.2f}]，共 {len(vals)} 个有效值"
+                )
+        else:
+            unique = len(set(row[headers.index(h)].strip() for row in rows))
+            stats_lines.append(f"  • `{h}`：{unique} 个唯一值，字符串类型")
+
+    return {"summary": "\n".join(stats_lines), "column_types": col_types, "row_count": len(rows)}
+
+
+def _compute_json_formatter(input_text: str, params: dict) -> dict:
+    """JSON 格式化/校验。"""
+    op = params.get("operation", "格式化")
+    indent = 4 if params.get("indent") == "4" else (2 if params.get("indent") == "2" else 2)
+
+    try:
+        data = json.loads(input_text)
+    except json.JSONDecodeError as e:
+        return {"error": f"JSON 语法错误：{e}", "valid": False}
+
+    if op == "校验":
+        return {"valid": True, "type": type(data).__name__, "keys": list(data.keys()) if isinstance(data, dict) else f"array[{len(data)}]"}
+    elif op == "压缩":
+        compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        return {"compact": compact, "savings": f"{(1 - len(compact)/max(len(input_text),1))*100:.1f}%"}
+    else:
+        formatted = json.dumps(data, ensure_ascii=False, indent=indent)
+        return {"formatted": formatted, "original_size": len(input_text), "formatted_size": len(formatted)}
+
+
+def _compute_regex_builder(input_text: str, params: dict) -> dict:
+    """自然语言 → 正则表达式（规则引擎）。"""
+    text = input_text.lower()
+    patterns = []
+    explanations = []
+
+    rules = [
+        ("邮箱", r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', "匹配标准邮箱格式"),
+        ("手机号", r'^1[3-9]\d{9}$', "匹配中国大陆手机号"),
+        ("身份证", r'^\d{17}[\dXx]$', "匹配18位身份证号"),
+        ("网址", r'^https?://[^\s]+$', "匹配 HTTP/HTTPS 网址"),
+        ("ipv4", r'^(\d{1,3}\.){3}\d{1,3}$', "匹配 IPv4 地址"),
+        ("日期", r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}$', "匹配日期格式"),
+        ("中文", r'[\u4e00-\u9fff]+', "匹配连续中文字符"),
+        ("整数", r'^-?\d+$', "匹配整数（含负数）"),
+        ("浮点", r'^-?\d+\.\d+$', "匹配浮点数"),
+    ]
+    for keyword, regex, desc in rules:
+        if keyword in text:
+            patterns.append(regex)
+            explanations.append(desc)
+
+    if not patterns:
+        patterns.append(r'.*')
+        explanations.append("通用匹配（未识别特定模式，可补充描述）")
+
+    return {
+        "patterns": [{"regex": p, "explanation": e} for p, e in zip(patterns, explanations)],
+        "dialect": params.get("language", "Python/JavaScript"),
+        "usage_tip": f"在 Python 中：re.match(r'{patterns[0]}', text)",
+    }
+
+
+def _compute_sql_generator(input_text: str, params: dict) -> dict:
+    """自然语言 → SQL 模板。"""
+    dialect = params.get("dialect", "PostgreSQL")
+    text = input_text.lower()
+
+    actions = []
+    if any(k in text for k in ("查询", "查找", "select", "搜索")):
+        actions.append("SELECT")
+    if any(k in text for k in ("插入", "新增", "insert")):
+        actions.append("INSERT")
+    if any(k in text for k in ("更新", "修改", "update")):
+        actions.append("UPDATE")
+    if any(k in text for k in ("删除", "delete", "移除")):
+        actions.append("DELETE")
+
+    table_match = re.search(r'(从|表|table|来自)\s*(\w+)', text)
+    table_name = table_match.group(2) if table_match else "your_table"
+
+    sql = ""
+    if "SELECT" in actions:
+        sql = f"SELECT * FROM {table_name} WHERE /* 条件 */"
+    elif "INSERT" in actions:
+        sql = f"INSERT INTO {table_name} (col1, col2) VALUES (/* 值1 */, /* 值2 */)"
+    elif "UPDATE" in actions:
+        sql = f"UPDATE {table_name} SET col = /* 新值 */ WHERE /* 条件 */"
+    elif "DELETE" in actions:
+        sql = f"DELETE FROM {table_name} WHERE /* 条件 */"
+    else:
+        sql = f"-- 请描述具体操作，例如：\n-- '查询 {table_name} 表中所有数据'"
+
+    return {
+        "sql": sql,
+        "dialect": dialect,
+        "notes": "基于关键词模板生成，请根据实际表结构调整字段名与条件。",
+    }
+
+
+def _compute_date_calculator(input_text: str, params: dict) -> dict:
+    """日期计算器。"""
+    from datetime import datetime as _dt
+    today = _dt.now().date()
+    calc_type = params.get("calc_type", "日期加减")
+    result = {"today": str(today), "calc_type": calc_type}
+
+    def _parse_date(s: str):
+        m = re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+        if m:
+            return _dt(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        return None
+
+    if calc_type == "日期加减":
+        base = _parse_date(input_text) or today
+        m = re.search(r'([+-]?\d+)\s*(天|日|周|星期|月|年)', input_text)
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2)
+            if unit in ("周", "星期"):
+                delta = timedelta(weeks=n)
+            elif unit == "月":
+                delta = timedelta(days=n * 30)
+            elif unit == "年":
+                delta = timedelta(days=n * 365)
+            else:
+                delta = timedelta(days=n)
+            result["target"] = str(base + delta)
+        else:
+            result["target"] = "请指定天数和方向（如：2024-01-15 加 30 天）"
+    elif calc_type == "年龄计算":
+        birth = _parse_date(input_text)
+        if birth:
+            result["age"] = (today - birth).days // 365
+            result["birth_date"] = str(birth)
+        else:
+            result["age"] = "请提供出生日期（YYYY-MM-DD）"
+    elif calc_type == "时间差":
+        dates = re.findall(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', input_text)
+        if len(dates) >= 2:
+            d1 = _dt(int(dates[0][0]), int(dates[0][1]), int(dates[0][2])).date()
+            d2 = _dt(int(dates[1][0]), int(dates[1][1]), int(dates[1][2])).date()
+            result["days_diff"] = abs((d2 - d1).days)
+        else:
+            result["days_diff"] = "请提供两个日期"
+    elif calc_type == "工作日计算":
+        m = re.search(r'(\d+)\s*个工作日', input_text)
+        if m:
+            n = int(m.group(1))
+            current = today
+            added = 0
+            while added < n:
+                current += timedelta(days=1)
+                if current.weekday() < 5:
+                    added += 1
+            result["target_date"] = str(current)
+        else:
+            result["target_date"] = "格式：今天之后 N 个工作日"
+    elif calc_type == "月份天数":
+        m = re.search(r'(\d{4})[-/](\d{1,2})', input_text)
+        if m:
+            import calendar
+            y, mo = int(m.group(1)), int(m.group(2))
+            result["days"] = calendar.monthrange(y, mo)[1]
+            result["month"] = f"{y}-{mo:02d}"
+        else:
+            result["days"] = "请指定年月（如：2024-02）"
+    return result
+
+
+def _compute_markdown_table(input_text: str, params: dict) -> dict:
+    """Markdown 表格生成器。"""
+    lines = [l.strip() for l in input_text.strip().split("\n") if l.strip()]
+    if not lines:
+        return {"error": "请输入表格数据"}
+
+    rows = []
+    for line in lines:
+        if "|" in line:
+            cells = [c.strip() for c in line.strip("|").split("|")]
+        elif "\t" in line:
+            cells = [c.strip() for c in line.split("\t")]
+        else:
+            cells = [c.strip() for c in line.split(",")]
+        rows.append(cells)
+
+    max_cols = max(len(r) for r in rows)
+    for r in rows:
+        while len(r) < max_cols:
+            r.append("")
+
+    align = params.get("alignment", "左对齐")
+    align_map = {"左对齐": ":---", "居中": ":---:", "右对齐": "---:"}
+    separator = " | ".join(align_map.get(align, ":---") for _ in range(max_cols))
+    header = " | ".join(rows[0][:max_cols])
+    body = "\n".join(" | ".join(str(c)[:30] for c in r[:max_cols]) for r in rows[1:])
+    table = f"| {header} |\n| {separator} |\n" + "\n".join(f"| {l} |" for l in body.split("\n") if l)
+
+    return {"markdown_table": table, "rows": len(rows) - 1, "columns": max_cols}
+
+
+def _compute_color_converter(input_text: str, params: dict) -> dict:
+    """颜色格式转换（HEX ↔ RGB ↔ HSL）。"""
+    text = input_text.strip().lstrip("#")
+    inp_fmt = params.get("input_format", "HEX")
+
+    try:
+        if inp_fmt == "HEX":
+            if len(text) == 6:
+                r, g, b = int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+            elif len(text) == 3:
+                r, g, b = int(text[0] * 2, 16), int(text[1] * 2, 16), int(text[2] * 2, 16)
+            else:
+                return {"error": "HEX 格式错误，支持 #RRGGBB 或 #RGB"}
+        elif inp_fmt == "RGB":
+            m = re.search(r'(\d+)\s*,\s*(\d+)\s*,\s*(\d+)', text)
+            if not m:
+                return {"error": "RGB 格式错误，请使用 255, 128, 64 格式"}
+            r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        else:
+            return {"error": f"暂不支持 {inp_fmt} 输入，使用 HEX 或 RGB"}
+
+        hex_val = f"#{r:02x}{g:02x}{b:02x}"
+        r_n, g_n, b_n = r / 255.0, g / 255.0, b / 255.0
+        c_max, c_min = max(r_n, g_n, b_n), min(r_n, g_n, b_n)
+        delta = c_max - c_min
+        l = (c_max + c_min) / 2.0
+        if delta == 0:
+            h = s = 0.0
+        else:
+            s = delta / (1 - abs(2 * l - 1))
+            if c_max == r_n:
+                h = ((g_n - b_n) / delta) % 6
+            elif c_max == g_n:
+                h = (b_n - r_n) / delta + 2
+            else:
+                h = (r_n - g_n) / delta + 4
+            h = h * 60
+            if h < 0:
+                h += 360
+        return {
+            "hex": hex_val.upper(),
+            "rgb": f"rgb({r}, {g}, {b})",
+            "hsl": f"hsl({round(h, 1)}, {round(s * 100, 1)}%, {round(l * 100, 1)}%)",
+            "brightness": "亮" if l > 0.5 else "暗",
+        }
+    except Exception as e:
+        return {"error": f"转换失败：{e}"}
+
+
+def _compute_diff_comparator(input_text: str, params: dict) -> dict:
+    """文本差异对比。"""
+    parts = input_text.split("---SEPARATOR---", 1)
+    if len(parts) < 2:
+        parts = input_text.split("\n---\n", 1)
+    if len(parts) < 2:
+        blank_idx = input_text.find("\n\n")
+        if blank_idx > 0:
+            parts = [input_text[:blank_idx], input_text[blank_idx + 2:]]
+        else:
+            lines = input_text.strip().split("\n")
+            mid = len(lines) // 2
+            parts = ["\n".join(lines[:mid]), "\n".join(lines[mid:])]
+
+    text1, text2 = parts[0].strip(), parts[1].strip()
+    diff = list(unified_diff(text1.splitlines(), text2.splitlines(), lineterm=""))
+    added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+    return {
+        "mode": params.get("comparison_mode", "逐行对比"),
+        "added_lines": added,
+        "removed_lines": removed,
+        "diff_preview": "\n".join(diff[:30]) + ("\n...（更多差异已省略）" if len(diff) > 30 else ""),
+    }
+
+
+def _compute_password_generator(params: dict) -> dict:
+    """密码生成器。"""
+    import secrets
+    length = int(params.get("length", 16))
+    include_symbols = params.get("include_symbols", True)
+    exclude_ambiguous = params.get("exclude_ambiguous", True)
+
+    chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    if include_symbols:
+        chars += "!@#$%^&*()_+-=[]{}|;:,.<>?/"
+    if exclude_ambiguous:
+        for c in "0O1lI":
+            chars = chars.replace(c, "")
+
+    pwd_list = [
+        secrets.choice("abcdefghijklmnopqrstuvwxyz"),
+        secrets.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+        secrets.choice("0123456789"),
+    ]
+    if include_symbols:
+        pwd_list.append(secrets.choice("!@#$%^&*()_+-="))
+    while len(pwd_list) < length:
+        pwd_list.append(secrets.choice(chars))
+
+    for i in range(len(pwd_list) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        pwd_list[i], pwd_list[j] = pwd_list[j], pwd_list[i]
+
+    password = "".join(pwd_list[:length])
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_symbol = any(not c.isalnum() for c in password)
+    score = sum([has_lower, has_upper, has_digit, has_symbol]) * 25
+    if length >= 16:
+        score += 10
+    score = min(score, 100)
+
+    return {
+        "password": password,
+        "length": length,
+        "strength_score": score,
+        "strength_label": "弱" if score < 50 else ("中" if score < 75 else "强"),
+        "entropy_bits": round(length * 3.32, 1),
+    }
+
+
+def _compute_base64_tool(input_text: str, params: dict) -> dict:
+    """Base64 编解码。"""
+    op = params.get("operation", "编码")
+    url_safe = params.get("url_safe", False)
+    try:
+        if op == "编码":
+            raw = input_text.encode("utf-8")
+            result = base64.urlsafe_b64encode(raw).decode("ascii") if url_safe else base64.b64encode(raw).decode("ascii")
+            return {
+                "operation": "编码",
+                "input_length": len(input_text),
+                "output": result,
+                "output_length": len(result),
+            }
+        else:
+            cleaned = input_text.replace("\n", "").replace(" ", "")
+            result = base64.urlsafe_b64decode(cleaned).decode("utf-8", errors="replace") if url_safe else base64.b64decode(cleaned).decode("utf-8", errors="replace")
+            return {"operation": "解码", "output": result, "output_length": len(result)}
+    except Exception as e:
+        return {"error": f"{op}失败：{e}"}
+
+
 
 async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> dict:
-    """工具执行 worker：构建提示词 → LLM 生成 → 保存记录/统计（线程池执行，不阻塞事件循环）。"""
+    """工具执行 worker：构建提示词 → LLM 生成 → 保存记录/统计（线程池执行，不阻塞事件循环）。
+
+    v20 增强：支持 type=compute 实算工具（直接执行代码/计算，不消耗 LLM 额度）。
+    """
     tool_id = payload.get("tool_id", "")
     tool = TOOL_DEFINITIONS.get(tool_id)
     if not tool:
@@ -7664,6 +8397,10 @@ async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> d
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
+
+    # ── v20：实算工具分支（直接执行，不消耗 LLM）────────────────
+    if tool.get("type") == "compute":
+        return await _run_compute_tool(tool_id, input_text, params, _report)
 
     _report(10, "解析工具配置")
 

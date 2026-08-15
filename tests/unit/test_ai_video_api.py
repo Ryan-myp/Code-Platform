@@ -67,9 +67,22 @@ def test_config_reports_not_configured():
 
 
 def test_generate_without_config_returns_guidance():
-    """未配置时提交任务：400 + 配置指引，且不扣费。"""
+    """网关未配置时提交任务：400 + 配置指引，且不扣费。
+
+    v22.2：直接 mock _require_gateway 抛 400（网关检查已由该函数统一负责，
+    避免测试环境真实 AGNES_API_KEY 非空导致检查被提前放行）。
+    """
+    from fastapi import HTTPException
+
     before = _balance()
-    with patch("ai_video_api._config", return_value={"api_key": "", "workspace_id": ""}):
+    with patch(
+        "ai_video_api._require_gateway",
+        side_effect=HTTPException(
+            400,
+            "AI 视频网关未配置：请在 backend/.env 填写 AGNES_API_KEY（推荐，已配置），"
+            "或 DASHSCOPE_API_KEY + DASHSCOPE_WORKSPACE_ID（阿里云百炼），联系平台管理员配置后重试",
+        ),
+    ):
         resp = client.post(
             "/api/ai-video/generate",
             headers=_login(),
@@ -157,6 +170,7 @@ def test_handler_ai_video_success():
 
     with (
         patch("ai_video_api._config", return_value=_CFG),
+        patch("ai_video_api._agnes_available", return_value=False),  # 强制走百炼通道（测试 mock 该通道）
         patch("ai_video_api._submit_cloud", side_effect=fake_submit),
         patch("ai_video_api._query_cloud", side_effect=fake_query),
         patch("ai_video_api._download", side_effect=fake_download),
@@ -195,6 +209,7 @@ def test_handler_lipsync_uses_omni_model():
 
     with (
         patch("ai_video_api._config", return_value=_CFG),
+        patch("ai_video_api._agnes_available", return_value=False),  # 强制走百炼通道
         patch("ai_video_api._submit_cloud", side_effect=fake_submit),
         patch("ai_video_api._query_cloud", side_effect=fake_query),
         patch("ai_video_api._download", side_effect=fake_download),
@@ -219,6 +234,7 @@ def test_handler_ai_video_failure_refunds():
 
     with (
         patch("ai_video_api._config", return_value=_CFG),
+        patch("ai_video_api._agnes_available", return_value=False),  # 强制走百炼通道
         patch("ai_video_api._submit_cloud", return_value="cloud_fail"),
         patch("ai_video_api._query_cloud", side_effect=fake_query),
         patch("ai_video_api.time.sleep", return_value=None),

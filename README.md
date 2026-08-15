@@ -1,4 +1,4 @@
-# Smart R&D Platform v6.4 - AI-Powered Intelligent Business Orchestration Engine
+# Smart R&D Platform v8.0 - AI-Powered Intelligent Business Orchestration Engine
 
 ![Status](https://img.shields.io/badge/status-production-brightgreen.svg) [License](LICENSE)
 
@@ -221,7 +221,64 @@ module — no demo-grade modules left:
 | Business analysis (8) | SEO keyword grouping/difficulty/priority matrix; insight-anomaly-advice report format; forecast confidence band; stock risk cards + report export; competitor change diff; content calendar + topic tag filters; segmented video analysis |
 | Creation factories (8) | Meme style previews + multi-set merge; music rhyme/section params + custom cover; image history thumbnail wall; video script template library + batch transcode; game template library + iteration diff; miniapp template library + review-material generator; short-drama shot-sheet Excel export + material manifest; digital-human script samples + lip-sync-friendly script check (`POST /api/digital-human/script-check`, auto-fix long segments/emoji/digits) |
 
-All modules covered by unit tests (`tests/unit/test_*_v15.py`); full pytest suite green, eslint 0 errors.
+All modules covered by unit tests (`tests/unit/test_*_v15.py`, `tests/unit/test_commercial_v20.py`, `tests/unit/test_workshop_v2.py`); full pytest suite green, eslint 0 errors.
+
+## Workshop Deep-Dive v2 (工坊深度优化)
+
+针对六大工坊/工具的薄弱点全面升级，每个模块都补充了真实可用的深度能力：
+
+| 模块 | 升级内容 | 新增端点/能力 |
+|---|---|---|
+| **视频工坊** | 自动字幕生成（Whisper 转录 + LLM fallback）、视频智能分析（关键帧 + 情感/关键词/技术质量）、视频滤镜（sepia/黑白/复古/暖冷/淡入淡出）、脚本模板扩至 16 套（新增 Vlog/广告/教程/音乐/测评） | `POST /api/video-factory/tools/auto-subtitle`、`POST /api/video-factory/tools/analyze`、`POST /api/video-factory/tools/filters` |
+| **小程序工坊** | Mock 数据层（shop/booking/food/news 模板动态数据）、HTML 在线预览（wxml→html 转换 + 页面 Tab 切换 + 数据注入）、4 个新模板（会员订阅/即时通讯/同城配送/在线教育） | `GET /api/miniapp/mock-data/{template_id}`、`GET /api/miniapp/preview-html/{proj_id}`、`GET /api/miniapp/templates/extended` |
+| **PRD 引擎** | 领域知识注入（电商/社交/工具/广告技术/金融科技五类专项审查）、结构化审查 JSON 输出（P0/P1/P2 问题清单 + 评分）、已解决问题跟踪（resolved_ids 过滤） | `POST /api/prd/review/domain-list`、`POST /api/prd/review/resolved` |
+| **表情包工坊** | GIF 动图生成（文字脉冲缩放 + 震动动画，4-16 帧可调）、微信动表情打包（GIF 主图 + 缩略图/图标/横幅 + 上传指南） | `POST /api/meme/generate/gif`、`POST /api/meme/publish-pack/animated` |
+| **数字人** | lip-sync v2：音频能量驱动口型 + 字级拼音口型双源融合（可调权重）、扩展韵母口型表（鼻韵母/儿化音 19 类）、lip-sync 质量评估、口型曲线可视化 | `POST /api/digital-human/lip-sync/quality`、`POST /api/digital-human/lip-sync/curve` |
+| **效率工具箱** | 11 个实算工具（不消耗 LLM）：单位换算、CSV 分析、JSON 格式化、正则构建器、SQL 生成器、日期计算、Markdown 表格、颜色转换、文本差异、密码生成、Base64 编解码 | 通过 `POST /api/tools/run` 执行（`type: compute` 自动分流） |
+
+## Commercial & B2B Enhancements (v20)
+
+| Category | Highlights |
+|---|---|
+| **Yearly Billing** | 年付价格（Pro ¥1990/年，VIP ¥9900/年），Stripe 支持年付 checkout，自动识别 `STRIPE_PRICE_PRO_YEARLY` / `STRIPE_PRICE_VIP_YEARLY` 价格 ID |
+| **Team Per-Seat** | 按席位计费（Pro ¥15/人/月，VIP ¥79/人/月），管理员仪表盘（使用量/席位/账单），邀请链接，续费接口 |
+| **API Key Billing** | 独立配额体系（`/api/api-keys/*`），包月套餐 + 按量付费双模式，用量统计 + 余额充值，不足自动告警 |
+| **Conversion Analytics** | 转化漏斗（注册→试用→付费），渠道归因（邀请/分享/自然流量），留存 Cohort，试用到期管道，MRR/ARR 估算 |
+| **A/B Test Pricing** | 环境变量驱动（`AB_TEST_ENABLED`, `AB_TRIAL_DAYS`, `AB_DISCOUNT_CODE`），支持不同用户组展示不同价格/试用期 |
+| **Enterprise Service** | 私有化部署询价（`/api/enterprise/inquiry`），功能清单（SSO/审计/SLA/白标），三档报价（基础/标准/尊享） |
+
+### 新增环境变量
+
+```bash
+# 年付价格 ID（Stripe Dashboard 中创建）
+STRIPE_PRICE_PRO_YEARLY=price_xxx
+STRIPE_PRICE_VIP_YEARLY=price_yyy
+STRIPE_PRICE_TEAM_PRO=price_zzz
+STRIPE_PRICE_TEAM_VIP=price_aaa
+
+# A/B 实验
+AB_TEST_ENABLED=true
+AB_TRIAL_DAYS=14          # 试用 14 天（默认 7）
+AB_DISCOUNT_CODE=SUMMER20 # 促销码
+
+# API Key 计费
+API_KEY_DEFAULT_RATE=5             # 按量单价（分/次）
+API_KEY_PLAN_PRO_MONTHLY=5000      # Pro 包月次数
+API_KEY_PLAN_VIP_MONTHLY=50000     # VIP 包月次数
+API_KEY_ALERT_THRESHOLD=20         # 剩余 20% 告警
+```
+
+### 架构修复（v20.1，工坊优化过程中发现并解决）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| **API Key 计费不可用** | `api_billing` 与旧 `apikey_api` 共用 `/api/api-keys` 路由和 `api_keys` 表（字段不同），v20 计费端点被遮蔽且插入失败 | 独立路由 `/api/api-key-billing` + 独立表 `api_key_billing`/`api_usage`；`ensure_api_keys_tables` 迁移 |
+| **团队席位计费不可用** | `main.py` 残留 v9 旧版 `/api/teams` 路由（mode/members 旧表结构），遮蔽 `team_api` 的 plan/seats 端点 | 移除 main.py 旧团队路由块；`ensure_team_tables` 补 `owner_id`/`plan`/`subscription_interval` 列迁移 |
+| **orders 表缺列** | 团队席位订单写入 `interval`/`metadata` 列，但 orders 表未定义 | `ensure_team_tables` 增加 orders 表 `interval`/`metadata` 补列 |
+| **创建 Key 返回假 id** | INSERT 与返回值各生成一次 `key_xxx`，topup 用返回 id 查不到 | 统一为同一 `billing_id` |
+| **sqlite3.Row 无 .get()** | team_api/api_billing 多处对 row 直接调用 `.get()`，生产 500 | fetchone 后统一 `dict(row)` 转换 |
+| **PRD 结构化解析失效** | 正则 `[P012]` 只匹配单字符，P0/P1 无法解析 | 改为 `[P012]{1,2}`，支持表格/列表/`[P0]` 三种格式 |
+| **conversion_analytics 导入错误** | 4 处局部 `from common.auth import _check_admin`（实际在 admin_api） | 删除错误局部导入，用模块级正确导入 |
 
 ## Extending the Platform
 
@@ -338,6 +395,30 @@ All endpoints are under `/api/workflows/`:
 5. **Node isolation**: Consider sandboxing custom SkillNode execution in separate process/container.
 
 6. **Network access**: Restrict outbound connections from the platform unless explicitly needed.
+
+## Production Deployment
+
+### npx 一键部署（免服务器，参考 DeepSeek Harness 模式）
+
+```bash
+# 完整启动（前端 + 后端，自动引导 Python venv）
+npx @xiaotuan/code-platform web
+
+# 指定端口 / 仅后端 / 仅前端
+npx @xiaotuan/code-platform web --port 3000 --backend-port 8888
+npx @xiaotuan/code-platform backend
+npx @xiaotuan/code-platform frontend --api http://127.0.0.1:8888
+
+# 环境检查
+npx @xiaotuan/code-platform doctor
+```
+
+原理：CLI（`deploy-cli/`）是纯 Node.js 引导器——检测 Python 3.10+ → 引导/复用 `.venv` → 启动 FastAPI 后端 → 用内置前端 dist（Vite 构建，7MB）提供 SPA 服务 + `/api` 同源代理。前端 API 走同源相对路径，免 CORS。云服务器/DevContainer/Codespaces 均可直接运行。
+
+### 常规部署
+
+- **SQLite 生产部署指南**: 详见 [docs/sqlite-production-guide.md](docs/sqlite-production-guide.md)，包含 WAL 模式调优、并发限制、以及何时迁移到 PostgreSQL 的判断标准。
+- **数据库备份**: 平台内置每日自动备份（`common/backup.py`），备份文件保留在 `backend/backups/` 目录。
 
 ## Contributing
 

@@ -43,11 +43,13 @@ import re
 import time
 import uuid
 import zipfile
+import hashlib
+from pathlib import Path
 from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
@@ -965,6 +967,304 @@ async def delete_project(proj_id: str, current_user: dict = require_auth()):
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+# ══════════════════════════════════════════════════════════════
+# 小程序工坊 v2 增强：Mock 数据层 + 在线预览 + 更多模板
+# ══════════════════════════════════════════════════════════════
+
+# ── Mock 数据生成器（让生成的静态页面有动态数据感）───────────
+MOCK_DATA_TEMPLATES = {
+    "shop": {
+        "products": [
+            {"id": 1, "name": "精选商品A", "price": 99, "image": "/static/prod1.jpg", "sales": 1203},
+            {"id": 2, "name": "热销商品B", "price": 199, "image": "/static/prod2.jpg", "sales": 856},
+            {"id": 3, "name": "新品上市C", "price": 59, "image": "/static/prod3.jpg", "sales": 432},
+            {"id": 4, "name": "限时特惠D", "price": 149, "image": "/static/prod4.jpg", "sales": 2100},
+        ],
+        "categories": [{"id": 1, "name": "全部"}, {"id": 2, "name": "新品"}, {"id": 3, "name": "热卖"}, {"id": 4, "name": "促销"}],
+        "banners": [
+            {"id": 1, "image": "/static/banner1.jpg", "link": "/pages/goods/detail?id=1"},
+            {"id": 2, "image": "/static/banner2.jpg", "link": "/pages/goods/detail?id=2"},
+        ],
+    },
+    "booking": {
+        "services": [
+            {"id": 1, "name": "基础服务", "price": 99, "duration": "30分钟", "description": "标准体验"},
+            {"id": 2, "name": "VIP服务", "price": 199, "duration": "60分钟", "description": "尊享体验"},
+            {"id": 3, "name": "定制服务", "price": 299, "duration": "90分钟", "description": "个性化方案"},
+        ],
+        "slots": ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "19:00", "20:00"],
+    },
+    "food": {
+        "dishes": [
+            {"id": 1, "name": "招牌炒饭", "price": 28, "image": "/static/dish1.jpg", "sales": 320, "rating": 4.8},
+            {"id": 2, "name": "香辣虾仁", "price": 58, "image": "/static/dish2.jpg", "sales": 180, "rating": 4.9},
+            {"id": 3, "name": "清蒸鲈鱼", "price": 88, "image": "/static/dish3.jpg", "sales": 95, "rating": 4.7},
+        ],
+        "categories": [{"id": 1, "name": "热销"}, {"id": 2, "name": "主食"}, {"id": 3, "name": "海鲜"}, {"id": 4, "name": "饮料"}],
+    },
+    "news": {
+        "articles": [
+            {"id": 1, "title": "今日要闻：行业最新动态", "summary": "简短摘要内容...", "author": "编辑", "date": "2024-01-15", "views": 1500},
+            {"id": 2, "title": "深度报道：趋势分析", "summary": "更多内容...", "author": "记者", "date": "2024-01-14", "views": 890},
+        ],
+        "categories": ["热点", "科技", "生活", "财经"],
+    },
+}
+
+
+@router.get("/mock-data/{template_id}")
+async def get_mock_data(template_id: str, current_user: dict = require_auth()):
+    """获取模板对应的 Mock 数据（用于预览时填充静态页面）。"""
+    mock = MOCK_DATA_TEMPLATES.get(template_id, {})
+    if not mock:
+        # 通用 fallback
+        mock = {
+            "items": [{"id": i, "name": f"示例项{i}", "desc": f"第 {i} 条内容"} for i in range(1, 6)],
+            "meta": {"total": 100, "page": 1, "pageSize": 20},
+        }
+    return {"template": template_id, "data": mock}
+
+
+@router.get("/preview-html/{proj_id}")
+async def preview_html(proj_id: str, current_user: dict = require_auth()):
+    """生成 HTML 预览页面（将小程序代码转换为可在浏览器中预览的 HTML）。
+
+    v20：把 wxss → css，wxml → html，js → 普通 JS，注入 mock 数据后渲染。
+    """
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM miniapp_projects WHERE id=?", (proj_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "项目不存在")
+        files = json.loads(row["files"] or "{}")
+        tpl = row.get("template", "custom")
+    finally:
+        conn.close()
+
+    if not files:
+        raise HTTPException(400, "项目没有文件")
+
+    # 构建 HTML 预览（首页 + 各页面 tab 切换）
+    from common.auth import get_user_profile
+    user = get_user_profile(current_user.get("user_id", ""))
+
+    mock_data = MOCK_DATA_TEMPLATES.get(tpl, {})
+
+    # 收集所有页面
+    pages = {p.replace(".js", "").replace(".wxml", "").replace(".wxss", "").replace(".json", "")
+             for p in files if p.startswith("pages/") and p.endswith((".wxml", ".js", ".wxss"))}
+    page_list = sorted(set(p.split("/")[1] for p in pages if len(p.split("/")) >= 2))
+
+    # 构建单页 HTML（含所有页面的简单渲染）
+    html_content = _build_preview_html(files, page_list, mock_data, row["name"], tpl)
+
+    # 保存预览文件
+    import hashlib
+    html_filename = f"preview_{hashlib.md5(proj_id.encode()).hexdigest()[:8]}.html"
+    preview_dir = VIDEO_DIR.parent / "previews" if hasattr(VIDEO_DIR, 'parent') else Path(__file__).parent / "previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = preview_dir / html_filename
+    preview_path.write_text(html_content, encoding="utf-8")
+
+    return {
+        "url": f"/api/miniapp/preview/{html_filename}",
+        "filename": html_filename,
+        "pages": page_list,
+        "mock_injected": bool(mock_data),
+    }
+
+
+def _build_preview_html(files: dict, page_list: list, mock_data: dict, project_name: str, template: str) -> str:
+    """将小程序文件转换为可浏览器预览的 HTML。"""
+    # 提取首页 wxml
+    home_wxml = ""
+    for path, content in files.items():
+        if path.endswith("index/index.wxml"):
+            home_wxml = content
+            break
+
+    # 提取 JS 数据
+    home_js_data = {}
+    for path, content in files.items():
+        if path.endswith("index/index.js"):
+            # 简单提取 data 字段
+            match = re.search(r'data\s*:\s*\{([^}]+)\}', content, re.DOTALL)
+            if match:
+                try:
+                    js_str = "data:" + match.group(1) + "}"
+                    # 简化处理：只提取字符串值
+                    home_js_data = {"raw": match.group(1)[:500]}
+                except Exception:
+                    pass
+            break
+
+    # 构建预览 HTML
+    pages_html_parts = []
+    for page_name in page_list:
+        wxml = ""
+        js_data = ""
+        for path, content in files.items():
+            if f"pages/{page_name}/{page_name}.wxml" in path:
+                wxml = content
+            if f"pages/{page_name}/{page_name}.js" in path:
+                js_data = content
+
+        # 简单 wxml → html 转换
+        html_body = wxml
+        if wxml:
+            # 替换 wx 组件为 html
+            html_body = html_body.replace("<view", "<div").replace("</view", "</div")
+            html_body = html_body.replace("<text", "<span").replace("</text", "</span")
+            html_body = html_body.replace("<image", "<img").replace("<button", "<button")
+            html_body = html_body.replace("<scroll-view", "<div class='scroll-view'")
+            html_body = html_body.replace("<swiper", "<div class='swiper'")
+            html_body = html_body.replace("<swiper-item", "<div class='swiper-item'")
+            html_body = html_body.replace("<block", "<!-- block -->")
+            html_body = re.sub(r'\{\{(.*?)\}\}', r'<span class="dynamic">\1</span>', html_body)
+            html_body = re.sub(r'bindtap="(.*?)"', r'data-action="\1"', html_body)
+
+        pages_html_parts.append(f"""
+<div class="preview-page" id="page-{page_name}" style="display:{'block' if page_name==page_list[0] else 'none'}">
+  <h3>📄 {page_name}</h3>
+  <div class="page-content" style="border:1px solid #eee;padding:12px;margin:8px 0;border-radius:8px;">
+    <pre style="font-size:11px;white-space:pre-wrap;word-break:break-all;color:#555;">{html_body[:2000]}</pre>
+  </div>
+</div>""")
+
+    pages_html = "\n".join(pages_html_parts)
+
+    full_html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>{project_name} - 预览</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#f5f5f5; }}
+  .header {{ background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; padding:16px 20px; }}
+  .header h1 {{ font-size:18px; }}
+  .header p {{ font-size:12px; opacity:0.8; margin-top:4px; }}
+  .tabs {{ display:flex; background:#fff; border-bottom:1px solid #eee; overflow-x:auto; }}
+  .tab {{ padding:12px 16px; font-size:13px; cursor:pointer; white-space:nowrap; border-bottom:2px solid transparent; }}
+  .tab.active {{ color:#667eea; border-bottom-color:#667eea; }}
+  .preview-container {{ padding:16px; max-width:800px; margin:0 auto; }}
+  .preview-page {{ background:#fff; border-radius:12px; padding:16px; margin-bottom:16px; box-shadow:0 2px 8px rgba(0,0,0,0.06); }}
+  .page-content {{ background:#fafafa; border-radius:8px; }}
+  .mock-badge {{ display:inline-block; background:#e0e7ff; color:#4f46e5; padding:2px 8px; border-radius:4px; font-size:11px; margin-bottom:8px; }}
+  .info-box {{ background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px; margin-bottom:16px; font-size:13px; color:#0369a1; }}
+  pre {{ line-height:1.6; }}
+  .dynamic {{ color:#dc2626; font-weight:500; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📱 {project_name}</h1>
+  <p>模板：{template} | Mock 数据：{('已注入' if mock_data else '无')} | 共 {len(page_list)} 个页面</p>
+</div>
+<div class="tabs">
+  {''.join('<div class="tab active" onclick="showPage(' + p + ')">' + p + '</div>' for p in page_list)}
+</div>
+<div class="preview-container">
+  <div class="info-box">
+    💡 预览模式：此为代码结构预览，非真实运行环境。导入微信开发者工具可获得完整预览体验。
+    {('<br>Mock 数据已注入：<code>' + json.dumps(mock_data, ensure_ascii=False)[:200] + '</code>') if mock_data else ''}
+  </div>
+  {pages_html}
+</div>
+<script>
+function showPage(name) {{
+  document.querySelectorAll('.preview-page').forEach(p => p.style.display='none');
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const el = document.getElementById('page-'+name);
+  if(el) el.style.display='block';
+  event.target.classList.add('active');
+}}
+</script>
+</body>
+</html>"""
+    return full_html
+
+
+@router.get("/preview/{filename}")
+async def serve_preview(filename: str):
+    """提供预览 HTML 文件下载。"""
+    preview_dir = Path(__file__).parent / "previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    filepath = preview_dir / filename
+    if not filepath.exists():
+        raise HTTPException(404, "预览文件不存在")
+    return FileResponse(str(filepath), media_type="text/html")
+
+
+@router.get("/templates/extended")
+async def get_extended_templates(current_user: dict = require_auth()):
+    """返回扩展模板列表（含 Mock 数据配置说明）。"""
+    extended = [
+        {
+            "id": "membership",
+            "name": "会员订阅",
+            "description": "会员等级/积分/签到/兑换，适合付费内容平台",
+            "icon": "👑",
+            "color": "from-yellow-500 to-amber-600",
+            "structure": [
+                "pages/index/index（首页：会员权益总览）",
+                "pages/membership/detail（会员等级详情）",
+                "pages/checkin/checkin（签到打卡）",
+                "pages/points/list（积分明细）",
+                "pages/mine/mine（会员中心）",
+            ],
+            "has_mock": True,
+        },
+        {
+            "id": "chat",
+            "name": "即时通讯",
+            "description": "单聊/群聊/消息列表，适合社交/客服场景",
+            "icon": "💬",
+            "color": "from-green-500 to-teal-600",
+            "structure": [
+                "pages/index/index（会话列表）",
+                "pages/chat/detail（聊天窗口）",
+                "pages/contact/list（联系人）",
+            ],
+            "has_mock": True,
+        },
+        {
+            "id": "delivery",
+            "name": "同城配送",
+            "description": "订单跟踪/骑手定位/配送范围，适合本地生活服务",
+            "icon": "🚀",
+            "color": "from-orange-500 to-red-600",
+            "structure": [
+                "pages/index/index（首页：下单入口）",
+                "pages/order/track（订单追踪地图）",
+                "pages/order/list（我的订单）",
+                "pages/address/list（收货地址）",
+            ],
+            "has_mock": True,
+        },
+        {
+            "id": "course",
+            "name": "在线教育",
+            "description": "课程列表/视频播放/学习进度/测试答题",
+            "icon": "📚",
+            "color": "from-indigo-500 to-purple-600",
+            "structure": [
+                "pages/index/index（课程列表+分类）",
+                "pages/course/detail（课程详情+目录）",
+                "pages/lesson/play（视频播放+笔记）",
+                "pages/quiz/list（章节测试）",
+                "pages/my/course（我的课程）",
+            ],
+            "has_mock": True,
+        },
+    ]
+    return {"templates": extended, "mock_available": True}
+
+
+from fastapi.responses import FileResponse
 
 
 @router.get("/{proj_id}/export-zip")

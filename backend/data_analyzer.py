@@ -142,7 +142,7 @@ async def data_analyzer_upload(file: UploadFile = File(...), current_user: dict 
     """上传表格文件（CSV/Excel），解析为 CSV 文本返回（前端预览与回传分析）。"""
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in ("csv", "xlsx", "xls"):
-        raise HTTPException(400, "仅支持CSV/Excel格式")
+        raise HTTPException(400, "不支持的文件类型，仅支持CSV/Excel格式")
 
     content = await file.read()
     if len(content) > MAX_FILE_BYTES:
@@ -251,7 +251,7 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
     blocked = check_sandbox_code(code)
     if blocked:
         log_usage("data_analyzer", len(user_prompt), len(code), 0.0, success=False)
-        raise HTTPException(400, "操作失败，请稍后重试")
+        raise HTTPException(400, "代码未通过安全检查，请勿使用危险操作")
 
     result = run_sandbox_python(code, extra_files={"data.csv": data})
     elapsed = round((datetime.now() - start).total_seconds(), 2)

@@ -7,7 +7,21 @@ import { friendlyError } from './errors'
  * - 请求拦截器自动注入 JWT
  * - 响应拦截器统一错误处理与 401 登出
  */
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8888'
+/**
+ * API 基地址（部署感知）：
+ * - VITE_API_URL 显式配置优先
+ * - 否则 npx 部署模式（同源：前端端口非 8888）→ 使用相对路径 ''（走同源 /api）
+ * - 本地开发默认 → http://localhost:8888
+ */
+function resolveApiBase() {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL
+  const port = window.location.port
+  // 前端端口非 8888 时视为同源部署（npx code-platform web --port 3000），API 走相对路径
+  if (port && port !== '8888' && port !== '5173') return ''
+  return 'http://localhost:8888'
+}
+
+const API_BASE = resolveApiBase()
 
 export { API_BASE }
 

@@ -400,7 +400,14 @@ export default function ToolHubPage() {
                     >
                       <Icon className="w-5 h-5 text-white" />
                     </div>
-                    <div className="font-medium text-sm text-gray-900">{tool.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-medium text-sm text-gray-900">{tool.name}</div>
+                      {tool.type === 'compute' && (
+                        <span className="px-1 py-0.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 rounded">
+                          ⚡实算
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500 truncate mt-0.5">{tool.category}</div>
                   </div>
                 )

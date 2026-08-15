@@ -39,6 +39,28 @@ def setup_test_db():
     from main import init_db
 
     init_db()
+    # v17.2 团队空间表迁移（teams 表旧结构 → plan/seats/owner_id；与 main.py lifespan 行为一致）
+    from team_api import ensure_team_tables
+
+    ensure_team_tables()
+    # v20 商业化表迁移（与 main.py lifespan 行为一致）
+    from api_billing import ensure_api_keys_tables
+    from conversion_analytics import ensure_analytics_tables
+    from enterprise_api import ensure_enterprise_tables
+    from prd_engine import ensure_requirements_tables
+    from game_factory import ensure_game_tables
+
+    ensure_api_keys_tables()
+    ensure_analytics_tables()
+    ensure_enterprise_tables()
+    ensure_requirements_tables()
+    ensure_game_tables()
+    # dh_gateway 计费体系：users.balance 余额列 + dh_billing_records 账单表（幂等）
+    from dh_gateway import _ensure_billing_tables
+    from common.db import get_db_context as _gdb
+
+    with _gdb() as conn:
+        _ensure_billing_tables(conn)
     # api_keys 表由 web_search 模块级 init_db 创建（该模块可能在 DB_PATH 切换前已加载，
     # 表落在旧库），此处对测试库幂等补建，保证 API Key 认证链路可用
     from common.db import get_db_context
@@ -66,6 +88,30 @@ def setup_test_db():
                 label TEXT,
                 created_at TEXT NOT NULL,
                 UNIQUE(user_id, fav_type, target_id)
+            )"""
+        )
+        # v20 API Key 计费表（api_billing 模块，独立于开放 API 密钥的 api_keys 表）
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS api_key_billing (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                key_prefix TEXT NOT NULL,
+                plan TEXT DEFAULT 'pay_as_you_go',
+                monthly_limit INTEGER DEFAULT 0,
+                rate_per_call INTEGER DEFAULT 5,
+                remaining INTEGER DEFAULT 0,
+                active INTEGER DEFAULT 1,
+                created_at TEXT
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS api_usage (
+                id TEXT PRIMARY KEY,
+                key_id TEXT NOT NULL,
+                amount INTEGER NOT NULL DEFAULT 1,
+                endpoint TEXT,
+                created_at TEXT
             )"""
         )
     yield db_path
@@ -116,6 +162,85 @@ def claim_and_run():
 def test_db_path(setup_test_db):
     """返回临时数据库路径"""
     return setup_test_db
+
+
+@pytest.fixture(scope="session")
+def valid_mp3_bytes():
+    """生成一段真实有效的 MP3 音频字节（数字人 TTS mock 用，须通过 ffprobe 校验）。
+
+    用 ffmpeg 生成 1 秒静音 MP3；ffmpeg 不可用时回退 base64 内嵌的最小有效 MP3。
+    """
+    import base64
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("ffmpeg"):
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                out = f.name
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                 "-t", "1", "-c:a", "libmp3lame", "-b:a", "64k", out],
+                capture_output=True, timeout=15,
+            )
+            if r.returncode == 0:
+                with open(out, "rb") as f:
+                    data = f.read()
+                try:
+                    os.unlink(out)
+                except OSError:
+                    pass
+                if len(data) > 512:
+                    return data
+        except Exception:
+            pass
+    # 兜底：最小有效 MP3（1 秒静音，libmp3lame 编码）
+    minimal_b64 = (
+        "SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQxAADB"
+        "QAAWAAADWFgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    )
+    try:
+        return base64.b64decode(minimal_b64)
+    except Exception:
+        return b"\xff\xfb" + b"\x00" * 2046
+
+
+@pytest.fixture(scope="session")
+def valid_mp4_bytes():
+    """生成一段真实有效的 MP4 视频字节（数字人渲染 mock 用，须通过 ffprobe 校验）。
+
+    用 ffmpeg 生成 1 秒 320x240 蓝色画面 + 静音；ffmpeg 不可用时回退最小 H.264 MP4。
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("ffmpeg"):
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
+                out = f.name
+            r = subprocess.run(
+                ["ffmpeg", "-y",
+                 "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1",
+                 "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                 "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                 "-c:a", "aac", "-b:a", "64k", out],
+                capture_output=True, timeout=20,
+            )
+            if r.returncode == 0:
+                with open(out, "rb") as f:
+                    data = f.read()
+                try:
+                    os.unlink(out)
+                except OSError:
+                    pass
+                if len(data) > 1024:
+                    return data
+        except Exception:
+            pass
+    # 兜底：无法生成时返回标记数据（测试将跳过渲染校验场景）
+    return b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 2046
 
 
 @pytest.fixture

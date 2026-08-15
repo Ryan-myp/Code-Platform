@@ -71,6 +71,7 @@ const PublishingPage = lazy(() => import('./pages/PublishingPage'))
 const GrowthPage = lazy(() => import('./pages/GrowthPage'))
 const SEOAnalyzerPage = lazy(() => import('./pages/SEOAnalyzerPage'))
 const MiniAppPage = lazy(() => import('./pages/MiniAppPage'))
+const MiniAppPreviewPage = lazy(() => import('./pages/MiniAppPreviewPage'))
 const GameFactoryPage = lazy(() => import('./pages/GameFactoryPage'))
 const ShortDramaPage = lazy(() => import('./pages/ShortDramaPage'))
 const VoicePage = lazy(() => import('./pages/VoicePage'))
@@ -425,6 +426,8 @@ export default function App() {
                                 </AccessGuard>
                               }
                             />
+                            {/* v22 小程序服务端预览（无鉴权包装：iframe 直连后端生成页） */}
+                            <Route path="/miniapp-preview/:filename" element={<MiniAppPreviewPage />} />
                             {/* v9.4 小游戏工坊（网页 + 微信双版本） */}
                             <Route
                               path="/games"

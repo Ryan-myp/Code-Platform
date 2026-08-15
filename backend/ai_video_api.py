@@ -153,7 +153,7 @@ def _agnes_avatar_submit(payload: dict) -> str:
     """提交 AGNES 视频任务（口型同步：image + audio → 说话视频），返回 video_id。"""
     import requests as _req
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY
+    from common.config import AGNES_API_BASE, AGNES_API_KEY, resolve_api_base
 
     mode = payload.get("mode", "text2video")
     prompt = payload.get("prompt", "")
@@ -165,8 +165,10 @@ def _agnes_avatar_submit(payload: dict) -> str:
     if (num_frames - 1) % 8 != 0:
         num_frames = ((num_frames - 1) // 8) * 8 + 1
 
+    from common.config import require_model, resolve_feature_model
+
     body = {
-        "model": "agnes-video-v2.0",
+        "model": require_model(payload.get("model") or resolve_feature_model(payload.get("user_id") or "", "video", ""), "视频"),
         "prompt": prompt,
         "width": width,
         "height": height,
@@ -195,7 +197,7 @@ def _agnes_avatar_submit(payload: dict) -> str:
 
     try:
         resp = _req.post(
-            f"{AGNES_API_BASE}/videos",
+            f"{resolve_api_base()}/videos",
             headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
             json=body,
             timeout=60,
@@ -225,7 +227,7 @@ def _agnes_avatar_poll(video_id: str, update: callable) -> str:
         _time.sleep(_POLL_INTERVAL)
         try:
             resp = _req.get(
-                f"{AGNES_API_BASE}/agnesapi",
+                f"{resolve_api_base()}/agnesapi",
                 params={"video_id": video_id},
                 headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
                 timeout=30,
@@ -322,7 +324,7 @@ def _charge_for(auth: dict, billing_id: str, price: float, task_id: str = "") ->
         row = conn.execute("SELECT balance FROM users WHERE id=?", (auth["user_id"],)).fetchone()
         balance = float(row["balance"] or 0) if row else 0.0
     if balance < price:
-        raise HTTPException(402, "操作失败，请稍后重试")
+        raise HTTPException(402, f"余额不足（当前 {balance:.1f} 元，本次需 {price:.1f} 元），请先充值")
     return _charge(auth, billing_id, price, task_id)
 
 

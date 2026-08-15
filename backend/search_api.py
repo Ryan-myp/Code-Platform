@@ -338,7 +338,7 @@ def _search_works(conn, keyword: str, limit: int = 20) -> list:
         "video": ("视频作品", "/video-factory"),
         "audio": ("歌曲作品", "/music-factory"),
         "lyrics": ("歌词作品", "/music-factory"),
-        "meme": ("表情包", "/meme-factory"),
+        "meme": ("表情包", "/meme"),
     }
     try:
         rows = conn.execute(
@@ -363,6 +363,9 @@ def _search_works(conn, keyword: str, limit: int = 20) -> list:
                 except Exception:
                     title = (r["content"] or "")[:24]
             t = r["type"]
+            # 表情包工坊产物在 artifacts 中 type 为 image，按来源工厂推断为 meme（前端展示为表情包）
+            if t == "image" and r["author"] == "meme_factory":
+                t = "meme"
             label, path = type_map.get(t, ("作品", f"/{t}-factory"))
             results.append({
                 "id": r["id"], "type": t, "title": title,

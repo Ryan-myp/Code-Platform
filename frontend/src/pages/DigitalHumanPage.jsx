@@ -41,6 +41,7 @@ import {
   AlertTriangle,
   LayoutGrid,
   Shuffle,
+  AudioWaveform,
 } from 'lucide-react'
 import { Card, Button, Empty, PageHeader, Modal, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
@@ -928,6 +929,26 @@ const fmtDaysLeft = (days) => {
     setPlaying(false)
     setTalking(false)
   }, [])
+
+  // v22：口型同步质量评估（音频能量 × 文字读音匹配度）
+  const [lipCheck, setLipCheck] = useState(null)
+  const [lipChecking, setLipChecking] = useState(false)
+  const checkLipSync = async () => {
+    if (!result?.audio_url) return
+    setLipChecking(true)
+    setLipCheck(null)
+    try {
+      const fd = new FormData()
+      fd.append('audio_path', result.audio_url)
+      fd.append('script_text', result?.text_length ? '' : '')
+      const res = await api.post('/api/digital-human/lip-sync/quality', fd, { timeout: 60000 })
+      setLipCheck(res.data)
+    } catch (e) {
+      toast.error(`口型检测失败：${e.message}`)
+    } finally {
+      setLipChecking(false)
+    }
+  }
 
   // 口播试听：TTS 短句预览（复用 voice_factory 全降级链，生成前先验证音频效果）
   const previewVoice = useCallback(async () => {
@@ -2654,6 +2675,16 @@ ${batchTexts
                     <Download className="w-3.5 h-3.5" /> 下载 MP3
                   </button>
                 )}
+                {result.audio_url && (
+                  <button
+                    onClick={checkLipSync}
+                    disabled={lipChecking}
+                    className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors disabled:opacity-50"
+                  >
+                    {lipChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AudioWaveform className="w-3.5 h-3.5" />}
+                    {lipChecking ? '检测中…' : '口型检测'}
+                  </button>
+                )}
                 {result.video_url && (
                   <button
                     onClick={() => playPreviewVideo(result.video_url)}
@@ -2689,6 +2720,42 @@ ${batchTexts
                   </button>
                 )}
               </div>
+              {/* v22 口型同步质量评估结果 */}
+              {lipCheck && (
+                <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-amber-800 flex items-center gap-1">
+                      <AudioWaveform className="w-3.5 h-3.5" /> 口型同步质量
+                    </span>
+                    <Badge color={lipCheck.score >= 75 ? 'green' : lipCheck.score >= 50 ? 'amber' : 'red'}>
+                      {lipCheck.score ?? '-'} 分
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="p-2 bg-white rounded-lg">
+                      <div className="text-lg font-bold text-amber-700">{lipCheck.open_range ?? '-'}</div>
+                      <div className="text-[10px] text-gray-500">开合范围</div>
+                    </div>
+                    <div className="p-2 bg-white rounded-lg">
+                      <div className="text-lg font-bold text-amber-700">{lipCheck.silence_gaps ?? '-'}</div>
+                      <div className="text-[10px] text-gray-500">停顿段数</div>
+                    </div>
+                    <div className="p-2 bg-white rounded-lg">
+                      <div className="text-lg font-bold text-amber-700">
+                        {lipCheck.peak_ratio ? Math.round(lipCheck.peak_ratio * 100) + '%' : '-'}
+                      </div>
+                      <div className="text-[10px] text-gray-500">重音占比</div>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    {lipCheck.score >= 75
+                      ? '口型与配音匹配良好，可正常发布'
+                      : lipCheck.score >= 50
+                        ? '口型匹配一般，建议检查文案长度与语速'
+                        : '口型匹配较弱，建议缩短文案或调整语速后重试'}
+                  </p>
+                </div>
+              )}
               {result.record_id && (
                 <div className="text-[10px] text-gray-400 mt-2">记录 ID：{result.record_id}</div>
               )}

@@ -94,7 +94,12 @@ class TestScriptTemplates:
         from video_factory import get_script_templates
 
         resp = asyncio.run(get_script_templates())
-        assert len(resp["templates"]) == 9
+        # v20 扩展：原 9 套（口播/剧情/科普）+ 7 套（Vlog/广告/教程/音乐/测评）
+        assert len(resp["templates"]) >= 9
+        cats = {t["category"] for t in resp["templates"]}
+        assert "口播" in cats
+        assert "Vlog" in cats
+        assert "广告" in cats
 
 
 class TestBuildTranscodePlan:

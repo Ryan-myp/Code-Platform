@@ -458,7 +458,7 @@ def create_job(payload: dict, current_user: dict = Depends(require_auth)):
     cron = (payload.get("cron_expression") or "0 9 * * *").strip()
     next_run = _parse_cron(cron)
     if not next_run:
-        raise HTTPException(400, "Cron 格式不正确")
+        raise HTTPException(400, "Cron 格式非法，请检查表达式")
     now = datetime.now().isoformat()
 
     conn = get_db()

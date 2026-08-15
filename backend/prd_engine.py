@@ -388,6 +388,9 @@ def stream_llm_response(system_prompt: str, user_prompt: str, max_tokens: int, u
     """把 LLM 流式调用包装为 SSE 响应（事件 delta/done/error），复用重试与模型降级。"""
 
     async def gen():
+        # 延迟导入：规避 common.helpers 与 prd_engine 的循环导入导致模块级 import 失效
+        from common.helpers import _sse_event
+
         start = time.time()
         try:
             full = ""
@@ -427,17 +430,31 @@ async def generate_prd(req: dict):
 
 @router.post("/api/prd/review")
 async def review_prd(req: dict):
-    """PRD 审查 - 优先用 biz-delivery ReviewEngine，失败 fallback LLM；stream: true 直接 LLM 流式"""
+    """PRD 审查 - 优先用 biz-delivery ReviewEngine，失败 fallback LLM；stream: true 直接 LLM 流式
+
+    v20 增强：
+    - 支持 domain 参数注入领域知识（e-commerce/social/tools/adtech）
+    - 支持 structured_output=true 返回结构化 JSON 问题清单
+    - 支持 resolved_ids 传入已修复问题 ID，仅返回未解决项
+    """
     prd_text = (req.get("prd_text") or "").strip()
     if not prd_text:
         raise HTTPException(400, "请输入 PRD 内容")
 
     repo_path = req.get("repo_path") or ""
+    domain = (req.get("domain") or "general").lower().strip()
+    structured = req.get("structured_output", False)
+    resolved_ids = req.get("resolved_ids", [])
+
     if req.get("stream"):
-        return stream_llm_response(REVIEW_SYSTEM, prd_text, 4000, "prd_review")
+        enhanced_system = _enhance_review_system(REVIEW_SYSTEM, domain)
+        return stream_llm_response(enhanced_system, prd_text, 4000, "prd_review")
 
     start = time.time()
     fallback = False
+
+    # 增强审查 prompt：注入领域知识
+    enhanced_review_system = _enhance_review_system(REVIEW_SYSTEM, domain)
 
     # 尝试 biz-delivery 引擎
     try:
@@ -446,7 +463,7 @@ async def review_prd(req: dict):
         profile = {
             "name": "platform",
             "repositories": [{"path": repo_path}] if repo_path else [],
-            "business_domain": "general",
+            "business_domain": domain,
         }
         engine = ReviewEngine(profile, output_dir=str(PROJECT_DIR / "cache"))
         result = engine.review(prd_text)
@@ -454,14 +471,152 @@ async def review_prd(req: dict):
         if not output:
             raise ValueError("empty review result")
         log_usage("prd_review", len(prd_text), len(output), time.time() - start)
-        return {"result": output, "engine": "biz-delivery"}
+        parsed = _parse_review_to_structured(output, resolved_ids) if structured else None
+        return {"result": output, "engine": "biz-delivery", "structured": parsed}
     except Exception as e:
         logger.warning(f"biz-delivery review unavailable, fallback LLM: {e}")
         fallback = True
 
-    result = await call_llm_async(REVIEW_SYSTEM, prd_text, max_tokens=4000)
+    # 构建带 resolved 过滤的用户提示
+    if resolved_ids:
+        prd_text += f"\n\n【历史审查】以下是已识别但尚未完全解决的问题（请重点关注这些项的修复情况）：\n{resolved_ids}"
+
+    result = await call_llm_async(enhanced_review_system, prd_text, max_tokens=4000)
     log_usage("prd_review", len(prd_text), len(result), time.time() - start)
-    return {"result": result, "engine": "llm", "fallback": fallback}
+    parsed = _parse_review_to_structured(result, resolved_ids) if structured else None
+    return {"result": result, "engine": "llm", "fallback": fallback, "structured": parsed, "domain": domain}
+
+
+# ── 领域知识注入（v20）────────────────────────────────────────
+
+DOMAIN_KNOWLEDGE = {
+    "e-commerce": """
+## 电商领域专项审查
+- 商品 SKU 管理：规格组合爆炸、库存锁定与释放时机
+- 订单状态机：待支付/已支付/发货/完成/退款/关闭的完整流转
+- 支付安全：防重放、幂等性、超时关单、对账补偿
+- 促销逻辑：优惠券叠加规则、秒杀库存扣减、价格冲突检测
+- 物流跟踪：承运商对接、物流状态回滚、异常件处理
+""",
+    "social": """
+## 社交领域专项审查
+- 内容安全：UGC 审核（文本/图片/视频）、敏感词库、举报机制
+- 关系链：关注/粉丝/好友的对称性与一致性
+- 实时消息：离线消息堆积、推送到达率、消息去重
+- 权限模型：私密/公开/仅自己可见的访问控制
+- 推荐系统：冷启动策略、多样性保证、负反馈处理
+""",
+    "tools": """
+## 工具类应用专项审查
+- 文件处理：格式兼容性、大文件内存管理、进度反馈
+- 离线能力：核心功能无网可用、数据本地持久化
+- 性能瓶颈：重复计算缓存、懒加载、结果复用
+- 数据导出：多格式支持、批量处理、断点续传
+""",
+    "adtech": """
+## 广告技术领域专项审查
+- 竞价流程：RTB 请求时序、出价策略生效时机、频控精度
+- 归因窗口：Last Click vs Multi-touch、跨设备归因
+- 反作弊：设备指纹稳定性、IP 代理检测、刷量特征识别
+- 创意审核：OCR 文字识别、版权检测、合规校验
+- 预算控制：账户级/计划级/单元级预算隔离、超投防护
+""",
+    "fin-tech": """
+## 金融科技专项审查
+- 资金安全：双重确认、大额预警、操作审计
+- 合规要求：KYC/AML、数据加密存储、隐私保护
+- 对账清算：日终对账、差异处理、冲正机制
+- 风控模型：实时风控决策、黑名单同步、阈值动态调整
+""",
+}
+
+
+def _enhance_review_system(base_system: str, domain: str) -> str:
+    """根据领域注入专项审查知识。"""
+    if domain in DOMAIN_KNOWLEDGE:
+        return base_system + DOMAIN_KNOWLEDGE[domain]
+    return base_system
+
+
+def _parse_review_to_structured(text: str, resolved_ids: list) -> dict:
+    """将审查文本解析为结构化 JSON（v20）。"""
+    import re as _re
+    issues = []
+    # 匹配 P0/P1/P2 级别的问题行（P0 为两位，注意 [P012]+ 匹配一个或多个）
+    patterns = [
+        r'\*?\s*(\d+)\.\s*\*\*?([P012]{1,2})\*\*?.*?问题[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)',
+        r'\*?\s*(\d+)\.\s*([P012]{1,2})\s*.+?[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)',
+        r'\|\s*(\d+)\s*\|\s*([P012]{1,2})\s*\|\s*(.+?)\s*\|',
+        r'\[([P012]{1,2})\]\s*[:：]\s*(.+?)(?=\n|$)',
+    ]
+    seen = set()
+    for pat in patterns:
+        for m in _re.finditer(pat, text, _re.DOTALL):
+            # 表格模式：group(1)=编号, group(2)=级别, group(3)=描述
+            # 带编号模式：同上
+            if pat.startswith(r'\[['):
+                num = str(len(issues) + 1)
+                level = m.group(1)
+                desc = m.group(2)
+            else:
+                num = m.group(1)
+                level = m.group(2)
+                desc = m.group(3)
+            if num in seen:
+                continue
+            level = level.upper()
+            desc = _re.sub(r'\*\*', '', desc).strip()[:200]
+            if desc and num not in resolved_ids:
+                issues.append({"id": num, "level": level, "description": desc})
+                seen.add(num)
+    # 计算评分
+    score_match = _re.search(r'(\d+)\s*/\s*100', text)
+    score = int(score_match.group(1)) if score_match else None
+    return {
+        "score": score,
+        "total_issues": len(issues),
+        "p0_count": sum(1 for i in issues if i["level"] == "P0"),
+        "p1_count": sum(1 for i in issues if i["level"] == "P1"),
+        "p2_count": sum(1 for i in issues if i["level"] == "P2"),
+        "issues": issues[:20],  # 最多返回20条
+    }
+
+
+def ensure_requirements_tables():
+    """幂等补列：requirements 表扩展 v20 字段。"""
+    from common.db import get_db
+    conn = get_db()
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(requirements)").fetchall()]
+    if "resolved_review_ids" not in cols:
+        conn.execute("ALTER TABLE requirements ADD COLUMN resolved_review_ids TEXT DEFAULT '[]'")
+    conn.commit()
+    conn.close()
+
+
+@router.post("/api/prd/review/domain-list")
+async def get_review_domains():
+    """返回可注入审查的领域列表及其专项检查点。"""
+    return {"domains": list(DOMAIN_KNOWLEDGE.keys()), "default": "general"}
+
+
+@router.post("/api/prd/review/resolved")
+async def mark_review_resolved(req: dict):
+    """标记审查问题为已解决（记录到 requirement 的 resolved_review_ids）。"""
+    req_id = req.get("req_id")
+    issue_ids = req.get("issue_ids", [])
+    if not req_id or not issue_ids:
+        raise HTTPException(400, "req_id 和 issue_ids 不能为空")
+    conn = get_db()
+    row = conn.execute("SELECT resolved_review_ids FROM requirements WHERE id=?", (req_id,)).fetchone()
+    existing = json.loads(row["resolved_review_ids"]) if row and row["resolved_review_ids"] else []
+    existing = list(set(existing + issue_ids))
+    conn.execute(
+        "UPDATE requirements SET resolved_review_ids=? WHERE id=?",
+        (json.dumps(existing), req_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "resolved_count": len(issue_ids)}
 
 
 @router.post("/api/prd/technical-design")

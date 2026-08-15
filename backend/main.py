@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
 
-def _search_kb_simple(query: str, kb: list, limit: int) -> list:
-    """简化版知识库搜索。"""
-    results = []
-    for item in kb:
-        if query.lower() in str(item).lower():
-            results.append(item)
-            if len(results) >= limit:
-                break
-    return results
-
-def _prepare_kb_query(request_data: dict) -> dict:
-    """简化版准备知识库查询。"""
-    return {
-        "query": request_data.get("query", ""),
-        "limit": request_data.get("limit", 10)
-    }
 """小团智能平台 v8.0 — AI 赋能各行各业，智能解决工作难题。
 
 v8.0 升级：安全加固、Pydantic 模型验证、异步架构、WebSocket、工作流并行。
@@ -53,12 +37,7 @@ from slowapi.util import get_remote_address
 load_dotenv()
 
 import skills_store  # noqa: E402
-from admin_api import router as admin_api_router  # noqa: E402
-from ai_video_api import router as ai_video_router  # noqa: E402
-from apikey_api import router as apikey_api_router  # noqa: E402
-from batch_api import router as batch_api_router  # noqa: E402
-from chat_engine import router as chat_engine_router  # noqa: E402
-from collab_engine import router as collab_engine_router  # noqa: E402
+from routers import register_routers  # noqa: E402
 from common.auth import (  # noqa: E402
     change_password,
     consume_quota,
@@ -84,7 +63,9 @@ from common.auth import (  # noqa: E402
     get_billing_history,
 )
 from common.backup import ensure_daily_backup  # noqa: E402
-from common.backup import router as backup_router  # noqa: E402
+from oauth_api import ensure_social_bindings_table  # noqa: E402
+from team_api import ensure_team_tables  # noqa: E402
+from feedback_api import ensure_feedback_table  # noqa: E402
 from common.config import ALLOWED_ORIGINS, is_production, validate_security_config  # noqa: E402
 from common.db import get_db, init_schema  # noqa: E402
 from common.db_async import is_pg_enabled, get_async_db, close_async_db  # noqa: E402
@@ -113,8 +94,6 @@ from common.models import (  # noqa: E402
     SkillCreateRequest,
     SkillUpdateRequest,
     PortalSwitchRequest,
-    TeamCreateRequest,
-    TeamUpdateRequest,
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
@@ -124,59 +103,10 @@ from common.observability import (  # noqa: E402
     uptime_seconds,
 )
 from common.sandbox_check import MAX_CODE_LEN, check_sandbox_code, run_sandbox_python  # noqa: E402
-from competitor_monitor import router as competitor_monitor_router  # noqa: E402
-from content_strategy import router as content_strategy_router  # noqa: E402
-from data_forecast import router as data_forecast_router  # noqa: E402
-from dh_gateway import router as dh_gateway_router  # noqa: E402
-from digital_human import router as digital_human_router  # noqa: E402
-from doc_qa import router as doc_qa_router  # noqa: E402
-from drafts import router as drafts_router  # noqa: E402
-from drama_templates import router as drama_templates_router  # noqa: E402
-from extensions_agents import router as extensions_agents_router  # noqa: E402
-from favorites_api import router as favorites_api_router  # noqa: E402
-from gallery import router as gallery_router  # noqa: E402
-from game_factory import router as game_factory_router  # noqa: E402
-from growth_engine import router as growth_engine_router  # noqa: E402
-from image_factory import router as image_factory_router  # noqa: E402
-from meme_factory import router as meme_factory_router  # noqa: E402
-from meme_templates import router as meme_templates_router  # noqa: E402
-from mindmap_templates import router as mindmap_templates_router  # noqa: E402
-from mindmap import router as mindmap_router  # noqa: E402
-from miniapp import router as miniapp_router  # noqa: E402
-from music_factory import router as music_factory_router  # noqa: E402
-from music_scene_templates import router as music_scene_templates_router  # noqa: E402
-from notify_api import router as notify_api_router  # noqa: E402
-from openai_gateway import router as openai_gateway_router  # noqa: E402
-from relay_api import router as relay_router  # noqa: E402
-from pdf_tools import router as pdf_tools_router  # noqa: E402
-from pdf_doc_templates import router as pdf_doc_templates_router  # noqa: E402
-from prd_engine import router as prd_engine_router  # noqa: E402
-from publishing import router as publishing_router  # noqa: E402
-from realtime import router as realtime_router  # noqa: E402
-from scheduler import router as scheduler_router  # noqa: E402
 from scheduler import start_scheduler, stop_scheduler  # noqa: E402
-from search_api import router as search_api_router  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
-from seo_analyzer import router as seo_analyzer_router  # noqa: E402
-from sessions import router as sessions_router  # noqa: E402
-from short_drama import router as drama_router  # noqa: E402
-from stripe_api import router as stripe_router  # noqa: E402
-from oauth_api import router as oauth_router, ensure_social_bindings_table  # noqa: E402
-from team_api import router as team_router, ensure_team_tables  # noqa: E402
-from feedback_api import router as feedback_router, ensure_feedback_table  # noqa: E402
-from smart_dashboard import router as smart_dashboard_router  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
-from task_queue import router as task_queue_router  # noqa: E402
-from templates_market import router as templates_market_router  # noqa: E402
-from template_store import router as template_store_router  # noqa: E402
-from video_analyzer import router as video_analyzer_router  # noqa: E402
-from video_factory import router as video_factory_router  # noqa: E402
-from video_templates import router as video_templates_router  # noqa: E402
-from voice_chat import router as voice_chat_router  # noqa: E402
 from voice_factory import _tts_health_check as _tts_prewarm  # noqa: E402
-from voice_factory import router as voice_factory_router  # noqa: E402
-from voice_templates import router as voice_templates_router  # noqa: E402
-from web_search import router as web_search_router  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -244,6 +174,18 @@ async def lifespan(app: FastAPI):
     ensure_team_tables()
     # v17.3 用户反馈表初始化
     ensure_feedback_table()
+    # v20 商业化增强：API Key 计费 / 转化分析 / 企业询价 表初始化
+    from api_billing import ensure_api_keys_tables
+    from conversion_analytics import ensure_analytics_tables
+    from enterprise_api import ensure_enterprise_tables
+    from prd_engine import ensure_requirements_tables
+    from game_factory import ensure_game_tables
+
+    ensure_api_keys_tables()
+    ensure_analytics_tables()
+    ensure_enterprise_tables()
+    ensure_requirements_tables()
+    ensure_game_tables()
     # v12.0 数据可靠性：每日自动备份（按日期去重）
     ensure_daily_backup()
     # 发布排期后台自动执行（每 60s 扫描到期 pending 排期）
@@ -2096,71 +2038,6 @@ async def delete_workflow(workflow_id: str, current_user: dict = require_auth())
 # 会话/消息/记忆 API 已迁移至 sessions.py router（/api/sessions/*）
 
 
-# ── Team 管理 ───────────────────────────────────────────────────
-@app.get("/api/teams")
-async def list_teams(current_user: dict = require_auth()):
-    """获取所有 Teams"""
-    conn = get_db()
-    teams = conn.execute("SELECT * FROM teams ORDER BY created_at DESC").fetchall()
-    conn.close()
-    return [dict(t) for t in teams]
-
-
-@app.post("/api/teams")
-async def create_team(req: TeamCreateRequest, current_user: dict = require_auth()):
-    """创建 Team"""
-    conn = get_db()
-    team_id = f"team_{int(time.time() * 1000)}"
-    conn.execute(
-        """INSERT INTO teams (id, name, description, mode, members, instructions, respond_directly, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            team_id,
-            req.name,
-            req.description,
-            req.mode,
-            json.dumps(req.members),
-            req.instructions,
-            1 if req.respond_directly else 0,
-            datetime.now().isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return {"id": team_id, "name": req.name}
-
-
-@app.put("/api/teams/{team_id}")
-async def update_team(team_id: str, req: TeamUpdateRequest, current_user: dict = require_auth()):
-    """更新 Team"""
-    conn = get_db()
-    conn.execute(
-        """UPDATE teams SET name=?, description=?, mode=?, members=?, instructions=?, respond_directly=?
-           WHERE id=?""",
-        (
-            req.name or "",
-            req.description or "",
-            req.mode or "coordinate",
-            json.dumps(req.members or []),
-            req.instructions or "",
-            1 if req.respond_directly else 0,
-            team_id,
-        ),
-    )
-    conn.commit()
-    conn.close()
-    return {"id": team_id, "name": req.name or ""}
-
-
-@app.delete("/api/teams/{team_id}")
-async def delete_team(team_id: str, current_user: dict = require_auth()):
-    """删除 Team"""
-    conn = get_db()
-    conn.execute("DELETE FROM teams WHERE id=?", (team_id,))
-    conn.commit()
-    conn.close()
-    return {"success": True}
-
 
 # ── Skills 管理（标准 Agent Skills 目录结构）───────────────────
 @app.get("/api/skills")
@@ -3812,96 +3689,12 @@ def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
     }
 
 
-app.include_router(ai_video_router)
-app.include_router(image_factory_router)
-app.include_router(video_factory_router)
-app.include_router(video_templates_router)
-app.include_router(music_factory_router)
-app.include_router(miniapp_router)
-app.include_router(publishing_router)
-app.include_router(game_factory_router)
-app.include_router(growth_engine_router)
-app.include_router(voice_factory_router)
-app.include_router(voice_templates_router)
-app.include_router(meme_factory_router)
-app.include_router(meme_templates_router)
-app.include_router(drafts_router)
-app.include_router(gallery_router)
-app.include_router(templates_market_router)
-app.include_router(template_store_router)
-app.include_router(prd_engine_router)
-app.include_router(chat_engine_router)
-app.include_router(sessions_router)
-app.include_router(stripe_router)
-app.include_router(collab_engine_router)
-app.include_router(content_strategy_router)
-app.include_router(digital_human_router)
-app.include_router(drama_router)
-app.include_router(drama_templates_router)
-app.include_router(music_scene_templates_router)
-app.include_router(task_queue_router)
-app.include_router(smart_dashboard_router)
-app.include_router(pdf_tools_router)
-app.include_router(pdf_doc_templates_router)
-app.include_router(competitor_monitor_router)
-app.include_router(seo_analyzer_router)
-app.include_router(realtime_router)
-app.include_router(extensions_agents_router)
-
-# v9.3: 5大高科技功能
-app.include_router(voice_chat_router)
-app.include_router(video_analyzer_router)
-app.include_router(mindmap_router)
-app.include_router(mindmap_templates_router)
-app.include_router(data_forecast_router)
-app.include_router(doc_qa_router)
-app.include_router(web_search_router)
-app.include_router(batch_api_router)
-app.include_router(favorites_api_router)
-app.include_router(apikey_api_router)
-app.include_router(search_api_router)
-app.include_router(scheduler_router)
-app.include_router(openai_gateway_router)
-app.include_router(relay_router)
-app.include_router(dh_gateway_router)
-app.include_router(backup_router)
-app.include_router(oauth_router)
-app.include_router(team_router)
-app.include_router(feedback_router)
-app.include_router(notify_api_router)
-
-# v9.0: Platform API
-from platform_api import router as platform_api_router  # noqa: E402
-
-app.include_router(platform_api_router)
-
-# v9.0: Extended API (Phase 2-4 + Office)
-from extended_api import router as extended_api_router  # noqa: E402
-
-app.include_router(extended_api_router)
-
-# v9.0: Tool Hub API
-from tool_hub import router as tool_hub_router  # noqa: E402
-
-app.include_router(tool_hub_router)
-
-# v9.0: AI 数据分析沙箱
-from data_analyzer import router as data_analyzer_router  # noqa: E402
-
-app.include_router(data_analyzer_router)
-
-# v9.0: Stock Tools API
-from stock_tools import router as stock_tools_router  # noqa: E402
-
-app.include_router(stock_tools_router)
-
-# v9.1: 管理后台 API
-app.include_router(admin_api_router)
-# 企业级优化器集成
-from optimizer_integration import init_optimizer_system
-init_optimizer_system()
-
 # ══════════════════════════════════════════════════════════════
+# 路由注册（统一入口，见 routers.py）
+# ══════════════════════════════════════════════════════════════
+register_routers(app)
+
+# ══════════════════════════════════════════════════════════════# ══════════════════════════════════════════════════════════════
 # 门户系统 API（v16.0）
 # ══════════════════════════════════════════════════════════════
 @app.get("/api/portal/current")
@@ -3931,17 +3724,9 @@ async def switch_portal(req: PortalSwitchRequest, current_user: dict = require_a
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8888)
-
-# ══════════════════════════════════════════════════════════════
-# 企业级优化器系统（v18.0）
-# ══════════════════════════════════════════════════════════════
-from optimizer_integration import (
-    router as optimizer_router,
-    init_optimizer_system,
-)
-
-init_optimizer_system()
-app.include_router(optimizer_router)
+    # 端口可配置：CLI/容器/云部署通过 PORT 环境变量覆盖（默认 8888）
+    port = int(os.environ.get("PORT", "8888"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
