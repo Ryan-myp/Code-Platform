@@ -1,44 +1,24 @@
 /**
- *  Service Worker — PWA 离线缓存
- *  策略：先缓存后网络（Cache First）用于静态资源；网络优先用于 API
+ * 一次性自毁 Service Worker（本地版不使用 SW）
+ *
+ * 背景：旧版注册的 SW 以 Cache First 缓存了旧 index.html 与静态资源，
+ * 升级后仍从缓存喂旧页面 → 引用旧哈希 JS → 404/MIME 报错，且旧页面会反复注册旧 SW。
+ * 本文件部署后：浏览器导航时检测到 sw.js 内容变化 → 安装本版本 →
+ * 立即注销自身并清空所有缓存，之后请求全部直连服务器，彻底打破缓存循环。
  */
-const CACHE_NAME = 'xiaotuan-v1'
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-]
-
-// 安装：预缓存核心资源
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
-  )
+self.addEventListener('install', () => {
   self.skipWaiting()
+  self.registration.unregister()
 })
 
-// 激活：清理旧缓存
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   )
-  self.clients.claim()
 })
 
-// 请求策略
-self.addEventListener('fetch', (event) => {
-  const { request } = event
-  // API 请求：网络优先，失败回退缓存
-  if (request.url.includes('/api/')) {
-    event.respondWith(
-      fetch(request).catch(() => caches.match(request))
-    )
-    return
-  }
-  // 静态资源：Cache First
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
-  )
-})
+// 不拦截任何请求：页面/静态资源全部直连服务器
+self.addEventListener('fetch', () => {})
