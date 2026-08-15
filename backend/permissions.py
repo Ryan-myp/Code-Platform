@@ -21,6 +21,7 @@ VISIBLE_TO_VALUES = ("all", "pro", "vip", "admin", "hidden")
 
 # 页面注册表：前端 Sidebar / 路由守卫按 page_id 对齐
 PAGES = [
+    {"id": "pipeline", "path": "/pipeline", "label": "口播短视频工厂"},
     {"id": "image-factory", "path": "/image-factory", "label": "图片工厂"},
     {"id": "video-factory", "path": "/video-factory", "label": "视频工厂"},
     {"id": "music-factory", "path": "/music-factory", "label": "音乐工厂"},
