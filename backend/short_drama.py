@@ -641,10 +641,11 @@ def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, sho
         return False
 
 
-def _make_intro_card(title: str, art_style: str = "", subtitle: str = "") -> str | None:
-    """生成片头标题卡：画风渐变背景 + 剧名大字 + 副标题（红果漫剧开场）。
+def _make_intro_card(title: str, art_style: str = "", subtitle: str = "", bg_img: str | None = None) -> str | None:
+    """生成片头标题卡：场景图暗化背景（有则用）+ 剧名大字 + 副标题（红果漫剧开场）。
 
-    返回图片路径（PNG），失败返回 None（不影响主流程）。
+    v1.0.53：bg_img 为可选场景主图——有则暗化/模糊做背景（更接近红果漫剧
+    "画面+标题"开场），无则回退画风渐变底。返回图片路径（PNG），失败返回 None。
     """
     try:
         from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -659,18 +660,36 @@ def _make_intro_card(title: str, art_style: str = "", subtitle: str = "") -> str
             "realistic": ((30, 30, 30), (120, 120, 120)),   # 灰黑（写实沉稳）
         }
         c1, c2 = palettes.get(style, palettes["guoman"])
-        img = Image.new("RGB", (w, h))
-        draw = ImageDraw.Draw(img)
-        for y in range(h):
-            t = y / h
-            draw.line([(0, y), (w, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(c1, c2, strict=False)))
-        img = img.filter(ImageFilter.GaussianBlur(radius=4))
-        # 装饰：柔和光晕
-        glow = Image.new("RGB", (w, h), (0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        gd.ellipse([w * 0.15, h * 0.25, w * 0.85, h * 0.75], fill=tuple(int(c * 0.55) for c in c1))
-        glow = glow.filter(ImageFilter.GaussianBlur(radius=120))
-        img = Image.blend(img, glow, 0.35)
+        img = None
+        if bg_img and os.path.exists(bg_img):
+            try:
+                img = Image.open(bg_img).convert("RGB").resize((w, h))
+                # 顶部渐变压暗（保证标题可读）+ 高斯柔化（电影开场质感）
+                img = img.filter(ImageFilter.GaussianBlur(radius=6))
+                overlay = Image.new("RGB", (w, h))
+                od = ImageDraw.Draw(overlay)
+                for y in range(h):
+                    t = y / h
+                    # 上 60% 深暗渐变，底部保留场景亮度
+                    alpha = int(150 * max(0, 1 - t * 1.2))
+                    od.line([(0, y), (w, y)], fill=(10, 8, 20, 0))
+                    od.line([(0, y), (w, y)], fill=tuple(int(a * alpha / 150) for a in (10, 8, 20)))
+                img = Image.blend(img, Image.new("RGB", (w, h), (10, 8, 20)), 0.45)
+            except Exception:
+                img = None
+        if img is None:
+            # 回退：画风渐变背景 + 光晕
+            img = Image.new("RGB", (w, h))
+            draw = ImageDraw.Draw(img)
+            for y in range(h):
+                t = y / h
+                draw.line([(0, y), (w, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(c1, c2, strict=False)))
+            img = img.filter(ImageFilter.GaussianBlur(radius=4))
+            glow = Image.new("RGB", (w, h), (0, 0, 0))
+            gd = ImageDraw.Draw(glow)
+            gd.ellipse([w * 0.15, h * 0.25, w * 0.85, h * 0.75], fill=tuple(int(c * 0.55) for c in c1))
+            glow = glow.filter(ImageFilter.GaussianBlur(radius=120))
+            img = Image.blend(img, glow, 0.35)
         draw = ImageDraw.Draw(img)
         try:
             font_big = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", 84)
@@ -679,10 +698,10 @@ def _make_intro_card(title: str, art_style: str = "", subtitle: str = "") -> str
             font_big = font_sub = ImageFont.load_default()
         # 剧名居中，带描边阴影
         title = (title or "未命名短剧").strip()
-        draw.text((w // 2 + 3, 560 + 3), title, fill=(0, 0, 0, 160), font=font_big, anchor="mm")
+        draw.text((w // 2 + 3, 560 + 3), title, fill=(0, 0, 0, 200), font=font_big, anchor="mm")
         draw.text((w // 2, 560), title, fill="white", font=font_big, anchor="mm")
         if subtitle:
-            draw.text((w // 2, 680), subtitle, fill=(255, 255, 255, 200), font=font_sub, anchor="mm")
+            draw.text((w // 2, 680), subtitle, fill=(255, 255, 255, 220), font=font_sub, anchor="mm")
         path = os.path.join(os.path.dirname(__file__), "drama_factory", f"intro_{int(time.time() * 1000)}.png")
         img.save(path, "PNG")
         return path
@@ -1911,16 +1930,21 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         if not clip_paths:
             raise HTTPException(502, "所有分镜合成失败，请重试")
 
-        # 2.5 片头标题卡（漫剧标准开场：剧名+集数，3.5s，BGM 垫底）
+        # 2.5 片头标题卡（漫剧标准开场：场景图暗化 + 剧名，3.5s，BGM 垫底）
         intro_clip = ""
         if payload.get("illust_mode"):
             _report(70, "片头制作中…")
             _intro_style = (payload.get("art_style") or DEFAULT_ART_STYLE).strip().lower()
             if _intro_style not in ART_STYLES:
                 _intro_style = DEFAULT_ART_STYLE
+            # v1.0.53：片头用首场景主图做背景（红果漫剧"画面+标题"开场）
+            _intro_bg = os.path.join(tmpdir, "seg_000.jpg")
+            if not os.path.exists(_intro_bg):
+                _intro_bg = None
             intro_path = await asyncio.to_thread(
                 _make_intro_card, title, _intro_style,
                 f"第 {payload.get('episode') or 1} 集" if payload.get('episode') else "",
+                _intro_bg,
             )
             if intro_path:
                 try:
@@ -1941,13 +1965,20 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
                     logger.warning(f"片头生成失败: {e}")
                     intro_clip = ""
 
-        # 2.6 片尾卡（红果漫剧结尾：剧名 + 下集预告提示）
+        # 2.6 片尾卡（红果漫剧结尾：场景图暗化 + 剧名 + 下集预告提示）
         outro_clip = ""
         if payload.get("illust_mode"):
             try:
+                # v1.0.53：片尾用末场景主图做背景
+                _outro_bg = None
+                _segs = sorted(
+                    [f for f in os.listdir(tmpdir) if f.startswith("seg_") and f.endswith(".jpg")]
+                )
+                if _segs:
+                    _outro_bg = os.path.join(tmpdir, _segs[-1])
                 outro_path = await asyncio.to_thread(
                     _make_intro_card, title, _intro_style,
-                    "本集完 · 下集更精彩",
+                    "本集完 · 下集更精彩", _outro_bg,
                 )
                 if outro_path:
                     outro_clip = os.path.join(tmpdir, "outro.mp4")
