@@ -431,7 +431,8 @@ def _portrait_key(cid: str, char: dict, art_style: str = "") -> str:
     return f"{cid}_{hashlib.sha256(sig.encode()).hexdigest()[:8]}"
 
 
-def _load_char_portrait(cid: str, char: dict, uid: str = "", art_style: str = "") -> bytes | None:
+def _load_char_portrait(cid: str, char: dict, uid: str = "", art_style: str = "",
+                       _api_key: str = "", _api_base: str = "") -> bytes | None:
     """读取角色立绘缓存（无则生成）。"""
     key = _portrait_key(cid, char, art_style)
     path = PORTRAIT_DIR / f"{key}.jpg"
@@ -440,7 +441,7 @@ def _load_char_portrait(cid: str, char: dict, uid: str = "", art_style: str = ""
             return path.read_bytes()
         except Exception:
             pass
-    data = _generate_character_portrait(char, uid, art_style)
+    data = _generate_character_portrait(char, uid, art_style, _api_key, _api_base)
     return data
 
 
@@ -453,13 +454,18 @@ def _save_char_portrait(cid: str, char: dict, data: bytes, art_style: str = "") 
         pass
 
 
-def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "") -> bytes | None:
+def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "", _api_key: str = "", _api_base: str = "") -> bytes | None:
     """生成角色定妆立绘（漫剧模式：全剧同脸同装的核心）。
 
     根据角色圣经的外貌/服装描述 + 画风预设，生成一张竖屏半身立绘，
     之后每镜都用这张立绘做图生图参考锚定 → 同一角色全剧形象一致。
+    _api_key/_api_base：显式传入（to_thread 线程无 ContextVar）。
     """
-    if not char or not resolve_api_key():
+    if not _api_key:
+        _api_key = resolve_api_key()
+    if not _api_base:
+        _api_base = resolve_api_base()
+    if not char or not _api_key:
         return None
     try:
         import base64
@@ -487,8 +493,8 @@ def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "")
             "extra_body": {"response_format": "url"},
         }
         r = requests.post(
-            f"{resolve_api_base()}/images/generations",
-            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
+            f"{_api_base}/images/generations",
+            headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
             json=body,
             timeout=90,
         )
@@ -509,7 +515,8 @@ def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "")
 
 
 def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "",
-                           art_style: str = "", dialogue: str = "", shot_size: str = "") -> bytes | None:
+                           art_style: str = "", dialogue: str = "", shot_size: str = "",
+                           _api_key: str = "", _api_base: str = "") -> bytes | None:
     """AGNES 文生图/图生图镜头插画（v13.30 角色一致性 + 画风统一）。
 
     参考图 refs（角色立绘）非空 → 图生图/多图合成锚定角色形象；
@@ -555,8 +562,8 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
             # AGNES 支持多图 reference：直接传各角色立绘 + prompt 描述位置区分
             body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs[:3]]
         r = requests.post(
-            f"{resolve_api_base()}/images/generations",
-            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
+            f"{_api_base}/images/generations",
+            headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
             json=body,
             timeout=90,
         )
@@ -709,6 +716,127 @@ def _make_intro_video(img_path: str, bgm_path: str, out_path: str, duration: flo
     r = subprocess.run(cmd, capture_output=True, timeout=180)
     if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
         raise RuntimeError("片头视频合成失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
+def _i2v_motion_prompt(emotion: str, dialogue: str = "") -> str:
+    """按情绪生成图生视频动作提示词（人物动态，红果漫剧微动效）。"""
+    emo = (emotion or "neutral").strip().lower()
+    base = {
+        "happy": "gently smiles and nods, eyes brighten, subtle happy expression, natural head movement",
+        "sad": "slowly lowers eyes, slight trembling of lips, sad expression, gentle sigh, subtle shoulder movement",
+        "angry": "frowns, jaw tightens, intense eyes, slight head shake of disbelief, tense expression",
+        "gentle": "softly smiles, eyes warm, gentle nod, calm breathing, tender expression",
+        "serious": "slowly narrows eyes, thoughtful expression, subtle chin movement, focused gaze",
+        "neutral": "naturally blinks and slightly turns head, subtle breathing, calm expression",
+    }.get(emo, "naturally blinks and slightly turns head, subtle breathing, calm expression")
+    if dialogue:
+        # 台词语境：嘴部微动（口型感）
+        base += ", lips move slightly as if speaking, subtle mouth animation"
+    return base + ", cinematic, realistic motion, smooth"
+
+
+def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", max_wait: int = 240,
+                   _api_key: str = "", _api_base: str = "") -> bool:
+    """图生视频（i2v）：主图 → AGNES 动态视频 → 裁剪竖屏 → 保存。
+
+    返回是否成功；队列满/超时/失败均返回 False（由调用方回退静态子镜，不阻塞）。
+    _api_key/_api_base：显式传入（to_thread 线程拿不到 ContextVar，必须由调用方传入）。
+    """
+    if not _api_key:
+        _api_key = resolve_api_key()
+    if not _api_base:
+        _api_base = resolve_api_base()
+    if not _api_key:
+        return False
+    try:
+        import base64 as _b64
+        import requests as _req
+
+        img_b64 = _b64.b64encode(open(img_path, "rb").read()).decode()
+        body = {
+            "model": "agnes-video-v2.0",
+            "prompt": prompt,
+            "image": f"data:image/jpeg;base64,{img_b64}",
+            "duration": 5,
+        }
+        resp = _req.post(
+            f"{_api_base}/videos",
+            headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+            json=body, timeout=60,
+        )
+        if resp.status_code == 503 and "queue_full" in resp.text:
+            logger.warning("i2v 队列满，回退静态镜头")
+            return False
+        if resp.status_code != 200:
+            logger.warning(f"i2v 提交失败 HTTP {resp.status_code}")
+            return False
+        vid = (resp.json().get("video_id") or resp.json().get("task_id") or "").strip()
+        if not vid:
+            return False
+        # 轮询
+        url = ""
+        for _ in range(int(max_wait / 15) + 1):
+            time.sleep(15)
+            q = _req.get(
+                f"{_api_base}/agnesapi", params={"video_id": vid},
+                headers={"Authorization": f"Bearer {_api_key}"}, timeout=30,
+            )
+            try:
+                d = q.json()
+            except Exception:
+                continue
+            st = d.get("status")
+            if st == "completed":
+                url = d.get("output", {}).get("video_url") or d.get("url") or ""
+                break
+            if st == "failed":
+                return False
+        if not url:
+            return False
+        # 下载 + 裁剪竖屏（i2v 输出 1088x832 横屏 → 720x1280 竖屏）
+        vresp = _req.get(url, timeout=120)
+        if vresp.status_code != 200:
+            return False
+        tmp_v = out_path + ".src.mp4"
+        with open(tmp_v, "wb") as f:
+            f.write(vresp.content)
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", tmp_v,
+            "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        try:
+            os.remove(tmp_v)
+        except Exception:
+            pass
+        if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 10000:
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"i2v 场景镜头失败: {e}")
+        return False
+
+
+def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str) -> bool:
+    """动态 i2v 画面 + 子镜配音合成（画面时长取两者短者，配音铺满）。"""
+    try:
+        vdur = _probe_seconds(video_path)
+        adur = _probe_seconds(audio_path)
+        dur = max(2.0, min(vdur or 5.0, adur or 5.0))
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", audio_path,
+            "-t", f"{dur:.2f}",
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "128k",
+            out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10000
+    except Exception:
+        return False
 
 
 def _probe_seconds(path: str) -> float:
@@ -1503,7 +1631,11 @@ async def _drama_render_one(
             else:
                 anchors = "、".join(char_map[c]["anchor"] for c in _sc)
             refs = [char_refs[c] for c in scene_chars if c in char_refs]
-            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs, uid, art_style, sc.get("dialogue") or "", sc.get("shot_size") or "")
+            data = await asyncio.to_thread(
+                _generate_scene_image, shot, anchors, refs, uid, art_style,
+                sc.get("dialogue") or "", sc.get("shot_size") or "",
+                resolve_api_key(), resolve_api_base(),
+            )
         if data:
             with open(img_path, "wb") as f:
                 f.write(data)
@@ -1549,6 +1681,33 @@ async def _drama_render_one(
                             )
                             if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
                                 sub_clips.append(sclip)
+                        # v1.0.45 动态锚镜头：本场有台词/人物时，用主图生成 1 个 i2v
+                        # 动态片段（人物真动/口型），替换第一个静态子镜 → 画面"活"起来
+                        if sc.get("dialogue") and len(sub_clips) >= 2:
+                            _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：动态镜头生成中…")
+                            dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}.mp4")
+                            _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
+                            _ctx_key = resolve_api_key()
+                            _ctx_base = resolve_api_base()
+                            dyn_ok = await asyncio.to_thread(
+                                _i2v_scene_clip, img_path, _motion_p, dyn_clip, uid, 240,
+                                _ctx_key, _ctx_base,
+                            )
+                            if not dyn_ok:
+                                logger.warning(f"i2v 动态锚失败（第 {i+1} 镜），回退静态")
+                            if dyn_ok and os.path.exists(dyn_clip) and os.path.getsize(dyn_clip) > 10000:
+                                # 动态锚替换第一个静态子镜，并把该子镜配音合入动态画面
+                                _dyn_audio = sub_audios[0] if len(sub_audios) >= 1 else None
+                                _dyn_final = os.path.join(tmpdir, f"dyn_final_{i:03d}.mp4")
+                                _mux_ok = False
+                                if _dyn_audio and os.path.exists(_dyn_audio):
+                                    _mux_ok = await asyncio.to_thread(
+                                        _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final,
+                                    )
+                                if _mux_ok and os.path.exists(_dyn_final):
+                                    sub_clips[0] = _dyn_final
+                                else:
+                                    sub_clips[0] = dyn_clip
                         if len(sub_clips) >= 2:
                             _concat_sub_shots(sub_clips, clip)
                         elif sub_clips:
@@ -1587,7 +1746,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
     if illust_mode and char_map:
         _report(12, "角色定妆中…（保证全剧角色一致）")
         for _cid, _char in char_map.items():
-            _portrait = _load_char_portrait(_cid, _char, uid, art_style)
+            _portrait = _load_char_portrait(_cid, _char, uid, art_style, resolve_api_key(), resolve_api_base())
             if _portrait:
                 char_refs[_cid] = _portrait
                 # 单角色立绘缓存到本地，跨集复用
