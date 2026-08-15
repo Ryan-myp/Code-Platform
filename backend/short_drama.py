@@ -84,14 +84,29 @@ _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 _MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".aac")
 
 
+def _resolve_pexels_key() -> str:
+    """解析当前请求应使用的 Pexels key：用户级优先（个人中心配置），回退全局环境变量。"""
+    try:
+        from common.relay_context import get_relay_context
+
+        ctx = get_relay_context()
+        if ctx and ctx.get("pexels_key"):
+            return ctx["pexels_key"]
+    except Exception:
+        pass
+    return PEXELS_API_KEY
+
+
 def _pexels_search_video(query: str) -> str | None:
     """Pexels API 按关键词搜索竖屏视频素材，返回合适的 mp4 直链（失败/无 key 返回 None）。
 
     v13.25 借鉴 MoneyPrinterTurbo 素材管线：LLM 输出每镜搜索关键词 → 实时拉取真实素材。
     v13.29 相关性增强：per_page 5→15、时长过滤 8-40s（利于单镜循环）、
     按 (关键词+日期) 哈希轮换 top 5 候选（同词每天换一批，避免缓存死锁同画面）。
+    v1.0.36：key 支持用户级配置（个人中心填写），优先用用户自己的 key。
     """
-    if not PEXELS_API_KEY:
+    _key = _resolve_pexels_key()
+    if not _key:
         return None
     try:
         import requests
@@ -99,7 +114,7 @@ def _pexels_search_video(query: str) -> str | None:
         r = requests.get(
             "https://api.pexels.com/videos/search",
             params={"query": query, "orientation": "portrait", "per_page": 15},
-            headers={"Authorization": PEXELS_API_KEY},
+            headers={"Authorization": _key},
             timeout=10,
         )
         if r.status_code != 200:
@@ -1158,7 +1173,7 @@ async def drama_config(current_user: dict = require_auth()):
         )
     music_count = sum(1 for p in MUSIC_DIR.glob("*") if p.is_file() and p.suffix.lower() in _MUSIC_EXTS)
     return {
-        "pexels_configured": bool(PEXELS_API_KEY),
+        "pexels_configured": bool(_resolve_pexels_key()),
         "local_materials": local_count,
         "music_tracks": music_count,
     }

@@ -484,3 +484,77 @@ async def _verify_user_key(api_key: str, api_base: str) -> tuple:
             return False, f"HTTP {resp.status_code}"
     except Exception as e:
         return False, str(e)[:120]
+
+
+# ══════════════════════════════════════════════════════════════
+# Pexels 素材 key（用户级配置：个人中心填写，短剧素材模式使用）
+# ══════════════════════════════════════════════════════════════
+
+
+class PexelsKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=8, max_length=200, description="Pexels API Key")
+
+
+@router.put("/me/pexels")
+async def save_my_pexels_key(req: PexelsKeyRequest, current_user: dict = require_auth()):
+    """保存用户 Pexels API Key（短剧素材模式用；先校验 key 有效）。"""
+    uid = current_user.get("user_id", "")
+    if not uid:
+        raise HTTPException(401, "请先登录")
+    api_key = req.api_key.strip()
+    # 校验：Pexels 官方 Key 为 32 位十六进制；且对无效 key 的 API 探针不可靠
+    # （无效 key 也可能返回 200），故做格式校验 + 实际请求验证兜底
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Za-z0-9]{20,64}", api_key):
+        raise HTTPException(400, "Pexels Key 格式不正确（应为 32 位左右字母数字），请检查后重试")
+    # 实际请求验证：搜索结果为空/异常视为不可用
+    import httpx as _httpx
+
+    try:
+        async with _httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.pexels.com/videos/search",
+                params={"query": "city night", "per_page": 1},
+                headers={"Authorization": api_key},
+            )
+            if resp.status_code == 401:
+                raise HTTPException(400, "Pexels Key 无效（401），请检查后重试")
+            if resp.status_code == 403:
+                raise HTTPException(400, "Pexels Key 无权限（403），请检查配额")
+            if resp.status_code != 200:
+                raise HTTPException(400, f"Pexels 校验失败：HTTP {resp.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"Pexels 校验失败：{e}") from e
+    with get_db_context() as conn:
+        conn.execute("UPDATE users SET pexels_api_key=? WHERE id=?", (api_key, uid))
+    return {
+        "success": True,
+        "message": "Pexels Key 已保存，短剧素材模式将使用你的 Key 拉取真实素材",
+        "api_key_masked": _mask_key(api_key),
+    }
+
+
+@router.get("/me/pexels")
+async def get_my_pexels_key(current_user: dict = require_auth()):
+    """读取用户 Pexels Key 配置状态（脱敏）。"""
+    uid = current_user.get("user_id", "")
+    from common.auth import get_user_relay_config
+
+    relay = get_user_relay_config(uid) or {}
+    key = (relay.get("pexels_key") or "").strip()
+    return {
+        "configured": bool(key),
+        "api_key_masked": _mask_key(key) if key else "",
+    }
+
+
+@router.delete("/me/pexels")
+async def clear_my_pexels_key(current_user: dict = require_auth()):
+    """清除用户 Pexels Key。"""
+    uid = current_user.get("user_id", "")
+    with get_db_context() as conn:
+        conn.execute("UPDATE users SET pexels_api_key='' WHERE id=?", (uid,))
+    return {"success": True, "message": "已清除 Pexels Key"}

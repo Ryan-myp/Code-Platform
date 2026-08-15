@@ -62,6 +62,11 @@ async def lifespan(app: FastAPI):
             conn.execute("ALTER TABLE users ADD COLUMN relay_keys TEXT DEFAULT '{}'")
         except Exception:
             pass
+        try:
+            # v1.0.36：Pexels 素材 key（用户级配置，跟中转站 key 一样支持个人中心填写）
+            conn.execute("ALTER TABLE users ADD COLUMN pexels_api_key TEXT DEFAULT ''")
+        except Exception:
+            pass
         # 迁移旧数据：relay_api_key（旧单列）→ relay_keys[relay_provider]，避免升级后丢 key
         try:
             rows = conn.execute(
