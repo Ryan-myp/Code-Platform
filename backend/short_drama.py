@@ -385,6 +385,92 @@ def _anchor_search(char: dict | None, search: str) -> str:
     return q
 
 
+PORTRAIT_DIR = DRAMA_DIR / "portraits"  # 角色定妆立绘缓存（漫剧模式：全剧/跨集同脸）
+
+
+def _portrait_key(cid: str, char: dict) -> str:
+    """立绘缓存 key：角色 id + 外貌服装哈希（外貌变了就重新生成）。"""
+    sig = f"{char.get('appearance')}|{char.get('outfit')}"
+    return f"{cid}_{hashlib.sha256(sig.encode()).hexdigest()[:8]}"
+
+
+def _load_char_portrait(cid: str, char: dict, uid: str = "") -> bytes | None:
+    """读取角色立绘缓存（无则生成）。"""
+    key = _portrait_key(cid, char)
+    path = PORTRAIT_DIR / f"{key}.jpg"
+    if path.exists() and path.stat().st_size > 4096:
+        try:
+            return path.read_bytes()
+        except Exception:
+            pass
+    data = _generate_character_portrait(char, uid)
+    return data
+
+
+def _save_char_portrait(cid: str, char: dict, data: bytes) -> None:
+    """持久化角色立绘（跨集复用）。"""
+    try:
+        PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
+        (PORTRAIT_DIR / f"{_portrait_key(cid, char)}.jpg").write_bytes(data)
+    except Exception:
+        pass
+
+
+def _generate_character_portrait(char: dict, uid: str = "") -> bytes | None:
+    """生成角色定妆立绘（漫剧模式：全剧同脸同装的核心）。
+
+    根据角色圣经的外貌/服装描述，生成一张竖屏半身立绘（无背景文字、纯角色），
+    之后每镜都用这张立绘做图生图参考锚定 → 同一角色全剧形象一致。
+    """
+    if not char or not resolve_api_key():
+        return None
+    try:
+        import base64
+        import io
+        import requests
+        from PIL import Image
+        from common.config import IMAGE_MODEL, require_model, resolve_feature_model
+
+        name = char.get("name") or ""
+        appearance = char.get("appearance") or ""
+        outfit = char.get("outfit") or ""
+        gender = char.get("gender") or ""
+        prompt = (
+            f"竖屏影视级角色定妆立绘，{gender}角色「{name}」，"
+            f"外貌：{appearance}；服装：{outfit}。"
+            "全身半身构图，正面微侧，干净纯色背景，电影级打光，高清细节，"
+            "画面中无任何文字，无场景，只有角色。"
+        )
+        body = {
+            "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
+            "prompt": prompt,
+            "size": "1K",
+            "ratio": "9:16",
+            "n": 1,
+            "extra_body": {"response_format": "url"},
+        }
+        r = requests.post(
+            f"{resolve_api_base()}/images/generations",
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
+            json=body,
+            timeout=90,
+        )
+        r.raise_for_status()
+        url = (r.json().get("data") or [{}])[0].get("url")
+        if not url:
+            return None
+        img_resp = requests.get(url, timeout=60)
+        if img_resp.status_code != 200:
+            return None
+        img = Image.open(io.BytesIO(img_resp.content))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"角色立绘生成失败: {api_error_detail(e)}")
+        return None
+
+
 def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "") -> bytes | None:
     """AGNES 文生图/图生图镜头插画（v13.30 角色一致性）。
 
@@ -404,10 +490,12 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         from common.config import IMAGE_MODEL, require_model, resolve_feature_model
         from common.llm import api_error_detail
 
+        # 漫剧模式：画面必须与 shot 描述强一致（红果漫剧标准），角色锚定外貌服装
         prompt = (
-            "竖屏短剧电影分镜插画，写实电影感，竖构图，画面只有场景与人物，画面中无任何文字。"
-            + (f"角色必须保持{anchors}的外貌与服装不变。" if anchors else "")
-            + shot
+            "竖屏短剧电影分镜插画，精致动漫电影质感，竖构图，画面只有场景与人物，画面中无任何文字，"
+            "人物表情与动作必须完全符合台词与画面描述。"
+            + (f"出场的角色必须保持：{anchors}（外貌与服装全剧不变）。" if anchors else "")
+            + f"镜头画面：{shot}"
         )
         body = {
             "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
@@ -561,6 +649,25 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
 
 
 _SCENE_MOTIONS = ("zoom_in", "zoom_out", "pan_in", "pan_out")
+
+# 情绪 → 运镜（漫剧模式：情绪不同，镜头语言不同，红果漫剧标准）
+_EMOTION_MOTION = {
+    "happy": "zoom_in",       # 欢快：推近聚焦
+    "gentle": "pan_out",      # 温柔：缓慢横移
+    "sad": "zoom_out",        # 悲伤：拉远留白
+    "angry": "zoom_in",       # 激昂：快速推近（幅度大）
+    "serious": "pan_in",      # 严肃：缓慢推近
+    "neutral": "zoom_in",
+}
+
+
+def _motion_for(sc: dict, idx: int) -> str:
+    """按情绪选运镜（fallback 循环交替，保证镜间不单调）。"""
+    emo = (sc.get("emotion") or "neutral").strip().lower()
+    m = _EMOTION_MOTION.get(emo)
+    if m:
+        return m
+    return _SCENE_MOTIONS[idx % len(_SCENE_MOTIONS)]
 
 
 def _material_scene_video(query: str, audio_path: str, out_path: str, duration: float,
@@ -1011,14 +1118,12 @@ async def _drama_render_one(
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
             refs = [char_refs[c] for c in scene_chars if c in char_refs]
-            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs)
+            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs, uid)
         if data:
             with open(img_path, "wb") as f:
                 f.write(data)
             await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
             ok = True
-            if len(scene_chars) == 1:
-                char_refs[scene_chars[0]] = data
         else:
             ok = await asyncio.to_thread(_make_scene_card, text, i, total, title, img_path, uid=uid)
             if ok:
@@ -1037,6 +1142,16 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
     dh_off = False
     char_map = {c.get("id"): c for c in characters if c.get("id")}
     char_refs: dict[str, bytes] = {}
+    # 漫剧模式：渲染前为每个出场角色预热定妆立绘（全剧同脸同装核心）。
+    # 立绘作为每镜图生图参考锚定；角色圣经已存立绘时直接复用（跨集同脸）。
+    if illust_mode and char_map:
+        _report(12, "角色定妆中…（保证全剧角色一致）")
+        for _cid, _char in char_map.items():
+            _portrait = _load_char_portrait(_cid, _char, uid)
+            if _portrait:
+                char_refs[_cid] = _portrait
+                # 单角色立绘缓存到本地，跨集复用
+                _save_char_portrait(_cid, _char, _portrait)
     for i, sc in enumerate(scenes):
         _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
         text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
@@ -1045,7 +1160,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
         scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
         fade_in, fade_out = i == 0, i == total - 1
-        motion = _SCENE_MOTIONS[i % len(_SCENE_MOTIONS)]
+        motion = _motion_for(sc, i)
         result = await _drama_render_one(
             i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
             illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
