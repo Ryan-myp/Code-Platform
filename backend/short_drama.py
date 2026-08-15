@@ -757,7 +757,7 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
             "model": "agnes-video-v2.0",
             "prompt": prompt,
             "image": f"data:image/jpeg;base64,{img_b64}",
-            "duration": 5,
+            "duration": 8,
         }
         resp = _req.post(
             f"{_api_base}/videos",
@@ -835,12 +835,11 @@ def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str) -> bool:
     """动态 i2v 画面 + 子镜配音合成（画面时长取两者短者，配音铺满）。"""
     try:
         vdur = _probe_seconds(video_path)
-        adur = _probe_seconds(audio_path)
-        dur = max(2.0, min(vdur or 5.0, adur or 5.0))
         cmd = [
             FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", audio_path,
-            "-t", f"{dur:.2f}",
+            "-t", f"{max(2.0, vdur or 8.0):.2f}",
             "-map", "0:v", "-map", "1:a",
+            "-af", "apad",  # 配音不足补静音，动态画面全程有声
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "128k",
             out_path,
@@ -1783,7 +1782,8 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         fade_in, fade_out = i == 0, i == total - 1
         motion = _motion_for(sc, i)
         _last_frame = _last_scene_frame
-        _dyn_on = _dyn_lv == "on" or (_dyn_lv == "auto" and i % 2 == 0)
+        # auto 模式：每场都尝试动态（红果漫剧密度），i2v 队列忙时由 _i2v_scene_clip 内部重试/回退
+        _dyn_on = _dyn_lv == "on" or _dyn_lv == "auto"
         result = await _drama_render_one(
             i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
             illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
@@ -1877,7 +1877,7 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
 
         # 2.6 片尾卡（红果漫剧结尾：剧名 + 下集预告提示）
         outro_clip = ""
-        if illust_mode:
+        if payload.get("illust_mode"):
             try:
                 outro_path = await asyncio.to_thread(
                     _make_intro_card, title, _intro_style,
