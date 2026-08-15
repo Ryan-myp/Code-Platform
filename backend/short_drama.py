@@ -764,9 +764,21 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
             headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
             json=body, timeout=60,
         )
+        # 队列满：等待重试（最多 3 次×30s），保证动态密度；仍失败才回退静态
         if resp.status_code == 503 and "queue_full" in resp.text:
-            logger.warning("i2v 队列满，回退静态镜头")
-            return False
+            for _r in range(3):
+                logger.warning(f"i2v 队列满，等待重试（{_r + 1}/3）…")
+                time.sleep(30)
+                resp = _req.post(
+                    f"{_api_base}/videos",
+                    headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+                    json=body, timeout=60,
+                )
+                if resp.status_code == 200:
+                    break
+            if resp.status_code != 200:
+                logger.warning("i2v 队列持续满，回退静态镜头")
+                return False
         if resp.status_code != 200:
             logger.warning(f"i2v 提交失败 HTTP {resp.status_code}")
             return False
@@ -1663,7 +1675,8 @@ async def _drama_render_one(
                         _shot_seq = _shot_sequence(sc.get("emotion") or "", len(sub_audios), i)
                         for si, sa in enumerate(sub_audios):
                             sclip = os.path.join(tmpdir, f"shot_{i:03d}_{si:02d}.mp4")
-                            s_dur = max(_probe_seconds(sa), 2.0)
+                            # 子镜时长撑满场次目标（红果漫剧：画面节奏独立于配音，配音短则画面留白/慢镜）
+                            s_dur = max(shot_dur / n_sub, _probe_seconds(sa), 2.0)
                             # 机位递进（场次内景别渐进：交代→进入→聚焦→收尾）
                             shot_type = _shot_seq[si % len(_shot_seq)]
                             # 取景窗口：全图或局部（特写窗口偏上中、横移窗口偏左/右）
