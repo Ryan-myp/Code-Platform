@@ -1585,8 +1585,9 @@ async def _drama_render_one(
     i: int, sc: dict, text: str, tmpdir: str, avatar_mode: bool, avatar_id: str, dh_engine: str,
     user: str, uid: str, role: str, illust_mode: bool, char_map: dict, char_refs: dict,
     dh_off: bool, fade_in: bool, fade_out: bool, motion: str, title: str, _report, total: int,
-    art_style: str = "",
+    art_style: str = "", last_frame: bytes | None = None, dynamic_on: bool = True,
 ) -> tuple:
+    """dynamic_on: 本场是否启用 i2v 动态锚（render_scenes 按 dynamic_level 算好传入）。"""
     """单镜渲染：数字人 → 素材 → 插画/卡片 三级回退。返回 (clip, audio_path, dh_off)。"""
     clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
     audio_path = ""
@@ -1631,8 +1632,12 @@ async def _drama_render_one(
             else:
                 anchors = "、".join(char_map[c]["anchor"] for c in _sc)
             refs = [char_refs[c] for c in scene_chars if c in char_refs]
+            # v1.0.46 双参考：角色立绘（同脸）+ 上一镜画面（镜间连续性：场景/光线/服装延续）
+            _refs2 = list(refs)
+            if last_frame and _refs2:
+                _refs2.append(last_frame)
             data = await asyncio.to_thread(
-                _generate_scene_image, shot, anchors, refs, uid, art_style,
+                _generate_scene_image, shot, anchors, _refs2, uid, art_style,
                 sc.get("dialogue") or "", sc.get("shot_size") or "",
                 resolve_api_key(), resolve_api_base(),
             )
@@ -1683,7 +1688,7 @@ async def _drama_render_one(
                                 sub_clips.append(sclip)
                         # v1.0.45 动态锚镜头：本场有台词/人物时，用主图生成 1 个 i2v
                         # 动态片段（人物真动/口型），替换第一个静态子镜 → 画面"活"起来
-                        if sc.get("dialogue") and len(sub_clips) >= 2:
+                        if dynamic_on and sc.get("dialogue") and len(sub_clips) >= 2:
                             _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：动态镜头生成中…")
                             dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}.mp4")
                             _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
@@ -1735,6 +1740,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
     art_style = (payload.get("art_style") or DEFAULT_ART_STYLE).strip().lower()
     if art_style not in ART_STYLES:
         art_style = DEFAULT_ART_STYLE
+    _dyn_lv = (payload.get("dynamic_level") or "auto").strip().lower()
     characters = payload.get("characters") or []
     clip_paths, srt_durations, voice_durations = [], [], []
     total = len(scenes)
@@ -1752,6 +1758,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
                 # 单角色立绘缓存到本地，跨集复用
                 _save_char_portrait(_cid, _char, _portrait, art_style)
     scene_bounds: list[int] = []  # 每个场次第一个 clip 的下标（供场间转场）
+    _last_scene_frame: bytes | None = None  # 上一镜成功画面（双参考：镜间连续性）
     for i, sc in enumerate(scenes):
         _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
         text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
@@ -1761,13 +1768,23 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
         fade_in, fade_out = i == 0, i == total - 1
         motion = _motion_for(sc, i)
+        _last_frame = _last_scene_frame
+        _dyn_on = _dyn_lv == "on" or (_dyn_lv == "auto" and i % 2 == 0)
         result = await _drama_render_one(
             i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
             illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
-            payload.get("title") or "未命名短剧", _report, total, art_style,
+            payload.get("title") or "未命名短剧", _report, total, art_style, _last_frame, _dyn_on,
         )
         clip, audio_path, dh_off = result
         if clip:
+            # 双参考：本场插画画面作为下一镜的镜间连续性参考
+            if illust_mode:
+                _imgp = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
+                if os.path.exists(_imgp) and os.path.getsize(_imgp) > 10000:
+                    try:
+                        _last_scene_frame = open(_imgp, "rb").read()
+                    except Exception:
+                        pass
             if not clip_paths:
                 scene_bounds.append(0)
             clip_paths.append(clip)
@@ -2144,6 +2161,7 @@ async def generate_drama(
     template_id: str = Form("", description="题材模板 ID（drama-templates，如 dt_ceo）"),
     illust_mode: bool = Form(False, description="true=AI 插画模式（AGNES 文生图/图生图，角色一致性）"),
     art_style: str = Form("", description="画风预设：guoman国漫/hanman韩漫/3d/realistic写实（漫剧模式）"),
+    dynamic_level: str = Form("auto", description="动态镜头级别：auto自动/on开启/off关闭（i2v 人物动态，慢且耗配额）"),
     avatar_mode: bool = Form(False, description="true=数字人播报模式（每镜生成人像口播视频）"),
     avatar_id: str = Form("business-female", description="数字人形象ID（avatar_mode 时生效）"),
     dh_engine: str = Form("2d", description="数字人引擎：2d/live_portrait（sadtalker 耗时过长不适用）"),
@@ -2189,6 +2207,7 @@ async def generate_drama(
         "template_id": template_id,
         "illust_mode": illust_mode,
         "art_style": art_style,
+        "dynamic_level": dynamic_level,
         "avatar_mode": avatar_mode,
         "avatar_id": avatar_id,
         "dh_engine": dh_engine,
