@@ -317,7 +317,12 @@ def _parse_script(raw: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("剧本输出不是 JSON")
-    data = json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
+        data = json.loads(cleaned)
     scenes = data.get("scenes") or []
     if not scenes:
         raise ValueError("剧本没有分镜")
@@ -1541,7 +1546,7 @@ def _parse_characters(data: dict) -> list[dict]:
 
 
 def _drama_parse_script(raw: str) -> dict:
-    """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音）。"""
+    """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音/尾随逗号）。"""
     text = raw.strip()
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
@@ -1549,7 +1554,13 @@ def _drama_parse_script(raw: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("剧本输出不是 JSON")
-    data = json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError:
+        # 长剧本 LLM 偶发尾随逗号，清洗后重试
+        cleaned = re.sub(r",\s*([\]}])", r"\1", candidate)
+        data = json.loads(cleaned)
     scenes = data.get("scenes") or []
     if not scenes:
         raise ValueError("剧本没有分镜")
@@ -1617,21 +1628,56 @@ async def novel_to_script(
 
     ep_block = f"\n本集为第 {episode} 集，开头 5-10 秒要承接上一集结尾的悬念钩子。" if episode and int(episode) > 1 else ""
 
-    for attempt in range(3):
-        try:
-            raw = await call_llm_async(
-                _NOVEL_SYSTEM,
-                f"小说原文（可截取关键章节，总长约 {len(novel)} 字）：\n{novel[:12000]}\n\n"
-                f"目标单集时长约 {duration_hint} 秒。{chars_block}{ep_block}",
-                max_tokens=8000,
-                temperature=0.85,
-                timeout=300,
-            )
-            script = _drama_parse_script(raw)
-            break
-        except (ValueError, json.JSONDecodeError) as e:
-            if attempt == 2:
-                raise HTTPException(502, f"剧本解析失败：{e}") from e
+    # 长剧分块：>240s 时 LLM 单次输出 24+ 镜 JSON 极易格式错误，
+    # 改为按「每块 ≤12 镜」分批生成再合并（每块独立 JSON，短输出更稳定）
+    batch_count = 1
+    if duration_hint > 240:
+        batch_count = math.ceil(duration_hint / 240)  # 600s → 3 块，900s → 4 块
+    scenes_all: list = []
+    chars_all: list = []
+    title_out = ""
+    for bi in range(batch_count):
+        batch_scenes = math.ceil((duration_hint / batch_count) / 28)  # 每块约 28s/镜
+        start_idx = len(scenes_all) + 1
+        block_prompt = (
+            f"小说原文（可截取关键章节）：\n{novel[:12000]}\n\n"
+            f"目标单集时长约 {duration_hint} 秒，共分 {batch_count} 块生成。"
+            f"本块为第 {bi + 1}/{batch_count} 块（分镜序号从 {start_idx} 开始，"
+            f"本块生成约 {batch_scenes} 镜）。"
+            f"{chars_block}{ep_block}\n"
+            f"第 1 块需输出完整 characters 角色表；后续块可省略 characters（沿用第 1 块）。"
+            f"剧情需连贯：第 {start_idx} 镜承接上一块结尾，本块结尾留悬念。"
+        )
+        ok_block = False
+        for attempt in range(3):
+            try:
+                raw = await call_llm_async(
+                    _NOVEL_SYSTEM,
+                    block_prompt,
+                    max_tokens=8000,
+                    temperature=0.85,
+                    timeout=300,
+                )
+                partial = _drama_parse_script(raw)
+                # 本块 scenes 的 id 从 1 起，需要偏移到全局序号
+                for s in partial["scenes"]:
+                    s["id"] = start_idx
+                    start_idx += 1
+                scenes_all.extend(partial["scenes"])
+                if partial.get("characters"):
+                    chars_all = partial["characters"]
+                if not title_out:
+                    title_out = partial["title"]
+                ok_block = True
+                break
+            except (ValueError, json.JSONDecodeError) as e:
+                if attempt == 2:
+                    raise HTTPException(502, f"剧本解析失败（第 {bi + 1} 块）：{e}") from e
+        if not ok_block:
+            raise HTTPException(502, "剧本生成失败，请稍后重试")
+    if not scenes_all:
+        raise HTTPException(502, "剧本没有分镜")
+    script = {"title": title_out or "未命名短剧", "episode": int(episode or 1), "scenes": scenes_all, "characters": chars_all}
     # 系列角色库优先：LLM 可能改了角色，用已存角色表覆盖（保证跨集稳定）
     if series_chars:
         script["characters"] = series_chars
