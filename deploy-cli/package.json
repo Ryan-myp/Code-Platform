@@ -1,6 +1,6 @@
 {
   "name": "@xiaotuan/code-platform",
-  "version": "1.0.0",
+  "version": "1.0.51",
   "description": "小团智能平台一键部署 — npx 启动 FastAPI 后端 + React 前端（免服务器）",
   "type": "module",
   "bin": {

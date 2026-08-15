@@ -992,6 +992,19 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
         "-r", str(FPS),
         out_path,
     ]
+    if audio_path is None:
+        # v1.0.51：无音频镜（片尾卡等）→ lavfi 静音轨，避免 ffmpeg 收到 None 崩溃
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y",
+            "-loop", "1", "-i", img_path,
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", f"{duration:.2f}",
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            "-r", str(FPS),
+            out_path,
+        ]
     r = subprocess.run(cmd, capture_output=True, timeout=180)
     if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
         raise RuntimeError("单镜合成失败: " + r.stderr.decode(errors="replace")[-200:])
@@ -1242,36 +1255,71 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
     """
     esc = srt_path.replace(":", "\\:").replace("'", "\\'")
     subtitle_vf = f"subtitles='{esc}':force_style='FontName=PingFang SC,FontSize=14,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,Outline=1,Shadow=0,MarginV={int(margin_v)}'"
-    if bgm_path and os.path.exists(bgm_path):
-        total = max(_probe_seconds(video_path), 1.0)
+    # v1.0.51：字幕烧录与 BGM 混音拆两步 —— imageio-ffmpeg v7.1 的 aac 编码器
+    # 在 amix 长流（>约90s）时因隐式重采样报 "3 frames left in the queue" 导致
+    # Conversion failed（此前 10 分钟成片 BGM 必失败，回退无 BGM）；
+    # 系统 ffmpeg（/usr/local/bin）aac 正常但无 libass 不能烧字幕 → 分工：
+    #   ① imageio 烧字幕（视频重编码，音频 copy）
+    #   ② 系统 ffmpeg 混 BGM（视频 copy，仅音频重编码）—— 二次编码仅音频，无画质损失
+    _burn_ok = False
+    try:
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
+            "-vf", subtitle_vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        if r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 4096:
+            _burn_ok = True
+        else:
+            logger.warning(f"字幕烧录失败: {(r.stderr or b'')[-150:]}")
+    except Exception as e:
+        logger.warning(f"字幕烧录异常: {e}")
+    if not _burn_ok:
+        # 兜底：无字幕直接复制（不抛错，保证出片）
+        shutil.copy(video_path, out_path)
+        return
+    if not (bgm_path and os.path.exists(bgm_path)):
+        return
+    # BGM 混音（系统 ffmpeg，视频 copy）
+    sys_ff = "/usr/local/bin/ffmpeg"
+    if not os.path.exists(sys_ff):
+        return
+    try:
+        total = max(_probe_seconds(out_path), 1.0)
         fade_st = max(0.0, total - 2.0)
+        # 读原声采样率，BGM 对齐（避免 amix 隐式重采样在 aac 的队列 bug）
+        ar = "44100"
         try:
-            cmd = [
-                FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", bgm_path,
-                "-filter_complex",
-                f"[1:a]atrim=0:{total:.2f},aresample=44100,volume=0.12,"
-                f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
-                f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
-                "-map", "0:v", "-map", "[a]",
-                "-vf", subtitle_vf,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "128k",
-                out_path,
-            ]
-            r = subprocess.run(cmd, capture_output=True, timeout=600)
-            if r.returncode == 0 and os.path.exists(out_path):
-                return
-            logger.warning(f"BGM 混音字幕失败，回退无 BGM: {(r.stderr or b'')[-120:]}")
-        except Exception as e:
-            logger.warning(f"BGM 混音异常，回退无 BGM: {e}")
-    # 无 BGM 字幕烧录（含 BGM 失败回退）
-    cmd = [
-        FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
-        "-vf", subtitle_vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        out_path,
-    ]
+            pr = subprocess.run([FFPROBE_BIN, "-v", "quiet", "-print_format", "json",
+                                 "-show_streams", out_path], capture_output=True, text=True, timeout=30)
+            info = json.loads(pr.stdout or "{}")
+            for s in info.get("streams", []):
+                if s.get("codec_type") == "audio" and s.get("sample_rate"):
+                    ar = s["sample_rate"]
+                    break
+        except Exception:
+            pass
+        tmp_mix = out_path + ".mix.mp4"
+        cmd = [
+            sys_ff, "-nostdin", "-y", "-i", out_path, "-i", bgm_path,
+            "-filter_complex",
+            f"[1:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
+            f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
+            f"[0:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+            "-map", "0:v", "-map", "[a]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+            tmp_mix,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=600)
+        if r.returncode == 0 and os.path.exists(tmp_mix) and os.path.getsize(tmp_mix) > 4096:
+            os.replace(tmp_mix, out_path)
+        else:
+            logger.warning(f"BGM 混音失败（保留字幕版）: {(r.stderr or b'')[-150:]}")
+    except Exception as e:
+        logger.warning(f"BGM 混音异常（保留字幕版）: {e}")
     r = subprocess.run(cmd, capture_output=True, timeout=600)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError("字幕烧录失败: " + r.stderr.decode(errors="replace")[-200:])
