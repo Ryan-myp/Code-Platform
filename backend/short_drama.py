@@ -634,6 +634,83 @@ def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, sho
         return False
 
 
+def _make_intro_card(title: str, art_style: str = "", subtitle: str = "") -> str | None:
+    """生成片头标题卡：画风渐变背景 + 剧名大字 + 副标题（红果漫剧开场）。
+
+    返回图片路径（PNG），失败返回 None（不影响主流程）。
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+        w, h = 720, 1280
+        # 按画风选色调
+        style = (art_style or DEFAULT_ART_STYLE).strip().lower()
+        palettes = {
+            "guoman": ((147, 51, 234), (236, 72, 153)),     # 紫粉（国漫）
+            "hanman": ((59, 130, 246), (16, 185, 129)),     # 蓝绿（韩漫清新）
+            "3d": ((245, 158, 11), (239, 68, 68)),          # 橙红（3D 温暖）
+            "realistic": ((30, 30, 30), (120, 120, 120)),   # 灰黑（写实沉稳）
+        }
+        c1, c2 = palettes.get(style, palettes["guoman"])
+        img = Image.new("RGB", (w, h))
+        draw = ImageDraw.Draw(img)
+        for y in range(h):
+            t = y / h
+            draw.line([(0, y), (w, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(c1, c2, strict=False)))
+        img = img.filter(ImageFilter.GaussianBlur(radius=4))
+        # 装饰：柔和光晕
+        glow = Image.new("RGB", (w, h), (0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        gd.ellipse([w * 0.15, h * 0.25, w * 0.85, h * 0.75], fill=tuple(int(c * 0.55) for c in c1))
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=120))
+        img = Image.blend(img, glow, 0.35)
+        draw = ImageDraw.Draw(img)
+        try:
+            font_big = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", 84)
+            font_sub = ImageFont.truetype("/System/Library/Fonts/PingFang.ttc", 36)
+        except OSError:
+            font_big = font_sub = ImageFont.load_default()
+        # 剧名居中，带描边阴影
+        title = (title or "未命名短剧").strip()
+        draw.text((w // 2 + 3, 560 + 3), title, fill=(0, 0, 0, 160), font=font_big, anchor="mm")
+        draw.text((w // 2, 560), title, fill="white", font=font_big, anchor="mm")
+        if subtitle:
+            draw.text((w // 2, 680), subtitle, fill=(255, 255, 255, 200), font=font_sub, anchor="mm")
+        path = os.path.join(os.path.dirname(__file__), "drama_factory", f"intro_{int(time.time() * 1000)}.png")
+        img.save(path, "PNG")
+        return path
+    except Exception as e:
+        logger.warning(f"片头卡生成失败: {e}")
+        return None
+
+
+def _make_intro_video(img_path: str, bgm_path: str, out_path: str, duration: float = 3.5) -> None:
+    """片头视频：标题卡 + BGM 前奏（2s 淡入 + 结尾淡出），Ken Burns 慢推。"""
+    total = max(1, int(duration * FPS))
+    amp = 0.06
+    vf = (
+        "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
+        f"zoompan=z='1+{amp}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS},"
+        "fade=t=in:st=0:d=0.4,fade=t=out:st=3.0:d=0.5"
+    )
+    cmd = [
+        FFMPEG_BIN, "-nostdin", "-y",
+        "-loop", "1", "-i", img_path,
+        "-i", bgm_path,
+        "-t", f"{duration:.2f}",
+        "-filter_complex",
+        f"[1:a]atrim=0:{duration},afade=t=in:st=0:d=0.8,afade=t=out:st={max(0.5, duration - 1.0):.2f}:d=0.8,volume=0.5[a]",
+        "-map", "0:v", "-map", "[a]",
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-r", str(FPS),
+        out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    if r.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
+        raise RuntimeError("片头视频合成失败: " + r.stderr.decode(errors="replace")[-200:])
+
+
 def _probe_seconds(path: str) -> float:
     """ffprobe 读取音/视频时长（秒），失败返回 0。"""
     try:
@@ -995,13 +1072,27 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
         return
 
 def _pick_bgm() -> str | None:
-    """随机选一首背景音乐（music 目录），目录为空/无音频返回 None。"""
-    tracks = [p for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in _MUSIC_EXTS]
-    if not tracks:
-        return None
+    """选一首背景音乐：优先 drama_factory/music（用户自备），
+    其次复用音乐工厂生成的作品（music_factory/*.mp3）——零成本氛围感。
+    目录为空/无音频返回 None。
+    """
     import random
 
-    return str(random.choice(tracks))
+    candidates: list[str] = []
+    if MUSIC_DIR.exists():
+        candidates += [
+            str(p) for p in MUSIC_DIR.iterdir()
+            if p.is_file() and p.suffix.lower() in _MUSIC_EXTS
+        ]
+    mf_dir = DRAMA_DIR.parent / "music_factory"
+    if mf_dir.exists():
+        candidates += [
+            str(p) for p in mf_dir.glob("*.mp3")
+            if p.is_file() and p.stat().st_size > 50_000
+        ]
+    if not candidates:
+        return None
+    return random.choice(candidates)
 
 
 def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None, margin_v: int = 24) -> None:
@@ -1015,25 +1106,33 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
     if bgm_path and os.path.exists(bgm_path):
         total = max(_probe_seconds(video_path), 1.0)
         fade_st = max(0.0, total - 2.0)
-        cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", bgm_path,
-            "-filter_complex",
-            f"[1:a]volume=0.12,afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
-            f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
-            "-map", "0:v", "-map", "[a]",
-            "-vf", subtitle_vf,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
-            out_path,
-        ]
-    else:
-        cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
-            "-vf", subtitle_vf,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "copy",
-            out_path,
-        ]
+        try:
+            cmd = [
+                FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", bgm_path,
+                "-filter_complex",
+                f"[1:a]atrim=0:{total:.2f},aresample=44100,volume=0.12,"
+                f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
+                f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+                "-map", "0:v", "-map", "[a]",
+                "-vf", subtitle_vf,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                out_path,
+            ]
+            r = subprocess.run(cmd, capture_output=True, timeout=600)
+            if r.returncode == 0 and os.path.exists(out_path):
+                return
+            logger.warning(f"BGM 混音字幕失败，回退无 BGM: {(r.stderr or b'')[-120:]}")
+        except Exception as e:
+            logger.warning(f"BGM 混音异常，回退无 BGM: {e}")
+    # 无 BGM 字幕烧录（含 BGM 失败回退）
+    cmd = [
+        FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
+        "-vf", subtitle_vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        out_path,
+    ]
     r = subprocess.run(cmd, capture_output=True, timeout=600)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError("字幕烧录失败: " + r.stderr.decode(errors="replace")[-200:])
@@ -1556,9 +1655,43 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         if not clip_paths:
             raise HTTPException(502, "所有分镜合成失败，请重试")
 
-        # 3. 拼接（场次间交叉淡化转场）+ 字幕
+        # 2.5 片头标题卡（漫剧标准开场：剧名+集数，3.5s，BGM 垫底）
+        intro_clip = ""
+        if payload.get("illust_mode"):
+            _report(70, "片头制作中…")
+            _intro_style = (payload.get("art_style") or DEFAULT_ART_STYLE).strip().lower()
+            if _intro_style not in ART_STYLES:
+                _intro_style = DEFAULT_ART_STYLE
+            intro_path = await asyncio.to_thread(
+                _make_intro_card, title, _intro_style,
+                f"第 {payload.get('episode') or 1} 集" if payload.get('episode') else "",
+            )
+            if intro_path:
+                try:
+                    intro_clip = os.path.join(tmpdir, "intro.mp4")
+                    _bgm = _pick_bgm()
+                    if _bgm:
+                        # 片头：标题卡 + BGM 前奏（2s 淡入）
+                        _report(71, "片头配乐中…")
+                        await asyncio.to_thread(
+                            _make_intro_video, intro_path, _bgm, intro_clip, 3.5,
+                        )
+                    else:
+                        await asyncio.to_thread(
+                            _scene_video, intro_path, None, intro_clip, 3.5,
+                            "slow_push", True, True, (0.0, 0.0, 1.0, 1.0),
+                        )
+                except Exception as e:
+                    logger.warning(f"片头生成失败: {e}")
+                    intro_clip = ""
+
+        # 3. 拼接（片头 + 场次间交叉淡化转场）+ 字幕
         _report(72, "片段拼接中…")
         raw_video = os.path.join(tmpdir, "merged.mp4")
+        if intro_clip and os.path.exists(intro_clip):
+            clip_paths.insert(0, intro_clip)
+            scene_bounds = [b + 1 for b in scene_bounds]
+            scene_bounds.insert(0, 0)
         await asyncio.to_thread(_concat_videos, clip_paths, raw_video, scene_bounds)
         stem = f"drama_{int(time.time() * 1000)}"
         srt_path = os.path.join(tmpdir, f"{stem}.srt")
