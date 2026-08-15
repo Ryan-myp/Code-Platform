@@ -210,8 +210,9 @@ _SCRIPT_SYSTEM = """你是资深短剧编剧。把用户主题扩写成一部节
 4. 场次与目标时长匹配（v13.27 长剧）：场次数 ≈ 目标秒数 ÷ 每场 25-30 秒，向上取整（如 300 秒 → 10-12 场；600 秒 → 20-24 场；≤2 分钟不少于 4 场，最多 28 场）；每场 sec 15-40 秒（单镜保底时长，配音不足时画面素材循环补足）
 5. shot 必须是"画面里能拍到的东西"（具体场景/道具/人物动作/天气/光线），禁止抽象概念；search 给出 2-4 个与 shot 完全对应的英文关键词（如 night city rain neon），禁止抽象词（dream/hope/life 等搜不到素材的词）
 6. 每场旁白+台词合计约 60-100 字（约 20-30 秒口播量），全场总时长贴近目标时长 ±20%，禁止每场超长台词；台词/旁白必须提到本镜画面里的具体元素（画面有雨才能说"雨"），与 shot 强呼应，禁止写与画面无关的抽象感慨
-7. 每镜必须标注情绪 emotion（v13.24）：happy 欢快 / sad 悲伤 / angry 激昂愤怒 / gentle 温柔 / serious 严肃 / neutral 自然，台词口吻与情绪一致
-8. 剧情有起承转合，结尾留悬念钩子"""
+7. 每镜必须标注景别 shot_size（特写/近景/中景/全景/远景），情绪激烈用特写近景、交代环境用全景、对话用中景；shot 与景别一致
+8. 每镜必须标注情绪 emotion（v13.24）：happy 欢快 / sad 悲伤 / angry 激昂愤怒 / gentle 温柔 / serious 严肃 / neutral 自然，台词口吻与情绪一致
+9. 剧情有起承转合，结尾留悬念钩子"""
 
 
 async def _generate_script(theme: str, duration_hint: int, template: dict | None = None) -> dict:
@@ -359,6 +360,10 @@ def _parse_script(raw: str) -> dict:
             emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
                    "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
         s["emotion"] = emo
+        # v1.0.40 景别规范化（漫剧镜头语言）
+        _sz = str(s.get("shot_size") or "").strip()
+        _sz = _sz.replace("特写", "closeup").replace("近景", "medium").replace("中景", "medium").replace("全景", "wide").replace("远景", "wide")
+        s["shot_size"] = _sz if _sz in ("closeup", "medium", "wide") else ""
         # v13.25 素材关键词：search 清洗（限长/去引号），缺失回退 shot 前 30 字符（Pexels 兼容中文）
         search = str(s.get("search") or "").strip()
         search = re.sub(r"[\"'\[\]]", "", search)[:60]
@@ -387,39 +392,71 @@ def _anchor_search(char: dict | None, search: str) -> str:
 
 PORTRAIT_DIR = DRAMA_DIR / "portraits"  # 角色定妆立绘缓存（漫剧模式：全剧/跨集同脸）
 
+# ── 画风预设（漫剧模式：全剧统一画风，对标红果漫剧）──
+ART_STYLES = {
+    "guoman": {
+        "label": "国漫",
+        "desc": "中国国漫风格，精致动漫人物，唯美线条，高饱和色彩",
+        "prompt": "中国国漫风格，精致动漫人物立绘，唯美线条，高饱和度色彩，动漫电影质感",
+    },
+    "hanman": {
+        "label": "韩漫",
+        "desc": "韩式漫画，时尚精美，柔和光影，精致五官",
+        "prompt": "韩国漫画风格，时尚精美动漫人物，柔和光影，精致五官，都市言情漫画质感",
+    },
+    "3d": {
+        "label": "3D 动画",
+        "desc": "3D 动画电影渲染，立体人物，柔和光照",
+        "prompt": "3D动画电影风格，皮克斯式渲染，立体人物，柔和光照，精致材质",
+    },
+    "realistic": {
+        "label": "写实电影",
+        "desc": "真人电影质感，真实光影，细节丰富",
+        "prompt": "真人电影风格，写实光影，精致细节，电影剧照质感",
+    },
+}
+DEFAULT_ART_STYLE = "guoman"
 
-def _portrait_key(cid: str, char: dict) -> str:
-    """立绘缓存 key：角色 id + 外貌服装哈希（外貌变了就重新生成）。"""
-    sig = f"{char.get('appearance')}|{char.get('outfit')}"
+
+def _art_style_prompt(style: str) -> str:
+    """画风描述（无效/空回退默认）。"""
+    s = (style or "").strip().lower()
+    cfg = ART_STYLES.get(s)
+    return cfg["prompt"] if cfg else ART_STYLES[DEFAULT_ART_STYLE]["prompt"]
+
+
+def _portrait_key(cid: str, char: dict, art_style: str = "") -> str:
+    """立绘缓存 key：角色 id + 外貌服装 + 画风（外貌/画风变了就重新生成）。"""
+    sig = f"{char.get('appearance')}|{char.get('outfit')}|{art_style or DEFAULT_ART_STYLE}"
     return f"{cid}_{hashlib.sha256(sig.encode()).hexdigest()[:8]}"
 
 
-def _load_char_portrait(cid: str, char: dict, uid: str = "") -> bytes | None:
+def _load_char_portrait(cid: str, char: dict, uid: str = "", art_style: str = "") -> bytes | None:
     """读取角色立绘缓存（无则生成）。"""
-    key = _portrait_key(cid, char)
+    key = _portrait_key(cid, char, art_style)
     path = PORTRAIT_DIR / f"{key}.jpg"
     if path.exists() and path.stat().st_size > 4096:
         try:
             return path.read_bytes()
         except Exception:
             pass
-    data = _generate_character_portrait(char, uid)
+    data = _generate_character_portrait(char, uid, art_style)
     return data
 
 
-def _save_char_portrait(cid: str, char: dict, data: bytes) -> None:
+def _save_char_portrait(cid: str, char: dict, data: bytes, art_style: str = "") -> None:
     """持久化角色立绘（跨集复用）。"""
     try:
         PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
-        (PORTRAIT_DIR / f"{_portrait_key(cid, char)}.jpg").write_bytes(data)
+        (PORTRAIT_DIR / f"{_portrait_key(cid, char, art_style)}.jpg").write_bytes(data)
     except Exception:
         pass
 
 
-def _generate_character_portrait(char: dict, uid: str = "") -> bytes | None:
+def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "") -> bytes | None:
     """生成角色定妆立绘（漫剧模式：全剧同脸同装的核心）。
 
-    根据角色圣经的外貌/服装描述，生成一张竖屏半身立绘（无背景文字、纯角色），
+    根据角色圣经的外貌/服装描述 + 画风预设，生成一张竖屏半身立绘，
     之后每镜都用这张立绘做图生图参考锚定 → 同一角色全剧形象一致。
     """
     if not char or not resolve_api_key():
@@ -436,10 +473,10 @@ def _generate_character_portrait(char: dict, uid: str = "") -> bytes | None:
         outfit = char.get("outfit") or ""
         gender = char.get("gender") or ""
         prompt = (
-            f"竖屏影视级角色定妆立绘，{gender}角色「{name}」，"
+            f"{_art_style_prompt(art_style)}。竖屏影视级角色定妆立绘，{gender}角色「{name}」，"
             f"外貌：{appearance}；服装：{outfit}。"
-            "全身半身构图，正面微侧，干净纯色背景，电影级打光，高清细节，"
-            "画面中无任何文字，无场景，只有角色。"
+            "半身构图，正面微侧，干净纯色背景，电影级打光，高清细节，"
+            "五官清晰，画面中无任何文字，无场景，只有角色。"
         )
         body = {
             "model": require_model(resolve_feature_model(uid, "image", IMAGE_MODEL), "图片"),
@@ -471,13 +508,13 @@ def _generate_character_portrait(char: dict, uid: str = "") -> bytes | None:
         return None
 
 
-def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "") -> bytes | None:
-    """AGNES 文生图/图生图镜头插画（v13.30 角色一致性）。
+def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "",
+                           art_style: str = "", dialogue: str = "", shot_size: str = "") -> bytes | None:
+    """AGNES 文生图/图生图镜头插画（v13.30 角色一致性 + 画风统一）。
 
-    参考图 refs（按出场角色顺序，每角色最近一张单人插画）非空 → 图生图/多图合成
-    （顶层 image 参数传 Data URI），配合 anchors 文字锚定，保证「同一角色每次出场一致」；
-    无参考图 → 纯文生图（文字锚定兜底）。统一 scale+crop 到 720x1280；
-    无 key/超时/接口异常一律返回 None，由调用方静默回退渐变卡片，不阻塞主链路。
+    参考图 refs（角色立绘）非空 → 图生图/多图合成锚定角色形象；
+    画风 art_style 全剧统一；台词元素 dialogue 注入画面（画面-台词强匹配）。
+    统一 scale+crop 到 720x1280；失败返回 None 由调用方回退。
     """
     if not shot or not resolve_api_key():
         return None
@@ -491,9 +528,18 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
         from common.llm import api_error_detail
 
         # 漫剧模式：画面必须与 shot 描述强一致（红果漫剧标准），角色锚定外貌服装
+        dialogue_hint = ""
+        if dialogue:
+            dialogue_hint = f"人物表情与动作须符合台词语境（{dialogue[:40]}）。"
+        size_hint = {
+            "closeup": "特写景别：突出人物面部表情与情绪，背景虚化",
+            "medium": "中景景别：人物半身入画，兼顾表情与环境",
+            "wide": "全景景别：完整交代场景环境，人物融入环境",
+        }.get(shot_size, "")
         prompt = (
-            "竖屏短剧电影分镜插画，精致动漫电影质感，竖构图，画面只有场景与人物，画面中无任何文字，"
-            "人物表情与动作必须完全符合台词与画面描述。"
+            f"{_art_style_prompt(art_style)}。竖屏短剧电影分镜插画，竖构图，画面只有场景与人物，"
+            f"画面中无任何文字，{dialogue_hint}"
+            + (f"{size_hint}。" if size_hint else "")
             + (f"出场的角色必须保持：{anchors}（外貌与服装全剧不变）。" if anchors else "")
             + f"镜头画面：{shot}"
         )
@@ -506,7 +552,22 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
             "extra_body": {"response_format": "url"},
         }
         if refs:
-            body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs]
+            if len(refs) == 1:
+                body["image"] = ["data:image/jpeg;base64," + base64.b64encode(refs[0]).decode()]
+            else:
+                # 多角色同框：立绘水平拼接成一张参考图（左=角色A，右=角色B），
+                # 模型看到"多人并排"参考 → 同框时能分辨各角色形象
+                _ims = [Image.open(io.BytesIO(r)).convert("RGB") for r in refs[:2]]
+                _w = sum(im.width for im in _ims)
+                _h = max(im.height for im in _ims)
+                _canvas = Image.new("RGB", (_w, _h), (255, 255, 255))
+                _x = 0
+                for _im in _ims:
+                    _canvas.paste(_im, (_x, (_h - _im.height) // 2))
+                    _x += _im.width
+                _cbuf = io.BytesIO()
+                _canvas.save(_cbuf, format="JPEG", quality=85)
+                body["image"] = ["data:image/jpeg;base64," + base64.b64encode(_cbuf.getvalue()).decode()]
         r = requests.post(
             f"{resolve_api_base()}/images/generations",
             headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
@@ -1081,6 +1142,7 @@ async def _drama_render_one(
     i: int, sc: dict, text: str, tmpdir: str, avatar_mode: bool, avatar_id: str, dh_engine: str,
     user: str, uid: str, role: str, illust_mode: bool, char_map: dict, char_refs: dict,
     dh_off: bool, fade_in: bool, fade_out: bool, motion: str, title: str, _report, total: int,
+    art_style: str = "",
 ) -> tuple:
     """单镜渲染：数字人 → 素材 → 插画/卡片 三级回退。返回 (clip, audio_path, dh_off)。"""
     clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
@@ -1118,7 +1180,7 @@ async def _drama_render_one(
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             anchors = "、".join(char_map[c]["anchor"] for c in scene_chars if char_map[c].get("anchor"))
             refs = [char_refs[c] for c in scene_chars if c in char_refs]
-            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs, uid)
+            data = await asyncio.to_thread(_generate_scene_image, shot, anchors, refs, uid, art_style, sc.get("dialogue") or "", sc.get("shot_size") or "")
         if data:
             with open(img_path, "wb") as f:
                 f.write(data)
@@ -1136,6 +1198,9 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
     avatar_id = (payload.get("avatar_id") or "business-female").strip()
     dh_engine = (payload.get("dh_engine") or "2d").strip()
     illust_mode = bool(payload.get("illust_mode"))
+    art_style = (payload.get("art_style") or DEFAULT_ART_STYLE).strip().lower()
+    if art_style not in ART_STYLES:
+        art_style = DEFAULT_ART_STYLE
     characters = payload.get("characters") or []
     clip_paths, srt_durations, voice_durations = [], [], []
     total = len(scenes)
@@ -1147,11 +1212,11 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
     if illust_mode and char_map:
         _report(12, "角色定妆中…（保证全剧角色一致）")
         for _cid, _char in char_map.items():
-            _portrait = _load_char_portrait(_cid, _char, uid)
+            _portrait = _load_char_portrait(_cid, _char, uid, art_style)
             if _portrait:
                 char_refs[_cid] = _portrait
                 # 单角色立绘缓存到本地，跨集复用
-                _save_char_portrait(_cid, _char, _portrait)
+                _save_char_portrait(_cid, _char, _portrait, art_style)
     for i, sc in enumerate(scenes):
         _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：配音 + 画面…")
         text = " ".join(x for x in (sc.get("narrator"), sc.get("dialogue")) if x)
@@ -1164,7 +1229,7 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         result = await _drama_render_one(
             i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
             illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
-            payload.get("title") or "未命名短剧", _report, total,
+            payload.get("title") or "未命名短剧", _report, total, art_style,
         )
         clip, audio_path, dh_off = result
         if clip:
@@ -1504,6 +1569,7 @@ async def generate_drama(
     characters_json: str = Form("", description="角色表 JSON（[{id,name,gender,age,appearance,outfit,search}]）"),
     template_id: str = Form("", description="题材模板 ID（drama-templates，如 dt_ceo）"),
     illust_mode: bool = Form(False, description="true=AI 插画模式（AGNES 文生图/图生图，角色一致性）"),
+    art_style: str = Form("", description="画风预设：guoman国漫/hanman韩漫/3d/realistic写实（漫剧模式）"),
     avatar_mode: bool = Form(False, description="true=数字人播报模式（每镜生成人像口播视频）"),
     avatar_id: str = Form("business-female", description="数字人形象ID（avatar_mode 时生效）"),
     dh_engine: str = Form("2d", description="数字人引擎：2d/live_portrait（sadtalker 耗时过长不适用）"),
@@ -1548,6 +1614,7 @@ async def generate_drama(
         "characters": characters,
         "template_id": template_id,
         "illust_mode": illust_mode,
+        "art_style": art_style,
         "avatar_mode": avatar_mode,
         "avatar_id": avatar_id,
         "dh_engine": dh_engine,
@@ -1650,10 +1717,11 @@ _NOVEL_SYSTEM = """你是资深短剧编剧。把用户提供的小说/故事原
 3. 结构：{"title": "剧名", "episode": 1, "characters": [{"id": "lin", "name": "林小满", "gender": "女", "age": "24岁", "appearance": "黑色长发齐刘海，圆脸大眼睛", "outfit": "白色连衣裙配红色围巾", "search": "young chinese woman black hair"}], "scenes": [{"id": 1, "chars": ["lin"], "shot": "镜头画面描述", "search": "英文素材关键词", "narrator": "旁白", "dialogue": "角色台词", "emotion": "情绪", "sec": 25}]}
 4. 角色一致性（最重要）：先定义 1-4 个主要角色 characters，每个角色性别/年龄/发型/发色/服装全剧固定；每镜 chars 列出场角色（1-2 个为宜）；每个角色首次出场安排单人镜定妆，后续沿用；shot 必须点名角色并沿用其外貌服装；search 以该镜主角英文特征词开头
 5. 场次与目标时长匹配：场次数 ≈ 目标秒数 ÷ 每场 25-30 秒（如 45 秒 → 2-3 场；300 秒 → 10-12 场；最多 28 场）；每场 sec 15-40 秒
-6. shot 必须是"画面能拍到的东西"；search 给 2-4 个对应英文关键词（如 night city rain neon），禁止抽象词
-7. 每场旁白+台词约 60-100 字；台词必须提到本镜画面里的具体元素，与 shot 强呼应
-8. 每镜标注情绪 emotion：happy/sad/angry/gentle/serious/neutral
-9. 剧情有起承转合，结尾留悬念钩子（为下一集铺垫）"""
+6. 每镜必须标注景别 shot_size（特写/近景/中景/全景/远景），按剧情情绪选：情绪激烈用特写近景，交代环境用全景远景，对话用中景；镜头画面 shot 必须与景别一致
+7. shot 必须是"画面能拍到的东西"；search 给 2-4 个对应英文关键词（如 night city rain neon），禁止抽象词
+8. 每场旁白+台词约 60-100 字；台词必须提到本镜画面里的具体元素，与 shot 强呼应
+9. 每镜标注情绪 emotion：happy/sad/angry/gentle/serious/neutral
+10. 剧情有起承转合，结尾留悬念钩子（为下一集铺垫）"""
 
 
 def _parse_characters(data: dict) -> list[dict]:
@@ -1764,6 +1832,9 @@ def _drama_parse_script(raw: str) -> dict:
             emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
                    "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
         s["emotion"] = emo
+        _sz = str(s.get("shot_size") or "").strip()
+        _sz = _sz.replace("特写", "closeup").replace("近景", "medium").replace("中景", "medium").replace("全景", "wide").replace("远景", "wide")
+        s["shot_size"] = _sz if _sz in ("closeup", "medium", "wide") else ""
         search = str(s.get("search") or "").strip()
         search = re.sub(r"[\"'\[\]]", "", search)[:60]
         if not search:
