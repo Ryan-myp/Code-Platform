@@ -56,7 +56,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
-from common.config import load_config, resolve_api_key
+from common.config import load_config, resolve_api_key, resolve_api_base
 from common.llm import api_error_detail, _safe_exc_msg
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -324,8 +324,8 @@ async def enhance_prompt(prompt: str = Form(...), current_user: dict = require_a
 
 # ── 统计 API ──────────────────────────────────────────────────
 @router.get("/stats")
-async def get_stats():
-    """获取图片工厂统计"""
+async def get_stats(current_user: dict = require_auth()):
+    """获取图片工厂统计（api_configured 按当前用户的中转站 Key 判断）"""
     files = []
     if os.path.exists(IMAGE_DIR):
         files = [f for f in os.listdir(IMAGE_DIR) if f.endswith((".png", ".jpg", ".jpeg"))]
@@ -336,7 +336,7 @@ async def get_stats():
         "total_images": len(files),
         "total_templates": len(templates),
         "image_dir": IMAGE_DIR,
-        "api_configured": bool(AGNES_API_KEY),
+        "api_configured": bool(resolve_api_key()),
     }
 
 
@@ -532,7 +532,7 @@ def normalize_size(size: str | None) -> str:
 async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文生图（同步/异步任务共用执行体，异步时回报进度）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效（与 resolve_api_key() 模块级绑定不同）
-    from common.config import IMAGE_MODEL
+    from common.config import IMAGE_MODEL, require_model
 
     if not resolve_api_key():
         raise HTTPException(400, "未配置中转站 API Key")
@@ -540,9 +540,11 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
 
+    from common.config import require_model, resolve_feature_model
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or DEFAULT_IMAGE_SIZE
-    model = payload.get("model") or IMAGE_MODEL
+    _uid = payload.get("user_id") or ""
+    model = require_model(payload.get("model") or resolve_feature_model(_uid, "image", IMAGE_MODEL), "图片")
     batch_size, n = normalize_batch_params(payload.get("batch_size"), payload.get("n"))
     project_id = payload.get("project_id") or ""
     negative = payload.get("negative") or ""
@@ -554,7 +556,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
     if not res["ok"]:
         raise HTTPException(400, "操作失败，请稍后重试")
 
-    url = f"{AGNES_API_BASE}/images/generations"
+    url = f"{resolve_api_base()}/images/generations"
     headers = {"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"}
 
     size_str = normalize_size(size)
@@ -582,19 +584,25 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
             if "data" in data and len(data["data"]) > 0:
                 for item in data["data"]:
                     image_url = item.get("url")
+                    b64 = item.get("b64_json")
                     if image_url:
                         img_resp = await asyncio.to_thread(requests.get, image_url, timeout=60)
                         img = Image.open(io.BytesIO(img_resp.content))
-                        filename = save_image(img)
-                        art_id = _save_artifact(filename, project_id, prompt, {"size": size_str, "model": model})
-                        results.append(
-                            {
-                                "id": filename,
-                                "artifact_id": art_id,
-                                "url": f"/api/image-factory/images/{filename}",
-                                "prompt": prompt,
-                            }
-                        )
+                    elif b64:
+                        img = Image.open(io.BytesIO(base64.b64decode(b64)))
+                    else:
+                        results.append({"error": "生成失败：接口返回缺少图片数据（url/b64_json）", "prompt": prompt})
+                        continue
+                    filename = save_image(img)
+                    art_id = _save_artifact(filename, project_id, prompt, {"size": size_str, "model": model})
+                    results.append(
+                        {
+                            "id": filename,
+                            "artifact_id": art_id,
+                            "url": f"/api/image-factory/images/{filename}",
+                            "prompt": prompt,
+                        }
+                    )
             else:
                 results.append({"error": f"生成失败：{data}", "prompt": prompt})
         except Exception as e:
@@ -642,6 +650,7 @@ async def text_to_image(
         "n": n,
         "project_id": project_id,
         "negative": negative,
+        "user_id": uid,
     }
     if sync:
         return await _image_t2i_worker(payload)
@@ -693,7 +702,7 @@ def _pick_strength_by_preserve(strength: float, preserve: list | None) -> float:
 async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """图生图（同步/异步任务共用执行体，异步时回报进度）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-    from common.config import IMAGE_MODEL
+    from common.config import IMAGE_MODEL, require_model, resolve_feature_model
 
     if not resolve_api_key():
         raise HTTPException(400, "未配置中转站 API Key")
@@ -704,7 +713,8 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or "1024x1024"
     strength = float(payload.get("strength") or 0.35)
-    model = payload.get("model") or IMAGE_MODEL
+    _uid = payload.get("user_id") or ""
+    model = require_model(payload.get("model") or resolve_feature_model(_uid, "image", IMAGE_MODEL), "图片")
     project_id = payload.get("project_id") or ""
     negative = payload.get("negative") or ""
     # 保留内容：person/pose/background/composition（可多选），空=自由发挥
@@ -723,7 +733,7 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     api_prompt = _build_preserve_prompt(prompt, preserve)
     api_strength = _pick_strength_by_preserve(strength, preserve)
 
-    url = f"{AGNES_API_BASE}/images/generations"
+    url = f"{resolve_api_base()}/images/generations"
     # 中转站 images/generations 仅支持 JSON body：图片以 base64 Data URI 传入（与短剧插画一致）
     headers = {"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"}
     body = {
@@ -802,7 +812,7 @@ async def image_to_image(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative, "keep_person": keep_person, "preserve": preserve}
+    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative, "keep_person": keep_person, "preserve": preserve, "user_id": uid}
     face_content = await face_ref.read() if face_ref else b""
     if face_content:
         payload["face_ref"] = base64.b64encode(face_content).decode()
@@ -2060,7 +2070,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             }
             analyze_resp = await asyncio.to_thread(
                 requests.post,
-                f"{AGNES_API_BASE}/chat/completions",
+                f"{resolve_api_base()}/chat/completions",
                 headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
                 json=analyze_payload,
                 timeout=60,
@@ -2204,8 +2214,11 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
+        from common.config import require_model
+
+        _tryon_model = require_model(IMAGE_MODEL, "AI 试衣")
         tryon_request = {
-            "model": IMAGE_MODEL,
+            "model": _tryon_model,
             "prompt": garment_lock,
             "size": "1024x1024",
             "n": 1,
@@ -2215,7 +2228,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         # 无背景模式：不加 image 锚定（实测会裁剪人脸），仅靠提示词尽力保留原场景
         response = await asyncio.to_thread(
             requests.post,
-            f"{AGNES_API_BASE}/images/generations",
+            f"{resolve_api_base()}/images/generations",
             headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json=tryon_request,
             timeout=120,
@@ -2322,7 +2335,7 @@ def _turntable_prompt(base_prompt: str = "") -> str:
 
 async def _image_turntable_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """3D 转盘视频：基于图片生成人物原地 360° 旋转视频（图生视频 ti2vid）。"""
-    from common.config import AGNES_API_BASE as _BASE
+    from common.config import resolve_api_base as _BASE
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
@@ -2340,8 +2353,11 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
     if (num_frames - 1) % 8 != 0:
         num_frames = ((num_frames - 1) // 8) * 8 + 1
 
+    from common.config import VIDEO_MODEL, require_model
+
+    _turntable_vid_model = require_model(payload.get("model") or VIDEO_MODEL, "视频")
     body = {
-        "model": "agnes-video-v2.0",
+        "model": _turntable_vid_model,
         "prompt": prompt,
         "width": width,
         "height": height,
@@ -2355,7 +2371,7 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
     try:
         resp = await asyncio.to_thread(
             requests.post,
-            f"{_BASE}/videos",
+            f"{_BASE()}/videos",
             headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json=body,
             timeout=60,
@@ -2375,7 +2391,7 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
             try:
                 q = await asyncio.to_thread(
                     requests.get,
-                    f"{_BASE}/agnesapi",
+                    f"{_BASE()}/agnesapi",
                     params={"video_id": vid},
                     headers={"Authorization": f"Bearer {resolve_api_key()}"},
                     timeout=30,
@@ -2489,10 +2505,10 @@ async def replace_background(
             try:
                 bg_resp = await asyncio.to_thread(
                     requests.post,
-                    f"{AGNES_API_BASE}/images/generations",
+                    f"{resolve_api_base()}/images/generations",
                     headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
                     json={
-                        "model": IMAGE_MODEL,
+                        "model": require_model(IMAGE_MODEL, "图片"),
                         "prompt": f"{ai_background.strip()}, wide background, no people, no text, soft lighting",
                         "size": f"{w}x{h}",
                         "n": 1,
