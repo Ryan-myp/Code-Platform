@@ -559,8 +559,15 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
             "extra_body": {"response_format": "url"},
         }
         if refs:
-            # AGNES 支持多图 reference：直接传各角色立绘 + prompt 描述位置区分
-            body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in refs[:3]]
+            # AGNES 支持多图 reference：直接传各角色立绘 + prompt 描述位置区分。
+            # v1.0.54：最多 3 张参考图，且**最后一张必须是上一镜画面（双参考）**——
+            # 镜间连续性（场景/光线/服装延续）比第 3 个角色的立绘更重要；
+            # 角色同脸由立绘锚定保证，取前 2 张立绘 + 恒留 last_frame（调用方按
+            # 立绘在前、last_frame 在末尾的顺序传入 _refs2）。
+            _refs_keep = list(refs)
+            if len(_refs_keep) > 3:
+                _refs_keep = _refs_keep[:2] + _refs_keep[-1:]
+            body["image"] = ["data:image/jpeg;base64," + base64.b64encode(r).decode() for r in _refs_keep[:3]]
         r = requests.post(
             f"{_api_base}/images/generations",
             headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
@@ -1162,11 +1169,16 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
         return False
 
 
-def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int] | None = None) -> None:
+def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int] | None = None,
+                   transitions: dict[int, str] | None = None) -> None:
     """拼接镜头片段：子镜头间硬切（快节奏），场次间交叉淡化（大段落转场）。
 
     scene_bounds: 场次起始 clip 下标列表（如 [0, 5, 11] 表示第 0/5/11 个 clip 是新场次）。
-    场次边界用 xfade 交叉淡化（0.35s），其余硬切（concat demuxer，快速）。
+    transitions: v1.0.54 场次边界转场类型映射 {组下标: xfade transition}——
+      情绪分型：angry/serious 用 fadeblack（闪黑强调戏剧张力）、
+      sad/gentle 用 fade（柔和叠化）、happy 用 smoothleft（轻快横推），
+      默认 fade。组下标 = scene_bounds 中该边界的序号（1 起，第 0 组是开场无转场）。
+    场次边界默认 xfade fade 0.35s，其余硬切（concat demuxer，快速）。
     """
     if not scene_bounds or len(scene_bounds) < 2 or len(clip_paths) < 2:
         list_file = out_path + ".txt"
@@ -1217,10 +1229,14 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
     f = ""
     for gi in range(1, len(tmp_group)):
         off = offsets[gi - 1] if gi - 1 < len(offsets) else 0.0
+        # v1.0.54 情绪分型转场：gi 即组序号（1 起）
+        _tr = (transitions or {}).get(gi, "fade")
+        if _tr not in ("fade", "fadeblack", "smoothleft", "fadewhite", "slideup", "circleopen"):
+            _tr = "fade"
         if gi == 1:
-            f += "[0:v][1:v]xfade=transition=fade:duration=0.35:offset=%.3f[v%d]" % (off, gi)
+            f += "[0:v][1:v]xfade=transition=%s:duration=0.35:offset=%.3f[v%d]" % (_tr, off, gi)
         else:
-            f += "[v%d][%d:v]xfade=transition=fade:duration=0.35:offset=%.3f[v%d]" % (gi - 1, gi, off, gi)
+            f += "[v%d][%d:v]xfade=transition=%s:duration=0.35:offset=%.3f[v%d]" % (gi - 1, gi, _tr, off, gi)
     for gi in range(1, len(tmp_group)):
         if gi == 1:
             f += "[0:a][1:a]acrossfade=d=0.35[a%d]" % gi
@@ -1999,7 +2015,22 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
             scene_bounds.insert(0, 0)
         if outro_clip and os.path.exists(outro_clip):
             clip_paths.append(outro_clip)
-        await asyncio.to_thread(_concat_videos, clip_paths, raw_video, scene_bounds)
+        # v1.0.54 情绪分型转场：场次边界转场类型按"进入场景"的情绪选择
+        #   angry/serious → fadeblack（闪黑强调张力）  sad/gentle → fade（柔和叠化）
+        #   happy → smoothleft（轻快横推）           其他 → fade
+        _emotion_transition = {
+            "angry": "fadeblack", "serious": "fadeblack",
+            "sad": "fade", "gentle": "fade",
+            "happy": "smoothleft", "neutral": "fade",
+        }
+        _transitions: dict[int, str] = {}
+        for _bi in range(1, len(scene_bounds)):
+            # 组序号 _bi 的边界 = 第 _bi 组 → 第 _bi+1 组（gi 从 1 起，即进入 scenes[_bi]）
+            # 有片头时 scene_bounds 整体 +1，情绪仍按"进入的场次"取 scenes[_bi]
+            if _bi < len(scenes):
+                _emo = (scenes[_bi].get("emotion") or "neutral").strip().lower()
+                _transitions[_bi] = _emotion_transition.get(_emo, "fade")
+        await asyncio.to_thread(_concat_videos, clip_paths, raw_video, scene_bounds, _transitions)
         stem = f"drama_{int(time.time() * 1000)}"
         srt_path = os.path.join(tmpdir, f"{stem}.srt")
         _make_srt(scenes[: len(srt_durations)], srt_durations, voice_durations, srt_path)
