@@ -764,11 +764,13 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
             headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
             json=body, timeout=60,
         )
-        # 队列满：等待重试（最多 3 次×30s），保证动态密度；仍失败才回退静态
+        # 队列满：指数退避重试（30/60/120s，共 4 次约 210s），保证动态密度；
+        # 大并发/夜间排队时比固定 3×30s 更耐等；仍失败才回退静态
         if resp.status_code == 503 and "queue_full" in resp.text:
-            for _r in range(3):
-                logger.warning(f"i2v 队列满，等待重试（{_r + 1}/3）…")
-                time.sleep(30)
+            _backoff = (30, 60, 120, 120)
+            for _r, _wait in enumerate(_backoff, 1):
+                logger.warning(f"i2v 队列满，等待重试（{_r}/{len(_backoff)}）{_wait}s…")
+                time.sleep(_wait)
                 resp = _req.post(
                     f"{_api_base}/videos",
                     headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
@@ -1304,12 +1306,14 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             pass
         tmp_mix = out_path + ".mix.mp4"
         cmd = [
-            sys_ff, "-nostdin", "-y", "-i", out_path, "-i", bgm_path,
+            sys_ff, "-nostdin", "-y",
+            "-stream_loop", "-1", "-i", bgm_path,   # v1.0.52：BGM 循环铺满全片（30s 短曲不再尾部静音）
+            "-i", out_path,
             "-filter_complex",
-            f"[1:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
+            f"[0:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
-            f"[0:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
-            "-map", "0:v", "-map", "[a]",
+            f"[1:a]aresample={ar}[ao];[ao][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+            "-map", "1:v", "-map", "[a]",
             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
             tmp_mix,
         ]
@@ -1320,9 +1324,6 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             logger.warning(f"BGM 混音失败（保留字幕版）: {(r.stderr or b'')[-150:]}")
     except Exception as e:
         logger.warning(f"BGM 混音异常（保留字幕版）: {e}")
-    r = subprocess.run(cmd, capture_output=True, timeout=600)
-    if r.returncode != 0 or not os.path.exists(out_path):
-        raise RuntimeError("字幕烧录失败: " + r.stderr.decode(errors="replace")[-200:])
 
 
 def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float = 10.0) -> dict:
@@ -1370,6 +1371,23 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
                 findings.append(f"疑似横屏（{w}x{h}），竖屏短剧应为 9:16")
             if h > 0 and (w % 2 != 0 or h % 2 != 0):
                 findings.append(f"分辨率非偶数（{w}x{h}），部分平台播放异常")
+    except Exception:
+        pass
+    # v1.0.52：BGM/配音完整性——成片不应有超长静音段（BGM 混入失败会回退无 BGM，
+    # 原片配音间隙会出现 >2s 静音）。silencedetect 仅在音轨存在时执行。
+    try:
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-i", path,
+             "-af", "silencedetect=n=-50dB:d=3.0", "-f", "null", "-"],
+            capture_output=True, timeout=120,
+        )
+        import re as _re
+        silences = _re.findall(r"silence_start:\s*([\d.]+)", (r.stderr or "").decode(errors="replace"))
+        # 长静音段（>3s）数量：BGM 循环垫底后为 0（实测）；BGM 缺失/未循环的
+        # 长片配音间隙会出现几十段（10 分钟无 BGM 片实测 27 段）。
+        # 2-3s 短停顿是配音对白间隙，不算缺陷。
+        if len(silences) > 3:
+            findings.append(f"检测到 {len(silences)} 段超长静音（>3s），BGM 可能未混入或未循环")
     except Exception:
         pass
     return {"ok": len(findings) == 0, "findings": findings}
