@@ -366,7 +366,7 @@ def get_user_relay_config(user_id: str) -> dict:
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT relay_api_key, relay_api_base, relay_provider, relay_keys FROM users WHERE id=?",
+            "SELECT relay_api_key, relay_api_base, relay_provider, relay_keys, pexels_api_key FROM users WHERE id=?",
             (user_id,),
         ).fetchone()
         if not row:
@@ -388,6 +388,7 @@ def get_user_relay_config(user_id: str) -> dict:
             "api_key": api_key,
             "api_base": (row["relay_api_base"] or "").strip(),
             "provider": provider,
+            "pexels_key": (row["pexels_api_key"] or "").strip(),
         }
     finally:
         conn.close()
