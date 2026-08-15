@@ -51,7 +51,7 @@ from pydantic import BaseModel, Field
 
 from common.artifacts import save_artifact
 from common.auth import require_auth
-from common.config import load_config
+from common.config import load_config, resolve_api_key
 from common.llm import _safe_exc_msg
 from task_queue import create_task, register_handler
 
@@ -284,12 +284,12 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str =
         logger.warning("edge-tts 健康检查不通过，直接走中转站通道")
     except Exception:
         logger.warning("edge-tts 全部失败，回退中转站 API")
-    if not AGNES_API_KEY:
+    if not resolve_api_key():
         raise HTTPException(500, "TTS 通道不可用（edge-tts 与中转站均失败），请稍后重试")
     try:
         resp = requests.post(
             f"{AGNES_API_BASE}/audio/speech",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json={"model": "tts-1", "input": text, "voice": voice, "speed": speed},
             timeout=_TTS_RELAY_TIMEOUT,
         )
@@ -384,6 +384,15 @@ def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
     else:
         cmd += ["-codec:a", "libmp3lame", "-b:a", "256k", "-ar", "44100", out_path]
     subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL, timeout=180, check=True)
+
+
+def _srt_ts(seconds: float) -> str:
+    """秒 → SRT 时间戳（HH:MM:SS,mmm）。"""
+    ms = int(round(seconds * 1000))
+    h, rem = divmod(ms, 3600_000)
+    m, rem = divmod(rem, 60_000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def _make_srt(segs: list[str], durations: list[float], out_path: str) -> None:
@@ -565,8 +574,8 @@ async def _synthesize_audio(params: dict, progress: Callable | None) -> dict:
 
 async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key（系统配置-模型配置中设置）")
 
     # v23 配音场景模板热度：按模板生成时记录（失败静默）
     tpl_id = (payload.get("template_id") or "").strip()
@@ -621,7 +630,11 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     from common.llm import log_usage
 
     log_usage("voice_generate", len(text), 0, elapsed)
-    _report(100, "配音已生成")
+    try:
+        from common.helpers import _notify_progress
+        _notify_progress(progress, 100, "配音已生成")
+    except Exception:
+        pass
     return {
         "id": filename,
         "artifact_id": art_id,
@@ -660,8 +673,8 @@ async def generate_voice(
     - format: mp3（256k 高音质，默认）/ wav（PCM 无损）
     - pitch: -20 ~ +20 音调百分比（0 为原声，正为明亮/负为低沉）
     """
-    if not AGNES_API_KEY:
-        raise HTTPException(400, "未配置 AGNES_API_KEY（系统配置-模型配置中设置）")
+    if not resolve_api_key():
+        raise HTTPException(400, "未配置中转站 API Key（系统配置-模型配置中设置）")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""

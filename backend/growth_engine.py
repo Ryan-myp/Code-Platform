@@ -547,6 +547,7 @@ def ai_review(
         params,
     ).fetchall()
     conn.close()
+    rows = [dict(r) for r in rows]
 
     if not rows:
         return {"report": f"最近 {days} 天暂无效果数据，请先录入发布数据后再生成复盘报告。", "data_points": 0}
@@ -555,7 +556,7 @@ def ai_review(
     data_lines = [f"近 {days} 天共有 {len(rows)} 条有效数据：\n"]
     for r in rows:
         data_lines.append(
-            f"- [{r.get('platform', '')}]《{r.get('title', '无标题')[:40]}》"
+            f"- [{r.get('platform', '')}]《{(r.get('title') or '无标题')[:40]}》"
             f" 阅读:{r.get('views', 0)} 点赞:{r.get('likes', 0)} "
             f"评论:{r.get('comments', 0)} 涨粉:{r.get('followers_gained', 0)}"
         )

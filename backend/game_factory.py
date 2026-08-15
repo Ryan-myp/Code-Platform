@@ -640,7 +640,38 @@ def _ensure_history_column(conn) -> None:
         conn.commit()
 
 
+def ensure_game_tables() -> None:
+    """幂等补齐 game_projects 表全部 v15/v20 列（cover/qc/iterations/version_history 等）。
+
+    与 main.py lifespan 中其他 ensure_* 表迁移一致；测试 conftest 亦调用。
+    """
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(game_projects)").fetchall()]
+        additions = {
+            "cover": "TEXT DEFAULT ''",
+            "qc": "TEXT DEFAULT ''",
+            "iterations": "INTEGER DEFAULT 0",
+            "iteration_log": "TEXT DEFAULT '[]'",
+            "version_history": "TEXT DEFAULT '[]'",
+        }
+        for col, ddl in additions.items():
+            if col not in cols:
+                try:
+                    conn.execute(f"ALTER TABLE game_projects ADD COLUMN {col} {ddl}")
+                except Exception:
+                    pass
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @router.get("/templates")
+async def list_templates(current_user: dict = require_auth()):
+    """游戏模板列表（前端模板选择器数据源）。"""
+    return TEMPLATES
 
 
 @router.post("/{proj_id}/cover")
@@ -1289,7 +1320,7 @@ async def project_history_version(proj_id: str, version: int, current_user: dict
         history = []
     item = next((h for h in history if h.get("version") == version), None)
     if not item:
-        raise HTTPException(404, "资源不存在")
+        raise HTTPException(404, f"历史版本 v{version} 不存在（当前共 {len(history)} 个版本）")
     return {
         "version": item["version"],
         "created_at": item.get("created_at", ""),

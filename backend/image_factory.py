@@ -2471,6 +2471,7 @@ async def replace_background(
     background: str = Form("beach"),
     force_color: str = Form(""),  # 可选：强制使用指定颜色
     ai_background: str = Form("", description="AI 背景描述（非空时调用文生图生成真实场景背景，失败回退场景渐变）"),
+    current_user: dict = require_auth(),
 ):
     """背景替换 - rembg 语义分割人物 + 新背景合成（场景渐变 / 纯色 / AI 生成）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效

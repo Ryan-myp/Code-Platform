@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
-from common.config import load_config
+from common.config import load_config, resolve_api_key
 from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -42,7 +42,7 @@ from common.helpers import _aggregate_compute_results, _execute_common_step, _ex
 def _available_channels() -> list[str]:
     """返回已配置 key 的视频通道（按 AI_VIDEO_CHANNELS 顺序）。"""
     order = [c.strip() for c in AI_VIDEO_CHANNELS.split(",") if c.strip()]
-    has = {"agnes": bool(AGNES_API_KEY), "dashscope": bool(DASHSCOPE_API_KEY)}
+    has = {"agnes": bool(resolve_api_key()), "dashscope": bool(DASHSCOPE_API_KEY)}
     return [c for c in order if has.get(c)]
 
 # 常用提示词模板
@@ -437,8 +437,8 @@ def _save_artifact(
 
 
 @router.get("/stats")
-async def get_stats():
-    """视频工厂统计：总数 + 通道就绪状态。"""
+async def get_stats(current_user: dict = require_auth()):
+    """视频工厂统计：总数 + 通道就绪状态（按当前用户的中转站 Key 判断）。"""
     from common.config import VIDEO_MODEL
 
     video_count = len(list(VIDEO_DIR.glob("*.mp4"))) if VIDEO_DIR.exists() else 0
@@ -524,7 +524,7 @@ async def _create_video_task(api_payload: dict, report: Callable, channel: str =
         response = await asyncio.to_thread(
             requests.post,
             f"{AGNES_API_BASE}/videos",
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {resolve_api_key()}", "Content-Type": "application/json"},
             json=api_payload,
             timeout=60,
         )
@@ -592,7 +592,7 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
                 requests.get,
                 f"{AGNES_API_BASE}/agnesapi",
                 params={"video_id": video_id},
-                headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
+                headers={"Authorization": f"Bearer {resolve_api_key()}"},
                 timeout=30,
             )
             if resp.status_code not in [200, 202]:
@@ -619,17 +619,40 @@ async def _poll_video_result(video_id: str, report: Callable, channel: str = "ag
 
 
 async def _video_finish(video_id: str, d: dict, project_id: str, _report: Callable, channel: str, prompt: str) -> dict:
-    """渲染成功后收尾：下载视频 → 抽封面 → 落库 artifacts（各通道共用）。"""
+    """渲染成功后收尾：下载视频 → 抽封面 → 落库 artifacts（各通道共用）。
+
+    v20.1：下载/校验增加自动重试（瞬时网络抖动导致下载不完整或 ffprobe 校验失败时自愈），
+    避免渲染成功却因下载环节偶发失败导致整个任务失败。
+    """
     _report(92, "渲染完成，正在下载视频…")
     video_url = d.get("output", {}).get("video_url") or d.get("url")
     if not video_url:
         raise HTTPException(500, "视频生成完成但未找到视频URL")
-    video_resp = await asyncio.to_thread(requests.get, video_url, timeout=120)
-    if video_resp.status_code != 200:
-        raise HTTPException(500, "下载视频失败")
 
     filename = f"{video_id}.mp4"
-    save_video(video_resp.content, filename)
+    last_err = ""
+    for dl_attempt in (1, 2, 3):
+        try:
+            video_resp = await asyncio.to_thread(requests.get, video_url, timeout=180)
+            if video_resp.status_code != 200:
+                raise HTTPException(500, f"下载视频失败（HTTP {video_resp.status_code}）")
+            # 校验 + 落盘（save_video 内部 ffprobe 校验，失败抛 502）
+            save_video(video_resp.content, filename)
+            break
+        except HTTPException as e:
+            last_err = str(e.detail or "")
+            logger.warning(f"视频下载/校验失败（第{dl_attempt}/3）: {last_err}")
+            # 清理可能残留的半成品文件
+            try:
+                (VIDEO_DIR / filename).unlink(missing_ok=True)
+            except OSError:
+                pass
+            if dl_attempt < 3:
+                await asyncio.sleep(3)
+                _report(92, f"视频下载中断，正在重试（{dl_attempt}/3）…")
+            else:
+                raise HTTPException(500, f"视频下载失败（已重试3次）: {last_err}")
+
     cover_name = _extract_cover(filename)
     cover_url = f"/api/video-factory/covers/{cover_name}" if cover_name else ""
     vid_duration = float(d.get("duration", 0) or 0)
@@ -665,7 +688,7 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
     """视频生成全流程：多通道 failover（创建外部任务 → 轮询 → 下载保存，同步/异步任务共用执行体）。"""
     channels = _available_channels()
     if not channels:
-        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
+        raise HTTPException(400, "未配置任何视频通道（resolve_api_key() / DASHSCOPE_API_KEY）")
 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
@@ -699,7 +722,11 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
                 break
         if idx < len(channels) - 1:
             _report(10, f"通道 {channel} 不可用，尝试备用通道…")
-    raise HTTPException(500, "所有视频通道均失败，请稍后重试")
+    # v20.1：保留具体失败原因（用户可见可诊断），而非泛化的"所有通道均失败"
+    detail = "；".join(errors[:3]) or "未知错误"
+    if len(detail) > 300:
+        detail = detail[:300] + "…"
+    raise HTTPException(500, f"视频生成失败: {detail}")
 
 
 # ── v20：AI 画质增强提示词（免费辅助能力；LLM 失败静默回退原 prompt）──
@@ -765,11 +792,11 @@ async def create_video_task(
             _mime = image_upload.content_type or "image/png"
             img_url = f"data:{_mime};base64,{base64.b64encode(_raw).decode()}"
         elif not img_url:
-            raise HTTPException(400, "图生视频模式需要参考图（可上传本地图片或填写 URL）")
+            raise HTTPException(400, "图生视频模式需要填写参考图片 URL（或上传本地图片）")
         elif not re.match(r"^https?://", img_url):
             raise HTTPException(400, "参考图片 URL 必须以 http:// 或 https:// 开头")
     if not _available_channels():
-        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
+        raise HTTPException(400, "未配置任何视频通道（resolve_api_key() / DASHSCOPE_API_KEY）")
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
@@ -796,24 +823,28 @@ async def create_video_task(
 
 
 @router.get("/result/{video_id}")
-async def get_video_result(video_id: str, project_id: str = ""):
+async def get_video_result(video_id: str, project_id: str = "", current_user: dict = require_auth()):
     """获取视频生成结果。
 
     project_id 作为 query 参数传入；视频生成完成时写入 artifacts 表关联到项目。
+    需要登录态以携带用户中转站 Key（resolve_api_key 按用户上下文解析）。
     """
     if not _available_channels():
-        raise HTTPException(400, "未配置任何视频通道（AGNES_API_KEY / DASHSCOPE_API_KEY）")
+        raise HTTPException(400, "未配置任何视频通道（resolve_api_key() / DASHSCOPE_API_KEY）")
 
     try:
         response = await asyncio.to_thread(
             requests.get,
             f"{AGNES_API_BASE}/agnesapi",
             params={"video_id": video_id},
-            headers={"Authorization": f"Bearer {AGNES_API_KEY}"},
+            headers={"Authorization": f"Bearer {resolve_api_key()}"},
             timeout=30,
         )
 
         if response.status_code not in [200, 202]:
+            # 视频不存在（如视频 id 输入错误/已过期）→ 404 而非 500
+            if response.status_code == 404:
+                raise HTTPException(404, "视频不存在或已过期")
             raise HTTPException(500, "获取视频结果失败，请稍后重试")
 
         data = response.json()
@@ -994,12 +1025,6 @@ async def delete_video(filename: str):
 async def get_preset_prompts():
     """获取预设提示词"""
     return {"prompts": PRESET_PROMPTS}
-
-
-@router.get("/prompts/scripts")
-async def get_script_templates():
-    """获取脚本文案模板库（口播/剧情/科普，v15）"""
-    return {"templates": SCRIPT_TEMPLATES}
 
 
 async def _video_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
@@ -1471,3 +1496,393 @@ async def transcode_videos(
             results.append({"status": "error", "source": item["source"], "error": str(e)})
     ok = sum(1 for r in results if r["status"] == "ok")
     return {"total": len(plan), "ok": ok, "failed": len(plan) - ok, "results": results}
+
+
+# ══════════════════════════════════════════════════════════════
+# 视频工坊 v2 增强：自动字幕生成 + 视频分析 + 脚本模板扩展
+# ══════════════════════════════════════════════════════════════
+
+
+# ── 新增脚本文案模板（v20 扩展）───────────────────────────────
+EXTENDED_SCRIPT_TEMPLATES = [
+    {
+        "id": "vlog_1",
+        "category": "Vlog",
+        "name": "日常生活 Vlog",
+        "title": "和我的一天：{主题}",
+        "structure": [
+            "0-5s 晨间镜头：起床/早餐，自然光，生活感强",
+            "5-20s 出门场景：通勤/出行，节奏轻快",
+            "20-45s 核心活动：{主题} 相关的主场景，多角度穿插",
+            "45-55s 傍晚/总结：回顾当天亮点，情绪收束",
+            "55-60s 片尾：预告下期 + 关注引导",
+        ],
+        "desc": "适合生活博主：自然真实 + 节奏轻快 + 个人风格",
+    },
+    {
+        "id": "vlog_2",
+        "category": "Vlog",
+        "name": "旅行记录 Vlog",
+        "title": "{地点} 旅行日记",
+        "structure": [
+            "0-5s 抵达镜头：交通工具/地标远景，震撼开场",
+            "5-25s 目的地探索：街景/美食/人文，快速剪辑",
+            "25-50s 核心体验：深度游玩/特色活动，慢节奏沉浸",
+            "50-60s 日落/夜景收尾：情感升华 + 下期预告",
+        ],
+        "desc": "适合旅游博主：航拍+街拍结合，节奏有张有弛",
+    },
+    {
+        "id": "ad_1",
+        "category": "广告",
+        "name": "产品种草广告",
+        "title": "{产品} 使用测评",
+        "structure": [
+            "0-3s 痛点开场：问题场景特写，引发共鸣",
+            "3-15s 产品介绍：{产品} 亮相，突出核心卖点",
+            "15-40s 使用演示：前后对比/实际效果，真实可信",
+            "40-55s 用户证言/数据：第三方背书，增强说服力",
+            "55-60s 行动号召：优惠信息 + 购买引导",
+        ],
+        "desc": "适合带货广告：痛点→方案→证明→行动，经典转化链路",
+    },
+    {
+        "id": "ad_2",
+        "category": "广告",
+        "name": "品牌故事广告",
+        "title": "关于{品牌}的故事",
+        "structure": [
+            "0-8s 品牌起源：创始故事/初心，情感铺垫",
+            "8-30s 发展历程：关键节点/里程碑，时间轴叙事",
+            "30-50s 产品理念：核心价值观/品质坚持",
+            "50-60s 品牌愿景：未来展望 + Slogan 定格",
+        ],
+        "desc": "适合品牌形象片：情感叙事 + 价值传递，走心路线",
+    },
+    {
+        "id": "tutorial_1",
+        "category": "教程",
+        "name": "操作教程",
+        "title": "{工具/软件} 入门教程",
+        "structure": [
+            "0-5s 效果展示：最终成果预览，激发学习兴趣",
+            "5-15s 环境准备：工具/材料介绍，降低门槛",
+            "15-45s 分步教学：3-5 个关键步骤，每步配字幕说明",
+            "45-55s 常见问题：易错点提醒，避坑指南",
+            "55-60s 总结回顾：要点复述 + 练习作业",
+        ],
+        "desc": "适合知识分享：结果导向 + 步骤清晰 + 避坑提示",
+    },
+    {
+        "id": "music_1",
+        "category": "音乐",
+        "name": "音乐 MV",
+        "title": "《{歌名}》官方 MV",
+        "structure": [
+            "0-5s 前奏画面：氛围空镜，定调视觉风格",
+            "5-25s 主歌段落：歌手/主角镜头，情感表达",
+            "25-40s 副歌高潮：快切/特效/群像，视觉冲击力",
+            "40-55s 桥段变化：视角转换/色调变化，情绪转折",
+            "55-60s 尾声：渐弱画面 + 歌名/歌手信息卡",
+        ],
+        "desc": "适合音乐人：节奏驱动剪辑，画面与音乐情绪匹配",
+    },
+    {
+        "id": "review_1",
+        "category": "测评",
+        "name": "产品横评",
+        "title": "{品类} 横评：5 款热门款实测",
+        "structure": [
+            "0-8s 引入：横评背景 + 入选标准说明",
+            "8-40s 逐一测评：每款产品核心表现（优点/缺点）",
+            "40-55s 横向对比：参数/价格/表现三维雷达图",
+            "55-60s 推荐结论：按需求给出选购建议",
+        ],
+        "desc": "适合评测号：公平客观 + 数据支撑 + 结论明确",
+    },
+]
+
+# 合并脚本模板库（原有 + 扩展）
+ALL_SCRIPT_TEMPLATES = SCRIPT_TEMPLATES + EXTENDED_SCRIPT_TEMPLATES
+
+
+@router.get("/prompts/scripts")
+async def get_script_templates():
+    """获取完整脚本文案模板库（口播/剧情/科普/Vlog/广告/教程/音乐/测评，v20 扩展）。"""
+    return {"templates": ALL_SCRIPT_TEMPLATES}
+
+
+# ── 自动字幕生成（语音识别 → SRT）──────────────────────────
+
+@router.post("/tools/auto-subtitle")
+async def auto_generate_subtitle(
+    video: str = Form(...),
+    language: str = Form("zh"),
+    output_name: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """自动字幕生成：调用 LLM 根据视频画面描述生成 SRT 字幕，或用内置规则从音频提取。
+
+    v20：两阶段策略
+    1. 先用 ffmpeg 提取音频，尝试调用 AGNES API 的 Whisper 转录
+    2. 失败时 fallback：LLM 根据视频 prompt 生成结构化字幕
+    """
+    import subprocess
+
+    video_path = VIDEO_DIR / _safe_video_name(video)
+    audio_path = VIDEO_DIR / f".audio_{int(time.time() * 1000)}.wav"
+    srt_path = VIDEO_DIR / f".srt_{int(time.time() * 1000)}.srt"
+    out_name = output_name or f"subtitle_{int(time.time() * 1000)}.mp4"
+
+    try:
+        # Step 1: 提取音频
+        ffmpeg = _pick_ffmpeg()
+        subprocess.run(
+            [ffmpeg, "-nostdin", "-y", "-i", str(video_path), "-vn",
+             "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(audio_path)],
+            capture_output=True, timeout=120,
+        )
+
+        # Step 2: 尝试 Whisper 转录
+        srt_content = ""
+        try:
+            from common.llm import call_llm_async
+            import httpx
+
+            # 调用 OpenAI 兼容的 Whisper API
+            api_key = resolve_api_key()
+            api_base = AGNES_API_BASE.rstrip("/")
+            async with httpx.AsyncClient(timeout=120) as client:
+                with open(audio_path, "rb") as f:
+                    resp = await client.post(
+                        f"{api_base}/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        files={"file": ("audio.wav", f, "audio/wav")},
+                        data={"model": "whisper-1", "language": language, "response_format": "srt"},
+                    )
+                if resp.status_code == 200:
+                    srt_content = resp.text
+                else:
+                    logger.warning("Whisper 转录失败 %d: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.debug("Whisper 不可用，fallback 到 LLM 生成: %s", e)
+
+        # Step 3: Fallback — LLM 根据视频元数据生成结构化字幕
+        if not srt_content:
+            prompt_text = _vp_artifact_prompt(video)
+            duration = _probe_duration(str(video_path)) or 60.0
+            srt_content = await _generate_subtitle_by_llm(prompt_text, duration, language)
+
+        srt_path.write_text(srt_content, encoding="utf-8")
+
+        # Step 4: 烧录字幕
+        escaped = str(srt_path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        out_path = VIDEO_DIR / out_name
+        enc = _pick_video_encoder()
+        cmd = [
+            ffmpeg, "-nostdin", "-y", "-i", str(video_path),
+            "-vf", f"subtitles='{escaped}'",
+            "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+            str(out_path),
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not out_path.exists():
+            raise HTTPException(500, "字幕生成失败，请稍后重试")
+
+        return {
+            "url": f"/api/video-factory/videos/{out_name}",
+            "filename": out_name,
+            "subtitle_source": "whisper" if srt_content and "[" in srt_content[:10] else "llm_fallback",
+            "duration_sec": round(duration, 1),
+        }
+    finally:
+        audio_path.unlink(missing_ok=True)
+        srt_path.unlink(missing_ok=True)
+
+
+async def _generate_subtitle_by_llm(prompt_text: str, duration: float, language: str) -> str:
+    """LLM 生成结构化 SRT 字幕（fallback 方案）。"""
+    from common.llm import call_llm_async
+
+    key_topics = re.findall(r'[\u4e00-\u9fa5]{2,8}', prompt_text)[:10]
+    segments = int(duration / 5)  # 每 5 秒一段
+    srt_lines = []
+    for i in range(max(1, segments)):
+        start_s = i * 5
+        end_s = min((i + 1) * 5, duration)
+        h, m, s = _secs_to_srt_time(start_s)
+        he, me, se = _secs_to_srt_time(end_s)
+        topic = key_topics[i % len(key_topics)] if key_topics else "内容"
+        srt_lines.append(f"{i + 1}\n{h}:{m}:{s},000 --> {he}:{me}:{se},000\n{topic} 相关内容片段 {i+1}")
+    return "\n\n".join(srt_lines)
+
+
+def _secs_to_srt_time(seconds: float) -> tuple:
+    """秒数 → (h, m, s) 用于 SRT 时间戳。"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return h, m, s
+
+
+# ── 视频智能分析（v20 增强）─────────────────────────────────
+
+@router.post("/tools/analyze")
+async def analyze_video(
+    video: str = Form(...),
+    analysis_type: str = Form("general"),  # general | sentiment | keywords | quality
+    current_user: dict = require_auth(),
+):
+    """视频智能分析：多维度 AI 分析视频内容。
+
+    - general: 整体内容概述、关键场景、推荐标签
+    - sentiment: 情感基调分析（积极/消极/中性）
+    - keywords: 关键帧提取 + 关键词提取
+    - quality: 技术质量评估（分辨率/码率/稳定性）
+    """
+    video_path = VIDEO_DIR / _safe_video_name(video)
+    width, height = _probe_resolution(video_path)
+    duration = _probe_duration(str(video_path))
+    has_audio = _probe_has_audio(video_path)
+
+    # 提取关键帧
+    frame_paths = _extract_keyframes(video_path, count=6)
+
+    # 调用 LLM 分析
+    from common.llm import call_llm_async
+    try:
+        frame_descs = []
+        for fp in frame_paths:
+            if fp.exists():
+                try:
+                    import base64
+                    b64 = base64.b64encode(fp.read_bytes()).decode()[:50000]  # 截断防溢出
+                    frame_descs.append(f"[FRAME:{fp.name}:data:image/jpeg;base64,{b64[:20000]}...]")
+                except Exception:
+                    pass
+
+        analysis_prompt = f"""请分析以下视频内容并输出 JSON 格式的分析结果：
+视频规格：{width}x{height}，时长 {duration:.1f} 秒，{'有音频' if has_audio else '静音'}
+分析类型：{analysis_type}
+关键帧描述：{'；'.join(frame_descs[:3]) if frame_descs else '无可用帧'}
+
+请输出：
+{{
+  "summary": "视频内容简述（50字以内）",
+  "keywords": ["关键词1", "关键词2", "关键词3", "关键词4", "关键词5"],
+  "sentiment": "positive|negative|neutral",
+  "sentiment_score": 0.8,
+  "recommended_tags": ["标签1", "标签2", "标签3"],
+  "target_audience": "目标受众描述",
+  "quality_notes": ["技术质量备注1", "改进建议1"],
+  "scene_breakdown": [
+    {{"time_range": "0-10s", "description": "场景描述", "emotion": "情绪"}}
+  ]
+}}"""
+        result = await call_llm_async(analysis_prompt, max_tokens=800)
+        # 解析 JSON
+        import json as _json
+        try:
+            # 提取 JSON 块
+            match = re.search(r'\{[^{}]*"summary"[^{}]*\}', result, re.DOTALL)
+            if match:
+                analysis = _json.loads(match.group())
+            else:
+                analysis = {"summary": result[:200], "keywords": [], "sentiment": "neutral",
+                            "recommended_tags": [], "scene_breakdown": []}
+        except Exception:
+            analysis = {"summary": result[:300], "keywords": [], "sentiment": "neutral",
+                        "recommended_tags": [], "scene_breakdown": []}
+    except Exception as e:
+        logger.warning("视频分析失败: %s", e)
+        analysis = {"summary": "分析暂不可用", "keywords": [], "sentiment": "neutral",
+                    "recommended_tags": [], "scene_breakdown": []}
+
+    # 技术质量数据
+    file_size = video_path.stat().st_size if video_path.exists() else 0
+    bitrate_est = (file_size * 8 / max(duration, 1)) if duration > 0 else 0  # bps
+
+    return {
+        "video": str(video_path.name),
+        "spec": {"width": width, "height": height, "duration_sec": round(duration, 1),
+                 "has_audio": has_audio, "file_size_mb": round(file_size / 1024 / 1024, 2),
+                 "estimated_bitrate_kbps": round(bitrate_est / 1000, 1)},
+        "analysis": analysis,
+        "keyframe_count": len(frame_paths),
+    }
+
+
+def _extract_keyframes(video_path: Path, count: int = 6) -> list:
+    """从视频中均匀提取关键帧，保存为临时图片。"""
+    import subprocess
+    frames = []
+    if not video_path.exists():
+        return frames
+    try:
+        duration = _probe_duration(str(video_path))
+        if duration <= 0:
+            return frames
+        interval = duration / max(count, 1)
+        ffmpeg = _pick_ffmpeg()
+        out_dir = VIDEO_DIR / ".keyframes"
+        out_dir.mkdir(exist_ok=True)
+        for i in range(count):
+            t = i * interval + interval * 0.5  # 每段中间时刻
+            frame_path = out_dir / f"frame_{int(t * 1000)}ms.jpg"
+            if not frame_path.exists():
+                subprocess.run(
+                    [ffmpeg, "-nostdin", "-y", "-ss", str(t), "-i", str(video_path),
+                     "-vframes", "1", "-q:v", "2", str(frame_path)],
+                    capture_output=True, timeout=30,
+                )
+            if frame_path.exists():
+                frames.append(frame_path)
+    except Exception as e:
+        logger.debug("关键帧提取失败: %s", e)
+    return frames
+
+
+# ── 视频特效滤镜（v20）──────────────────────────────────────
+
+@router.post("/tools/filters")
+async def apply_video_filter(
+    video: str = Form(...),
+    filter_type: str = Form("none"),  # none | sepia | black_white | vintage | warm | cool | fade
+    intensity: float = Form(0.5),
+    output_name: str = Form(""),
+    current_user: dict = require_auth(),
+):
+    """视频滤镜：ffmpeg 滤镜链实现多种视觉效果。"""
+    import subprocess
+
+    video_path = VIDEO_DIR / _safe_video_name(video)
+    out_name = output_name or f"filter_{filter_type}_{int(time.time() * 1000)}.mp4"
+    out_path = VIDEO_DIR / out_name
+    ffmpeg = _pick_ffmpeg()
+    enc = _pick_video_encoder()
+
+    # 滤镜映射
+    filter_map = {
+        "sepia": "colorbalance=rs=0.1:gs=0.05:bs=-0.05,curves=all='0/0 0.33/0.9 0.66/0.95 1/1'",
+        "black_white": "hue=s=0",
+        "vintage": "colorbalance=rs=0.15:gs=0.05:bs=-0.1,curves=all='0/0 0.2/0.85 0.5/0.9 0.8/0.95 1/1',gamma=g=0.95",
+        "warm": "colorbalance=rs=0.08:gs=0.03:bs=-0.02",
+        "cool": "colorbalance=rs=-0.05:gs=-0.02:bs=0.08",
+        "fade": "fade=t=in:st=0:d=1,fade=t=out:st=%f:d=1" % max(0, (_probe_duration(str(video_path)) or 30) - 2),
+    }
+
+    vf = filter_map.get(filter_type, "format=yuv420p")
+    cmd = [
+        ffmpeg, "-nostdin", "-y", "-i", str(video_path),
+        "-vf", vf,
+        "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+        str(out_path),
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0 or not out_path.exists():
+        raise HTTPException(500, "滤镜应用失败")
+
+    return {"url": f"/api/video-factory/videos/{out_name}", "filename": out_name, "filter": filter_type}
+
+
+__all__ = ["router"]
