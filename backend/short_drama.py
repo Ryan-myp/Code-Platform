@@ -361,7 +361,8 @@ def _parse_script(raw: str) -> dict:
             raise ValueError(f"分镜 {s.get('id')} 内容为空")
         if not s.get("sec"):
             s["sec"] = 5
-        s["sec"] = max(2, min(45, int(s["sec"])))
+        # v1.0.64：上限 45→60（10 分钟剧单场可达 50-60s）
+        s["sec"] = max(2, min(60, int(s["sec"])))
         # v13.24 情绪白名单清洗：LLM 可能输出非法/中文情绪标签，非法回落 neutral
         emo = str(s.get("emotion") or "neutral").strip().lower()
         if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
@@ -923,6 +924,34 @@ def _split_dyn_video(video_path: str, n_seg: int, prefix: str) -> list[str]:
         return out_files if out_files else [video_path]
     except Exception:
         return [video_path]
+
+
+def _stretch_clip(video_path: str, target_dur: float, out_path: str) -> bool:
+    """v1.0.65：把视频慢放拉伸到目标时长（setpts + 音频 atempo 保持音调）。
+
+    用于动态锚切分段撑满子镜目标时长（5s i2v 切 2 段各 2.5s → 目标 4.17s），
+    动作慢放保持连贯，不改变音调（atempo 补偿）。失败返回 False 由调用方保留原段。
+    """
+    try:
+        dur = _probe_seconds(video_path)
+        if dur <= 0 or target_dur <= dur:
+            return False
+        speed = dur / target_dur  # <1：慢放
+        atempo = speed  # atempo 需要 0.5-2.0，speed 接近 0.6 在范围内
+        if not (0.5 <= atempo <= 2.0):
+            return False
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
+            "-vf", f"setpts={1/speed:.4f}*PTS",
+            "-af", f"atempo={atempo:.4f}",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            out_path,
+        ]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 4096
+    except Exception:
+        return False
 
 
 def _probe_seconds(path: str) -> float:
@@ -1918,7 +1947,16 @@ async def _drama_render_one(
                         for si, sa in enumerate(sub_audios):
                             sclip = os.path.join(tmpdir, f"shot_{i:03d}_{si:02d}.mp4")
                             # 子镜时长撑满场次目标（红果漫剧：画面节奏独立于配音，配音短则画面留白/慢镜）
-                            s_dur = max(shot_dur / n_sub, _probe_seconds(sa), 2.0)
+                            # v1.0.65：严格按场次时长分配——最后子镜吸收舍入余量，保证
+                            # n_sub 子镜总时长 = shot_dur（此前 max(shot_dur/n_sub, voice)
+                            # 在配音长于理论子镜时拉长单镜、总时长偏离场次目标）
+                            _base_dur = shot_dur / n_sub
+                            _voice_dur = _probe_seconds(sa)
+                            if si == n_sub - 1:
+                                # 末子镜吸收累计余量（配音超过则顺延，保证总长 ≥ shot_dur）
+                                s_dur = max(shot_dur - _base_dur * (n_sub - 1), _voice_dur, 2.0)
+                            else:
+                                s_dur = max(_base_dur, _voice_dur, 2.0)
                             # 机位递进（场次内景别渐进：交代→进入→聚焦→收尾）
                             shot_type = _shot_seq[si % len(_shot_seq)]
                             # 取景窗口：全图或局部（特写窗口偏上中、横移窗口偏左/右）
@@ -2001,6 +2039,18 @@ async def _drama_render_one(
                                                 )
                                                 if _seg_ok and os.path.exists(_seg_final):
                                                     _seg = _seg_final
+                                        # v1.0.65：动态锚段拉伸到目标子镜时长（5s i2v 切 2 段各
+                                        # 2.5s，替换 2 个 4.17s 子镜会每场短 ~3.3s → 10 分钟剧
+                                        # 569s<600s）。setpts 慢放撑满，动作保持连贯。
+                                        _target_dur = shot_dur / n_sub
+                                        _seg_dur = _probe_seconds(_seg)
+                                        if _seg_dur > 0 and _seg_dur < _target_dur * 0.9:
+                                            _stretch = os.path.join(tmpdir, f"dynseg_stretch_{i:03d}_{_di:02d}.mp4")
+                                            _sok = await asyncio.to_thread(
+                                                _stretch_clip, _seg, _target_dur, _stretch,
+                                            )
+                                            if _sok and os.path.exists(_stretch):
+                                                _seg = _stretch
                                         sub_clips[_rep] = _seg
                         if len(sub_clips) >= 2:
                             _concat_sub_shots(sub_clips, clip)
@@ -2769,7 +2819,9 @@ def _drama_parse_script(raw: str) -> dict:
     for s in scenes:
         if not s.get("shot") and not s.get("narrator") and not s.get("dialogue"):
             raise ValueError(f"分镜 {s.get('id')} 内容为空")
-        s["sec"] = max(2, min(45, int(s.get("sec") or 5)))
+        # v1.0.64：sec 上限 45→60（此前 clamp 到 45 使 10 分钟剧 12 场×45=540s < 600s 目标，
+        # 成片不足 10 分钟；红果漫剧单场可达 50-60s）
+        s["sec"] = max(2, min(60, int(s.get("sec") or 5)))
         emo = str(s.get("emotion") or "neutral").strip().lower()
         if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
             emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
