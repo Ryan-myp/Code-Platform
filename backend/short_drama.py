@@ -1395,8 +1395,12 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
         if "Error submitting packet" in _err or "Invalid data found" in _err:
             logger.warning("字幕产物音轨损坏，重编码修复（视频 copy）")
             _fix = out_path + ".fix.mp4"
+            # v1.0.60：修复用系统 ffmpeg（aac 长流正常）——imageio-ffmpeg v7.1 的 aac
+            # 编码器在 >90s 长流会 "3 frames left in the queue" 失败（与 BGM 混音同因）
+            _sys_ff = "/usr/local/bin/ffmpeg"
+            _fix_cmd = _sys_ff if os.path.exists(_sys_ff) else FFMPEG_BIN
             r2 = subprocess.run(
-                [FFMPEG_BIN, "-nostdin", "-y", "-i", out_path,
+                [_fix_cmd, "-nostdin", "-y", "-i", out_path,
                  "-map", "0:v", "-map", "0:a",
                  "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
                  "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0",
