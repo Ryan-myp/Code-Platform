@@ -729,7 +729,7 @@ def _make_intro_card(title: str, art_style: str = "", subtitle: str = "", bg_img
 def _make_intro_video(img_path: str, bgm_path: str, out_path: str, duration: float = 3.5) -> None:
     """片头视频：标题卡 + BGM 前奏（2s 淡入 + 结尾淡出），Ken Burns 慢推。"""
     total = max(1, int(duration * FPS))
-    amp = 0.06
+    amp = 0.12  # v1.0.68 幅度上调（消除静止感）
     vf = (
         "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
         f"zoompan=z='1+{amp}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS},"
@@ -1061,7 +1061,9 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
     nw = max(0.3, min(1.0, nw)); nh = max(0.3, min(1.0, nh))
     nx = max(0.0, min(1.0 - nw, nx)); ny = max(0.0, min(1.0 - nh, ny))
     # 短镜（<8s）幅度加大、长镜放缓：保证 2-4s 子镜头也有可见运镜
-    amp = 0.14 if total < 200 else (0.10 if total < 400 else 0.06)
+    # v1.0.68：幅度整体上调（0.14→0.22 / 0.10→0.16 / 0.06→0.12）——
+    # 此前长镜/静镜幅度 0.06 观感接近静止（"录播图"），放大推拉让静态子镜也有明显动态
+    amp = 0.22 if total < 200 else (0.16 if total < 400 else 0.12)
     # 2x 放大防抖基础缩放：先裁取景窗口再放大
     vf = "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560"
     # 应用取景窗口（crop 到窗口区域，窗口比例保持 9:16 输出）
@@ -1245,7 +1247,7 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
             # 图片 Ken Burns：2x 放大防抖 + zoompan 缓慢推近 + 配音
             # v13.31 修复：zoompan 必须用 on（输出帧计数），in 是输入帧计数会导致画面静止
             total = max(1, int(duration * FPS))
-            amp = 0.10 if total >= 250 else 0.06
+            amp = 0.16 if total >= 250 else 0.12  # v1.0.68 幅度上调
             cmd = [
                 FFMPEG_BIN, "-nostdin", "-y",
                 "-loop", "1", "-i", str(material),
