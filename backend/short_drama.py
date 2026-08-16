@@ -1981,6 +1981,18 @@ async def _drama_render_one(
                                 for _di, _seg in enumerate(_dyn_segs):
                                     _rep = _anchor_idx + _di
                                     if _rep < len(sub_clips) and os.path.exists(_seg) and os.path.getsize(_seg) > 4096:
+                                        # v1.0.62：切分出的动态子段也要合并对应子镜配音——
+                                        # 此前只有第 1 段（_dyn_src，_di=0）混了配音，后续段纯
+                                        # i2v 无台词声（音画不同步）。_di>0 的段补配音。
+                                        if _di > 0:
+                                            _seg_audio = sub_audios[_rep] if _rep < len(sub_audios) else None
+                                            if _seg_audio and os.path.exists(_seg_audio):
+                                                _seg_final = os.path.join(tmpdir, f"dynseg_audio_{i:03d}_{_di:02d}.mp4")
+                                                _seg_ok = await asyncio.to_thread(
+                                                    _mix_dyn_audio, _seg, _seg_audio, _seg_final,
+                                                )
+                                                if _seg_ok and os.path.exists(_seg_final):
+                                                    _seg = _seg_final
                                         sub_clips[_rep] = _seg
                         if len(sub_clips) >= 2:
                             _concat_sub_shots(sub_clips, clip)
