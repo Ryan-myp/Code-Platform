@@ -2016,8 +2016,9 @@ async def _drama_render_one(
                             _ctx_key = resolve_api_key()
                             _ctx_base = resolve_api_base()
                             _target_dur = shot_dur / n_sub
-                            # v1.0.67 高动态：每场 2 个 i2v 锚（情绪聚焦 + 场尾），各切 2 段
-                            # → 覆盖 4 个子镜真动态（~40% 画面），消除"录播图"静态观感。
+                            # v1.0.69 极限动态：每场 3 个 i2v 锚（情绪聚焦 + 场中 + 场尾），
+                            # 各切 2 段 → 覆盖 6 个子镜真动态（~60% 画面），
+                            # 大模型（i2v）参与度最大化，逼近"视频"观感。
                             _focus_idx = None
                             for _si2, _st2 in enumerate(_shot_seq):
                                 if _st2 in ("close_zoom", "zoom_in") and _si2 >= 1:
@@ -2028,9 +2029,12 @@ async def _drama_render_one(
                             _anchor_list = []
                             _a1 = min(_focus_idx if _focus_idx is not None else 0, len(sub_clips) - 1)
                             _a2 = min(len(sub_clips) - 2, max(0, len(sub_clips) - 2))
+                            _a3 = min(len(sub_clips) // 2, max(0, len(sub_clips) // 2))
                             if _a2 == _a1:
                                 _a2 = max(0, _a2 - 1)
-                            _anchor_list = list(dict.fromkeys([_a1, _a2]))
+                            if _a3 in (_a1, _a2):
+                                _a3 = max(0, _a3 - 1 if _a3 > 0 else _a3 + 1)
+                            _anchor_list = list(dict.fromkeys([_a1, _a3, _a2]))
                             for _ai, _anchor_idx in enumerate(_anchor_list):
                                 dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}_{_ai}.mp4")
                                 _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
