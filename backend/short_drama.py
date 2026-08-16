@@ -1212,6 +1212,105 @@ def _concat_sub_shots(seg_paths: list[str], out_path: str) -> None:
         raise RuntimeError("子镜头拼接失败: " + r.stderr.decode(errors="replace")[-200:])
 
 
+def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
+             _api_key: str = "", _api_base: str = "") -> bool:
+    """v1.0.70 文生视频镜头：直接用 video 大模型生成动态画面（替代静态图+缩放）。
+
+    用户反馈：静态图+锚点方案观感像"录播图"，要求直接用 video 大模型生成。
+    AGNES agnes-video-v2.0 支持纯文字生成 5s 动态视频（t2v，无图依赖）；
+    本函数：t2v 生成 → 竖屏化（720x1280）→ 配音合入 → 拉伸/补静音到目标时长。
+    返回 True=成功；失败返回 False（由调用方回退静态图方案）。
+    """
+    try:
+        import requests as _req
+        if not _api_key:
+            _api_key = resolve_api_key()
+        if not _api_base:
+            _api_base = resolve_api_base()
+        if not _api_key:
+            return False
+        body = {
+            "model": "agnes-video-v2.0",
+            "prompt": f"竖屏短剧电影镜头，竖构图9:16，{prompt}，人物动作自然连贯，电影质感",
+        }
+        vid = ""
+        for _a in range(6):
+            try:
+                resp = _req.post(f"{_api_base}/videos",
+                                 headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+                                 json=body, timeout=60)
+            except Exception:
+                time.sleep(15); continue
+            if resp.status_code == 200:
+                vid = (resp.json().get("video_id") or resp.json().get("task_id") or "").strip()
+                break
+            elif "queue_full" in resp.text:
+                # v1.0.70：视频生成队列比图片更满，重试 6 次×40s（240s）提高命中率
+                logger.warning(f"t2v 队列满，等待重试（{_a + 1}/6）40s")
+                time.sleep(40)
+            else:
+                logger.warning(f"t2v 提交失败 HTTP {resp.status_code}: {resp.text[:100]}")
+                return False
+        if not vid:
+            return False
+        url = ""
+        for _i in range(int(240 / 15) + 1):
+            time.sleep(15)
+            try:
+                q = _req.get(f"{_api_base}/agnesapi", params={"video_id": vid},
+                             headers={"Authorization": f"Bearer {_api_key}"}, timeout=30)
+                d = q.json()
+            except Exception:
+                continue
+            st = d.get("status")
+            if st == "completed":
+                url = d.get("output", {}).get("video_url") or d.get("url") or ""
+                break
+            if st == "failed":
+                return False
+        if not url:
+            return False
+        vresp = _req.get(url, timeout=120)
+        if vresp.status_code != 200:
+            return False
+        tmp_v = out_path + ".src.mp4"
+        with open(tmp_v, "wb") as f:
+            f.write(vresp.content)
+        # 竖屏化：1088x832 横屏 → 中央竖条 9:16 → 720x1280
+        vf = "crop=468:832:310:0,scale=720:1280"
+        vert = out_path + ".vert.mp4"
+        r = subprocess.run(
+            [FFMPEG_BIN, "-nostdin", "-y", "-i", tmp_v, "-vf", vf,
+             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "128k", vert],
+            capture_output=True, timeout=120,
+        )
+        if r.returncode != 0 or not os.path.exists(vert):
+            return False
+        # 配音合入 + 目标时长撑满（音频 apad、视频 tpad 冻结末帧）
+        tgt = max(duration, 2.0)
+        cmd = [
+            FFMPEG_BIN, "-nostdin", "-y", "-i", vert, "-i", audio_path,
+            "-t", f"{tgt:.2f}",
+            "-map", "0:v", "-map", "1:a",
+            "-vf", f"tpad=stop_mode=clone:stop_duration={max(0.0, tgt - _probe_video_seconds(vert)):.2f}",
+            "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0,apad",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k",
+            out_path,
+        ]
+        r2 = subprocess.run(cmd, capture_output=True, timeout=120)
+        for _f in (tmp_v, vert):
+            try:
+                if os.path.exists(_f): os.remove(_f)
+            except Exception:
+                pass
+        return r2.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10000
+    except Exception as e:
+        logger.warning(f"t2v 镜头失败: {e}")
+        return False
+
+
 def _material_scene_video(query: str, audio_path: str, out_path: str, duration: float,
                           fade_in: bool = True, fade_out: bool = True) -> bool:
     """素材镜头合成：Pexels/本地真实素材（视频 cover 裁剪或图片 Ken Burns 推近）+ 配音。
@@ -1933,6 +2032,72 @@ async def _drama_render_one(
         img_path = os.path.join(tmpdir, f"seg_{i:03d}.jpg")
         shot = sc.get("shot", "")
         data = None
+        # v1.0.70 优先 t2v 直接生成动态镜头（用户要求"直接用 video 大模型生成"）
+        if shot and not avatar_mode:
+            _t2v_chars = []
+            for _c in (sc.get("chars") or []):
+                _ch = char_map.get(_c)
+                if _ch:
+                    _t2v_chars.append(f"{_ch.get('name')}（{_ch.get('appearance') or ''}，{_ch.get('outfit') or ''}）")
+            _t2v_prompt = f"{shot}。" + ("人物：" + "；".join(_t2v_chars) if _t2v_chars else "")
+            _t2v_clip = os.path.join(tmpdir, f"t2v_{i:03d}.mp4")
+            _t2v_ok = await asyncio.to_thread(
+                # v1.0.70：t2v 输出 5s 真视频（不拉伸到整场——冻结末帧观感静止），
+                # 该 5s 动态镜头作为本场主镜返回，与其余镜头拼接
+                _t2v_shot, _t2v_prompt, audio_path, _t2v_clip, 5.0,
+                resolve_api_key(), resolve_api_base(),
+            )
+            if _t2v_ok and os.path.exists(_t2v_clip) and os.path.getsize(_t2v_clip) > 10000:
+                logger.info(f"t2v 镜头成功（第 {i + 1} 镜）")
+                # v1.0.70：t2v 5s 真视频 → 按场次目标时长拆分子镜（不同取景窗+运镜），
+                # 每段配 Ken Burns 窗口运动 → 整场真视频画面 + 镜头切换，无冻结帧
+                _t2v_total = float(sc.get("sec") or 5)
+                _t2v_n = max(1, min(8, int(round(_t2v_total / 3.2))))
+                _t2v_segs = _split_dyn_video(_t2v_clip, _t2v_n, f"t2vseg_{i:03d}")
+                _t2v_sub = []
+                _t2v_seq = _shot_sequence(sc.get("emotion") or "", len(_t2v_segs), i)
+                for _si, _seg in enumerate(_t2v_segs):
+                    if not (os.path.exists(_seg) and os.path.getsize(_seg) > 4096):
+                        continue
+                    # 子镜目标时长（末段吸收余量）
+                    if _si == len(_t2v_segs) - 1:
+                        _sd = max(_t2v_total - 3.2 * (len(_t2v_segs) - 1), _probe_video_seconds(_seg), 2.0)
+                    else:
+                        _sd = max(3.2, _probe_video_seconds(_seg), 2.0)
+                    # 每子镜用取景窗 + 运镜重合成（Ken Burns 在 t2v 画面上叠推拉，增加镜头感）
+                    _st = _t2v_seq[_si % len(_t2v_seq)]
+                    _win_map = {
+                        "close_zoom": (0.15, 0.15, 0.7, 0.7),
+                        "pan_left": (0.0, 0.0, 0.8, 1.0),
+                        "pan_right": (0.2, 0.0, 0.8, 1.0),
+                        "tilt_up": (0.1, 0.2, 0.8, 0.8),
+                        "tilt_down": (0.1, 0.0, 0.8, 0.8),
+                    }.get(_st, (0.0, 0.0, 1.0, 1.0))
+                    _sub_out = os.path.join(tmpdir, f"t2vshot_{i:03d}_{_si:02d}.mp4")
+                    try:
+                        _win_vf = (
+                            f"scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
+                            f"crop={int(1440*_win_map[2])}:{int(2560*_win_map[3])}:{int(1440*_win_map[0])}:{int(2560*_win_map[1])},"
+                            f"scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
+                            f"zoompan=z='1+0.08*on/{int(_sd*25)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(_sd*25)}:s=720x1280:fps=25"
+                        )
+                        _wr = subprocess.run(
+                            [FFMPEG_BIN, "-nostdin", "-y", "-i", _seg,
+                             "-t", f"{_sd:.2f}", "-vf", _win_vf,
+                             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+                             "-c:a", "aac", "-b:a", "128k", _sub_out],
+                            capture_output=True, timeout=120,
+                        )
+                        if _wr.returncode == 0 and os.path.exists(_sub_out) and os.path.getsize(_sub_out) > 4096:
+                            _t2v_sub.append(_sub_out)
+                    except Exception:
+                        _t2v_sub.append(_seg)
+                if len(_t2v_sub) >= 2:
+                    _t2v_concat = os.path.join(tmpdir, f"t2v_concat_{i:03d}.mp4")
+                    _concat_sub_shots(_t2v_sub, _t2v_concat)
+                    if os.path.exists(_t2v_concat):
+                        return _t2v_concat, audio_path, dh_off
+                return _t2v_clip, audio_path, dh_off
         if shot:
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             _sc = [c for c in scene_chars if char_map[c].get("anchor")]
