@@ -2058,6 +2058,10 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
             if not clip_paths:
                 scene_bounds.append(0)
             clip_paths.append(clip)
+            # v1.0.61：记录每场起始 clip 下标（此前只在首场 append，导致 scene_bounds=[0]
+            # → _concat_videos 判定 <2 组而走纯 concat，场间 xfade 转场从未生效！）
+            if len(clip_paths) > 1:
+                scene_bounds.append(len(clip_paths) - 1)
             srt_durations.append(_probe_seconds(clip))
             vd = _probe_seconds(audio_path) if audio_path else _probe_seconds(clip)
             voice_durations.append(vd)
