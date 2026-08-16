@@ -869,17 +869,26 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
         return False
 
 
-def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str) -> bool:
-    """动态 i2v 画面 + 子镜配音合成（画面时长取两者短者，配音铺满）。"""
+def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str, target_dur: float | None = None) -> bool:
+    """动态 i2v 画面 + 子镜配音合成（画面时长取两者短者，配音铺满）。
+
+    v1.0.66：target_dur 指定目标子镜时长——配音/画面不足时补足到目标：
+    - 音频：apad 补静音撑满
+    - 视频：tpad 冻结末帧撑满（i2v 动态段通常短于目标子镜时长，
+      此前视频 2.6s < 音频 4.2s，concat 时视频成短板且音频被截断 → 音频空洞）
+    """
     try:
         vdur = _probe_seconds(video_path)
+        adur = _probe_seconds(audio_path)
+        out_dur = target_dur if target_dur else max(2.0, vdur or 8.0)
         cmd = [
             FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", audio_path,
-            "-t", f"{max(2.0, vdur or 8.0):.2f}",
+            "-t", f"{max(out_dur, vdur or 0, adur or 0):.2f}",
             "-map", "0:v", "-map", "1:a",
-            "-af", "apad",  # 配音不足补静音，动态画面全程有声
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "128k",
+            "-vf", f"tpad=stop_mode=clone:stop_duration={max(0.0, out_dur - vdur):.2f}" if (target_dur and vdur and vdur < target_dur) else "null",
+            "-af", "apad",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -945,7 +954,7 @@ def _stretch_clip(video_path: str, target_dur: float, out_path: str) -> bool:
             "-vf", f"setpts={1/speed:.4f}*PTS",
             "-af", f"atempo={atempo:.4f}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
+            "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -964,6 +973,22 @@ def _probe_seconds(path: str) -> float:
             timeout=20,
         )
         return float(out.stdout.strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _probe_video_seconds(path: str) -> float:
+    """v1.0.66：读取视频流时长（秒）——混音产物视频短/音频长时，_probe_seconds
+    取 format.duration（可能=音频长）导致拉伸判断失误，此函数精确取视频流。"""
+    try:
+        out = subprocess.run(
+            [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=duration", "-of", "csv=p=0", path],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        return float(out.stdout.strip().split("\n")[0] or 0)
     except Exception:
         return 0.0
 
@@ -1092,7 +1117,9 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
         "-t", f"{duration:.2f}",
         "-vf", vf,
         "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-        "-af", "apad", "-c:a", "aac", "-b:a", "128k",
+        # v1.0.66：统一 48000Hz stereo——配音子镜原为 44100Hz mono，与片头(48000stereo)/
+        # 片尾(44100stereo) concat 时参数不一致导致音频流截断（空洞）
+        "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0,apad", "-c:a", "aac", "-b:a", "128k",
         "-r", str(FPS),
         out_path,
     ]
@@ -1101,7 +1128,7 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
         cmd = [
             FFMPEG_BIN, "-nostdin", "-y",
             "-loop", "1", "-i", img_path,
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
             "-t", f"{duration:.2f}",
             "-vf", vf,
             "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
@@ -1323,7 +1350,7 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
         [FFMPEG_BIN, "-nostdin", "-y"] + inputs + ["-filter_complex", f,
          "-map", "[v%d]" % last, "-map", "[a%d]" % last,
          "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-b:a", "128k", out_path],
+         "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k", out_path],
         capture_output=True, timeout=600,
     )
     for gp in tmp_group:
@@ -2010,13 +2037,15 @@ async def _drama_render_one(
                                 elif len(sub_clips) >= 3:
                                     _anchor_idx = max(1, int(len(sub_clips) * 0.6))
                                 _anchor_idx = min(_anchor_idx, len(sub_clips) - 1)
+                                # v1.0.66：目标子镜时长——动态锚/切分段混音时铺满该时长
+                                _target_dur = shot_dur / n_sub
                                 # 动态锚替换情绪高潮子镜，并把该子镜配音合入动态画面
                                 _dyn_audio = sub_audios[_anchor_idx] if _anchor_idx < len(sub_audios) else None
                                 _dyn_final = os.path.join(tmpdir, f"dyn_final_{i:03d}.mp4")
                                 _mux_ok = False
                                 if _dyn_audio and os.path.exists(_dyn_audio):
                                     _mux_ok = await asyncio.to_thread(
-                                        _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final,
+                                        _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final, _target_dur,
                                     )
                                 _dyn_src = _dyn_final if (_mux_ok and os.path.exists(_dyn_final)) else dyn_clip
                                 # v1.0.56 动态密度翻倍：一段 i2v 切成 2 个子段，替换锚位及其后
@@ -2035,15 +2064,17 @@ async def _drama_render_one(
                                             if _seg_audio and os.path.exists(_seg_audio):
                                                 _seg_final = os.path.join(tmpdir, f"dynseg_audio_{i:03d}_{_di:02d}.mp4")
                                                 _seg_ok = await asyncio.to_thread(
-                                                    _mix_dyn_audio, _seg, _seg_audio, _seg_final,
+                                                    _mix_dyn_audio, _seg, _seg_audio, _seg_final, _target_dur,
                                                 )
                                                 if _seg_ok and os.path.exists(_seg_final):
                                                     _seg = _seg_final
                                         # v1.0.65：动态锚段拉伸到目标子镜时长（5s i2v 切 2 段各
                                         # 2.5s，替换 2 个 4.17s 子镜会每场短 ~3.3s → 10 分钟剧
                                         # 569s<600s）。setpts 慢放撑满，动作保持连贯。
-                                        _target_dur = shot_dur / n_sub
-                                        _seg_dur = _probe_seconds(_seg)
+                                        # v1.0.66：拉伸判断用视频时长（音频可能已铺满 target 但
+                                        # 视频仍短——混音产物视频 2.6s/音频 4.2s 时 _probe_seconds
+                                        # 取音频→误判不需拉伸→视频短板→concat 音频空洞）
+                                        _seg_dur = _probe_video_seconds(_seg)
                                         if _seg_dur > 0 and _seg_dur < _target_dur * 0.9:
                                             _stretch = os.path.join(tmpdir, f"dynseg_stretch_{i:03d}_{_di:02d}.mp4")
                                             _sok = await asyncio.to_thread(
