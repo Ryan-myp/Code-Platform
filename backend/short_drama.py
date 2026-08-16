@@ -327,9 +327,17 @@ def _parse_characters(data: dict) -> list[dict]:
 def _parse_script(raw: str) -> dict:
     """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音，失败抛错）。"""
     text = raw.strip()
+    # v1.0.63：完整围栏优先；LLM 只输出开头 ```json 不闭合时取 ``` 之后内容
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     if m:
         text = m.group(1)
+    else:
+        _fence = text.find("```")
+        if _fence >= 0:
+            text = text[_fence + 3 :]
+            _json_tag = text.find("json")
+            if 0 <= _json_tag <= 4:
+                text = text[_json_tag + 4 :]
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("剧本输出不是 JSON")
@@ -2712,9 +2720,18 @@ def _repair_json_quotes(candidate: str) -> str:
 def _drama_parse_script(raw: str) -> dict:
     """解析 LLM 剧本 JSON（剥 markdown 代码块/前后噪音/尾随逗号）。"""
     text = raw.strip()
+    # v1.0.63：剥代码块围栏——优先完整围栏；LLM 常只输出开头 ```json 不闭合，
+    # 此时取首个 ``` 之后的内容（find { } 会再精确裁剪）。
     m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.S)
     if m:
         text = m.group(1)
+    else:
+        _fence = text.find("```")
+        if _fence >= 0:
+            text = text[_fence + 3 :]
+            _json_tag = text.find("json")
+            if 0 <= _json_tag <= 4:
+                text = text[_json_tag + 4 :]
     # 兼容：直接输出分镜数组 [{...}]（分块生成时 LLM 可能省略外层对象）
     data = None
     start, end = text.find("{"), text.rfind("}")
