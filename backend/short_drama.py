@@ -2007,76 +2007,64 @@ async def _drama_render_one(
                             )
                             if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
                                 sub_clips.append(sclip)
-                        # v1.0.45 动态锚镜头：本场有台词/人物时，用主图生成 1 个 i2v
-                        # 动态片段（人物真动/口型），替换情绪高潮子镜 → 画面"活"起来
-                        # v1.0.55：锚位从"固定第 1 子镜"改为"情绪聚焦子镜"——
-                        # 取 _shot_seq 中 close_zoom/closeup（特写聚焦=情绪高潮）的位置，
-                        # 无则取中部偏后（序列 60% 处），让人物动态出现在最该"动"的瞬间。
+                        # v1.0.45 动态锚镜头：本场有台词/人物时，用主图生成 i2v 动态片段
+                        # v1.0.67 高动态：每场 2 个 i2v 锚（情绪聚焦 + 场尾），各切 2 段
                         if dynamic_on and sc.get("dialogue") and len(sub_clips) >= 2:
                             _report(15 + int(50 * i / max(total, 1)), f"第 {i + 1}/{total} 镜：动态镜头生成中…")
-                            dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}.mp4")
-                            _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
                             _ctx_key = resolve_api_key()
                             _ctx_base = resolve_api_base()
-                            dyn_ok = await asyncio.to_thread(
-                                _i2v_scene_clip, img_path, _motion_p, dyn_clip, uid, 240,
-                                _ctx_key, _ctx_base,
-                            )
-                            if not dyn_ok:
-                                logger.warning(f"i2v 动态锚失败（第 {i+1} 镜），回退静态")
-                            if dyn_ok and os.path.exists(dyn_clip) and os.path.getsize(dyn_clip) > 10000:
-                                # 定位情绪高潮子镜下标（优先特写聚焦，其次 60% 处）
-                                _anchor_idx = 0
-                                _focus_idx = None
-                                for _si2, _st2 in enumerate(_shot_seq):
-                                    if _st2 in ("close_zoom", "zoom_in") and _si2 >= 1:
-                                        _focus_idx = _si2
-                                        break
-                                if _focus_idx is not None:
-                                    _anchor_idx = _focus_idx
-                                elif len(sub_clips) >= 3:
-                                    _anchor_idx = max(1, int(len(sub_clips) * 0.6))
-                                _anchor_idx = min(_anchor_idx, len(sub_clips) - 1)
-                                # v1.0.66：目标子镜时长——动态锚/切分段混音时铺满该时长
-                                _target_dur = shot_dur / n_sub
-                                # 动态锚替换情绪高潮子镜，并把该子镜配音合入动态画面
+                            _target_dur = shot_dur / n_sub
+                            # v1.0.67 高动态：每场 2 个 i2v 锚（情绪聚焦 + 场尾），各切 2 段
+                            # → 覆盖 4 个子镜真动态（~40% 画面），消除"录播图"静态观感。
+                            _focus_idx = None
+                            for _si2, _st2 in enumerate(_shot_seq):
+                                if _st2 in ("close_zoom", "zoom_in") and _si2 >= 1:
+                                    _focus_idx = _si2
+                                    break
+                            if _focus_idx is None and len(sub_clips) >= 3:
+                                _focus_idx = max(1, int(len(sub_clips) * 0.6))
+                            _anchor_list = []
+                            _a1 = min(_focus_idx if _focus_idx is not None else 0, len(sub_clips) - 1)
+                            _a2 = min(len(sub_clips) - 2, max(0, len(sub_clips) - 2))
+                            if _a2 == _a1:
+                                _a2 = max(0, _a2 - 1)
+                            _anchor_list = list(dict.fromkeys([_a1, _a2]))
+                            for _ai, _anchor_idx in enumerate(_anchor_list):
+                                dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}_{_ai}.mp4")
+                                _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
+                                dyn_ok = await asyncio.to_thread(
+                                    _i2v_scene_clip, img_path, _motion_p, dyn_clip, uid, 240,
+                                    _ctx_key, _ctx_base,
+                                )
+                                if not dyn_ok or not (os.path.exists(dyn_clip) and os.path.getsize(dyn_clip) > 10000):
+                                    logger.warning(f"i2v 动态锚{_ai + 1}失败（第 {i + 1} 镜），回退静态")
+                                    continue
                                 _dyn_audio = sub_audios[_anchor_idx] if _anchor_idx < len(sub_audios) else None
-                                _dyn_final = os.path.join(tmpdir, f"dyn_final_{i:03d}.mp4")
+                                _dyn_final = os.path.join(tmpdir, f"dyn_final_{i:03d}_{_ai}.mp4")
                                 _mux_ok = False
                                 if _dyn_audio and os.path.exists(_dyn_audio):
                                     _mux_ok = await asyncio.to_thread(
                                         _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final, _target_dur,
                                     )
                                 _dyn_src = _dyn_final if (_mux_ok and os.path.exists(_dyn_final)) else dyn_clip
-                                # v1.0.56 动态密度翻倍：一段 i2v 切成 2 个子段，替换锚位及其后
-                                # 一个静态子镜 → 同一真运动覆盖 2 个动态子镜，零额外 API 调用
                                 _dyn_segs = [ _dyn_src ]
                                 if _anchor_idx + 1 < len(sub_clips):
-                                    _dyn_segs = _split_dyn_video(_dyn_src, 2, f"dynseg_{i:03d}")
+                                    _dyn_segs = _split_dyn_video(_dyn_src, 2, f"dynseg_{i:03d}_{_ai}")
                                 for _di, _seg in enumerate(_dyn_segs):
                                     _rep = _anchor_idx + _di
                                     if _rep < len(sub_clips) and os.path.exists(_seg) and os.path.getsize(_seg) > 4096:
-                                        # v1.0.62：切分出的动态子段也要合并对应子镜配音——
-                                        # 此前只有第 1 段（_dyn_src，_di=0）混了配音，后续段纯
-                                        # i2v 无台词声（音画不同步）。_di>0 的段补配音。
                                         if _di > 0:
                                             _seg_audio = sub_audios[_rep] if _rep < len(sub_audios) else None
                                             if _seg_audio and os.path.exists(_seg_audio):
-                                                _seg_final = os.path.join(tmpdir, f"dynseg_audio_{i:03d}_{_di:02d}.mp4")
+                                                _seg_final = os.path.join(tmpdir, f"dynseg_audio_{i:03d}_{_ai}_{_di:02d}.mp4")
                                                 _seg_ok = await asyncio.to_thread(
                                                     _mix_dyn_audio, _seg, _seg_audio, _seg_final, _target_dur,
                                                 )
                                                 if _seg_ok and os.path.exists(_seg_final):
                                                     _seg = _seg_final
-                                        # v1.0.65：动态锚段拉伸到目标子镜时长（5s i2v 切 2 段各
-                                        # 2.5s，替换 2 个 4.17s 子镜会每场短 ~3.3s → 10 分钟剧
-                                        # 569s<600s）。setpts 慢放撑满，动作保持连贯。
-                                        # v1.0.66：拉伸判断用视频时长（音频可能已铺满 target 但
-                                        # 视频仍短——混音产物视频 2.6s/音频 4.2s 时 _probe_seconds
-                                        # 取音频→误判不需拉伸→视频短板→concat 音频空洞）
                                         _seg_dur = _probe_video_seconds(_seg)
                                         if _seg_dur > 0 and _seg_dur < _target_dur * 0.9:
-                                            _stretch = os.path.join(tmpdir, f"dynseg_stretch_{i:03d}_{_di:02d}.mp4")
+                                            _stretch = os.path.join(tmpdir, f"dynseg_stretch_{i:03d}_{_ai}_{_di:02d}.mp4")
                                             _sok = await asyncio.to_thread(
                                                 _stretch_clip, _seg, _target_dur, _stretch,
                                             )
