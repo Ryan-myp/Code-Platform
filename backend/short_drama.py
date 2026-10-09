@@ -2039,65 +2039,74 @@ async def _drama_render_one(
                 _ch = char_map.get(_c)
                 if _ch:
                     _t2v_chars.append(f"{_ch.get('name')}（{_ch.get('appearance') or ''}，{_ch.get('outfit') or ''}）")
-            _t2v_prompt = f"{shot}。" + ("人物：" + "；".join(_t2v_chars) if _t2v_chars else "")
-            _t2v_clip = os.path.join(tmpdir, f"t2v_{i:03d}.mp4")
-            _t2v_ok = await asyncio.to_thread(
-                # v1.0.70：t2v 输出 5s 真视频（不拉伸到整场——冻结末帧观感静止），
-                # 该 5s 动态镜头作为本场主镜返回，与其余镜头拼接
-                _t2v_shot, _t2v_prompt, audio_path, _t2v_clip, 5.0,
+            # v1.0.73 角色锚定的 i2v 差异化镜头：先由立绘生成场景主图（角色一致），
+            # 再对主图用 i2v 生成多个差异化动态镜头（不同景别/动作）——大模型动态 + 角色稳定。
+            _t2v_img = os.path.join(tmpdir, f"t2vbase_{i:03d}.jpg")
+            # 计算场景主图的角色锚定（立绘参考 + 位置提示）
+            _t2v_scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
+            _t2v_sc = [c for c in _t2v_scene_chars if char_map[c].get("anchor")]
+            if len(_t2v_sc) >= 2:
+                _t2v_pos = ["左边", "右边", "中间"][:len(_t2v_sc)]
+                _t2v_anchors = "；".join(f"{_t2v_pos[i]}的是{char_map[c]['name']}（{char_map[c]['anchor']}）" for i, c in enumerate(_t2v_sc))
+            else:
+                _t2v_anchors = "、".join(char_map[c]["anchor"] for c in _t2v_sc)
+            _t2v_refs = [char_refs[c] for c in _t2v_scene_chars if c in char_refs]
+            _t2v_refs2 = list(_t2v_refs)
+            if last_frame and _t2v_refs2:
+                _t2v_refs2.append(last_frame)
+            _t2v_data = await asyncio.to_thread(
+                _generate_scene_image, shot, _t2v_anchors, _t2v_refs2, uid, art_style,
+                sc.get("dialogue") or "", sc.get("shot_size") or "",
                 resolve_api_key(), resolve_api_base(),
             )
-            if _t2v_ok and os.path.exists(_t2v_clip) and os.path.getsize(_t2v_clip) > 10000:
-                logger.info(f"t2v 镜头成功（第 {i + 1} 镜）")
-                # v1.0.70：t2v 5s 真视频 → 按场次目标时长拆分子镜（不同取景窗+运镜），
-                # 每段配 Ken Burns 窗口运动 → 整场真视频画面 + 镜头切换，无冻结帧
-                _t2v_total = float(sc.get("sec") or 5)
-                _t2v_n = max(1, min(8, int(round(_t2v_total / 3.2))))
-                _t2v_segs = _split_dyn_video(_t2v_clip, _t2v_n, f"t2vseg_{i:03d}")
-                _t2v_sub = []
-                _t2v_seq = _shot_sequence(sc.get("emotion") or "", len(_t2v_segs), i)
-                for _si, _seg in enumerate(_t2v_segs):
-                    if not (os.path.exists(_seg) and os.path.getsize(_seg) > 4096):
-                        continue
-                    # 子镜目标时长（末段吸收余量）
-                    if _si == len(_t2v_segs) - 1:
-                        _sd = max(_t2v_total - 3.2 * (len(_t2v_segs) - 1), _probe_video_seconds(_seg), 2.0)
-                    else:
-                        _sd = max(3.2, _probe_video_seconds(_seg), 2.0)
-                    # 每子镜用取景窗 + 运镜重合成（Ken Burns 在 t2v 画面上叠推拉，增加镜头感）
-                    _st = _t2v_seq[_si % len(_t2v_seq)]
-                    _win_map = {
-                        "close_zoom": (0.15, 0.15, 0.7, 0.7),
-                        "pan_left": (0.0, 0.0, 0.8, 1.0),
-                        "pan_right": (0.2, 0.0, 0.8, 1.0),
-                        "tilt_up": (0.1, 0.2, 0.8, 0.8),
-                        "tilt_down": (0.1, 0.0, 0.8, 0.8),
-                    }.get(_st, (0.0, 0.0, 1.0, 1.0))
-                    _sub_out = os.path.join(tmpdir, f"t2vshot_{i:03d}_{_si:02d}.mp4")
+            _t2v_base_ok = False
+            if _t2v_data:
+                with open(_t2v_img, "wb") as _f:
+                    _f.write(_t2v_data)
+                _t2v_base_ok = os.path.getsize(_t2v_img) > 10000
+            _t2v_variants = [
+                "全景交代：人物全身入画，环境完整展现，镜头缓缓推进",
+                "中景动作：人物半身，正在做关键动作，眼神流露情绪",
+                "特写情绪：人物面部特写，表情细腻，情感饱满",
+                "中近景对话：人物近景，微微动作，欲言又止",
+                "收尾镜头：人物回眸转身，画面渐缓，余韵悠长",
+            ]
+            _t2v_total = float(sc.get("sec") or 5)
+            _t2v_n = max(1, min(6, int(round(_t2v_total / 5.0))))
+            _t2v_shot_list = []
+            for _ti in range(_t2v_n):
+                _t2v_v = _t2v_variants[_ti % len(_t2v_variants)]
+                _t2v_motion = f"{shot}。{_t2v_v}，人物动作自然连贯，情绪符合（{sc.get('emotion') or 'neutral'}），电影质感"
+                _t2v_c = os.path.join(tmpdir, f"t2v_{i:03d}_{_ti}.mp4")
+                if _t2v_base_ok:
+                    # 用场景主图做 i2v（角色锚定）：图生视频
+                    _t2v_ok2 = await asyncio.to_thread(
+                        _i2v_scene_clip, _t2v_img, _t2v_motion, _t2v_c, uid, 240,
+                        resolve_api_key(), resolve_api_base(),
+                    )
+                else:
+                    _t2v_ok2 = await asyncio.to_thread(
+                        _t2v_shot, _t2v_motion, audio_path, _t2v_c, 5.0,
+                        resolve_api_key(), resolve_api_base(),
+                    )
+                if _t2v_ok2 and os.path.exists(_t2v_c) and os.path.getsize(_t2v_c) > 10000:
+                    _t2v_shot_list.append(_t2v_c)
+                else:
+                    logger.warning(f"t2v/i2v 镜头{_ti}失败（第 {i + 1} 镜）")
+                # 拼接所有 t2v 镜头（场次内容全程动态）
+                _t2v_ready = []
+                for _sf in _t2v_shot_list:
+                    if os.path.exists(_sf) and os.path.getsize(_sf) > 10000:
+                        _t2v_ready.append(_sf)
+                if len(_t2v_ready) >= 2:
+                    _t2v_full = os.path.join(tmpdir, f"t2v_full_{i:03d}.mp4")
                     try:
-                        _win_vf = (
-                            f"scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
-                            f"crop={int(1440*_win_map[2])}:{int(2560*_win_map[3])}:{int(1440*_win_map[0])}:{int(2560*_win_map[1])},"
-                            f"scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
-                            f"zoompan=z='1+0.08*on/{int(_sd*25)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={int(_sd*25)}:s=720x1280:fps=25"
-                        )
-                        _wr = subprocess.run(
-                            [FFMPEG_BIN, "-nostdin", "-y", "-i", _seg,
-                             "-t", f"{_sd:.2f}", "-vf", _win_vf,
-                             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-                             "-c:a", "aac", "-b:a", "128k", _sub_out],
-                            capture_output=True, timeout=120,
-                        )
-                        if _wr.returncode == 0 and os.path.exists(_sub_out) and os.path.getsize(_sub_out) > 4096:
-                            _t2v_sub.append(_sub_out)
+                        _concat_sub_shots(_t2v_ready, _t2v_full)
+                        if os.path.exists(_t2v_full) and os.path.getsize(_t2v_full) > 10000:
+                            return _t2v_full, audio_path, dh_off
                     except Exception:
-                        _t2v_sub.append(_seg)
-                if len(_t2v_sub) >= 2:
-                    _t2v_concat = os.path.join(tmpdir, f"t2v_concat_{i:03d}.mp4")
-                    _concat_sub_shots(_t2v_sub, _t2v_concat)
-                    if os.path.exists(_t2v_concat):
-                        return _t2v_concat, audio_path, dh_off
-                return _t2v_clip, audio_path, dh_off
+                        pass
+                return _t2v_ready[0] if _t2v_ready else _t2v_clip, audio_path, dh_off
         if shot:
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             _sc = [c for c in scene_chars if char_map[c].get("anchor")]
