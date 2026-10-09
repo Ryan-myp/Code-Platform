@@ -776,7 +776,6 @@ def _as_list(value) -> list:
     return []
 
 
-
 def _calendar_slot(days: dict, day_str: str) -> dict:
     """获取/创建月历槽位。"""
     if day_str not in days:
@@ -836,6 +835,7 @@ def _fill_calendar_records(days: dict, records: list, month_str: str, summary: d
         )
         slot["total"] += 1
         summary["published"] += 1
+
 
 def build_calendar(month: str, schedules: list[dict], records: list[dict]) -> dict:
     """排期 + 已发布记录 → 月历聚合视图（纯函数，可单测）。

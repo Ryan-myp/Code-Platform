@@ -6,15 +6,15 @@ v2 升级：
 - 团队订阅生命周期管理
 - 邀请链接自动生成
 """
+
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common.auth import MEMBERSHIP_PLANS, TEAM_SEAT_PRICING, require_auth
+from common.auth import TEAM_SEAT_PRICING, require_auth
 from common.db import get_db
 from common.llm import _safe_exc_msg
 
@@ -24,16 +24,17 @@ router = APIRouter(prefix="/api/teams", tags=["团队管理"])
 
 # ── 请求模型 ──────────────────────────────────────────────────
 
+
 class TeamCreateRequest(BaseModel):
     name: str
     description: str = ""
     plan: str = "pro"  # pro | vip
-    seats: int = 1     # 初始席位数量
+    seats: int = 1  # 初始席位数量
 
 
 class TeamUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
 
 
 class MemberAddRequest(BaseModel):
@@ -102,8 +103,17 @@ async def create_team(req: TeamCreateRequest, current_user: dict = require_auth(
             """INSERT INTO teams (id, name, description, owner_id, plan, seats,
                subscription_plan, subscription_interval, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (team_id, req.name, req.description, user_id, req.plan, req.seats,
-             req.plan, "month", datetime.now().isoformat()),
+            (
+                team_id,
+                req.name,
+                req.description,
+                user_id,
+                req.plan,
+                req.seats,
+                req.plan,
+                "month",
+                datetime.now().isoformat(),
+            ),
         )
         # 创建者自动成为管理员 + 首個席位
         conn.execute(
@@ -122,7 +132,7 @@ async def create_team(req: TeamCreateRequest, current_user: dict = require_auth(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, _safe_exc_msg(e))
+        raise HTTPException(400, _safe_exc_msg(e)) from e
     finally:
         conn.close()
 
@@ -203,6 +213,7 @@ async def delete_team(team_id: str, current_user: dict = require_auth()):
 
 # ── 成员管理 ───────────────────────────────────────────────────
 
+
 @router.post("/{team_id}/members")
 async def add_member(team_id: str, req: MemberAddRequest, current_user: dict = require_auth()):
     """添加团队成员（仅管理员，受席位限制）。"""
@@ -263,6 +274,7 @@ async def remove_member(team_id: str, user_id: str, current_user: dict = require
 
 # ── 席位管理 ───────────────────────────────────────────────────
 
+
 @router.post("/{team_id}/seats/purchase")
 async def purchase_seats(team_id: str, req: SeatPurchaseRequest, current_user: dict = require_auth()):
     """购买额外席位（管理员操作）。"""
@@ -294,10 +306,15 @@ async def purchase_seats(team_id: str, req: SeatPurchaseRequest, current_user: d
             """INSERT INTO orders (id, user_id, plan, amount, interval,
                status, metadata, created_at)
                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
-            (order_id, current_user["user_id"], f"team_seat_{team['subscription_plan']}",
-             int(total * 100), req.interval,
-             f'{{"team_id": "{team_id}", "seats": {req.seats}, "unit_price": {unit_price}}}',
-             datetime.now().isoformat()),
+            (
+                order_id,
+                current_user["user_id"],
+                f"team_seat_{team['subscription_plan']}",
+                int(total * 100),
+                req.interval,
+                f'{{"team_id": "{team_id}", "seats": {req.seats}, "unit_price": {unit_price}}}',
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
 
@@ -357,6 +374,7 @@ async def renew_team_subscription(team_id: str, req: RenewTeamRequest, current_u
 
 # ── 管理员仪表盘 ───────────────────────────────────────────────
 
+
 @router.get("/{team_id}/dashboard")
 async def get_team_dashboard(team_id: str, current_user: dict = require_auth()):
     """团队管理员仪表盘（使用量/席位/账单/成员活跃）。"""
@@ -377,7 +395,7 @@ async def get_team_dashboard(team_id: str, current_user: dict = require_auth()):
 
         # 近期账单
         now = datetime.now()
-        month_start = now.replace(day=1).isoformat()
+        now.replace(day=1).isoformat()
         bills = conn.execute(
             """SELECT * FROM orders
                WHERE metadata LIKE ? AND status IN ('paid','approved')
@@ -428,6 +446,7 @@ async def get_invite_link(team_id: str, current_user: dict = require_auth()):
         conn.commit()
 
         from common.config import is_production
+
         base_url = "https://xiaotuan.ai" if is_production() else "http://localhost:5173"
         return {
             "invite_code": invite_code,
@@ -442,6 +461,7 @@ async def get_invite_link(team_id: str, current_user: dict = require_auth()):
 # 辅助函数
 # ══════════════════════════════════════════════════════════════
 
+
 def _is_team_admin(conn, team_id: str, user_id: str) -> bool:
     """检查用户是否为团队管理员。"""
     member = conn.execute(
@@ -455,7 +475,7 @@ def _get_team_usage_stats(conn, team_id: str) -> dict:
     """获取团队使用量统计。"""
     try:
         # 今日总用量
-        today = datetime.now().strftime("%Y-%m-%d")
+        datetime.now().strftime("%Y-%m-%d")
         usage_row = conn.execute(
             """SELECT COALESCE(SUM(u.used_today), 0) as total_used
                FROM users u
@@ -568,14 +588,13 @@ def ensure_team_tables():
 
 # ── 公开接口：通过邀请码加入团队 ──────────────────────────────
 
+
 @router.get("/join/{invite_code}")
 async def join_team_by_code(invite_code: str, current_user: dict = require_auth()):
     """通过邀请码加入团队。"""
     conn = get_db()
     try:
-        team = conn.execute(
-            "SELECT * FROM teams WHERE invite_code=?", (invite_code,)
-        ).fetchone()
+        team = conn.execute("SELECT * FROM teams WHERE invite_code=?", (invite_code,)).fetchone()
         if not team:
             raise HTTPException(404, "邀请码无效")
         team = dict(team)
@@ -598,8 +617,7 @@ async def join_team_by_code(invite_code: str, current_user: dict = require_auth(
         conn.execute(
             """INSERT INTO team_members (id, team_id, user_id, role, joined_at)
                VALUES (?, ?, ?, ?, ?)""",
-            (f"tm_{uuid.uuid4().hex[:12]}", team["id"], current_user["user_id"],
-             "member", datetime.now().isoformat()),
+            (f"tm_{uuid.uuid4().hex[:12]}", team["id"], current_user["user_id"], "member", datetime.now().isoformat()),
         )
         # 清除已使用的邀请码
         conn.execute("UPDATE teams SET invite_code=NULL WHERE id=?", (team["id"],))

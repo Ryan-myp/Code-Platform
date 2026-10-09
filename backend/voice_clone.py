@@ -61,11 +61,11 @@ def analyze_sample(path: str) -> dict:
     y, sr = librosa.load(path, sr=16000, mono=True)
     duration = len(y) / sr
     if duration < MIN_SAMPLE_SECONDS or duration > MAX_SAMPLE_SECONDS:
-        raise ValueError(f"样本时长需在 {MIN_SAMPLE_SECONDS:.0f}-{MAX_SAMPLE_SECONDS:.0f} 秒之间（当前 {duration:.1f}s）")
+        raise ValueError(
+            f"样本时长需在 {MIN_SAMPLE_SECONDS:.0f}-{MAX_SAMPLE_SECONDS:.0f} 秒之间（当前 {duration:.1f}s）"
+        )
     # pyin: 概率基频跟踪，对噪音鲁棒；fmin/fmax 在 librosa 0.10+ 为 keyword-only
-    f0, voiced_flag, _ = librosa.pyin(
-        y, fmin=70.0, fmax=500.0, sr=sr, frame_length=1024
-    )
+    f0, voiced_flag, _ = librosa.pyin(y, fmin=70.0, fmax=500.0, sr=sr, frame_length=1024)
     voiced = f0[~np.isnan(f0)]
     if len(voiced) < 10:
         raise ValueError("未检测到清晰人声，请上传干净人声样本（无背景音乐/噪音）")

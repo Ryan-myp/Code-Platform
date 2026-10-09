@@ -4,6 +4,7 @@
 - Face Renderer 使用 Conv3D，PyTorch MPS 不支持 → 强制 CPU + 多线程优化
 - 15s 视频（256 分辨率）预计 20-50 分钟，调用方需走异步任务
 """
+
 from __future__ import annotations
 
 import gc
@@ -21,12 +22,20 @@ os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "8")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "8")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "8")
 
+
 # SadTalker 2023 代码使用 numpy 1.24 已移除的老别名（np.float/np.int 等）。
 # numpy 固定 1.23.4 时 numba 0.61 又不兼容 → 保持 numpy 1.26 + 注入别名，兼容面最小。
 def _patch_numpy_aliases() -> None:
     import numpy as np
 
-    for _name, _target in (("float", float), ("int", int), ("bool", bool), ("object", object), ("complex", complex), ("str", str)):
+    for _name, _target in (
+        ("float", float),
+        ("int", int),
+        ("bool", bool),
+        ("object", object),
+        ("complex", complex),
+        ("str", str),
+    ):
         if not hasattr(np, _name):
             setattr(np, _name, _target)
 

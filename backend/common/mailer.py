@@ -68,7 +68,7 @@ def send_email(to: str, subject: str, html: str = "", text: str = "") -> dict:
         return {"ok": False, "reason": "收件邮箱不存在或被拒绝"}
     except Exception as e:
         logger.error("邮件发送失败: %s", e)
-        return {"ok": False, "reason": f"邮件发送失败"}
+        return {"ok": False, "reason": "邮件发送失败"}
 
 
 def send_password_reset_email(to_email: str, username: str, reset_link: str) -> dict:

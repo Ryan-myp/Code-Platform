@@ -5,6 +5,7 @@
 - 懒加载单例 + 线程锁（FastAPI 多 worker 场景只加载一次）
 - rembg 不可用（未安装/模型缺失）时抛错，由调用方降级到旧逻辑
 """
+
 from __future__ import annotations
 
 import logging
@@ -111,15 +112,15 @@ def make_gradient(width: int, height: int, top_hex: str, bottom_hex: str) -> Ima
 def make_scene_background(width: int, height: int, scene: str) -> Image.Image:
     """场景背景：纯色/垂直渐变（与旧背景替换的场景 id 兼容，视觉升级为渐变）。"""
     scenes = {
-        "beach": ("#FFB6C1", "#87CEEB"),      # 粉色沙滩 → 蓝天
-        "city": ("#6B7280", "#374151"),        # 城市灰
-        "space": ("#0F172A", "#1E1B4B"),       # 深空蓝紫
-        "studio": ("#F3F4F6", "#FFFFFF"),      # 摄影棚白
-        "forest": ("#228B22", "#065F46"),      # 森林绿
-        "snow": ("#FFFFFF", "#DCE7F3"),        # 雪景
-        "sunset": ("#FF6B6B", "#FFD93D"),      # 日落橙黄
-        "night": ("#111827", "#312E81"),       # 夜景
-        "pastel": ("#FDE68A", "#FBCFE8"),      # 马卡龙粉黄
+        "beach": ("#FFB6C1", "#87CEEB"),  # 粉色沙滩 → 蓝天
+        "city": ("#6B7280", "#374151"),  # 城市灰
+        "space": ("#0F172A", "#1E1B4B"),  # 深空蓝紫
+        "studio": ("#F3F4F6", "#FFFFFF"),  # 摄影棚白
+        "forest": ("#228B22", "#065F46"),  # 森林绿
+        "snow": ("#FFFFFF", "#DCE7F3"),  # 雪景
+        "sunset": ("#FF6B6B", "#FFD93D"),  # 日落橙黄
+        "night": ("#111827", "#312E81"),  # 夜景
+        "pastel": ("#FDE68A", "#FBCFE8"),  # 马卡龙粉黄
     }
     hexes = scenes.get(scene, scenes["studio"])
     if hexes[0] == hexes[1]:

@@ -219,7 +219,7 @@ class ContainerManager:
         容器名与项目绑定（sandbox-{project_id}）；deploy 部署的容器名为 sandbox-{name}，需去掉前缀。
         """
         if project_id.startswith("deploy-"):
-            container = f"sandbox-{project_id[len('deploy-'):]}"
+            container = f"sandbox-{project_id[len('deploy-') :]}"
         else:
             container = f"sandbox-{project_id}"
         try:

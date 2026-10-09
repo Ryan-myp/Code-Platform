@@ -21,11 +21,10 @@
 
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from common.auth import require_auth
@@ -82,13 +81,15 @@ def _ensure_stripe():
         raise HTTPException(400, "Stripe 未配置，请联系管理员")
     try:
         import stripe
+
         stripe.api_key = STRIPE_SECRET_KEY
         return stripe
     except ImportError:
-        raise HTTPException(503, "Stripe SDK 未安装，请运行: pip install stripe")
+        raise HTTPException(503, "Stripe SDK 未安装，请运行: pip install stripe") from None
 
 
 # ── 请求模型 ──────────────────────────────────────────────────
+
 
 class CheckoutRequest(BaseModel):
     plan: str  # pro | vip | team_pro | team_vip
@@ -124,10 +125,11 @@ async def create_checkout_session(req: CheckoutRequest, current_user: dict = req
     pricing = _PRICING[plan]
     amount = pricing["yearly_amount"] if interval == "yearly" else pricing["amount"]
     currency = pricing["currency"]
-    plan_name = pricing["name"]
+    pricing["name"]
 
     # A/B 实验价格覆盖
     from common.auth import get_ab_pricing_override
+
     ab_override = get_ab_pricing_override(plan.split("_")[0])
     if ab_override:
         amount = ab_override
@@ -189,6 +191,7 @@ async def create_checkout_session(req: CheckoutRequest, current_user: dict = req
 
     # 记录订单
     from common.db import get_db
+
     conn = get_db()
     try:
         order_id = f"order_{uuid.uuid4().hex[:12]}"
@@ -227,7 +230,7 @@ async def get_session_status(session_id: str, current_user: dict = require_auth(
             "subscription_id": getattr(session, "subscription", None),
         }
     except Exception as e:
-        raise HTTPException(404, f"会话不存在: {e}")
+        raise HTTPException(404, f"会话不存在: {e}") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -246,9 +249,9 @@ async def stripe_webhook(request: Request):
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
-        raise HTTPException(400, "无效 payload")
+        raise HTTPException(400, "无效 payload") from None
     except Exception:
-        raise HTTPException(401, "签名验证失败")
+        raise HTTPException(401, "签名验证失败") from None
 
     # 处理事件
     if event["type"] == "checkout.session.completed":
@@ -270,7 +273,6 @@ async def stripe_webhook(request: Request):
 
 async def _activate_membership_from_session(session: dict) -> None:
     """从 Stripe 会话激活会员（个人 + 团队）。"""
-    import stripe
 
     metadata = session.get("metadata", {})
     user_id = metadata.get("user_id", "")
@@ -312,8 +314,7 @@ async def _activate_membership_from_session(session: dict) -> None:
             conn.execute(
                 """UPDATE users SET membership=?, membership_expires=?, stripe_subscription_id=?,
                    daily_quota=? WHERE id=?""",
-                (plan, ends_at.isoformat(), subscription_id,
-                 9999 if plan == "vip" else 200, user_id),
+                (plan, ends_at.isoformat(), subscription_id, 9999 if plan == "vip" else 200, user_id),
             )
         conn.commit()
         logger.info("用户 %s 会员已激活: %s (%s) 至 %s", user_id, plan, interval, ends_at.date())
@@ -415,6 +416,7 @@ async def get_customer_portal(current_user: dict = require_auth()):
         user_id = current_user.get("user_id")
 
         from common.db import get_db
+
         conn = get_db()
         try:
             order = conn.execute(
@@ -450,6 +452,7 @@ async def create_team_checkout(req: TeamBillingRequest, current_user: dict = req
 
     # 验证团队权限
     from common.db import get_db
+
     conn = get_db()
     try:
         member = conn.execute(
@@ -511,10 +514,17 @@ async def create_team_checkout(req: TeamBillingRequest, current_user: dict = req
             """INSERT INTO orders (id, user_id, plan, amount, currency, interval,
                stripe_session_id, status, metadata, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-            (order_id, current_user["user_id"], f"team_{plan}", amount,
-             pricing["currency"], req.interval, session.id,
-             f'{{"team_id": "{req.team_id}", "seats": {req.seats}}}',
-             datetime.now().isoformat()),
+            (
+                order_id,
+                current_user["user_id"],
+                f"team_{plan}",
+                amount,
+                pricing["currency"],
+                req.interval,
+                session.id,
+                f'{{"team_id": "{req.team_id}", "seats": {req.seats}}}',
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
         return {

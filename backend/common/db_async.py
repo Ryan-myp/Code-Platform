@@ -13,11 +13,11 @@
 
 import logging
 import os
+import sqlite3
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
-
-import sqlite3
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +87,13 @@ async def get_async_db() -> AsyncIterator[Any]:
     if _async_conn is None:
         try:
             import asyncpg
+
             _async_conn = await asyncpg.connect(os.environ["ASYNC_PG_URL"])
             logger.info("PostgreSQL 连接已建立")
         except ImportError:
-            raise RuntimeError(
-                "asyncpg 未安装，请运行: pip install asyncpg"
-            )
+            raise RuntimeError("asyncpg 未安装，请运行: pip install asyncpg") from None
         except Exception as e:
-            raise RuntimeError(f"PostgreSQL 连接失败: {e}")
+            raise RuntimeError(f"PostgreSQL 连接失败: {e}") from e
 
     try:
         yield _async_conn
@@ -125,10 +124,7 @@ async def init_pg_schema() -> None:
         if has_users:
             logger.info("PostgreSQL 表结构已存在，跳过初始化")
             return
-        logger.warning(
-            "PostgreSQL 表结构不存在！请先从 SQLite 迁移数据："
-            "\n  python -m backend.common.db_migrate"
-        )
+        logger.warning("PostgreSQL 表结构不存在！请先从 SQLite 迁移数据：\n  python -m backend.common.db_migrate")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -168,7 +164,7 @@ async def migrate_sqlite_to_pg() -> dict:
                 continue
             try:
                 # 读取源数据
-                rows = await pg_conn.fetch(f"SELECT * FROM {table}") if False else []
+                await pg_conn.fetch(f"SELECT * FROM {table}") if False else []
                 # 注：实际迁移需要逐表拷贝，此处为框架代码
                 result["tables"] += 1
             except Exception as e:
@@ -199,6 +195,7 @@ def init_schema() -> None:
 
     if is_pg_enabled():
         import asyncio
+
         asyncio.run(init_pg_schema())
     else:
         _old_init()

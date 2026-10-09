@@ -175,12 +175,15 @@ def valid_mp3_bytes():
     import subprocess
     import tempfile
 
-    if shutil.which("ffmpeg"):
+    from common.ffmpeg_bin import FFMPEG_BIN, ffmpeg_available
+
+    _bin = FFMPEG_BIN
+    if ffmpeg_available():
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                 out = f.name
             r = subprocess.run(
-                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                [_bin, "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
                  "-t", "1", "-c:a", "libmp3lame", "-b:a", "64k", out],
                 capture_output=True, timeout=15,
             )
@@ -216,12 +219,15 @@ def valid_mp4_bytes():
     import subprocess
     import tempfile
 
-    if shutil.which("ffmpeg"):
+    from common.ffmpeg_bin import FFMPEG_BIN, ffmpeg_available
+
+    _bin = FFMPEG_BIN
+    if ffmpeg_available():
         try:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
                 out = f.name
             r = subprocess.run(
-                ["ffmpeg", "-y",
+                [_bin, "-y",
                  "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1",
                  "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
                  "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",

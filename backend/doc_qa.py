@@ -17,8 +17,8 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db_context
+from common.helpers import _notify_progress
 from common.llm import call_llm_async, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
@@ -186,7 +186,9 @@ def extract_text(filepath: str, filename: str) -> str:  # noqa: C901
 
 
 @router.post("/upload")
-async def upload_doc(file: UploadFile = File(...), background: BackgroundTasks = BackgroundTasks(), current_user: dict = require_auth()):
+async def upload_doc(
+    file: UploadFile = File(...), background: BackgroundTasks = BackgroundTasks(), current_user: dict = require_auth()
+):
     """上传文档，自动提取文本并生成摘要。"""
     if not file.filename:
         raise HTTPException(400, "未选择文件")
@@ -259,7 +261,9 @@ async def _summarize_doc_async(did: str, text: str, filename: str) -> None:
         logger.warning(f"doc summary failed: {e}")
     try:
         with get_db_context() as conn:
-            conn.execute("UPDATE doc_qa_records SET summary=? WHERE id=?", (json.dumps(summary, ensure_ascii=False), did))
+            conn.execute(
+                "UPDATE doc_qa_records SET summary=? WHERE id=?", (json.dumps(summary, ensure_ascii=False), did)
+            )
     except Exception as e:
         logger.warning(f"doc summary persist failed: {e}")
 
@@ -373,9 +377,7 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
             chunks.append(c)
     question = payload.get("question", "")
     retrieved = _retrieve_chunks(question, chunks, top_k=4)
-    context_lines = [
-        f"[{i}]（来源：{c['doc_name']}）\n{c['text']}" for i, c in enumerate(retrieved, 1)
-    ]
+    context_lines = [f"[{i}]（来源：{c['doc_name']}）\n{c['text']}" for i, c in enumerate(retrieved, 1)]
     system_prompt = DOC_QA_SYSTEM.replace("{context}", "\n\n".join(context_lines))
     history_text = ""
     for h in (payload.get("history") or [])[-6:]:

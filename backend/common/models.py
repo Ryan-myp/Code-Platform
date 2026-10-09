@@ -287,7 +287,6 @@ class SandboxSqlQueryRequest(BaseModel):
     sql: str = Field(..., min_length=1, description="只读 SQL，如 SELECT * FROM users LIMIT 10")
 
 
-
 # ══════════════════════════════════════════════════════════════
 # 对话
 # ══════════════════════════════════════════════════════════════

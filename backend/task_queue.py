@@ -882,10 +882,13 @@ async def retry_task_api(task_id: str, current_user: dict = require_auth()):
     # 重试计费：failed/success 重试 = 新一次执行（失败已退费 / 成功是新增需求），重新扣费；
     # interrupted/canceled 重试 = 续跑（提交时已扣且未退费），不重复扣费；402 拒绝重试
     if task["status"] in ("failed", "success"):
-        uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
-        quota = consume_quota(uid)
-        if not quota.get("allowed"):
-            raise HTTPException(402, "今日免费额度已用完，升级会员可继续使用（剩余 0 次）")
+        # 计费对象 = 任务属主（_check_owner 已保证请求者即属主）；
+        # 本地/存量任务无 user_id 时跳过扣费（无账可扣，避免本地模式重试永久 402）
+        uid = task.get("user_id") or (current_user.get("user_id", "") if isinstance(current_user, dict) else "")
+        if uid:
+            quota = consume_quota(uid)
+            if not quota.get("allowed"):
+                raise HTTPException(402, "今日免费额度已用完，升级会员可继续使用（剩余 0 次）")
     with get_db_context() as conn:
         conn.execute(
             """UPDATE async_tasks

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage, _safe_exc_msg
+from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 

@@ -41,7 +41,7 @@ def _route_matches(bp: str, path: str) -> bool:
     ps = [s for s in path.split("/") if s]
     if len(bs) != len(ps):
         return False
-    for b, p in zip(bs, ps):
+    for b, p in zip(bs, ps, strict=False):
         if b.startswith("{") and b.endswith("}"):
             continue  # 动态段匹配任意
         if b != p:
@@ -88,10 +88,12 @@ def gate_undefined() -> tuple[bool, str]:
     # 优先用 pyflakes，缺失时回退 py_compile（只查语法）
     py = sys.executable or "python3"
     try:
-        proc = subprocess.run([py, "-m", "pyflakes", *files],
-                               capture_output=True, text=True, timeout=180)
-        undefined = [ln for ln in (proc.stdout + proc.stderr).splitlines()
-                     if "undefined name" in ln and "unable to detect" not in ln]
+        proc = subprocess.run([py, "-m", "pyflakes", *files], capture_output=True, text=True, timeout=180)
+        undefined = [
+            ln
+            for ln in (proc.stdout + proc.stderr).splitlines()
+            if "undefined name" in ln and "unable to detect" not in ln
+        ]
     except FileNotFoundError:
         # 无 pyflakes：退化为逐文件语法编译
         bad = []
@@ -104,8 +106,10 @@ def gate_undefined() -> tuple[bool, str]:
         return True, "undefined 闸 PASS（无 pyflakes，语法编译通过）"
 
     if undefined:
-        return False, f"undefined 闸 FAIL：{len(undefined)} 个未定义变量（会运行时 NameError）\n" + "\n".join(undefined[:40])
-    return True, f"undefined 闸 PASS：全后端 0 未定义变量"
+        return False, f"undefined 闸 FAIL：{len(undefined)} 个未定义变量（会运行时 NameError）\n" + "\n".join(
+            undefined[:40]
+        )
+    return True, "undefined 闸 PASS：全后端 0 未定义变量"
 
 
 def gate_secrets() -> tuple[bool, str]:
@@ -114,7 +118,7 @@ def gate_secrets() -> tuple[bool, str]:
         re.compile(r'(?:api_key|apikey|secret|token|password|passwd)\s*[:=]\s*[\'"]([A-Za-z0-9_\-]{16,})[\'"]', re.I),
         re.compile(r'[\'"]sk-[A-Za-z0-9]{20,}[\'"]'),
     ]
-    allow = re.compile(r'getenv|environ|os\.environ|placeholder|example|your_|xxxx|test|dummy', re.I)
+    allow = re.compile(r"getenv|environ|os\.environ|placeholder|example|your_|xxxx|test|dummy", re.I)
     hits: list[str] = []
     for f in BACKEND.rglob("*.py"):
         for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):

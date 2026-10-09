@@ -1,4 +1,5 @@
 """用户反馈API — 收集用户反馈和建议。"""
+
 import logging
 import uuid
 from datetime import datetime
@@ -29,12 +30,18 @@ async def submit_feedback(req: FeedbackCreateRequest, current_user: dict = requi
     try:
         feedback_id = f"fb_{uuid.uuid4().hex[:12]}"
         conn.execute(
-            """INSERT INTO feedbacks (id, user_id, type, title, content, category, 
+            """INSERT INTO feedbacks (id, user_id, type, title, content, category,
                contact, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
             (
-                feedback_id, user_id, req.type, req.title, req.content,
-                req.category, req.contact, datetime.now().isoformat(),
+                feedback_id,
+                user_id,
+                req.type,
+                req.title,
+                req.content,
+                req.category,
+                req.contact,
+                datetime.now().isoformat(),
             ),
         )
         conn.commit()
@@ -42,7 +49,7 @@ async def submit_feedback(req: FeedbackCreateRequest, current_user: dict = requi
         return {"id": feedback_id, "message": "反馈提交成功，感谢您的建议！"}
     except Exception as e:
         logger.error(f"Feedback submission failed: {e}")
-        raise HTTPException(500, "提交失败，请稍后重试")
+        raise HTTPException(500, "提交失败，请稍后重试") from e
     finally:
         conn.close()
 
@@ -54,11 +61,11 @@ async def get_my_feedbacks(limit: int = 20, current_user: dict = require_auth())
     conn = get_db()
     try:
         rows = conn.execute(
-            """SELECT * FROM feedbacks 
-               WHERE user_id = ? 
-               ORDER BY created_at DESC 
+            """SELECT * FROM feedbacks
+               WHERE user_id = ?
+               ORDER BY created_at DESC
                LIMIT ?""",
-            (user_id, limit)
+            (user_id, limit),
         ).fetchall()
         return {"feedbacks": [dict(r) for r in rows], "total": len(rows)}
     finally:
@@ -74,7 +81,7 @@ async def get_all_feedbacks(
     """管理员查看所有反馈（仅管理员）。"""
     if current_user.get("role") != "admin":
         raise HTTPException(403, "权限不足")
-    
+
     conn = get_db()
     try:
         where = "1=1"
@@ -82,10 +89,9 @@ async def get_all_feedbacks(
         if status:
             where += " AND status = ?"
             params.append(status)
-        
+
         rows = conn.execute(
-            f"SELECT * FROM feedbacks WHERE {where} ORDER BY created_at DESC LIMIT ?",
-            params + [limit]
+            f"SELECT * FROM feedbacks WHERE {where} ORDER BY created_at DESC LIMIT ?", params + [limit]
         ).fetchall()
         return {"feedbacks": [dict(r) for r in rows], "total": len(rows)}
     finally:
@@ -101,16 +107,13 @@ async def update_feedback_status(
     """更新反馈状态（仅管理员）。"""
     if current_user.get("role") != "admin":
         raise HTTPException(403, "权限不足")
-    
+
     if status not in ("pending", "processing", "resolved", "closed"):
         raise HTTPException(400, "无效的状态值")
-    
+
     conn = get_db()
     try:
-        conn.execute(
-            "UPDATE feedbacks SET status=? WHERE id=?",
-            (status, feedback_id)
-        )
+        conn.execute("UPDATE feedbacks SET status=? WHERE id=?", (status, feedback_id))
         conn.commit()
         return {"success": True, "message": f"反馈状态已更新为: {status}"}
     finally:

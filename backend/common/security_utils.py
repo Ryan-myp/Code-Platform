@@ -1,8 +1,8 @@
 """安全工具函数 — 统一错误处理和鉴权。"""
-import logging
-import os
+
 import functools
-from typing import Callable
+import logging
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -28,43 +28,46 @@ def safe_http_error(status_code: int, message: str = None) -> str:
 
 def require_api_key(func: Callable) -> Callable:
     """API Key鉴权装饰器。"""
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         from fastapi import Header, HTTPException
-        api_key = kwargs.get('api_key') or Header(None)
+
+        api_key = kwargs.get("api_key") or Header(None)
         if not api_key:
             raise HTTPException(401, safe_http_error(401))
         # 验证API Key
         from common.db import get_db
+
         conn = get_db()
         try:
-            row = conn.execute(
-                "SELECT id, user_id, name FROM api_keys WHERE key=? AND active=1",
-                (api_key,)
-            ).fetchone()
+            row = conn.execute("SELECT id, user_id, name FROM api_keys WHERE key=? AND active=1", (api_key,)).fetchone()
             if not row:
                 raise HTTPException(401, safe_http_error(401))
-            kwargs['current_user'] = {"user_id": row["user_id"], "role": "api"}
+            kwargs["current_user"] = {"user_id": row["user_id"], "role": "api"}
         finally:
             conn.close()
         return await func(*args, **kwargs)
+
     return wrapper
 
 
 def optional_auth(func: Callable) -> Callable:
     """可选鉴权 — 有token就验证，没有也放行（用于公开+私有混合端点）。"""
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        from fastapi import Request
-        request = kwargs.get('request')
+        request = kwargs.get("request")
         if request:
             auth_header = request.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 from common.auth import decode_access_token
+
                 try:
                     user = decode_access_token(auth_header[7:])
-                    kwargs['current_user'] = user
-                except:
+                    kwargs["current_user"] = user
+                except Exception:
                     pass
         return await func(*args, **kwargs)
+
     return wrapper

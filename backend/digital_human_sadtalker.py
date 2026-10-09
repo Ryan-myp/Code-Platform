@@ -9,6 +9,7 @@ POST /release_task（multipart）→ 轮询 /query_result → 下载 /v1/video �
 - v13.23 推理分辨率 256→512（内存充足时）；超限自动保 256，平台缩放链路保持
 - stage 映射：pending 排队 / extract_3dmm / audio_to_coeff / face_render（耗时最长）
 """
+
 from __future__ import annotations
 
 import json
@@ -18,18 +19,20 @@ import shutil
 import subprocess
 import tempfile
 import time
-from common.helpers import _notify_progress
 
 import requests
+
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
+from common.helpers import _notify_progress
 
 logger = logging.getLogger(__name__)
 
 AVATAR_API_BASE = os.environ.get("AVATAR_API_BASE", "http://127.0.0.1:9890")
-_AVATAR_TIMEOUT = 30          # HTTP 请求超时
-_AVATAR_POLL_INTERVAL = 15    # 任务轮询间隔
+_AVATAR_TIMEOUT = 30  # HTTP 请求超时
+_AVATAR_POLL_INTERVAL = 15  # 任务轮询间隔
 # 推理总时长上限：avatar 引擎串行（同时仅 1 任务），需覆盖「排队等待 + 自身推理」两段耗时。
 # 实测 CPU 推理 15-25s 音频约 40-62 分钟，排队长任务时总时长可达 2 小时 → 取 7200s。
-_AVATAR_MAX_WAIT = 7200       # 推理总时长上限（120 分钟）
+_AVATAR_MAX_WAIT = 7200  # 推理总时长上限（120 分钟）
 _avatar_cache: dict = {"ok": None, "at": 0.0, "busy": 0}
 
 # SadTalker 原生输出 256x256（内存受限时）/ 512x512（v13.23 默认）；平台按用户选择的分辨率统一缩放
@@ -97,13 +100,21 @@ def _apply_watermark(video_path: str, size: tuple[int, int] = (1280, 720)) -> No
     enc = _pick_video_encoder()
     quality = ["-crf", "18"] if enc == "libx264" else ["-b:v", "5M", "-maxrate", "7M", "-bufsize", "10M"]
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", wm_path,
-        "-filter_complex", "[0:v][1:v]overlay=(W-w-30):(H-h-30)",
-        "-c:v", enc, *quality,
-        "-c:a", "copy",
-        "-movflags", "+faststart",
+        FFMPEG_BIN,
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        wm_path,
+        "-filter_complex",
+        "[0:v][1:v]overlay=(W-w-30):(H-h-30)",
+        "-c:v",
+        enc,
+        *quality,
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
         tmp_out,
     ]
     subprocess.run(cmd, check=True, capture_output=True, timeout=900)
@@ -120,12 +131,19 @@ def _scale_to_resolution(video_path: str, resolution: str) -> None:
     enc = "libx264"
     quality = ["-crf", "18", "-preset", "slow"]
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-vf", f"scale={size[0]}:{size[1]}:flags=lanczos",
-        "-c:v", enc, *quality,
-        "-c:a", "copy",
-        "-movflags", "+faststart",
+        FFMPEG_BIN,
+        "-y",
+        "-i",
+        video_path,
+        "-vf",
+        f"scale={size[0]}:{size[1]}:flags=lanczos",
+        "-c:v",
+        enc,
+        *quality,
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
         tmp_out,
     ]
     subprocess.run(cmd, check=True, capture_output=True, timeout=900)
@@ -142,7 +160,6 @@ EMOTION_EXPRESSION_SCALE = {
     "gentle": 1.5,
     "serious": 1.3,
 }
-
 
 
 def _sadtalker_submit(photo_path: str, audio_path: str, render_size: int, expression_scale: float) -> str:
@@ -195,6 +212,7 @@ def _sadtalker_download(file_url: str, output_path: str) -> None:
         f.write(dl.content)
     if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
         raise RuntimeError("SadTalker 视频回传失败（文件无效）")
+
 
 def generate_with_sadtalker(  # noqa: C901
     photo_path: str,

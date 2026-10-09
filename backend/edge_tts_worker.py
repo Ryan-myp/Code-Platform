@@ -55,9 +55,7 @@ async def main() -> int:
                 off = msg.get("offset") or 0
                 dur = msg.get("duration") or 0
                 try:
-                    words.append(
-                        {"text": msg.get("text", ""), "start": off / 1e7, "end": (off + dur) / 1e7}
-                    )
+                    words.append({"text": msg.get("text", ""), "start": off / 1e7, "end": (off + dur) / 1e7})
                 except TypeError:
                     # 个别消息字段缺失时静默跳过该词
                     pass

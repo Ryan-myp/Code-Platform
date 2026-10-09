@@ -397,7 +397,7 @@ export default function TemplateMarketPage() {
 
           {imgLoading ? (
             <SkeletonGrid count={8} />
-          ) : !imgStore || imgStore.items.length === 0 ? (
+          ) : !(imgStore?.items || []).length ? (
             <Empty
               icon={ImageIcon}
               title="暂无图片模板"
@@ -405,7 +405,7 @@ export default function TemplateMarketPage() {
             />
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-              {imgStore.items.map((t) => (
+              {(imgStore.items || []).map((t) => (
                 <div
                   key={t.id}
                   className="group bg-white rounded-2xl border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-0.5 hover:border-amber-300 transition-all flex flex-col"

@@ -3,9 +3,6 @@
 
 import asyncio
 import base64
-import hashlib
-import html
-import io
 import json
 import logging
 import os
@@ -21,9 +18,9 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db
-from common.llm import call_llm_async, _safe_exc_msg
+from common.helpers import _notify_progress
+from common.llm import call_llm_async
 from permissions import access_status, get_visibility_map, load_user_ctx
 from task_queue import create_task, register_handler
 
@@ -37,8 +34,6 @@ router = APIRouter()
 # ══════════════════════════════════════════════════════════════
 
 from tool_definitions import TOOL_DEFINITIONS  # noqa: F401  # 工具定义数据(拆分自 tool_hub)
-
-
 
 # ══════════════════════════════════════════════════════════════
 # 请求模型
@@ -129,10 +124,8 @@ async def enhance_prompt(req: EnhancePromptRequest, current_user: dict = require
         raise HTTPException(400, "内容过长（2000 字以内），请精简后重试")
     system_prompt = _ENHANCE_SYSTEMS.get(req.style, _ENHANCE_SYSTEMS["general"])
     try:
-        enhanced = await call_llm_async(
-            system_prompt, f"【原始内容】\n{text}", max_tokens=800, temperature=0.7
-        )
-        enhanced = enhanced.strip().strip('"\'`')
+        enhanced = await call_llm_async(system_prompt, f"【原始内容】\n{text}", max_tokens=800, temperature=0.7)
+        enhanced = enhanced.strip().strip("\"'`")
         if not enhanced or enhanced.lower().startswith(("抱歉", "sorry", "无法")):
             raise HTTPException(502, "智能补充暂不可用，请稍后重试")
         return {"ok": True, "enhanced": enhanced}
@@ -276,7 +269,13 @@ async def run_tool(
         user_id=str(current_user.get("user_id", "")),
         role=current_user.get("role", ""),
     )
-    return {"ok": True, "task_id": task["id"], "status": task["status"], "message": "工具执行任务已提交，可在任务中心或当前页面查看进度"}
+    return {
+        "ok": True,
+        "task_id": task["id"],
+        "status": task["status"],
+        "message": "工具执行任务已提交，可在任务中心或当前页面查看进度",
+    }
+
 
 # ══════════════════════════════════════════════════════════════
 # v20 实算工具执行引擎（不消耗 LLM 额度）
@@ -285,32 +284,69 @@ async def run_tool(
 # ── 单位换算表 ─────────────────────────────────────────────────
 _UNIT_CONVERSIONS = {
     "长度": {
-        "m": 1.0, "km": 1000.0, "cm": 0.01, "mm": 0.001,
-        "mi": 1609.344, "yd": 0.9144, "ft": 0.3048, "in": 0.0254,
-        "nmi": 1852.0, "ly": 9.461e15,
+        "m": 1.0,
+        "km": 1000.0,
+        "cm": 0.01,
+        "mm": 0.001,
+        "mi": 1609.344,
+        "yd": 0.9144,
+        "ft": 0.3048,
+        "in": 0.0254,
+        "nmi": 1852.0,
+        "ly": 9.461e15,
     },
     "重量": {
-        "kg": 1.0, "g": 0.001, "mg": 1e-6,
-        "t": 1000.0, "lb": 0.453592, "oz": 0.0283495, "ct": 0.0002,
+        "kg": 1.0,
+        "g": 0.001,
+        "mg": 1e-6,
+        "t": 1000.0,
+        "lb": 0.453592,
+        "oz": 0.0283495,
+        "ct": 0.0002,
     },
     "面积": {
-        "m2": 1.0, "km2": 1e6, "cm2": 1e-4, "mm2": 1e-6,
-        "ha": 10000.0, "ac": 4046.86, "ft2": 0.092903, "in2": 0.00064516,
+        "m2": 1.0,
+        "km2": 1e6,
+        "cm2": 1e-4,
+        "mm2": 1e-6,
+        "ha": 10000.0,
+        "ac": 4046.86,
+        "ft2": 0.092903,
+        "in2": 0.00064516,
     },
     "体积": {
-        "l": 1.0, "ml": 0.001, "m3": 1000.0, "cm3": 0.001,
-        "gal": 3.78541, "qt": 0.946353, "pt": 0.473176, "cup": 0.236588,
+        "l": 1.0,
+        "ml": 0.001,
+        "m3": 1000.0,
+        "cm3": 0.001,
+        "gal": 3.78541,
+        "qt": 0.946353,
+        "pt": 0.473176,
+        "cup": 0.236588,
     },
     "速度": {
-        "ms": 1.0, "kmh": 0.277778, "mph": 0.44704, "knot": 0.514444,
+        "ms": 1.0,
+        "kmh": 0.277778,
+        "mph": 0.44704,
+        "knot": 0.514444,
     },
     "数据量": {
-        "b": 1.0, "kb": 1024.0, "mb": 1024**2, "gb": 1024**3,
-        "tb": 1024**4, "pb": 1024**5,
+        "b": 1.0,
+        "kb": 1024.0,
+        "mb": 1024**2,
+        "gb": 1024**3,
+        "tb": 1024**4,
+        "pb": 1024**5,
     },
     "时间": {
-        "s": 1.0, "ms": 0.001, "min": 60.0, "h": 3600.0, "d": 86400.0,
-        "wk": 604800.0, "mo": 2592000.0, "yr": 31536000.0,
+        "s": 1.0,
+        "ms": 0.001,
+        "min": 60.0,
+        "h": 3600.0,
+        "d": 86400.0,
+        "wk": 604800.0,
+        "mo": 2592000.0,
+        "yr": 31536000.0,
     },
 }
 
@@ -400,7 +436,7 @@ def _compute_unit_converter(params: dict) -> dict:
     elif abs(result) < 0.001 and result != 0:
         result_str = f"{result:.6g}"
     else:
-        result_str = f"{result:.6f}".rstrip('0').rstrip('.')
+        result_str = f"{result:.6f}".rstrip("0").rstrip(".")
 
     return {
         "category": category,
@@ -415,8 +451,8 @@ async def _compute_csv_analyzer(input_text: str, params: dict) -> dict:
     import csv as _csv
     import io as _io
 
-    depth = params.get("analysis_depth", "基础统计")
-    lines = [l for l in input_text.strip().split("\n") if l.strip()]
+    params.get("analysis_depth", "基础统计")
+    lines = [line for line in input_text.strip().split("\n") if line.strip()]
     if len(lines) < 2:
         return {"error": "请输入至少包含表头的 CSV 数据（两行以上）"}
 
@@ -474,7 +510,7 @@ async def _compute_csv_analyzer(input_text: str, params: dict) -> dict:
             vals = numeric_cols[h]
             if vals:
                 stats_lines.append(
-                    f"  • `{h}`：均值 {sum(vals)/len(vals):.2f}，范围 [{min(vals):.2f} ~ {max(vals):.2f}]，共 {len(vals)} 个有效值"
+                    f"  • `{h}`：均值 {sum(vals) / len(vals):.2f}，范围 [{min(vals):.2f} ~ {max(vals):.2f}]，共 {len(vals)} 个有效值"
                 )
         else:
             unique = len(set(row[headers.index(h)].strip() for row in rows))
@@ -494,10 +530,14 @@ def _compute_json_formatter(input_text: str, params: dict) -> dict:
         return {"error": f"JSON 语法错误：{e}", "valid": False}
 
     if op == "校验":
-        return {"valid": True, "type": type(data).__name__, "keys": list(data.keys()) if isinstance(data, dict) else f"array[{len(data)}]"}
+        return {
+            "valid": True,
+            "type": type(data).__name__,
+            "keys": list(data.keys()) if isinstance(data, dict) else f"array[{len(data)}]",
+        }
     elif op == "压缩":
         compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-        return {"compact": compact, "savings": f"{(1 - len(compact)/max(len(input_text),1))*100:.1f}%"}
+        return {"compact": compact, "savings": f"{(1 - len(compact) / max(len(input_text), 1)) * 100:.1f}%"}
     else:
         formatted = json.dumps(data, ensure_ascii=False, indent=indent)
         return {"formatted": formatted, "original_size": len(input_text), "formatted_size": len(formatted)}
@@ -510,15 +550,15 @@ def _compute_regex_builder(input_text: str, params: dict) -> dict:
     explanations = []
 
     rules = [
-        ("邮箱", r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', "匹配标准邮箱格式"),
-        ("手机号", r'^1[3-9]\d{9}$', "匹配中国大陆手机号"),
-        ("身份证", r'^\d{17}[\dXx]$', "匹配18位身份证号"),
-        ("网址", r'^https?://[^\s]+$', "匹配 HTTP/HTTPS 网址"),
-        ("ipv4", r'^(\d{1,3}\.){3}\d{1,3}$', "匹配 IPv4 地址"),
-        ("日期", r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}$', "匹配日期格式"),
-        ("中文", r'[\u4e00-\u9fff]+', "匹配连续中文字符"),
-        ("整数", r'^-?\d+$', "匹配整数（含负数）"),
-        ("浮点", r'^-?\d+\.\d+$', "匹配浮点数"),
+        ("邮箱", r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", "匹配标准邮箱格式"),
+        ("手机号", r"^1[3-9]\d{9}$", "匹配中国大陆手机号"),
+        ("身份证", r"^\d{17}[\dXx]$", "匹配18位身份证号"),
+        ("网址", r"^https?://[^\s]+$", "匹配 HTTP/HTTPS 网址"),
+        ("ipv4", r"^(\d{1,3}\.){3}\d{1,3}$", "匹配 IPv4 地址"),
+        ("日期", r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", "匹配日期格式"),
+        ("中文", r"[\u4e00-\u9fff]+", "匹配连续中文字符"),
+        ("整数", r"^-?\d+$", "匹配整数（含负数）"),
+        ("浮点", r"^-?\d+\.\d+$", "匹配浮点数"),
     ]
     for keyword, regex, desc in rules:
         if keyword in text:
@@ -526,11 +566,11 @@ def _compute_regex_builder(input_text: str, params: dict) -> dict:
             explanations.append(desc)
 
     if not patterns:
-        patterns.append(r'.*')
+        patterns.append(r".*")
         explanations.append("通用匹配（未识别特定模式，可补充描述）")
 
     return {
-        "patterns": [{"regex": p, "explanation": e} for p, e in zip(patterns, explanations)],
+        "patterns": [{"regex": p, "explanation": e} for p, e in zip(patterns, explanations, strict=False)],
         "dialect": params.get("language", "Python/JavaScript"),
         "usage_tip": f"在 Python 中：re.match(r'{patterns[0]}', text)",
     }
@@ -551,7 +591,7 @@ def _compute_sql_generator(input_text: str, params: dict) -> dict:
     if any(k in text for k in ("删除", "delete", "移除")):
         actions.append("DELETE")
 
-    table_match = re.search(r'(从|表|table|来自)\s*(\w+)', text)
+    table_match = re.search(r"(从|表|table|来自)\s*(\w+)", text)
     table_name = table_match.group(2) if table_match else "your_table"
 
     sql = ""
@@ -576,19 +616,20 @@ def _compute_sql_generator(input_text: str, params: dict) -> dict:
 def _compute_date_calculator(input_text: str, params: dict) -> dict:
     """日期计算器。"""
     from datetime import datetime as _dt
+
     today = _dt.now().date()
     calc_type = params.get("calc_type", "日期加减")
     result = {"today": str(today), "calc_type": calc_type}
 
     def _parse_date(s: str):
-        m = re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+        m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
         if m:
             return _dt(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
         return None
 
     if calc_type == "日期加减":
         base = _parse_date(input_text) or today
-        m = re.search(r'([+-]?\d+)\s*(天|日|周|星期|月|年)', input_text)
+        m = re.search(r"([+-]?\d+)\s*(天|日|周|星期|月|年)", input_text)
         if m:
             n = int(m.group(1))
             unit = m.group(2)
@@ -611,7 +652,7 @@ def _compute_date_calculator(input_text: str, params: dict) -> dict:
         else:
             result["age"] = "请提供出生日期（YYYY-MM-DD）"
     elif calc_type == "时间差":
-        dates = re.findall(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', input_text)
+        dates = re.findall(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", input_text)
         if len(dates) >= 2:
             d1 = _dt(int(dates[0][0]), int(dates[0][1]), int(dates[0][2])).date()
             d2 = _dt(int(dates[1][0]), int(dates[1][1]), int(dates[1][2])).date()
@@ -619,7 +660,7 @@ def _compute_date_calculator(input_text: str, params: dict) -> dict:
         else:
             result["days_diff"] = "请提供两个日期"
     elif calc_type == "工作日计算":
-        m = re.search(r'(\d+)\s*个工作日', input_text)
+        m = re.search(r"(\d+)\s*个工作日", input_text)
         if m:
             n = int(m.group(1))
             current = today
@@ -632,9 +673,10 @@ def _compute_date_calculator(input_text: str, params: dict) -> dict:
         else:
             result["target_date"] = "格式：今天之后 N 个工作日"
     elif calc_type == "月份天数":
-        m = re.search(r'(\d{4})[-/](\d{1,2})', input_text)
+        m = re.search(r"(\d{4})[-/](\d{1,2})", input_text)
         if m:
             import calendar
+
             y, mo = int(m.group(1)), int(m.group(2))
             result["days"] = calendar.monthrange(y, mo)[1]
             result["month"] = f"{y}-{mo:02d}"
@@ -645,7 +687,7 @@ def _compute_date_calculator(input_text: str, params: dict) -> dict:
 
 def _compute_markdown_table(input_text: str, params: dict) -> dict:
     """Markdown 表格生成器。"""
-    lines = [l.strip() for l in input_text.strip().split("\n") if l.strip()]
+    lines = [line.strip() for line in input_text.strip().split("\n") if line.strip()]
     if not lines:
         return {"error": "请输入表格数据"}
 
@@ -669,7 +711,7 @@ def _compute_markdown_table(input_text: str, params: dict) -> dict:
     separator = " | ".join(align_map.get(align, ":---") for _ in range(max_cols))
     header = " | ".join(rows[0][:max_cols])
     body = "\n".join(" | ".join(str(c)[:30] for c in r[:max_cols]) for r in rows[1:])
-    table = f"| {header} |\n| {separator} |\n" + "\n".join(f"| {l} |" for l in body.split("\n") if l)
+    table = f"| {header} |\n| {separator} |\n" + "\n".join(f"| {lb} |" for lb in body.split("\n") if lb)
 
     return {"markdown_table": table, "rows": len(rows) - 1, "columns": max_cols}
 
@@ -688,7 +730,7 @@ def _compute_color_converter(input_text: str, params: dict) -> dict:
             else:
                 return {"error": "HEX 格式错误，支持 #RRGGBB 或 #RGB"}
         elif inp_fmt == "RGB":
-            m = re.search(r'(\d+)\s*,\s*(\d+)\s*,\s*(\d+)', text)
+            m = re.search(r"(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", text)
             if not m:
                 return {"error": "RGB 格式错误，请使用 255, 128, 64 格式"}
             r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -699,11 +741,11 @@ def _compute_color_converter(input_text: str, params: dict) -> dict:
         r_n, g_n, b_n = r / 255.0, g / 255.0, b / 255.0
         c_max, c_min = max(r_n, g_n, b_n), min(r_n, g_n, b_n)
         delta = c_max - c_min
-        l = (c_max + c_min) / 2.0
+        lum = (c_max + c_min) / 2.0
         if delta == 0:
             h = s = 0.0
         else:
-            s = delta / (1 - abs(2 * l - 1))
+            s = delta / (1 - abs(2 * lum - 1))
             if c_max == r_n:
                 h = ((g_n - b_n) / delta) % 6
             elif c_max == g_n:
@@ -716,8 +758,8 @@ def _compute_color_converter(input_text: str, params: dict) -> dict:
         return {
             "hex": hex_val.upper(),
             "rgb": f"rgb({r}, {g}, {b})",
-            "hsl": f"hsl({round(h, 1)}, {round(s * 100, 1)}%, {round(l * 100, 1)}%)",
-            "brightness": "亮" if l > 0.5 else "暗",
+            "hsl": f"hsl({round(h, 1)}, {round(s * 100, 1)}%, {round(lum * 100, 1)}%)",
+            "brightness": "亮" if lum > 0.5 else "暗",
         }
     except Exception as e:
         return {"error": f"转换失败：{e}"}
@@ -731,7 +773,7 @@ def _compute_diff_comparator(input_text: str, params: dict) -> dict:
     if len(parts) < 2:
         blank_idx = input_text.find("\n\n")
         if blank_idx > 0:
-            parts = [input_text[:blank_idx], input_text[blank_idx + 2:]]
+            parts = [input_text[:blank_idx], input_text[blank_idx + 2 :]]
         else:
             lines = input_text.strip().split("\n")
             mid = len(lines) // 2
@@ -739,8 +781,8 @@ def _compute_diff_comparator(input_text: str, params: dict) -> dict:
 
     text1, text2 = parts[0].strip(), parts[1].strip()
     diff = list(unified_diff(text1.splitlines(), text2.splitlines(), lineterm=""))
-    added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+    added = sum(1 for ln in diff if ln.startswith("+") and not ln.startswith("+++"))
+    removed = sum(1 for ln in diff if ln.startswith("-") and not ln.startswith("---"))
     return {
         "mode": params.get("comparison_mode", "逐行对比"),
         "added_lines": added,
@@ -752,6 +794,7 @@ def _compute_diff_comparator(input_text: str, params: dict) -> dict:
 def _compute_password_generator(params: dict) -> dict:
     """密码生成器。"""
     import secrets
+
     length = int(params.get("length", 16))
     include_symbols = params.get("include_symbols", True)
     exclude_ambiguous = params.get("exclude_ambiguous", True)
@@ -803,7 +846,9 @@ def _compute_base64_tool(input_text: str, params: dict) -> dict:
     try:
         if op == "编码":
             raw = input_text.encode("utf-8")
-            result = base64.urlsafe_b64encode(raw).decode("ascii") if url_safe else base64.b64encode(raw).decode("ascii")
+            result = (
+                base64.urlsafe_b64encode(raw).decode("ascii") if url_safe else base64.b64encode(raw).decode("ascii")
+            )
             return {
                 "operation": "编码",
                 "input_length": len(input_text),
@@ -812,11 +857,14 @@ def _compute_base64_tool(input_text: str, params: dict) -> dict:
             }
         else:
             cleaned = input_text.replace("\n", "").replace(" ", "")
-            result = base64.urlsafe_b64decode(cleaned).decode("utf-8", errors="replace") if url_safe else base64.b64decode(cleaned).decode("utf-8", errors="replace")
+            result = (
+                base64.urlsafe_b64decode(cleaned).decode("utf-8", errors="replace")
+                if url_safe
+                else base64.b64decode(cleaned).decode("utf-8", errors="replace")
+            )
             return {"operation": "解码", "output": result, "output_length": len(result)}
     except Exception as e:
         return {"error": f"{op}失败：{e}"}
-
 
 
 async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> dict:
@@ -975,7 +1023,6 @@ async def get_my_records(limit: int = 50, current_user: dict = require_auth()):
         conn.close()
 
 
-
 def _extract_excel(tmp_path: str, filename: str) -> str:
     """Excel 内容提取为 Markdown 表格。"""
     NL = "\n"
@@ -1094,7 +1141,9 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = require
             "text": lambda: _extract_text(tmp_path),
             "word": lambda: _extract_word(tmp_path, file.filename),
         }
-        extracted_content = await asyncio.to_thread(extractors[file_type]) if file_type == "excel" else extractors[file_type]()
+        extracted_content = (
+            await asyncio.to_thread(extractors[file_type]) if file_type == "excel" else extractors[file_type]()
+        )
         return {"ok": True, "filename": file.filename, "content": extracted_content, "file_type": file_type}
     finally:
         # 清理临时文件

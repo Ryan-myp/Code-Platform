@@ -58,6 +58,7 @@ def require_model(model_name: str, feature_label: str) -> str:
         )
     return model_name
 
+
 # ── 视频生成备用通道（预留）：阿里云百炼 wan2.2 文生视频 ─────────
 # 配置 DASHSCOPE_API_KEY 后 video_factory 自动启用 dashscope 通道（agnes 失败时 failover）
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY", "")
@@ -212,8 +213,8 @@ def resolve_api_key() -> str:
 
 # 支持的供应商（模式 B：用户选择中转站，各自 base 平台写死，防绕开计费）
 RELAY_PROVIDERS = {
-    "aixinghuo": "https://aixinghuo.net/v1",        # 爱星火中转站（默认）
-    "agnes": "https://apihub.agnes-ai.cn/v1",      # AGNES 官方 API
+    "aixinghuo": "https://aixinghuo.net/v1",  # 爱星火中转站（默认）
+    "agnes": "https://apihub.agnes-ai.cn/v1",  # AGNES 官方 API
 }
 
 
@@ -289,6 +290,7 @@ def get_model_config(model_name: str | None = None) -> dict:
     if user_key:
         return {"model": name, "api_key": user_key, "api_base": resolve_api_base()}
     return {"model": name, "api_key": AGNES_API_KEY, "api_base": resolve_api_base()}
+
 
 def resolve_feature_model(uid: str, feature: str, fallback: str = "") -> str:
     """读取用户按功能选择的模型偏好（model_prefs:{uid} {feature}），未选择用 fallback。"""

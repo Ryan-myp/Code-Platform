@@ -594,9 +594,12 @@ async def _publish_wechat(acc: dict, req: PublishRequest) -> str:
 
 # ── 抖音：素材上传 + 发布 ────────────────────────────────────
 
+
 async def _dy_upload_video(client, headers: dict, req: PublishRequest) -> str:
     """抖音视频上传（init → upload → complete），返回 video_id。"""
-    resp = await client.post("https://open.douyin.com/video/init/", headers=headers, json={"upload_url": "", "video_id": ""})
+    resp = await client.post(
+        "https://open.douyin.com/video/init/", headers=headers, json={"upload_url": "", "video_id": ""}
+    )
     init_data = resp.json()
     upload_url = ((init_data.get("data") or {}).get("upload") or {}).get("upload_url")
     video_id = ((init_data.get("data") or {}).get("upload") or {}).get("video_id")
@@ -617,8 +620,10 @@ async def _dy_publish_images(client, headers: dict, req: PublishRequest, text: s
     img_ids = []
     for url in req.asset_urls[:9]:
         resp = await client.post(
-            "https://open.douyin.com/image/upload/", headers=headers,
-            data={"text": ""}, files={"image": (_asset_filename(url), await _fetch_asset_bytes(url))},
+            "https://open.douyin.com/image/upload/",
+            headers=headers,
+            data={"text": ""},
+            files={"image": (_asset_filename(url), await _fetch_asset_bytes(url))},
         )
         img_id = ((resp.json().get("data") or {}).get("image") or {}).get("image_id")
         if img_id:
@@ -626,9 +631,11 @@ async def _dy_publish_images(client, headers: dict, req: PublishRequest, text: s
     if not img_ids:
         raise HTTPException(502, "抖音图片上传失败")
     return await client.post(
-        "https://open.douyin.com/image/create/", headers=headers,
+        "https://open.douyin.com/image/create/",
+        headers=headers,
         json={"image_ids": img_ids, "text": text, "privacy_level": 0},
     )
+
 
 async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
@@ -668,6 +675,7 @@ async def _publish_douyin(acc: dict, req: PublishRequest) -> str:  # noqa: C901
 
 # ── 快手：素材上传 + 发布 ────────────────────────────────────
 
+
 async def _ks_upload_media(client, headers: dict, req: PublishRequest) -> object:
     """上传素材到快手：视频走 uploadId 两段式，图片逐个上传。返回 resourceId 或 id 列表。"""
     if req.content_type == "video":
@@ -704,6 +712,7 @@ async def _ks_upload_media(client, headers: dict, req: PublishRequest) -> object
         if rid:
             img_ids.append(rid)
     return img_ids
+
 
 async def _publish_kuaishou(acc: dict, req: PublishRequest) -> str:  # noqa: C901
     if not req.asset_urls:
@@ -764,7 +773,6 @@ def _ensure_publish_columns(conn) -> None:
     if "reviewed_by" not in cols:
         conn.execute("ALTER TABLE publish_records ADD COLUMN reviewed_by TEXT DEFAULT ''")
     conn.commit()
-
 
 
 def _publish_pick_candidates(acc: dict | None, platform: str) -> list:
@@ -841,6 +849,7 @@ def _publish_guide_response(record_id: str, req: PublishRequest, adapted: dict, 
         "platform_label": PLATFORM_LABELS[req.platform],
         "message": f"自动发布未成功（{last_err}），已生成素材包可手动发布",
     }
+
 
 @router.post("/submit")
 async def submit_publish(req: PublishRequest, current_user: dict = require_auth()):  # noqa: C901

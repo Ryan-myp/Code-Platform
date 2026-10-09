@@ -57,8 +57,8 @@ An intelligent workflow orchestration platform that uses AI agents to automate c
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/smart-rd-platform.git
-cd smart-rd-platform
+git clone https://github.com/Ryan-myp/Code-Platform.git
+cd Code-Platform
 
 # Set up virtual environment (Python backend)
 cd backend

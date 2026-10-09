@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage, _safe_exc_msg
+from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ def _normalize_contract_result(result: dict) -> dict:
     if result.get("risk_level") not in ("high", "medium", "low"):
         result["risk_level"] = "medium"
     cleaned = []
-    for r in (result.get("risks") or []):
+    for r in result.get("risks") or []:
         if not isinstance(r, dict):
             continue
         risk = r.get("risk")
@@ -351,9 +351,12 @@ def contract_review(req: ContractReviewRequest, current_user: dict = require_aut
             try:
                 from common.template_utils import load_one, record_usage
                 from pdf_doc_templates import TEMPLATE_DIR
+
                 tpl = load_one(TEMPLATE_DIR, req.template_id, "PDF模板不存在")
                 if tpl.get("pro_tips"):
-                    user_prompt = f"【模板：《{tpl['name']}》】请额外重点审查以下要点：{tpl['pro_tips']}\n\n{user_prompt}"
+                    user_prompt = (
+                        f"【模板：《{tpl['name']}》】请额外重点审查以下要点：{tpl['pro_tips']}\n\n{user_prompt}"
+                    )
                 record_usage(req.template_id)
             except Exception:  # noqa: BLE001
                 pass
@@ -409,9 +412,12 @@ def resume_optimize(req: ResumeOptimizeRequest, current_user: dict = require_aut
         try:
             from common.template_utils import load_one, record_usage
             from pdf_doc_templates import TEMPLATE_DIR
+
             tpl = load_one(TEMPLATE_DIR, req.template_id, "PDF模板不存在")
             if tpl.get("pro_tips"):
-                user_prompt = f"【模板：《{tpl['name']}》】请额外重点参考以下优化要点：{tpl['pro_tips']}\n\n{user_prompt}"
+                user_prompt = (
+                    f"【模板：《{tpl['name']}》】请额外重点参考以下优化要点：{tpl['pro_tips']}\n\n{user_prompt}"
+                )
             if tpl.get("position") and not req.target_position:
                 user_prompt = f"目标岗位：{tpl['position']}\n\n{user_prompt}"
             record_usage(req.template_id)
@@ -479,7 +485,7 @@ async def compress_pdf(
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        raise HTTPException(500, "需要安装 PyMuPDF 以支持PDF压缩")
+        raise HTTPException(500, "需要安装 PyMuPDF 以支持PDF压缩") from None
 
     out_name = f"compressed_{uuid.uuid4().hex[:8]}.pdf"
     out_path = os.path.join(PDF_DIR, out_name)

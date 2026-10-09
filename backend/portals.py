@@ -18,7 +18,6 @@ import logging
 from datetime import datetime
 
 from common.db import get_db
-
 from permissions import PAGES, load_user_ctx  # noqa: F401 (re-exported for convenience)
 
 logger = logging.getLogger(__name__)
@@ -31,36 +30,83 @@ logger = logging.getLogger(__name__)
 _PORTAL_PAGE_MAP: dict[str, list[str]] = {
     "rdm": [
         # 首页 & 任务
-        "tasks", "records", "favorites", "notifications",
+        "tasks",
+        "records",
+        "favorites",
+        "notifications",
         # 研发工作台
-        "board", "workspace", "projects", "artifacts", "sandbox", "pipelines",
+        "board",
+        "workspace",
+        "projects",
+        "artifacts",
+        "sandbox",
+        "pipelines",
         # 智能体
-        "agents", "teams", "workflows", "knowledge-bases", "skills", "mcp-servers",
+        "agents",
+        "teams",
+        "workflows",
+        "knowledge-bases",
+        "skills",
+        "mcp-servers",
         # 协作 & 工具
-        "chat", "help",
+        "chat",
+        "help",
         # 系统
-        "api-platform", "usage-analytics", "usage-detail", "usage-detail", "scheduler", "config",
+        "api-platform",
+        "usage-analytics",
+        "usage-detail",
+        "usage-detail",
+        "scheduler",
+        "config",
     ],
     "media": [
         # 首页 & 任务
-        "tasks", "records", "favorites", "notifications",
+        "tasks",
+        "records",
+        "favorites",
+        "notifications",
         # 创作工坊
-        "image-factory", "video-factory", "drama", "music-factory",
-        "copywriting", "translation", "ppt-factory", "meme",
+        "image-factory",
+        "video-factory",
+        "drama",
+        "music-factory",
+        "copywriting",
+        "translation",
+        "ppt-factory",
+        "meme",
         # 发布运营
-        "publish", "strategy", "seo", "monitor", "growth",
+        "publish",
+        "strategy",
+        "seo",
+        "monitor",
+        "growth",
         # AI 工具
-        "digital-human", "voice-chat", "video-analyzer",
-        "mindmap", "forecast", "doc-qa", "web-search",
+        "digital-human",
+        "voice-chat",
+        "video-analyzer",
+        "mindmap",
+        "forecast",
+        "doc-qa",
+        "web-search",
         "code-interpreter",
         # 应用广场
-        "games", "miniapp", "voice-dubbing",
-        "gallery", "templates",
+        "games",
+        "miniapp",
+        "voice-dubbing",
+        "gallery",
+        "templates",
         # 效率工具
-        "tool-hub", "excel", "data-analyzer", "pdf-tools",
-        "batch-process", "stock",
+        "tool-hub",
+        "excel",
+        "data-analyzer",
+        "pdf-tools",
+        "batch-process",
+        "stock",
         # 协作 & 系统
-        "chat", "help", "api-platform", "usage-analytics",
+        "chat",
+        "help",
+        "api-platform",
+        "usage-analytics",
     ],
     "general": [p["id"] for p in PAGES],
 }
@@ -86,7 +132,15 @@ _PORTAL_NAV_GROUPS: dict[str, list[dict]] = {
             "label": "开发工具",
             "icon_key": "Wrench",
             "color": "from-orange-500 to-red-600",
-            "pages": ["code-interpreter", "doc-qa", "web-search", "data-analyzer", "excel", "pdf-tools", "batch-process"],
+            "pages": [
+                "code-interpreter",
+                "doc-qa",
+                "web-search",
+                "data-analyzer",
+                "excel",
+                "pdf-tools",
+                "batch-process",
+            ],
         },
         {
             "key": "rdm_collab",
@@ -110,8 +164,14 @@ _PORTAL_NAV_GROUPS: dict[str, list[dict]] = {
             "icon_key": "Wand2",
             "color": "from-accent-500 to-blue-600",
             "pages": [
-                "image-factory", "video-factory", "drama", "music-factory",
-                "copywriting", "translation", "ppt-factory", "meme",
+                "image-factory",
+                "video-factory",
+                "drama",
+                "music-factory",
+                "copywriting",
+                "translation",
+                "ppt-factory",
+                "meme",
             ],
         },
         {
@@ -127,8 +187,14 @@ _PORTAL_NAV_GROUPS: dict[str, list[dict]] = {
             "icon_key": "Brain",
             "color": "from-teal-500 to-cyan-600",
             "pages": [
-                "digital-human", "voice-chat", "video-analyzer",
-                "mindmap", "forecast", "doc-qa", "web-search", "code-interpreter",
+                "digital-human",
+                "voice-chat",
+                "video-analyzer",
+                "mindmap",
+                "forecast",
+                "doc-qa",
+                "web-search",
+                "code-interpreter",
             ],
         },
         {
@@ -163,28 +229,35 @@ _PORTAL_NAV_GROUPS: dict[str, list[dict]] = {
     "general": [],  # 通用版沿用前端硬编码导航，此处为空表示不强制
 }
 
+
 # 兼容旧格式：Sidebar.jsx 渲染时把 nav_groups 里的 pages 映射为 items
 # 这里做统一转换，让前端不必关心内部结构差异
 def _normalize_nav_groups(raw_groups: list[dict]) -> list[dict]:
     """将后端 nav_groups 转换为 Sidebar 期望格式（pages → items）。"""
     from permissions import PAGES
+
     page_meta = {p["id"]: p for p in PAGES}
     result = []
     for grp in raw_groups:
         items = []
         for page_id in grp.get("pages", []):
             meta = page_meta.get(page_id, {})
-            items.append({
-                "path": meta.get("path", f"/{page_id}"),
-                "label": meta.get("label", page_id),
-                "pageId": page_id,
-            })
-        result.append({
-            **grp,
-            "items": items,
-            "pages": None,  # 标记已转换
-        })
+            items.append(
+                {
+                    "path": meta.get("path", f"/{page_id}"),
+                    "label": meta.get("label", page_id),
+                    "pageId": page_id,
+                }
+            )
+        result.append(
+            {
+                **grp,
+                "items": items,
+                "pages": None,  # 标记已转换
+            }
+        )
     return result
+
 
 # icon 名称 → lucide-react 导入名映射（由 Sidebar 负责动态解析）
 ICON_MAP = {
@@ -245,7 +318,6 @@ ICON_MAP = {
     "FlaskConical": "FlaskConical",
     "Activity": "Activity",
     "HelpCircle": "HelpCircle",
-    "Brain": "Brain",
     "Shield": "Shield",
     "Key": "Key",
     "Clock": "Clock",
@@ -283,6 +355,7 @@ PORTAL_DEFS: dict[str, dict] = {
 # ══════════════════════════════════════════════════════════════
 # 数据库操作
 # ══════════════════════════════════════════════════════════════
+
 
 def seed_portals() -> None:
     """幂等初始化门户数据（仅插入不存在的记录）。"""
@@ -384,6 +457,7 @@ def set_user_portal_type(user_id: str, portal_type: str) -> None:
 # 导航构建（供前端使用）
 # ══════════════════════════════════════════════════════════════
 
+
 def build_portal_nav(portal_type: str, user_ctx: dict) -> list[dict]:
     """为指定门户构建前端导航树。
 
@@ -415,20 +489,24 @@ def build_portal_nav(portal_type: str, user_ctx: dict) -> list[dict]:
             if page_id not in visible_pages:
                 continue
             meta = page_meta.get(page_id, {})
-            items.append({
-                "path": meta.get("path", f"/{page_id}"),
-                "label": meta.get("label", page_id),
-                "pageId": page_id,
-            })
+            items.append(
+                {
+                    "path": meta.get("path", f"/{page_id}"),
+                    "label": meta.get("label", page_id),
+                    "pageId": page_id,
+                }
+            )
         if not items:
             continue
-        nav_groups.append({
-            "key": grp["key"],
-            "label": grp["label"],
-            "icon_key": grp.get("icon_key", "Brain"),
-            "color": grp.get("color", "from-gray-500 to-gray-600"),
-            "pages": items,  # 前端 Sidebar 用 pages 字段渲染
-        })
+        nav_groups.append(
+            {
+                "key": grp["key"],
+                "label": grp["label"],
+                "icon_key": grp.get("icon_key", "Brain"),
+                "color": grp.get("color", "from-gray-500 to-gray-600"),
+                "pages": items,  # 前端 Sidebar 用 pages 字段渲染
+            }
+        )
     return nav_groups
 
 

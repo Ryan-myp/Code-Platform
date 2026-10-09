@@ -84,10 +84,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         method = request.method
         path = request.url.path
         # 静态资源与文档页不记访问日志（噪音大），但仍计入指标
-        is_noisy = (
-            path.startswith(("/static/", "/assets/", "/favicon", "/uploads"))
-            or path == "/api/health"
-        )
+        is_noisy = path.startswith(("/static/", "/assets/", "/favicon", "/uploads")) or path == "/api/health"
         start = time.perf_counter()
         status_code = 500
         error = ""

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
-async def _meme_generate_simple(image_url: str, style: str, output_path: str) -> dict:
-    """简化版 meme 生成。"""
-    return {"status": "success", "output_path": output_path}
 
 async def _prepare_meme_params_simple(payload: dict) -> dict:
     """简化版准备 meme 参数。"""
     return {
         "image_url": payload.get("image_url", ""),
         "style": payload.get("style", "yellow"),
-        "output_path": payload.get("output_path", "")
+        "output_path": payload.get("output_path", ""),
     }
+
+
 """表情包工坊 — 文字一键生成表情包。
 
 - 经典模板模式（PIL 直接绘制，秒出不依赖 AI）：黄底/白底/红底/黑底/渐变 5 种风格
@@ -36,10 +35,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from common.artifacts import save_artifact
-from common.helpers import _notify_progress
 from common.auth import require_auth
-from common.config import load_config, resolve_api_key, resolve_api_base
-from common.llm import _safe_exc_msg
+from common.config import load_config, resolve_api_base, resolve_api_key
+from common.helpers import _notify_progress
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -49,7 +47,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/meme", tags=["表情包工坊"])
 
 load_config()
-from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
 
 MEME_DIR = os.path.join(os.path.dirname(__file__), "meme_factory")
 os.makedirs(MEME_DIR, exist_ok=True)
@@ -112,7 +109,11 @@ SIZE_SPECS = [
 # 微信表情开放平台发布规格（提交审核需 16 张成套）
 WECHAT_PACK_MAX = 16
 WECHAT_PACK_SPECS = [
-    {"name": "表情主图", "value": "240×240 PNG，透明或纯色背景，单张 ≤500KB", "desc": "16 张成套提交审核；本包已按原图等比缩放"},
+    {
+        "name": "表情主图",
+        "value": "240×240 PNG，透明或纯色背景，单张 ≤500KB",
+        "desc": "16 张成套提交审核；本包已按原图等比缩放",
+    },
     {"name": "表情缩略图", "value": "120×120 PNG（与主图内容一致）", "desc": "聊天面板内的小图预览"},
     {"name": "聊天页图标", "value": "50×50 PNG", "desc": "聊天面板入口图标"},
     {"name": "详情页横幅", "value": "750×400 PNG/JPG", "desc": "表情商店详情页展示图，本包已生成 4×4 宫格预览"},
@@ -423,7 +424,12 @@ def build_style_preview(style_id: str) -> Image.Image:
     while font.size > 15 and d.textlength(info["desc"], font=font) > PREVIEW_SIZE - 60:
         font = get_font(font.size - 2)
     w = d.textlength(info["desc"], font=font)
-    d.text(((PREVIEW_SIZE - w) // 2, PREVIEW_SIZE // 2 + 30), info["desc"], font=font, fill="#444444" if style_id == "paper" else stroke)
+    d.text(
+        ((PREVIEW_SIZE - w) // 2, PREVIEW_SIZE // 2 + 30),
+        info["desc"],
+        font=font,
+        fill="#444444" if style_id == "paper" else stroke,
+    )
     return img
 
 
@@ -450,7 +456,14 @@ async def style_previews(current_user: dict = require_auth()):
             except Exception as e:
                 logger.debug(f"ai style preview {sid} failed: {e}")
                 continue
-        out.append({"id": f"ai:{sid}", "style_id": sid, "name": AI_STYLE_LABELS.get(sid, sid), "url": f"/api/meme/previews/{fname}"})
+        out.append(
+            {
+                "id": f"ai:{sid}",
+                "style_id": sid,
+                "name": AI_STYLE_LABELS.get(sid, sid),
+                "url": f"/api/meme/previews/{fname}",
+            }
+        )
     return out
 
 
@@ -484,8 +497,7 @@ def _ai_bg(prompt: str, uid: str = "") -> Image.Image:
         timeout=180,
     )
     if resp.status_code != 200:
-        exc = requests.HTTPError(f"HTTP {resp.status_code} error", response=resp)
-        from common.llm import api_error_detail
+        requests.HTTPError(f"HTTP {resp.status_code} error", response=resp)
 
         raise HTTPException(500, "操作失败，请稍后重试")
     data = resp.json()
@@ -569,20 +581,16 @@ def _artifact_meta() -> dict:
     return meta
 
 
-
 async def _meme_generate_simple(image_url: str, style: str, output_path: str) -> dict:
     """简化版 meme 生成。"""
     # 简化的处理逻辑
-    result = {
-        "status": "success",
-        "output_path": output_path,
-        "style": style
-    }
+    result = {"status": "success", "output_path": output_path, "style": style}
     return result
 
 
 def _meme_validate(payload: dict) -> dict:
     """表情包参数提取 + 校验 + 安全审核。返回规范化参数。"""
+
     def _get_text(key: str) -> str:
         return (payload.get(key) or "").strip()
 
@@ -597,15 +605,18 @@ def _meme_validate(payload: dict) -> dict:
         raise HTTPException(400, "操作失败，请稍后重试")
     if style == "upload" and not bg_upload:
         raise HTTPException(400, "上传背景模式需要提供 bg_upload 图片（base64）")
-    for label, t in (("顶部文字", top_text), ("底部文字", bottom_text), ("AI 画面描述", ai_prompt)):
+    for _label, t in (("顶部文字", top_text), ("底部文字", bottom_text), ("AI 画面描述", ai_prompt)):
         if not t:
             continue
         res = check_text(t, "表情包")
         if not res["ok"]:
             raise HTTPException(400, "内容审核不通过")
     return {
-        "top_text": top_text, "bottom_text": bottom_text, "style": style,
-        "bg_upload": bg_upload, "ai_prompt": ai_prompt,
+        "top_text": top_text,
+        "bottom_text": bottom_text,
+        "style": style,
+        "bg_upload": bg_upload,
+        "ai_prompt": ai_prompt,
         "ai_style": payload.get("ai_style") or "flat",
         "decoration": payload.get("decoration") or "",
         "character": (payload.get("character") or "").strip(),
@@ -636,6 +647,7 @@ async def _meme_render_bg(params: dict, _report) -> tuple:
     top_fill, top_stroke = _text_color(params["style"])
     return img, top_fill, top_stroke, top_fill, top_stroke
 
+
 async def _meme_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字一键生成表情包（同步/异步任务共用执行体，异步时回报进度）。"""
 
@@ -647,6 +659,7 @@ async def _meme_generate_worker(payload: dict, progress: Callable | None = None)
     if tpl_id:
         try:
             from meme_templates import record_usage
+
             record_usage(tpl_id)
         except Exception:
             pass
@@ -759,7 +772,7 @@ async def generate_meme_set(
 
     # 成套前置审核：任一文案违规则拒绝整包（保证成套不废）
     for top, bottom in parsed:
-        for label, t in (("顶部文字", top), ("底部文字", bottom)):
+        for _label, t in (("顶部文字", top), ("底部文字", bottom)):
             if not t:
                 continue
             res = check_text(t, "表情包")
@@ -999,7 +1012,9 @@ def split_pack_sets(ids: list[str], max_per_set: int = WECHAT_PACK_MAX) -> list[
     return [cleaned[i : i + max_per_set] for i in range(0, len(cleaned), max_per_set)]
 
 
-def _pack_set_entries(sets: list[list[str]], meta: dict, pack_title: str, pack_desc: str) -> tuple[dict, list[Image.Image]]:
+def _pack_set_entries(
+    sets: list[list[str]], meta: dict, pack_title: str, pack_desc: str
+) -> tuple[dict, list[Image.Image]]:
     """按套构建发布包条目（纯函数，可单测）：每套主图/缩略图 + 表情说明。
 
     单套时目录即根目录；多套时按「表情包第 N 套」分目录。返回 (entries, 第一套原图列表)。
@@ -1101,13 +1116,24 @@ async def meme_publish_pack(
         extra = [
             f"打包套数：{set_total} 套（微信审核每套需 16 张）",
             f"总张数：{total} 张",
-            f"规格合规：主图 240×240 / 缩略图 120×120 / 图标 50×50 / 横幅 750×400 ✓",
+            "规格合规：主图 240×240 / 缩略图 120×120 / 图标 50×50 / 横幅 750×400 ✓",
             f"平均美观度：{avg}/100" if img_scores else "美观度：未检测",
         ]
         entries[f"{root}/质量自检报告.md"] = quality_report(
             f"微信表情包《{pack_title}》",
-            text_check={"ok": ok_all, "risk": "none" if ok_all else "high", "risk_words": [], "categories": [], "suggestion": ""},
-            image_quality={"score": avg, "grade": "A" if avg >= 85 else ("B" if avg >= 65 else "C"), "checks": [], "suggestions": []},
+            text_check={
+                "ok": ok_all,
+                "risk": "none" if ok_all else "high",
+                "risk_words": [],
+                "categories": [],
+                "suggestion": "",
+            },
+            image_quality={
+                "score": avg,
+                "grade": "A" if avg >= 85 else ("B" if avg >= 65 else "C"),
+                "checks": [],
+                "suggestions": [],
+            },
             extra=extra,
         )
     except Exception as e:
@@ -1192,6 +1218,7 @@ register_handler("meme_generate_set", _meme_generate_set_handler, user_limit=1)
 
 # ── GIF 动图生成 ─────────────────────────────────────────────
 
+
 def _make_meme_gif(
     base_img: Image.Image,
     top_text: str,
@@ -1228,11 +1255,13 @@ def _make_meme_gif(
         # 顶部文字（居中，带阴影偏移）
         if top_text:
             lines = _wrap_text(draw, top_text, font_big, max_w, max_lines=2)
-            text_h = sum(draw.textlength(ln, font=font_big) for ln in lines) if hasattr(draw, 'textlength') else h // 3
+            sum(draw.textlength(ln, font=font_big) for ln in lines) if hasattr(draw, "textlength") else h // 3
             y_start = margin + shift_y
             for ln in lines:
-                txt_w = draw.textlength(ln, font=font_big) if hasattr(draw, 'textlength') else len(ln) * font_big.size * 0.6
-                x = (w - txt_w) // 2 + shift_x
+                txt_w = (
+                    draw.textlength(ln, font=font_big) if hasattr(draw, "textlength") else len(ln) * font_big.size * 0.6
+                )
+                (w - txt_w) // 2 + shift_x
                 _draw_centered_label(frame, ln, y_start, "#FFFFFF", "#000000")
                 y_start += font_big.size + 4
 
@@ -1241,8 +1270,12 @@ def _make_meme_gif(
             lines = _wrap_text(draw, bottom_text, font_small, max_w, max_lines=2)
             y_start = h - margin - font_small.size * len(lines) - shift_y
             for ln in lines:
-                txt_w = draw.textlength(ln, font=font_small) if hasattr(draw, 'textlength') else len(ln) * font_small.size * 0.5
-                x = (w - txt_w) // 2 - shift_x
+                txt_w = (
+                    draw.textlength(ln, font=font_small)
+                    if hasattr(draw, "textlength")
+                    else len(ln) * font_small.size * 0.5
+                )
+                (w - txt_w) // 2 - shift_x
                 _draw_centered_label(frame, ln, y_start, "#FFFFFF", "#000000")
                 y_start += font_small.size + 4
 
@@ -1384,7 +1417,7 @@ async def meme_publish_animated_pack(
     if not sets:
         raise HTTPException(400, "没有可打包的动表情文件")
 
-    meta = _artifact_meta()
+    _artifact_meta()
     root = pack_dir_name("wechat_animated_meme")
     entries: dict = {}
     set_total = len(sets)

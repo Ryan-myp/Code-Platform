@@ -12,11 +12,11 @@
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-from common.auth import require_auth
 from admin_api import _check_admin
+from common.auth import require_auth
 from common.db import get_db
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def get_conversion_funnel(current_user: dict = require_auth()):
     try:
         now = datetime.now()
         thirty_days_ago = (now - timedelta(days=30)).isoformat()
-        ninety_days_ago = (now - timedelta(days=90)).isoformat()
+        (now - timedelta(days=90)).isoformat()
 
         # 注册数
         reg_30d = conn.execute(
@@ -188,12 +188,14 @@ async def get_retention_cohorts(current_user: dict = require_auth()):
         result = []
         for c in cohorts:
             total = c["total"] or 1
-            result.append({
-                "week": c["week"],
-                "cohort_size": c["total"],
-                "retention_7d": round(c["active_7d"] / total * 100, 1),
-                "retention_30d": round(c["active_30d"] / total * 100, 1),
-            })
+            result.append(
+                {
+                    "week": c["week"],
+                    "cohort_size": c["total"],
+                    "retention_7d": round(c["active_7d"] / total * 100, 1),
+                    "retention_30d": round(c["active_30d"] / total * 100, 1),
+                }
+            )
 
         return {"cohorts": result}
     finally:

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """视频工厂模块 - 基于 Agnes AI Video API v2.0"""
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-
 import asyncio
 import base64
 import io
@@ -14,12 +12,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import requests
-from fastapi import APIRouter, Form, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
-from common.config import load_config, resolve_api_key, resolve_api_base
+from common.config import load_config, resolve_api_base, resolve_api_key
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
 from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
@@ -30,20 +29,22 @@ router = APIRouter(prefix="/api/video-factory", tags=["视频工厂"])
 
 # 配置：走 common.config 单一来源
 load_config()
-from common.config import AGNES_API_BASE, AGNES_API_KEY, AI_VIDEO_CHANNELS, DASHSCOPE_API_KEY  # noqa: E402
+from common.config import AI_VIDEO_CHANNELS, DASHSCOPE_API_KEY  # noqa: E402
 
 VIDEO_DIR = Path(__file__).parent / "video_factory"
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── 视频生成通道（多通道 failover：按配置顺序尝试，未配置 key 的通道自动跳过）──
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
+from common.helpers import _notify_progress
+
 
 def _available_channels() -> list[str]:
     """返回已配置 key 的视频通道（按 AI_VIDEO_CHANNELS 顺序）。"""
     order = [c.strip() for c in AI_VIDEO_CHANNELS.split(",") if c.strip()]
     has = {"agnes": bool(resolve_api_key()), "dashscope": bool(DASHSCOPE_API_KEY)}
     return [c for c in order if has.get(c)]
+
 
 # 常用提示词模板
 PRESET_PROMPTS = [
@@ -208,7 +209,7 @@ _COVER_GRADIENTS = [
     ((14, 165, 233), (59, 130, 246)),  # 天蓝→蓝
     ((236, 72, 153), (168, 85, 247)),  # 粉→紫
     ((16, 185, 129), (14, 165, 233)),  # 绿→蓝
-    ((245, 158, 11), (239, 68, 68)),   # 橙→红
+    ((245, 158, 11), (239, 68, 68)),  # 橙→红
     ((59, 130, 246), (16, 185, 129)),  # 蓝→青
 ]
 
@@ -271,7 +272,7 @@ def _pick_video_encoder() -> str:
 
     try:
         out = sp.run(
-            ["ffmpeg", "-nostdin", "-hide_banner", "-encoders"],
+            [FFMPEG_BIN, "-nostdin", "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -301,7 +302,6 @@ def _probe_duration(filename: str) -> float:
     return 0.0
 
 
-
 def _probe_duration_ffmpeg(video_path) -> float:
     """ffprobe 获取视频时长（秒），失败返回 0。"""
     import subprocess
@@ -309,7 +309,8 @@ def _probe_duration_ffmpeg(video_path) -> float:
     try:
         r = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(video_path)],
-            capture_output=True, timeout=15,
+            capture_output=True,
+            timeout=15,
         )
         if r.returncode == 0:
             return float(r.stdout.decode().strip().split(",")[0])
@@ -329,7 +330,7 @@ def _extract_frame_candidates(video_path, dur: float) -> list:
     for idx, pos in enumerate(positions):
         tmp = video_path.parent / f"{cover_name}.{idx}.tmp.jpg"
         try:
-            cmd = ["ffmpeg", "-nostdin", "-y"]
+            cmd = [FFMPEG_BIN, "-nostdin", "-y"]
             if pos >= 0:
                 cmd += ["-ss", f"{max(0.5, pos):.2f}"]
             cmd += ["-i", str(video_path), "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", str(tmp)]
@@ -361,6 +362,7 @@ def _pick_brightest_frame(frames: list) -> Path:
         best = max(frames, key=lambda p: p.stat().st_size)
     return best
 
+
 def _extract_cover(filename: str) -> str | None:  # noqa: C901
     """用 ffmpeg 从视频抽帧生成封面图（30%/50%/70% 多点抽帧，自动选最亮帧；全失败回退首帧）。
 
@@ -369,7 +371,6 @@ def _extract_cover(filename: str) -> str | None:  # noqa: C901
     AI 视频首帧常有淡入/黑屏，多点采样取最亮帧可避开暗帧。
     ffmpeg 抽帧全失败时兜底用 PIL 生成渐变封面，保证视频永远有封面（前端不出现灰色占位）。
     """
-    import subprocess
 
     video_path = VIDEO_DIR / filename
     cover_name = f"{Path(filename).stem}.jpg"
@@ -652,7 +653,7 @@ async def _video_finish(video_id: str, d: dict, project_id: str, _report: Callab
                 await asyncio.sleep(3)
                 _report(92, f"视频下载中断，正在重试（{dl_attempt}/3）…")
             else:
-                raise HTTPException(500, f"视频下载失败（已重试3次）: {last_err}")
+                raise HTTPException(500, f"视频下载失败（已重试3次）: {last_err}") from None
 
     cover_name = _extract_cover(filename)
     cover_url = f"/api/video-factory/covers/{cover_name}" if cover_name else ""
@@ -715,7 +716,10 @@ async def _video_generate_worker(payload: dict, progress: Callable | None = None
                 errors.append(f"{channel}#{attempt}: {err_detail}")
                 logger.warning(f"视频通道 {channel} 第{attempt}次失败: {err_detail}")
                 # 仅网络类错误值得重试（超时/连接/5xx）；业务 4xx 不重试
-                retryable = any(k in err_detail for k in ("超时", "Timeout", "连接", "Connect", "5", "SSL", "网络")) or "操作失败" in err_detail
+                retryable = (
+                    any(k in err_detail for k in ("超时", "Timeout", "连接", "Connect", "5", "SSL", "网络"))
+                    or "操作失败" in err_detail
+                )
                 if attempt == 1 and retryable and len(channels) == 1:
                     _report(10, f"通道 {channel} 网络波动，正在重试…")
                     await asyncio.sleep(5)
@@ -757,7 +761,7 @@ async def enhance_prompt(
     enhanced = original
     try:
         out = await call_llm_async(system, f"【原始描述】\n{original}", max_tokens=600, temperature=0.7)
-        out = (out or "").strip().strip('\"\'`')
+        out = (out or "").strip().strip("\"'`")
         if len(out) >= 8:
             enhanced = out
     except Exception:
@@ -774,7 +778,9 @@ async def create_video_task(
     duration: int = Form(5),
     mode: str = Form("ti2vid"),
     image: str = Form(""),
-    image_upload: UploadFile | None = File(None, description="图生视频：本地图片上传（替代 image URL，自动转 base64 data URL）"),
+    image_upload: UploadFile | None = File(
+        None, description="图生视频：本地图片上传（替代 image URL，自动转 base64 data URL）"
+    ),
     frame_rate: int = Form(24),
     project_id: str = Form(""),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
@@ -1040,12 +1046,30 @@ register_handler("video_generate", _video_generate_handler, user_limit=2, pool="
 
 # ── 视频发布包（商业化发布 v14）────────────────────────────
 VIDEO_PRESETS = [
-    {"id": "douyin", "name": "抖音/快手", "w": 1080, "h": 1920, "ratio": "9:16",
-     "desc": "抖音/快手短视频（9:16 竖版），封面与视频同规格"},
-    {"id": "bilibili", "name": "B站/西瓜", "w": 1920, "h": 1080, "ratio": "16:9",
-     "desc": "B站/西瓜/YouTube 横屏（1080p）"},
-    {"id": "weixin", "name": "视频号", "w": 1080, "h": 1230, "ratio": "6:7",
-     "desc": "微信视频号推荐比例 6:7（1080×1230）"},
+    {
+        "id": "douyin",
+        "name": "抖音/快手",
+        "w": 1080,
+        "h": 1920,
+        "ratio": "9:16",
+        "desc": "抖音/快手短视频（9:16 竖版），封面与视频同规格",
+    },
+    {
+        "id": "bilibili",
+        "name": "B站/西瓜",
+        "w": 1920,
+        "h": 1080,
+        "ratio": "16:9",
+        "desc": "B站/西瓜/YouTube 横屏（1080p）",
+    },
+    {
+        "id": "weixin",
+        "name": "视频号",
+        "w": 1080,
+        "h": 1230,
+        "ratio": "6:7",
+        "desc": "微信视频号推荐比例 6:7（1080×1230）",
+    },
 ]
 _VIDEO_PLATFORM_SPECS = {
     "douyin": [
@@ -1079,9 +1103,21 @@ def _vp_transcode(src_path, out_name: str, w: int, h: int) -> tuple:
     out_path = VIDEO_DIR / out_name
     has_audio = _probe_has_audio(src_path)
     cmd = [
-        ffmpeg, "-nostdin", "-y", "-i", str(src_path),
-        "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        ffmpeg,
+        "-nostdin",
+        "-y",
+        "-i",
+        str(src_path),
+        "-vf",
+        f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
     ]
     cmd += (["-c:a", "aac", "-b:a", "192k"] if has_audio else ["-an"]) + [str(out_path)]
     r = subprocess.run(cmd, capture_output=True, timeout=600)
@@ -1111,7 +1147,9 @@ def _vp_artifact_prompt(src: str) -> str:
     return ""
 
 
-def _vp_qc_report(prompt: str, width: int, height: int, w: int, h: int, duration: float, has_audio: bool, title: str) -> str | None:
+def _vp_qc_report(
+    prompt: str, width: int, height: int, w: int, h: int, duration: float, has_audio: bool, title: str
+) -> str | None:
     """视频质量自检报告（失败返回 None）。"""
     try:
         prompt_check = check_text(prompt, "prompt") if prompt else None
@@ -1214,7 +1252,18 @@ def _probe_has_audio(path: Path) -> bool:
 
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
             capture_output=True,
             text=True,
             timeout=15,
@@ -1230,7 +1279,18 @@ def _probe_resolution(path: Path) -> tuple[int, int]:
 
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(path)],
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=s=x:p=0",
+                str(path),
+            ],
             capture_output=True,
             text=True,
             timeout=15,
@@ -1282,15 +1342,24 @@ async def concat_videos(
     ins = "".join(f"[v{i}][a{i}]" for i in range(n))
     parts += a_parts + [f"{ins}concat=n={n}:v=1:a=1[vout][aout]"]
     cmd += [
-        "-filter_complex", ";".join(parts),
-        "-map", "[vout]", "-map", "[aout]",
-        "-c:v", enc, "-c:a", "aac", "-movflags", "+faststart",
+        "-filter_complex",
+        ";".join(parts),
+        "-map",
+        "[vout]",
+        "-map",
+        "[aout]",
+        "-c:v",
+        enc,
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
         str(out),
     ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-    except Exception as e:
-        raise HTTPException(500, "操作失败，请稍后重试")
+    except Exception:
+        raise HTTPException(500, "操作失败，请稍后重试") from None
     if r.returncode != 0 or not out.exists():
         raise HTTPException(500, "拼接失败，请稍后重试")
     return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "width": w, "height": h}
@@ -1334,7 +1403,10 @@ async def add_music(
             cmd += [
                 "-filter_complex",
                 f"[1:a]volume={vol}[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-                "-map", "0:v", "-map", "[aout]",
+                "-map",
+                "0:v",
+                "-map",
+                "[aout]",
             ]
         else:
             # 原视频无音轨：仅 BGM 作音轨
@@ -1342,8 +1414,8 @@ async def add_music(
         cmd += ["-c:v", enc, "-c:a", "aac", "-movflags", "+faststart", str(out)]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试")
+        except Exception:
+            raise HTTPException(500, "操作失败，请稍后重试") from None
         if r.returncode != 0 or not out.exists():
             raise HTTPException(500, "配乐失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name, "bg_volume": vol}
@@ -1371,15 +1443,25 @@ async def burn_subtitle(
         # subtitles filter 路径转义：\ : ' 需转义，避免 filter 解析错乱
         escaped = str(srt_file).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         cmd = [
-            ffmpeg, "-nostdin", "-y", "-i", str(video_path),
-            "-vf", f"subtitles='{escaped}'",
-            "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"subtitles='{escaped}'",
+            "-c:v",
+            enc,
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
             str(out),
         ]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试")
+        except Exception:
+            raise HTTPException(500, "操作失败，请稍后重试") from None
         if r.returncode != 0 or not out.exists():
             raise HTTPException(500, "字幕烧录失败，请稍后重试")
         return {"url": f"/api/video-factory/videos/{out.name}", "filename": out.name}
@@ -1458,7 +1540,7 @@ async def transcode_videos(
         _safe_video_name(n)  # 存在性校验
     try:
         plan = build_transcode_plan(names, width or None, height or None, crf)
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(400, "请求参数错误") from None
 
     ffmpeg = _pick_ffmpeg()
@@ -1468,10 +1550,19 @@ async def transcode_videos(
         src = VIDEO_DIR / item["source"]
         out = VIDEO_DIR / item["output"]
         cmd = [
-            ffmpeg, "-nostdin", "-y", "-i", str(src),
-            "-vf", item["scale"],
-            "-c:v", enc, "-crf", str(item["crf"]),
-            "-movflags", "+faststart",
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-i",
+            str(src),
+            "-vf",
+            item["scale"],
+            "-c:v",
+            enc,
+            "-crf",
+            str(item["crf"]),
+            "-movflags",
+            "+faststart",
         ]
         if _probe_has_audio(src):
             cmd += ["-c:a", "aac", "-b:a", "192k"]
@@ -1616,6 +1707,7 @@ async def get_script_templates():
 
 # ── 自动字幕生成（语音识别 → SRT）──────────────────────────
 
+
 @router.post("/tools/auto-subtitle")
 async def auto_generate_subtitle(
     video: str = Form(...),
@@ -1640,15 +1732,28 @@ async def auto_generate_subtitle(
         # Step 1: 提取音频
         ffmpeg = _pick_ffmpeg()
         subprocess.run(
-            [ffmpeg, "-nostdin", "-y", "-i", str(video_path), "-vn",
-             "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(audio_path)],
-            capture_output=True, timeout=120,
+            [
+                ffmpeg,
+                "-nostdin",
+                "-y",
+                "-i",
+                str(video_path),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                str(audio_path),
+            ],
+            capture_output=True,
+            timeout=120,
         )
 
         # Step 2: 尝试 Whisper 转录
         srt_content = ""
         try:
-            from common.llm import call_llm_async
             import httpx
 
             # 调用 OpenAI 兼容的 Whisper API
@@ -1682,9 +1787,19 @@ async def auto_generate_subtitle(
         out_path = VIDEO_DIR / out_name
         enc = _pick_video_encoder()
         cmd = [
-            ffmpeg, "-nostdin", "-y", "-i", str(video_path),
-            "-vf", f"subtitles='{escaped}'",
-            "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+            ffmpeg,
+            "-nostdin",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"subtitles='{escaped}'",
+            "-c:v",
+            enc,
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
             str(out_path),
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
@@ -1704,9 +1819,8 @@ async def auto_generate_subtitle(
 
 async def _generate_subtitle_by_llm(prompt_text: str, duration: float, language: str) -> str:
     """LLM 生成结构化 SRT 字幕（fallback 方案）。"""
-    from common.llm import call_llm_async
 
-    key_topics = re.findall(r'[\u4e00-\u9fa5]{2,8}', prompt_text)[:10]
+    key_topics = re.findall(r"[\u4e00-\u9fa5]{2,8}", prompt_text)[:10]
     segments = int(duration / 5)  # 每 5 秒一段
     srt_lines = []
     for i in range(max(1, segments)):
@@ -1715,7 +1829,7 @@ async def _generate_subtitle_by_llm(prompt_text: str, duration: float, language:
         h, m, s = _secs_to_srt_time(start_s)
         he, me, se = _secs_to_srt_time(end_s)
         topic = key_topics[i % len(key_topics)] if key_topics else "内容"
-        srt_lines.append(f"{i + 1}\n{h}:{m}:{s},000 --> {he}:{me}:{se},000\n{topic} 相关内容片段 {i+1}")
+        srt_lines.append(f"{i + 1}\n{h}:{m}:{s},000 --> {he}:{me}:{se},000\n{topic} 相关内容片段 {i + 1}")
     return "\n\n".join(srt_lines)
 
 
@@ -1728,6 +1842,7 @@ def _secs_to_srt_time(seconds: float) -> tuple:
 
 
 # ── 视频智能分析（v20 增强）─────────────────────────────────
+
 
 @router.post("/tools/analyze")
 async def analyze_video(
@@ -1752,21 +1867,23 @@ async def analyze_video(
 
     # 调用 LLM 分析
     from common.llm import call_llm_async
+
     try:
         frame_descs = []
         for fp in frame_paths:
             if fp.exists():
                 try:
                     import base64
+
                     b64 = base64.b64encode(fp.read_bytes()).decode()[:50000]  # 截断防溢出
                     frame_descs.append(f"[FRAME:{fp.name}:data:image/jpeg;base64,{b64[:20000]}...]")
                 except Exception:
                     pass
 
         analysis_prompt = f"""请分析以下视频内容并输出 JSON 格式的分析结果：
-视频规格：{width}x{height}，时长 {duration:.1f} 秒，{'有音频' if has_audio else '静音'}
+视频规格：{width}x{height}，时长 {duration:.1f} 秒，{"有音频" if has_audio else "静音"}
 分析类型：{analysis_type}
-关键帧描述：{'；'.join(frame_descs[:3]) if frame_descs else '无可用帧'}
+关键帧描述：{"；".join(frame_descs[:3]) if frame_descs else "无可用帧"}
 
 请输出：
 {{
@@ -1784,21 +1901,37 @@ async def analyze_video(
         result = await call_llm_async(analysis_prompt, max_tokens=800)
         # 解析 JSON
         import json as _json
+
         try:
             # 提取 JSON 块
             match = re.search(r'\{[^{}]*"summary"[^{}]*\}', result, re.DOTALL)
             if match:
                 analysis = _json.loads(match.group())
             else:
-                analysis = {"summary": result[:200], "keywords": [], "sentiment": "neutral",
-                            "recommended_tags": [], "scene_breakdown": []}
+                analysis = {
+                    "summary": result[:200],
+                    "keywords": [],
+                    "sentiment": "neutral",
+                    "recommended_tags": [],
+                    "scene_breakdown": [],
+                }
         except Exception:
-            analysis = {"summary": result[:300], "keywords": [], "sentiment": "neutral",
-                        "recommended_tags": [], "scene_breakdown": []}
+            analysis = {
+                "summary": result[:300],
+                "keywords": [],
+                "sentiment": "neutral",
+                "recommended_tags": [],
+                "scene_breakdown": [],
+            }
     except Exception as e:
         logger.warning("视频分析失败: %s", e)
-        analysis = {"summary": "分析暂不可用", "keywords": [], "sentiment": "neutral",
-                    "recommended_tags": [], "scene_breakdown": []}
+        analysis = {
+            "summary": "分析暂不可用",
+            "keywords": [],
+            "sentiment": "neutral",
+            "recommended_tags": [],
+            "scene_breakdown": [],
+        }
 
     # 技术质量数据
     file_size = video_path.stat().st_size if video_path.exists() else 0
@@ -1806,9 +1939,14 @@ async def analyze_video(
 
     return {
         "video": str(video_path.name),
-        "spec": {"width": width, "height": height, "duration_sec": round(duration, 1),
-                 "has_audio": has_audio, "file_size_mb": round(file_size / 1024 / 1024, 2),
-                 "estimated_bitrate_kbps": round(bitrate_est / 1000, 1)},
+        "spec": {
+            "width": width,
+            "height": height,
+            "duration_sec": round(duration, 1),
+            "has_audio": has_audio,
+            "file_size_mb": round(file_size / 1024 / 1024, 2),
+            "estimated_bitrate_kbps": round(bitrate_est / 1000, 1),
+        },
         "analysis": analysis,
         "keyframe_count": len(frame_paths),
     }
@@ -1817,6 +1955,7 @@ async def analyze_video(
 def _extract_keyframes(video_path: Path, count: int = 6) -> list:
     """从视频中均匀提取关键帧，保存为临时图片。"""
     import subprocess
+
     frames = []
     if not video_path.exists():
         return frames
@@ -1833,9 +1972,22 @@ def _extract_keyframes(video_path: Path, count: int = 6) -> list:
             frame_path = out_dir / f"frame_{int(t * 1000)}ms.jpg"
             if not frame_path.exists():
                 subprocess.run(
-                    [ffmpeg, "-nostdin", "-y", "-ss", str(t), "-i", str(video_path),
-                     "-vframes", "1", "-q:v", "2", str(frame_path)],
-                    capture_output=True, timeout=30,
+                    [
+                        ffmpeg,
+                        "-nostdin",
+                        "-y",
+                        "-ss",
+                        str(t),
+                        "-i",
+                        str(video_path),
+                        "-vframes",
+                        "1",
+                        "-q:v",
+                        "2",
+                        str(frame_path),
+                    ],
+                    capture_output=True,
+                    timeout=30,
                 )
             if frame_path.exists():
                 frames.append(frame_path)
@@ -1845,6 +1997,7 @@ def _extract_keyframes(video_path: Path, count: int = 6) -> list:
 
 
 # ── 视频特效滤镜（v20）──────────────────────────────────────
+
 
 @router.post("/tools/filters")
 async def apply_video_filter(
@@ -1870,14 +2023,24 @@ async def apply_video_filter(
         "vintage": "colorbalance=rs=0.15:gs=0.05:bs=-0.1,curves=all='0/0 0.2/0.85 0.5/0.9 0.8/0.95 1/1',gamma=g=0.95",
         "warm": "colorbalance=rs=0.08:gs=0.03:bs=-0.02",
         "cool": "colorbalance=rs=-0.05:gs=-0.02:bs=0.08",
-        "fade": "fade=t=in:st=0:d=1,fade=t=out:st=%f:d=1" % max(0, (_probe_duration(str(video_path)) or 30) - 2),
+        "fade": f"fade=t=in:st=0:d=1,fade=t=out:st={max(0, (_probe_duration(str(video_path)) or 30) - 2):f}:d=1",
     }
 
     vf = filter_map.get(filter_type, "format=yuv420p")
     cmd = [
-        ffmpeg, "-nostdin", "-y", "-i", str(video_path),
-        "-vf", vf,
-        "-c:v", enc, "-c:a", "copy", "-movflags", "+faststart",
+        ffmpeg,
+        "-nostdin",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        vf,
+        "-c:v",
+        enc,
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
         str(out_path),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)

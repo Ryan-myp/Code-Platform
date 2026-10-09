@@ -61,6 +61,10 @@ describe('TemplateMarketPage 模板市场', () => {
       if (String(url).includes('/api/templates/market')) {
         return Promise.resolve({ data: MARKET_DATA })
       }
+      if (String(url).includes('/api/image-store/list')) {
+        // 默认 Tab 为图片商城：返回空 items 验证 Empty 分支不崩（后端 shape: {total, items, categories}）
+        return Promise.resolve({ data: { total: 0, items: [], categories: [] } })
+      }
       if (String(url).includes('/api/templates/c2c')) {
         return Promise.resolve({ data: C2C_ITEMS })
       }
@@ -79,6 +83,8 @@ describe('TemplateMarketPage 模板市场', () => {
   it('渲染内置模板列表（分组聚合）', async () => {
     renderPage()
     expect(screen.getByText('模板市场')).toBeInTheDocument()
+    // 默认 Tab 是图片商城，切到内置模板 Tab
+    fireEvent.click(screen.getByText('内置模板'))
     await waitFor(() => expect(screen.getByText('贪吃蛇模板')).toBeInTheDocument())
     expect(screen.getByText('飞机大战模板')).toBeInTheDocument()
     expect(screen.getByText('打卡助手模板')).toBeInTheDocument()
@@ -89,6 +95,7 @@ describe('TemplateMarketPage 模板市场', () => {
 
   it('收藏 toggle：点击星标收藏，只看收藏过滤生效', async () => {
     renderPage()
+    fireEvent.click(screen.getByText('内置模板'))
     await waitFor(() => expect(screen.getByText('贪吃蛇模板')).toBeInTheDocument())
     // 收藏 t1
     const favBtns = screen.getAllByTitle('收藏模板')

@@ -11,20 +11,17 @@
 """
 
 import contextvars
-from typing import Optional
 
 # 当前请求的用户中转站配置：{"api_key": str, "api_base": str} 或 None
-_relay_context: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
-    "relay_context", default=None
-)
+_relay_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar("relay_context", default=None)
 
 
-def set_relay_context(relay: Optional[dict]) -> None:
+def set_relay_context(relay: dict | None) -> None:
     """设置当前请求的用户中转站配置（中间件在请求开始时调用）。"""
     _relay_context.set(relay)
 
 
-def get_relay_context() -> Optional[dict]:
+def get_relay_context() -> dict | None:
     """读取当前请求的用户中转站配置（无则 None）。"""
     return _relay_context.get()
 

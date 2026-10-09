@@ -17,8 +17,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import _add_column_if_missing, get_db_context
+from common.helpers import _notify_progress
 from common.llm import call_llm_async, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
@@ -466,7 +466,7 @@ async def _batch_retry_worker(payload: dict, progress: Callable | None = None) -
         _notify_progress(progress, pct, stage)
 
     items = payload.get("items", [])
-    user_id = payload.get("user_id", "")
+    payload.get("user_id", "")
     start = datetime.now()
     results = []
     total = len(items)
@@ -478,10 +478,10 @@ async def _batch_retry_worker(payload: dict, progress: Callable | None = None) -
                 f"将以下{item.get('source_lang', 'auto')}文本翻译为{item.get('target_lang', 'en')}：\n\n"
                 f"{item.get('original', '')[:2000]}"
             )
-            raw = await call_llm_async(
-                BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30
+            raw = await call_llm_async(BATCH_TRANSLATE_SYSTEM, user_prompt, max_tokens=500, temperature=0.3, timeout=30)
+            results.append(
+                {"index": item["index"], "original": item.get("original", "")[:200], "translated": raw.strip()}
             )
-            results.append({"index": item["index"], "original": item.get("original", "")[:200], "translated": raw.strip()})
         except Exception as e:
             results.append(
                 {"index": item["index"], "original": item.get("original", "")[:200], "translated": "", "error": str(e)}

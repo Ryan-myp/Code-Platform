@@ -13,7 +13,6 @@
 """
 
 import logging
-import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,7 @@ def _looks_like_placeholder(path: str) -> bool:
             pat = head[:2]
             if pat == b"\xff\xfb" or pat == b"\xff\xf3":
                 count = head.count(pat)
-                if count >= 8 and len(set(head[:count * 2])) <= 2:
+                if count >= 8 and len(set(head[: count * 2])) <= 2:
                     return True
         return False
     except OSError:
@@ -39,7 +38,7 @@ def _looks_like_placeholder(path: str) -> bool:
 
 
 def is_valid_audio(path: str, min_bytes: int = _MIN_AUDIO_BYTES) -> bool:
-    """音频文件是否有效：大小 + 非占位 + ffprobe 可解析。"""
+    """音频文件是否有效：大小 + 非占位 + 可解析出时长（ffprobe 或 ffmpeg -i 兑底）。"""
     import os
 
     try:
@@ -47,41 +46,24 @@ def is_valid_audio(path: str, min_bytes: int = _MIN_AUDIO_BYTES) -> bool:
             return False
         if _looks_like_placeholder(path):
             return False
-        r = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", path],
-            capture_output=True, text=True, timeout=15,
-        )
-        if r.returncode != 0:
-            return False
-        import json
+        from common.ffmpeg_bin import probe_media
 
-        d = json.loads(r.stdout or "{}")
-        return float(d.get("format", {}).get("duration") or 0) > 0
+        meta = probe_media(path)
+        return bool(meta and meta["duration"] > 0)
     except Exception:
         return False
 
 
 def is_valid_video(path: str, min_bytes: int = _MIN_VIDEO_BYTES, min_duration: float = 0.5) -> bool:
-    """视频文件是否有效：大小 + ffprobe 可解析 + 有视频流。"""
+    """视频文件是否有效：大小 + 可解析 + 有时长 + 含视频流（ffprobe 或 ffmpeg -i 兑底）。"""
     import os
 
     try:
         if not os.path.exists(path) or os.path.getsize(path) < min_bytes:
             return False
-        r = subprocess.run(
-            ["ffprobe", "-v", "error",
-             "-show_entries", "format=duration", "-show_entries", "stream=codec_type",
-             "-of", "json", path],
-            capture_output=True, text=True, timeout=20,
-        )
-        if r.returncode != 0:
-            return False
-        import json
+        from common.ffmpeg_bin import probe_media
 
-        d = json.loads(r.stdout or "{}")
-        if float(d.get("format", {}).get("duration") or 0) < min_duration:
-            return False
-        streams = d.get("streams", [])
-        return any(s.get("codec_type") == "video" for s in streams)
+        meta = probe_media(path)
+        return bool(meta and meta["duration"] >= min_duration and meta["has_video"])
     except Exception:
         return False

@@ -69,7 +69,8 @@ describe('VideoFactoryPage v20 AI 增强', () => {
       return Promise.resolve({ data: {} })
     })
     render(<VideoFactoryPage />)
-    // 切换模式：通过选择框 value 直接改 inputs
+    // 生成模式选择框在「高级参数」折叠区内（默认收起），先展开
+    fireEvent.click(screen.getByText('高级参数'))
     const modeSelect = screen.getAllByRole('combobox').find((el) => el.value === 'ti2vid')
     fireEvent.change(modeSelect, { target: { value: 'i2vid' } })
     const textarea = screen.getByPlaceholderText(/sunset over the ocean/)

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage, _safe_exc_msg
+from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +226,13 @@ def diff_reports(prev: dict | None, curr: dict) -> dict:
         cv = _dig(curr, path)
         if pv is not None and cv is not None and pv != cv:
             changed.append(
-                {"field": path, "label": label, "added": [], "removed": [], "modified": [{"prev": str(pv), "curr": str(cv)}]}
+                {
+                    "field": path,
+                    "label": label,
+                    "added": [],
+                    "removed": [],
+                    "modified": [{"prev": str(pv), "curr": str(cv)}],
+                }
             )
 
     total = len(changed)
@@ -246,7 +252,9 @@ class CompetitorAddRequest(BaseModel):
     account_id: str = Field("", max_length=200, description="账号ID/主页链接")
     description: str = Field("", max_length=500, description="竞品描述")
     profile_url: str = Field("", max_length=500, description="主页URL")
-    monitor_frequency: str = Field("weekly", pattern="^(daily|weekly|monthly|manual)$", description="监控频率：daily/weekly/monthly/manual")
+    monitor_frequency: str = Field(
+        "weekly", pattern="^(daily|weekly|monthly|manual)$", description="监控频率：daily/weekly/monthly/manual"
+    )
 
 
 class AnalyzeRequest(BaseModel):
@@ -268,7 +276,18 @@ async def add_competitor(req: CompetitorAddRequest, current_user: dict = require
         """INSERT INTO competitors (id, user_id, name, platform, account_id,
            description, profile_url, monitor_frequency, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?) """,
-        (comp_id, user, req.name, req.platform, req.account_id, req.description, req.profile_url, req.monitor_frequency, now, now),
+        (
+            comp_id,
+            user,
+            req.name,
+            req.platform,
+            req.account_id,
+            req.description,
+            req.profile_url,
+            req.monitor_frequency,
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -402,7 +421,12 @@ def analyze_competitors(req: AnalyzeRequest, current_user: dict = require_auth()
     return {
         "report_id": report_id,
         "competitors": [
-            {"id": c["id"], "name": c["name"], "platform": c["platform"], "monitor_frequency": c.get("monitor_frequency", "weekly")}
+            {
+                "id": c["id"],
+                "name": c["name"],
+                "platform": c["platform"],
+                "monitor_frequency": c.get("monitor_frequency", "weekly"),
+            }
             for c in competitors
         ],
         "analysis": analysis,

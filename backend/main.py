@@ -37,20 +37,22 @@ from slowapi.util import get_remote_address
 load_dotenv()
 
 import skills_store  # noqa: E402
-from routers import register_routers  # noqa: E402
+from common.audit import ensure_audit_table  # noqa: E402
 from common.auth import (  # noqa: E402
+    _auth_by_api_key,
     change_password,
     consume_quota,
     create_order,
     create_share,
     decode_access_token,
+    get_billing_history,
     get_invite_info,
     get_my_orders,
     get_quota_info,
-    _auth_by_api_key,
     get_share,
+    get_usage_daily_timeline,
+    get_usage_detail,
     get_user_profile,
-    grant_free_trial,
     login_user,
     register_user,
     require_auth,
@@ -58,19 +60,12 @@ from common.auth import (  # noqa: E402
     send_password_reset_token,
     submit_voucher,
     update_user_profile,
-    get_usage_detail,
-    get_usage_daily_timeline,
-    get_billing_history,
 )
 from common.backup import ensure_daily_backup  # noqa: E402
-from oauth_api import ensure_social_bindings_table  # noqa: E402
-from team_api import ensure_team_tables  # noqa: E402
-from feedback_api import ensure_feedback_table  # noqa: E402
 from common.config import ALLOWED_ORIGINS, is_production, validate_security_config  # noqa: E402
 from common.db import get_db, init_schema  # noqa: E402
-from common.db_async import is_pg_enabled, get_async_db, close_async_db  # noqa: E402
+from common.db_async import close_async_db, get_async_db, is_pg_enabled  # noqa: E402
 from common.llm import call_llm_async, log_usage, stream_llm_async  # noqa: E402
-from common.audit import ensure_audit_table  # noqa: E402
 from common.models import (  # noqa: E402
     AgentCreateRequest,
     AgentUpdateRequest,
@@ -83,6 +78,7 @@ from common.models import (  # noqa: E402
     MCPServerCreateRequest,
     MCPServerUpdateRequest,
     OrderCreateRequest,
+    PortalSwitchRequest,
     ProfileUpdateRequest,
     RegisterRequest,
     ResetPasswordRequest,
@@ -93,7 +89,6 @@ from common.models import (  # noqa: E402
     ShareCreateRequest,
     SkillCreateRequest,
     SkillUpdateRequest,
-    PortalSwitchRequest,
     WorkflowCreateRequest,
     WorkflowUpdateRequest,
 )
@@ -103,9 +98,13 @@ from common.observability import (  # noqa: E402
     uptime_seconds,
 )
 from common.sandbox_check import MAX_CODE_LEN, check_sandbox_code, run_sandbox_python  # noqa: E402
+from feedback_api import ensure_feedback_table  # noqa: E402
+from oauth_api import ensure_social_bindings_table  # noqa: E402
+from routers import register_routers  # noqa: E402
 from scheduler import start_scheduler, stop_scheduler  # noqa: E402
 from seed_data import seed_if_empty  # noqa: E402
 from task_queue import recover_interrupted_tasks, start_workers, stop_workers  # noqa: E402
+from team_api import ensure_team_tables  # noqa: E402
 from voice_factory import _tts_health_check as _tts_prewarm  # noqa: E402
 
 # ── 日志 ──────────────────────────────────────────────────────
@@ -129,6 +128,7 @@ def _rl(rate: str) -> str:
 def _safe_error(msg: str) -> str:
     """清洗命令执行错误信息，防止泄露内部路径/密码/IP 等敏感内容。"""
     import re as _re
+
     safe = _re.sub(r"/[^\s,;]{8,}", "<path>", msg)[:200]
     safe = _re.sub(r"(?:password|secret|token|key)\s*[:=]\s*\S+", "<cred>", safe, flags=_re.IGNORECASE)
     safe = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", safe)
@@ -138,6 +138,7 @@ def _safe_error(msg: str) -> str:
 def _safe_exc_msg(e: Exception) -> str:
     """从异常中提取安全错误消息，过滤路径和敏感信息。"""
     import re as _re
+
     msg = str(e)[:200]
     msg = _re.sub(r"/[^\s,;]{6,}", "<path>", msg)
     msg = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", msg)
@@ -178,8 +179,8 @@ async def lifespan(app: FastAPI):
     from api_billing import ensure_api_keys_tables
     from conversion_analytics import ensure_analytics_tables
     from enterprise_api import ensure_enterprise_tables
-    from prd_engine import ensure_requirements_tables
     from game_factory import ensure_game_tables
+    from prd_engine import ensure_requirements_tables
 
     ensure_api_keys_tables()
     ensure_analytics_tables()
@@ -220,6 +221,7 @@ async def lifespan(app: FastAPI):
     yield
     # 清理 PostgreSQL 连接
     import asyncio as _asyncio
+
     try:
         _asyncio.run_coroutine_threadsafe(close_async_db(), _asyncio.get_running_loop())
     except Exception:
@@ -232,7 +234,9 @@ async def lifespan(app: FastAPI):
 # ── FastAPI 应用 ──────────────────────────────────────────────
 _docs_disabled = is_production()
 app = FastAPI(
-    title="小团智能平台 v12.0", version="12.0.0", lifespan=lifespan,
+    title="小团智能平台 v12.0",
+    version="12.0.0",
+    lifespan=lifespan,
     docs_url=None if _docs_disabled else "/docs",
     redoc_url=None if _docs_disabled else "/redoc",
     openapi_url=None if _docs_disabled else "/openapi.json",
@@ -256,7 +260,6 @@ def _cleanup_expired_uploads() -> int:
     """删除超过保留期的上传文件，返回删除数量。"""
     if UPLOAD_RETENTION_DAYS <= 0:
         return 0
-    import threading
     from datetime import datetime, timedelta
 
     cutoff = (datetime.now() - timedelta(days=UPLOAD_RETENTION_DAYS)).timestamp()
@@ -304,9 +307,10 @@ def _send_trial_reminders() -> int:
     已续费（membership_expires 晚于 trial_expires）自动跳过。
     """
     from common.mailer import is_smtp_configured, send_trial_expiry_email
+
     if not is_smtp_configured():
         return 0
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     conn = get_db()
     sent = 0
@@ -363,6 +367,7 @@ def start_trial_reminder() -> None:
 
     threading.Thread(target=_loop, daemon=True, name="trial-reminder").start()
     logger.info("试用到期提醒守护线程已启动（剩余 %s 天提醒）", TRIAL_REMIND_DAYS)
+
 
 # workflow 写入防抖（阻断旧版前端自动保存循环）
 _WF_LAST_WRITE: dict[str, float] = {}
@@ -472,14 +477,15 @@ app.add_middleware(RequestContextMiddleware)
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     """为所有响应添加基础安全头，生产环境额外开启 HSTS。"""
-    from starlette.responses import Response as StarletteResponse
     response = await call_next(request)
     # 基本安全头（始终设置）
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Cache-Control"] = "no-store"
     if not _docs_disabled:
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+        )
     # 生产环境启用 HSTS（31536000s = 1年）
     if _docs_disabled:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -600,10 +606,7 @@ async def quota_middleware(request: Request, call_next):
                         if membership == "pro":
                             detail = f"今日专业版 {daily} 次额度已用完，明日 0 点自动恢复；升级至尊版可无限使用"
                         else:
-                            detail = (
-                                f"今日免费额度已用完（{daily} 次/日）。"
-                                "升级专业版解锁每日 200 次，或邀请好友得额度"
-                            )
+                            detail = f"今日免费额度已用完（{daily} 次/日）。升级专业版解锁每日 200 次，或邀请好友得额度"
                         return JSONResponse(
                             status_code=402,
                             content={"detail": detail, "membership": membership},
@@ -688,7 +691,13 @@ async def ops_stats():
             "today_success": trow["ok_n"] if trow else 0,
         }
     except Exception:
-        stats["llm"] = {"total_calls": 0, "success_calls": 0, "avg_response_ms": 0, "today_calls": 0, "today_success": 0}
+        stats["llm"] = {
+            "total_calls": 0,
+            "success_calls": 0,
+            "avg_response_ms": 0,
+            "today_calls": 0,
+            "today_success": 0,
+        }
     return stats
 
 
@@ -813,6 +822,7 @@ _ASSISTANT_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"
 def _sse_event(event: str, data: dict) -> str:
     """序列化 SSE 事件。"""
     import json as _json
+
     return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -856,8 +866,6 @@ async def assistant_chat_stream(request: Request, req: AssistantChatRequest, cur
     if not message:
         raise HTTPException(400, "消息不能为空")
 
-    import json as _json
-
     parts = []
     for m in (req.history or [])[-10:]:
         role = "用户" if m.get("role") == "user" else "助手"
@@ -875,7 +883,7 @@ async def assistant_chat_stream(request: Request, req: AssistantChatRequest, cur
     async def gen():
         try:
             full = ""
-            async for delta, full in stream_llm_async(
+            async for delta, full in stream_llm_async(  # noqa: B007
                 system_prompt=_ASSISTANT_SYSTEM,
                 user_prompt=user_prompt,
                 max_tokens=1500,
@@ -883,7 +891,13 @@ async def assistant_chat_stream(request: Request, req: AssistantChatRequest, cur
             ):
                 yield _sse_event("delta", {"text": delta})
             elapsed = round(time.time() - start, 2)
-            log_usage("assistant_chat_stream", len(user_prompt), len(full), elapsed, user_id=str(current_user.get("user_id", "")))
+            log_usage(
+                "assistant_chat_stream",
+                len(user_prompt),
+                len(full),
+                elapsed,
+                user_id=str(current_user.get("user_id", "")),
+            )
             yield _sse_event("done", {"full": full, "elapsed": elapsed})
         except HTTPException as e:
             yield _sse_event("error", {"detail": e.detail})
@@ -929,9 +943,11 @@ async def forgot_password(request: Request, req: ForgotPasswordRequest):
     result = send_password_reset_token(req.username)
     if result.get("sent"):
         from common.mailer import is_smtp_configured, send_password_reset_email
+
         # 若 SMTP 已配置，尝试真实发送邮件；未配置时返回 token 便于开发测试
         if is_smtp_configured():
             from common.db import get_db
+
             conn = get_db()
             try:
                 row = conn.execute(
@@ -942,7 +958,9 @@ async def forgot_password(request: Request, req: ForgotPasswordRequest):
                 conn.close()
             to_email = row["email"] if row else ""
             if to_email and result.get("token"):
-                reset_link = f"{os.environ.get('APP_BASE_URL', 'http://localhost:5173')}/reset-password?token={result['token']}"
+                reset_link = (
+                    f"{os.environ.get('APP_BASE_URL', 'http://localhost:5173')}/reset-password?token={result['token']}"
+                )
                 send_password_reset_email(to_email, req.username, reset_link)
         return {"sent": True, "message": "重置令牌已生成，请查收邮件"}
     raise HTTPException(400, result.get("reason", "操作失败"))
@@ -1105,7 +1123,7 @@ def _media_file_exists(media_url: str) -> bool:
         ("/api/meme-factory/images/", "meme_factory"),
     ):
         if media_url.startswith(prefix):
-            return os.path.exists(os.path.join(base, sub, media_url[len(prefix):]))
+            return os.path.exists(os.path.join(base, sub, media_url[len(prefix) :]))
     return True
 
 
@@ -1326,8 +1344,7 @@ async def sitemap_xml(request: Request):
     urls = []
     for path, _title, priority in _SEO_PAGES:
         urls.append(
-            f"<url><loc>{escape(base + path)}</loc><changefreq>weekly</changefreq>"
-            f"<priority>{priority}</priority></url>"
+            f"<url><loc>{escape(base + path)}</loc><changefreq>weekly</changefreq><priority>{priority}</priority></url>"
         )
     try:
         from common.db import get_db
@@ -1348,7 +1365,11 @@ async def sitemap_xml(request: Request):
             )
     except Exception:
         pass  # 分享表不可用时仅返回静态页
-    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(urls) + "\n</urlset>"
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(urls)
+        + "\n</urlset>"
+    )
     return Response(content=xml, media_type="application/xml")
 
 
@@ -1534,6 +1555,7 @@ async def invite_leaderboard(limit: int = 10, current_user: dict = require_auth(
 async def invite_history(limit: int = 50, current_user: dict = require_auth()):
     """邀请历史列表。"""
     from common.auth import get_invite_history
+
     return get_invite_history(current_user.get("user_id"), limit)
 
 
@@ -1541,6 +1563,7 @@ async def invite_history(limit: int = 50, current_user: dict = require_auth()):
 async def invite_rewards(limit: int = 50, current_user: dict = require_auth()):
     """奖励流水列表。"""
     from common.auth import get_invite_rewards
+
     return get_invite_rewards(current_user.get("user_id"), limit)
 
 
@@ -1558,6 +1581,7 @@ async def get_audit_log_entries(
     if current_user.get("role") != "admin":
         raise HTTPException(403, "权限不足")
     from common.audit import get_audit_logs
+
     return get_audit_logs(user_id, action, start_date, end_date, limit)
 
 
@@ -1567,6 +1591,7 @@ async def get_audit_stats(current_user: dict = require_auth()):
     if current_user.get("role") != "admin":
         raise HTTPException(403, "权限不足")
     from common.db import get_db
+
     conn = get_db()
     try:
         # 今日操作数
@@ -1574,17 +1599,15 @@ async def get_audit_stats(current_user: dict = require_auth()):
         today_count = conn.execute(
             "SELECT COUNT(*) FROM audit_logs WHERE created_at LIKE ?", (f"{today}%",)
         ).fetchone()[0]
-        
+
         # 操作类型分布
         action_stats = conn.execute(
             "SELECT action, COUNT(*) as cnt FROM audit_logs GROUP BY action ORDER BY cnt DESC LIMIT 10"
         ).fetchall()
-        
+
         # 失败操作数
-        fail_count = conn.execute(
-            "SELECT COUNT(*) FROM audit_logs WHERE success = 0"
-        ).fetchone()[0]
-        
+        fail_count = conn.execute("SELECT COUNT(*) FROM audit_logs WHERE success = 0").fetchone()[0]
+
         return {
             "today_count": today_count,
             "fail_count": fail_count,
@@ -1898,7 +1921,6 @@ def _normalize_wf_edges(edges: list) -> list:
 
 
 @app.get("/api/workflows/{workflow_id}")
-
 async def get_workflow(workflow_id: str, current_user: dict = require_auth()):  # noqa: C901
     """获取工作流详情"""
     conn = get_db()
@@ -2036,7 +2058,6 @@ async def delete_workflow(workflow_id: str, current_user: dict = require_auth())
 
 # ── 会话管理 ──────────────────────────────────────────────────
 # 会话/消息/记忆 API 已迁移至 sessions.py router（/api/sessions/*）
-
 
 
 # ── Skills 管理（标准 Agent Skills 目录结构）───────────────────
@@ -2297,7 +2318,6 @@ def _mask_kb_config(cfg: dict) -> dict:
     return cfg
 
 
-
 def _kb_connect_sqlite(cfg: dict):
     """SQLite 连接。"""
     path = (cfg.get("database") or "").strip()
@@ -2343,6 +2363,7 @@ def _kb_connect_postgres(cfg: dict):
     )
     return conn, conn.cursor(), None
 
+
 def _kb_connect(cfg: dict):
     """建立数据库连接，返回 (conn, cursor, error)。支持 sqlite / mysql / postgres。"""
     engine = (cfg.get("engine") or "sqlite").lower()
@@ -2375,8 +2396,6 @@ def _kb_list_tables(cursor, engine: str) -> list[str]:
     except Exception:
         return []
 
-
-@app.get("/api/knowledge-bases")
 
 def _kb_file_stats(p: str) -> tuple:
     """统计 file 类型知识库的文档数与大小。"""
@@ -2418,6 +2437,8 @@ def _kb_db_stats(cfg: dict) -> tuple:
         pass
     return 0, 0
 
+
+@app.get("/api/knowledge-bases")
 async def list_knowledge_bases(current_user: dict = require_auth()):  # noqa: C901
     """获取所有知识库（连接配置脱敏；file/db 类型附文档统计）"""
     conn = get_db()
@@ -2610,27 +2631,21 @@ async def _search_kb_internal(params: dict) -> dict:
     """内部搜索函数。"""
     return {}
 
+
 async def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
     """解析搜索请求参数。"""
-    return {
-        "kb_id": kb_id,
-        "query": q.strip()[:500],
-        "limit": min(limit, 20),
-        "offset": 0
-    }
+    return {"kb_id": kb_id, "query": q.strip()[:500], "limit": min(limit, 20), "offset": 0}
+
 
 def _execute_vector_search(params: dict) -> list:
     """执行向量搜索。"""
     # 简化的搜索逻辑
     return []
 
+
 def _format_search_response(results: list, total: int) -> dict:
     """格式化搜索结果。"""
-    return {
-        "results": results,
-        "total": total,
-        "limit": len(results)
-    }
+    return {"results": results, "total": total, "limit": len(results)}
 
 
 def _prepare_search_context(query_data):
@@ -2639,24 +2654,18 @@ def _prepare_search_context(query_data):
         "query": query_data.get("query", ""),
         "filters": query_data.get("filters", {}),
         "results": [],
-        "status": "prepared"
+        "status": "prepared",
     }
+
 
 def _execute_search_step(search_type, search_params):
     """执行单步搜索。"""
-    return {
-        "type": search_type,
-        "params": search_params,
-        "status": "searched"
-    }
+    return {"type": search_type, "params": search_params, "status": "searched"}
+
 
 def _finalize_search_results(results):
     """汇总搜索结果。"""
-    return {
-        "total_results": len(results),
-        "results": results,
-        "status": "completed"
-    }
+    return {"total_results": len(results), "results": results, "status": "completed"}
 
 
 def _build_kb_context_simple(context_docs: list) -> str:
@@ -2664,7 +2673,6 @@ def _build_kb_context_simple(context_docs: list) -> str:
     if not context_docs:
         return ""
     return "\n".join([doc.get("content", "") for doc in context_docs[:5]])
-
 
 
 def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
@@ -2750,6 +2758,7 @@ def _kb_search_file(d: dict, q: str, limit: int) -> dict:
             break
     return {"ok": True, "hits": hits, "count": len(hits)}
 
+
 def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()
@@ -2833,7 +2842,6 @@ async def upload_kb_document(file: UploadFile = File(...), current_user: dict = 
 
 
 @app.get("/api/knowledge-bases/{kb_id}/documents")
-
 def _kb_docs_file(p: str) -> list:
     """file 类型知识库文档列表（目录扫描或单文件）。"""
     docs = []
@@ -2842,18 +2850,26 @@ def _kb_docs_file(p: str) -> list:
             fp = os.path.join(p, fn)
             if os.path.isfile(fp):
                 try:
-                    docs.append({
-                        "name": fn, "path": fp, "size": os.path.getsize(fp),
-                        "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
-                    })
+                    docs.append(
+                        {
+                            "name": fn,
+                            "path": fp,
+                            "size": os.path.getsize(fp),
+                            "mtime": datetime.fromtimestamp(os.path.getmtime(fp)).isoformat(),
+                        }
+                    )
                 except OSError:
                     continue
     elif p and os.path.isfile(p):
         try:
-            docs.append({
-                "name": os.path.basename(p), "path": p, "size": os.path.getsize(p),
-                "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
-            })
+            docs.append(
+                {
+                    "name": os.path.basename(p),
+                    "path": p,
+                    "size": os.path.getsize(p),
+                    "mtime": datetime.fromtimestamp(os.path.getmtime(p)).isoformat(),
+                }
+            )
         except OSError:
             pass
     return docs
@@ -2873,6 +2889,7 @@ def _kb_docs_db(d: dict) -> list:
     except Exception:
         pass
     return []
+
 
 async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):  # noqa: C901
     """列出知识库文档：file 类型扫描目录/文件；db 类型返回表信息；url 返回空。"""
@@ -3079,17 +3096,19 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
 
 
 @app.post("/api/mcp-servers/{server_id}/test")
-
 def _setup_mcp_test_env() -> dict:
     """设置MCP测试环境。"""
     import tempfile
+
     tmp_dir = tempfile.mkdtemp(prefix="mcp_test_")
     return {"tmp_dir": tmp_dir, "config": {}}
+
 
 def _run_mcp_health_check(config: dict) -> bool:
     """运行MCP健康检查。"""
     # 简化的健康检查
     return True
+
 
 def _collect_mcp_metrics(config: dict) -> dict:
     """收集MCP指标。"""
@@ -3129,7 +3148,11 @@ async def _mcp_test_http(url: str, headers: dict) -> dict:
             resp = await client.post(
                 url,
                 json=init_payload,
-                headers={**headers, "Accept": "application/json, text/event-stream", "Content-Type": "application/json"},
+                headers={
+                    **headers,
+                    "Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json",
+                },
             )
             if resp.status_code >= 400:
                 return {"ok": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
@@ -3156,6 +3179,7 @@ async def _mcp_list_tools(client, url: str, headers: dict) -> list:
         return [t.get("name", "?") for t in (data2.get("result", {}).get("tools", []) if data2 else [])]
     except Exception:
         return []
+
 
 async def test_mcp_server(server_id: str, current_user: dict = require_auth()):  # noqa: C901
     """测试 MCP 连接：stdio 检查命令可执行；SSE/HTTP 执行 JSON-RPC initialize 握手（自动注入认证头）。"""
@@ -3273,28 +3297,66 @@ async def sandbox_services(current_user: dict = require_auth()):
 
 # Redis 控制台安全白名单：仅允许数据操作命令，禁止 FLUSHALL/FLUSHDB/SHUTDOWN/CONFIG/EVAL 等危险命令
 REDIS_SAFE_COMMANDS = {
-    "PING", "ECHO", "DBSIZE", "KEYS", "EXISTS", "TYPE", "TTL", "PTTL", "GET", "MGET", "SET", "MSET",
-    "APPEND", "DEL", "EXPIRE", "PERSIST", "RENAME", "INCR", "DECR", "INCRBY", "DECRBY",
-    "HSET", "HGET", "HDEL", "HGETALL", "HLEN", "HEXISTS",
-    "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LLEN",
-    "SADD", "SREM", "SMEMBERS", "SCARD", "SISMEMBER",
-    "ZADD", "ZREM", "ZRANGE", "ZCARD", "ZSCORE",
-    "GETRANGE", "SETEX", "STRLEN", "OBJECT",
+    "PING",
+    "ECHO",
+    "DBSIZE",
+    "KEYS",
+    "EXISTS",
+    "TYPE",
+    "TTL",
+    "PTTL",
+    "GET",
+    "MGET",
+    "SET",
+    "MSET",
+    "APPEND",
+    "DEL",
+    "EXPIRE",
+    "PERSIST",
+    "RENAME",
+    "INCR",
+    "DECR",
+    "INCRBY",
+    "DECRBY",
+    "HSET",
+    "HGET",
+    "HDEL",
+    "HGETALL",
+    "HLEN",
+    "HEXISTS",
+    "LPUSH",
+    "RPUSH",
+    "LPOP",
+    "RPOP",
+    "LRANGE",
+    "LLEN",
+    "SADD",
+    "SREM",
+    "SMEMBERS",
+    "SCARD",
+    "SISMEMBER",
+    "ZADD",
+    "ZREM",
+    "ZRANGE",
+    "ZCARD",
+    "ZSCORE",
+    "GETRANGE",
+    "SETEX",
+    "STRLEN",
+    "OBJECT",
 }
 
 
 def _sandbox_project_env(project_id: str) -> dict:
     """读取沙箱项目创建配置中的环境变量（服务控制台凭据：MYSQL_ROOT_PASSWORD 等）"""
     conn = get_db()
-    row = conn.execute(
-        "SELECT image, config FROM sandbox_projects WHERE id=?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT image, config FROM sandbox_projects WHERE id=?", (project_id,)).fetchone()
     conn.close()
     env_map = {}
     if row:
         try:
             cfg = json.loads(row["config"] or "{}")
-            for e in (cfg.get("env") or []):
+            for e in cfg.get("env") or []:
                 if isinstance(e, str) and "=" in e:
                     k, _, v = e.partition("=")
                     env_map[k.strip()] = v.strip()
@@ -3342,9 +3404,7 @@ def sandbox_sql_query(project_id: str, req: SandboxSqlQueryRequest, current_user
     # 从项目镜像与创建配置（env）确定数据库客户端与凭据：
     # 沙箱项目创建时可自定义密码（如 MYSQL_ROOT_PASSWORD），不可硬编码默认值
     conn = get_db()
-    row = conn.execute(
-        "SELECT image FROM sandbox_projects WHERE id=?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT image FROM sandbox_projects WHERE id=?", (project_id,)).fetchone()
     conn.close()
     image = (row["image"] if row else "") or ""
     image_l = image.lower()
@@ -3377,11 +3437,7 @@ def sandbox_sql_query(project_id: str, req: SandboxSqlQueryRequest, current_user
     if raw.strip():
         lines = raw.split("\n")
         columns = [c for c in lines[0].split("\t") if c != ""]
-        rows = [
-            [c for c in line.split("\t")]
-            for line in lines[1:]
-            if line.strip() and line.strip() != "(0 rows)"
-        ]
+        rows = [[c for c in line.split("\t")] for line in lines[1:] if line.strip() and line.strip() != "(0 rows)"]
     return {"ok": True, "sql": sql, "columns": columns, "rows": rows, "raw": raw}
 
 
@@ -3394,8 +3450,20 @@ MONGO_SAFE_PATTERNS = [
 ]
 # 写操作/危险操作禁词（大小写不敏感，命中即拒绝）
 MONGO_BLOCKED = [
-    "insert", "update", "delete", "remove", "drop", "create", "rename", "aggregate",
-    "eval(", "runcommand", "admincommand", "$out", "$merge", "copytodatabase",
+    "insert",
+    "update",
+    "delete",
+    "remove",
+    "drop",
+    "create",
+    "rename",
+    "aggregate",
+    "eval(",
+    "runcommand",
+    "admincommand",
+    "$out",
+    "$merge",
+    "copytodatabase",
 ]
 
 
@@ -3411,7 +3479,9 @@ def sandbox_mongo_command(project_id: str, req: SandboxRedisCommandRequest, curr
     if any(b in cmd_l for b in MONGO_BLOCKED):
         raise HTTPException(400, "仅支持只读操作（禁止 insert/update/delete/drop/create/aggregate 等）")
     if not any(p.match(cmd) for p in MONGO_SAFE_PATTERNS):
-        raise HTTPException(400, "命令格式不在允许范围（支持 show dbs / use db / db.集合.find(...) / db.stats() 等只读操作）")
+        raise HTTPException(
+            400, "命令格式不在允许范围（支持 show dbs / use db / db.集合.find(...) / db.stats() 等只读操作）"
+        )
 
     # 凭据从项目创建配置读取（模板默认 admin/password）
     env_map = _sandbox_project_env(project_id)
@@ -3426,8 +3496,18 @@ def sandbox_mongo_command(project_id: str, req: SandboxRedisCommandRequest, curr
 
 # RabbitMQ 控制台：rabbitmqctl 只读白名单（状态/列表类命令）
 RABBITMQ_SAFE_VERBS = {
-    "status", "ping", "list_queues", "list_exchanges", "list_bindings", "list_connections",
-    "list_channels", "list_users", "list_permissions", "list_vhosts", "list_policies", "list_consumers",
+    "status",
+    "ping",
+    "list_queues",
+    "list_exchanges",
+    "list_bindings",
+    "list_connections",
+    "list_channels",
+    "list_users",
+    "list_permissions",
+    "list_vhosts",
+    "list_policies",
+    "list_consumers",
 }
 RABBITMQ_FIELD_RE = re.compile(r"^[a-zA-Z0-9_ ]*$")
 
@@ -3544,7 +3624,9 @@ def sandbox_start_project(project_id: str, current_user: dict = require_auth()):
         from datetime import datetime
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        r = subprocess.run(["podman", "start", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        r = subprocess.run(
+            ["podman", "start", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30
+        )
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
@@ -3569,7 +3651,9 @@ def sandbox_stop_project(project_id: str, current_user: dict = require_auth()):
         from datetime import datetime
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        r = subprocess.run(["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        r = subprocess.run(
+            ["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30
+        )
         if r.returncode != 0:
             return {"status": "error", "message": (r.stderr or "").strip() or f"容器 {container} 不存在"}
         conn = get_db()
@@ -3593,8 +3677,12 @@ def sandbox_delete_project(project_id: str, current_user: dict = require_auth())
         import subprocess
 
         container = f"sandbox-{project_id[len('deploy-') :]}"
-        subprocess.run(["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
-        subprocess.run(["podman", "rm", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        subprocess.run(
+            ["podman", "stop", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30
+        )
+        subprocess.run(
+            ["podman", "rm", container], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30
+        )
         conn = get_db()
         conn.execute("DELETE FROM sandbox_projects WHERE id=?", (project_id,))
         conn.commit()
@@ -3694,13 +3782,14 @@ def sandbox_execute_code(req: dict, current_user: dict = require_auth()):
 # ══════════════════════════════════════════════════════════════
 register_routers(app)
 
+
 # ══════════════════════════════════════════════════════════════# ══════════════════════════════════════════════════════════════
 # 门户系统 API（v16.0）
 # ══════════════════════════════════════════════════════════════
 @app.get("/api/portal/current")
 async def get_current_portal(current_user: dict = require_auth()):
     """获取当前用户绑定的门户配置（导航树 + 高亮工具），用于前端渲染侧边栏。"""
-    from portals import get_user_portal_type, load_user_ctx, get_portal_nav_for_user
+    from portals import get_portal_nav_for_user, load_user_ctx
 
     user_ctx = load_user_ctx(current_user)
     return get_portal_nav_for_user(user_ctx)
@@ -3725,6 +3814,7 @@ async def switch_portal(req: PortalSwitchRequest, current_user: dict = require_a
 
 if __name__ == "__main__":
     import os
+
     import uvicorn
 
     # 端口可配置：CLI/容器/云部署通过 PORT 环境变量覆盖（默认 8888）

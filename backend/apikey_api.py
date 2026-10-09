@@ -52,6 +52,7 @@ def _key_status(expires_at: str) -> str:
         return "expired"
     return "active"
 
+
 # ── API文档定义 ─────────────────────────────────────────────
 # 注意：web_search.py/batch_api.py/favorites_api.py 的 init_db() 已初始化 api_keys 表
 

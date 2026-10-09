@@ -143,6 +143,7 @@ def ensure_daily_backup() -> bool:
     # 异步上传远程（不阻塞主流程）
     try:
         from concurrent.futures import ThreadPoolExecutor
+
         executor = ThreadPoolExecutor(max_workers=1)
         executor.submit(upload_to_remote, result["name"])
     except Exception:
@@ -161,10 +162,7 @@ _REMOTE_BACKUP_PREFIX = os.environ.get("BACKUP_PREFIX", "backups").strip()
 def _remote_enabled() -> bool:
     """检查是否配置了远程备份（S3/OSS/MinIO）。"""
     return bool(
-        _REMOTE_BACKUP_BUCKET
-        and _REMOTE_BACKUP_ENDPOINT
-        and _REMOTE_BACKUP_ACCESS_KEY
-        and _REMOTE_BACKUP_SECRET_KEY
+        _REMOTE_BACKUP_BUCKET and _REMOTE_BACKUP_ENDPOINT and _REMOTE_BACKUP_ACCESS_KEY and _REMOTE_BACKUP_SECRET_KEY
     )
 
 

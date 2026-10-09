@@ -46,7 +46,9 @@ init_db()
 
 
 class FavoriteRequest(BaseModel):
-    fav_type: Literal["tool", "record", "template", "gallery"] = Field(..., description="收藏类型: tool/record/template/gallery")
+    fav_type: Literal["tool", "record", "template", "gallery"] = Field(
+        ..., description="收藏类型: tool/record/template/gallery"
+    )
     target_id: str = Field(..., min_length=1, max_length=200, description="目标ID")
     label: str = Field("", max_length=100, description="显示标签（可选）")
 
@@ -74,7 +76,9 @@ async def add_favorite(req: FavoriteRequest, current_user: dict = require_auth()
 
 @router.get("")
 async def list_favorites(
-    fav_type: Literal["", "tool", "record", "template", "gallery"] = Query("", description="筛选类型: tool/record/template/gallery"),
+    fav_type: Literal["", "tool", "record", "template", "gallery"] = Query(
+        "", description="筛选类型: tool/record/template/gallery"
+    ),
     limit: int = Query(100, ge=1, le=200, description="每页条数"),
     offset: int = Query(0, ge=0, description="偏移量"),
     current_user: dict = require_auth(),

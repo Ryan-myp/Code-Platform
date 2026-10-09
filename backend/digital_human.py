@@ -28,8 +28,10 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
 from common.llm import call_llm, log_usage
-from common.media_check import is_valid_audio as _valid_audio, is_valid_video as _valid_video
+from common.media_check import is_valid_audio as _valid_audio
+from common.media_check import is_valid_video as _valid_video
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -385,7 +387,10 @@ INDUSTRY_TEMPLATES = [
 
 
 # ── AI 写真肖像生成 ─────────────────────────────────────────
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
+from common.helpers import (
+    _notify_progress,
+)
+
 
 def _get_portrait_path(avatar_id: str) -> str:
     """返回某数字人形象写真图片的本地路径。"""
@@ -513,7 +518,12 @@ def _generate_portrait(avatar_id: str, uid: str = "") -> str | None:
         "style, shallow depth of field, 8k uhd, hyper-realistic detail"
     )
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY, IMAGE_MODEL, require_model, resolve_api_key, resolve_api_base
+    from common.config import (
+        IMAGE_MODEL,
+        require_model,
+        resolve_api_base,
+        resolve_api_key,
+    )
     from common.llm import api_error_detail
 
     if not resolve_api_key():
@@ -604,26 +614,14 @@ def _load_font(size: int, candidates: list[str]) -> ImageFont.FreeTypeFont:
 
 
 def _audio_duration(path: str) -> float:
-    """用 ffprobe 获取音频时长（秒）；文件无效/不可读返回 0（调用方拦截）。"""
+    """获取音频时长（秒）：ffprobe 优先，无 ffprobe 时 ffmpeg -i 兑底；文件无效/不可读返回 0（调用方拦截）。"""
     try:
-        out = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
-            timeout=15,
-        )
-        duration = float(out.stdout.strip())
-        return max(duration, 1.0)
+        from common.ffmpeg_bin import probe_media
+
+        meta = probe_media(path, timeout=15)
+        if not meta:
+            return 0.0
+        return max(meta["duration"], 1.0)
     except Exception:
         return 0.0
 
@@ -642,7 +640,7 @@ def _pick_video_encoder() -> str:
         enc = "libx264"
         try:
             out = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-encoders"],
+                [FFMPEG_BIN, "-hide_banner", "-encoders"],
                 capture_output=True,
                 text=True,
                 stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
@@ -760,8 +758,16 @@ _EMOJI_RE = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F]
 _DIGIT_RE = re.compile(r"\d{3,}")
 _LATIN_WORD_RE = re.compile(r"[A-Za-z]{6,}")
 _CN_DIGIT_MAP = {
-    "0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
-    "5": "五", "6": "六", "7": "七", "8": "八", "9": "九",
+    "0": "零",
+    "1": "一",
+    "2": "二",
+    "3": "三",
+    "4": "四",
+    "5": "五",
+    "6": "六",
+    "7": "七",
+    "8": "八",
+    "9": "九",
 }
 
 
@@ -800,11 +806,14 @@ def check_script_quality(text: str) -> dict:
     if not raw.strip():
         return {
             "ok": False,
-            "issues": [{
-                "level": "error", "item": "空文案",
-                "detail": "未输入任何口播内容",
-                "suggest": "请先填写文案，或点击行业模板一键填入示例文案",
-            }],
+            "issues": [
+                {
+                    "level": "error",
+                    "item": "空文案",
+                    "detail": "未输入任何口播内容",
+                    "suggest": "请先填写文案，或点击行业模板一键填入示例文案",
+                }
+            ],
             "char_count": 0,
             "estimate_sec": 1,
             "fixed_text": "",
@@ -813,74 +822,98 @@ def check_script_quality(text: str) -> dict:
 
     # 2) 文案过短
     if char_count < 10:
-        issues.append({
-            "level": "error", "item": "文案过短",
-            "detail": f"仅 {char_count} 个汉字，难以支撑完整口播",
-            "suggest": "补充至 30 字以上，让数字人有充分的表达节奏",
-        })
+        issues.append(
+            {
+                "level": "error",
+                "item": "文案过短",
+                "detail": f"仅 {char_count} 个汉字，难以支撑完整口播",
+                "suggest": "补充至 30 字以上，让数字人有充分的表达节奏",
+            }
+        )
 
     # 3) 长句无停顿：按标点/空白切分后的连续汉字段过长
     segs = [seg for seg in re.split(r"[，。！？；：、,.!?;:…—～~·\s]+", raw) if seg]
     for seg in segs:
         n = len(_CJK_RE.findall(seg))
         if n > 60:
-            issues.append({
-                "level": "error", "item": "超长无停顿句",
-                "detail": f"连续 {n} 个汉字无停顿（约 {n // 4} 秒一口气念完），TTS 易读岔、口型与停顿错位",
-                "suggest": f"在第 18 字附近断句：『{seg[:18]}…』后加分号或句号",
-            })
+            issues.append(
+                {
+                    "level": "error",
+                    "item": "超长无停顿句",
+                    "detail": f"连续 {n} 个汉字无停顿（约 {n // 4} 秒一口气念完），TTS 易读岔、口型与停顿错位",
+                    "suggest": f"在第 18 字附近断句：『{seg[:18]}…』后加分号或句号",
+                }
+            )
         elif n > 35:
-            issues.append({
-                "level": "warn", "item": "长句无停顿",
-                "detail": f"连续 {n} 个汉字无停顿，接近一口气读完的极限",
-                "suggest": f"建议在第 18 字附近断句：『{seg[:18]}…』",
-            })
+            issues.append(
+                {
+                    "level": "warn",
+                    "item": "长句无停顿",
+                    "detail": f"连续 {n} 个汉字无停顿，接近一口气读完的极限",
+                    "suggest": f"建议在第 18 字附近断句：『{seg[:18]}…』",
+                }
+            )
 
     # 4) emoji / 特殊符号：fixed_text 中自动移除
     emojis = sorted(set(_EMOJI_RE.findall(raw)))
     if emojis:
-        issues.append({
-            "level": "warn", "item": "含 emoji/特殊符号",
-            "detail": f"检测到 {len(emojis)} 种符号：{' '.join(emojis[:5])}" + ("…" if len(emojis) > 5 else ""),
-            "suggest": "TTS 可能跳过或读出乱码，建议改为文字（如 👍→点赞）",
-        })
+        issues.append(
+            {
+                "level": "warn",
+                "item": "含 emoji/特殊符号",
+                "detail": f"检测到 {len(emojis)} 种符号：{' '.join(emojis[:5])}" + ("…" if len(emojis) > 5 else ""),
+                "suggest": "TTS 可能跳过或读出乱码，建议改为文字（如 👍→点赞）",
+            }
+        )
         fixed = _EMOJI_RE.sub("", fixed)
 
     # 5) 长数字串：fixed_text 中自动转中文数字
     digit_hits = _DIGIT_RE.findall(raw)
     if digit_hits:
-        issues.append({
-            "level": "warn", "item": "长数字串",
-            "detail": f"发现 {len(digit_hits)} 处 ≥3 位数字（如 {digit_hits[0]}），TTS 易按英文逐位朗读",
-            "suggest": f"建议转中文：『{_digits_to_cn(digit_hits[0])}』",
-        })
+        issues.append(
+            {
+                "level": "warn",
+                "item": "长数字串",
+                "detail": f"发现 {len(digit_hits)} 处 ≥3 位数字（如 {digit_hits[0]}），TTS 易按英文逐位朗读",
+                "suggest": f"建议转中文：『{_digits_to_cn(digit_hits[0])}』",
+            }
+        )
         fixed = _DIGIT_RE.sub(lambda m: _digits_to_cn(m.group()), fixed)
 
     # 6) 长英文词
     latin_words = sorted(set(_LATIN_WORD_RE.findall(raw)))
     if latin_words:
-        issues.append({
-            "level": "warn", "item": "长英文词",
-            "detail": f"检测到 {len(latin_words)} 个 ≥6 字母英文词（如 {latin_words[0]}），中文音色易逐字母朗读",
-            "suggest": "建议拆分为中文表述（如 AI → 人工智能）",
-        })
+        issues.append(
+            {
+                "level": "warn",
+                "item": "长英文词",
+                "detail": f"检测到 {len(latin_words)} 个 ≥6 字母英文词（如 {latin_words[0]}），中文音色易逐字母朗读",
+                "suggest": "建议拆分为中文表述（如 AI → 人工智能）",
+            }
+        )
 
     # 7) 连续空行：fixed_text 中折叠
     if re.search(r"\n{3,}", raw):
-        issues.append({
-            "level": "warn", "item": "连续空行过多",
-            "detail": "存在 3 行及以上连续空行，渲染会出现大段空白",
-            "suggest": "合并为单个空行，保留分段结构",
-        })
+        issues.append(
+            {
+                "level": "warn",
+                "item": "连续空行过多",
+                "detail": "存在 3 行及以上连续空行，渲染会出现大段空白",
+                "suggest": "合并为单个空行，保留分段结构",
+            }
+        )
         fixed = re.sub(r"\n{3,}", "\n\n", fixed)
 
     # 8) 全文无标点（有内容且没有任何断句符号）
     if char_count >= 10 and not _PUNCT_RE.search(raw):
-        issues.append({
-            "level": "warn", "item": "全文无标点",
-            "detail": "整段文案没有任何断句标点，朗读没有停顿节奏",
-            "suggest": "按语义在每 15~20 字处添加逗号或句号",
-        })
+        issues.append(
+            {
+                "level": "warn",
+                "item": "全文无标点",
+                "detail": "整段文案没有任何断句标点，朗读没有停顿节奏",
+                "suggest": "按语义在每 15~20 字处添加逗号或句号",
+            }
+        )
 
     fixed = fixed.strip()
     return {
@@ -905,7 +938,7 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
     """
     try:
         out = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
+            [FFMPEG_BIN, "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
             capture_output=True,
             stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=30,
@@ -933,15 +966,15 @@ def _audio_energy_curve(path: str, duration: float, fps: float) -> list:
 # 扩展版韵母口型表（v20：增加更多音标分类，覆盖常见拼音韵母）
 _ENHANCED_MOUTH_SHAPES = {
     # 单韵母
-    "a": (1.0, 0.5),   # 大口
+    "a": (1.0, 0.5),  # 大口
     "o": (0.75, 0.95),  # 圆嘴
     "e": (0.55, 0.65),  # 半开
     "i": (0.45, 0.25),  # 扁嘴
-    "u": (0.55, 1.0),   # 嘟嘴
-    "v": (0.6, 0.8),    # ü 扁圆
+    "u": (0.55, 1.0),  # 嘟嘴
+    "v": (0.6, 0.8),  # ü 扁圆
     "er": (0.65, 0.7),  # 儿化
     # 鼻韵母
-    "an": (0.8, 0.4),   # 前鼻音
+    "an": (0.8, 0.4),  # 前鼻音
     "en": (0.6, 0.5),
     "ang": (0.9, 0.3),  # 后鼻音
     "eng": (0.7, 0.4),
@@ -952,7 +985,7 @@ _ENHANCED_MOUTH_SHAPES = {
     "ün": (0.65, 0.75),
     "ions": (0.5, 0.5),
     # 闭口音
-    "n": (0.15, 0.4),   # 鼻音收尾
+    "n": (0.15, 0.4),  # 鼻音收尾
     "ng": (0.2, 0.45),
     # 默认
     "": (0.0, 0.5),
@@ -995,7 +1028,7 @@ def _blend_mouth_shapes(script_curve: list, audio_curve: list, alpha: float = 0.
 
     len_script = len(script_curve)
     len_audio = len(audio_curve)
-    min_len = min(len_script, len_audio)
+    min(len_script, len_audio)
     max_len = max(len_script, len_audio)
 
     result = []
@@ -1014,6 +1047,7 @@ def _build_script_timeline_v2(text: str, duration: float, audio_path: str = "", 
     比原版 _build_script_timeline 多了音频能量融合能力。
     """
     import re
+
     from pypinyin import Style, pinyin
 
     hanzi = re.compile(r"[\u4e00-\u9fff]")
@@ -1047,8 +1081,7 @@ def _build_script_timeline_v2(text: str, duration: float, audio_path: str = "", 
             audio_mouth = _audio_driven_mouth(audio_path, fps, duration)
             if audio_mouth:
                 timeline_audio = []
-                audio_idx = 0
-                audio_step = len(audio_mouth) / max(len(timeline), 1)
+                len(audio_mouth) / max(len(timeline), 1)
                 for ch, start, end, op, ro in timeline:
                     # 取该时间段内的平均音频口型
                     segment_end_idx = int((end / duration) * len(audio_mouth))
@@ -1089,8 +1122,9 @@ def _build_script_timeline_v2(text: str, duration: float, audio_path: str = "", 
 
 def _mouth_shape_at_v2(timeline: list, t: float, smooth: float = 0.025) -> tuple:
     """v2 平滑口型查询：支持帧级时间轴（由 _build_script_timeline_v2 生成）。"""
+
     def _shape_at(t0: float) -> tuple:
-        for _, _, _, open_, round_ in timeline:
+        for _, _, _, open_, _round in timeline:  # noqa: B007
             if open_ <= 0.01:
                 return (0.0, 0.5)
             # 找到包含 t0 的时间段
@@ -1761,28 +1795,33 @@ def _draw_karaoke(  # noqa: C901 — 卡拉OK逐字绘制（right/center 双布�
         cur_x += _text_width(ch, font)
 
 
-
 def _create_ui_layer(width: int, height: int):
     """创建 UI 图层。"""
     from PIL import Image, ImageDraw
+
     ui = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     return ui, ImageDraw.Draw(ui)
 
+
 def _draw_glow_spots(img, ui, width, height, t, S):
     """绘制高斯柔光斑。"""
-    for i, (gx, gy, scale) in enumerate([
-        (0.82, 0.20, 1.6),
-        (0.12, 0.72, 1.3),
-        (0.58, 0.92, 1.9),
-    ]):
+    for i, (gx, gy, scale) in enumerate(
+        [
+            (0.82, 0.20, 1.6),
+            (0.12, 0.72, 1.3),
+            (0.58, 0.92, 1.9),
+        ]
+    ):
         layer = _get_glow_template(150, scale)
-        cx = int(width * gx + __import__('math').sin(t * 0.3 + i * 2.1) * 40 * S)
-        cy = int(height * gy + __import__('math').cos(t * 0.25 + i * 1.7) * 30 * S)
+        cx = int(width * gx + __import__("math").sin(t * 0.3 + i * 2.1) * 40 * S)
+        cy = int(height * gy + __import__("math").cos(t * 0.25 + i * 1.7) * 30 * S)
         img.paste(layer, (cx - layer.width // 2, cy - layer.height // 2), layer)
+
 
 def _apply_talk_motion(t, energy, emotion, S):
     """应用说话律动。"""
     import math
+
     emo = _EMOTION_FACE.get(emotion, _EMOTION_FACE["neutral"])
     talk = min(1.0, energy * 1.6) * emo["move"]
     sway_t = math.sin(t * 1.15)
@@ -1791,9 +1830,28 @@ def _apply_talk_motion(t, energy, emotion, S):
     enter_ease = 1 - (1 - min(1.0, t / 0.8)) ** 3
     return talk, sway_t, breathe_t, glow_alpha, enter_ease, emo
 
-def _draw_portrait_region(img, draw, portrait, t, energy, S, width, height, talk, sway_t, breathe_t, glow_alpha, enter_ease, emo, mouth_shape, avatar) -> None:
+
+def _draw_portrait_region(
+    img,
+    draw,
+    portrait,
+    t,
+    energy,
+    S,
+    width,
+    height,
+    talk,
+    sway_t,
+    breathe_t,
+    glow_alpha,
+    enter_ease,
+    emo,
+    mouth_shape,
+    avatar,
+) -> None:
     """绘制人物区（写真动态 + 眨眼/嘴型 + 光环）——完整迁移。"""
     import math
+
     p_base, p_mask_base, p_base_w, p_base_h, face_meta = portrait
     # 头部几何（归一化画布 800x1000 坐标）→ 眼/嘴/颊彩动态定位，
     # 适配不同写真构图差异（固定比例在构图漂移时会贴错位）
@@ -1815,12 +1873,7 @@ def _draw_portrait_region(img, draw, portrait, t, energy, S, width, height, talk
     p_h = max(20, int(p_base_h * breath_scale * S))
     # 点头倾斜：小角度 + 高频微颤（真人肌肉松弛感，避免纸片式大摆）
     # v13.24 情绪头姿：欢快/严肃微抬头，悲伤低头，愤怒微前倾
-    tilt = (
-        0.9 * sway_t * (1.0 + 0.9 * talk)
-        + 0.45 * talk * math.sin(t * 2.9)
-        + 0.22 * math.sin(t * 5.1)
-        + emo["head"]
-    )
+    tilt = 0.9 * sway_t * (1.0 + 0.9 * talk) + 0.45 * talk * math.sin(t * 2.9) + 0.22 * math.sin(t * 5.1) + emo["head"]
     nod_pivot = (int(p_w / 2), p_h)  # 底部中心为旋转轴
     p_img = p_base.resize((p_w, p_h), Image.LANCZOS).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
     p_mask = p_mask_base.resize((p_w, p_h), Image.BILINEAR).rotate(tilt, resample=Image.BILINEAR, center=nod_pivot)
@@ -1914,6 +1967,7 @@ def _draw_portrait_region(img, draw, portrait, t, energy, S, width, height, talk
 def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, avatar, fonts) -> None:
     """无人物时的兜底画面（云朵/光斑/表情）。"""
     import math
+
     glow_alpha = max(8, min(45, int(22 + 16 * math.sin(t * 1.9))))  # 呼吸光晕透明度（与主画像函数一致）
     # fallback：emoji 大头像（有真实人物感）
     float_offset = int(math.sin(t * 1.3) * 8 * S)
@@ -1968,7 +2022,9 @@ def _draw_portrait_region_fallback(img, draw, portrait, t, S, width, height, ava
         draw.text((cx - sw // 2, cy + r + 22), style_text, fill="#ffffff55", font=fonts["body"])
 
 
-def _draw_bottom_bar(draw, width: int, height: int, S: float, fonts: dict, avatar: dict, accent, progress: float) -> None:
+def _draw_bottom_bar(
+    draw, width: int, height: int, S: float, fonts: dict, avatar: dict, accent, progress: float
+) -> None:
     """底部栏：品牌信息 + 主题色进度条。"""
     bar_h = int(64 * S)
     draw.rectangle([0, height - bar_h, width, height], fill="#00000055")
@@ -1985,6 +2041,7 @@ def _draw_bottom_bar(draw, width: int, height: int, S: float, fonts: dict, avata
     fill_w = int(bar_w * progress)
     if fill_w > 4:
         draw.rounded_rectangle([int(30 * S), bar_y, int(30 * S) + fill_w, bar_y + int(6 * S)], radius=3, fill=accent)
+
 
 def _render_frame(  # noqa: C901
     avatar: dict,
@@ -2034,12 +2091,34 @@ def _render_frame(  # noqa: C901
     # ── 4. 左侧人物：写真 + 动态（入场滑入/呼吸缩放/点头倾斜/眨眼/嘴型开合）──
     if portrait:
         _draw_portrait_region(
-            img, draw, portrait, t, energy, S, width, height,
-            talk, sway_t, breathe_t, glow_alpha, enter_ease, emo, mouth_shape, avatar,
+            img,
+            draw,
+            portrait,
+            t,
+            energy,
+            S,
+            width,
+            height,
+            talk,
+            sway_t,
+            breathe_t,
+            glow_alpha,
+            enter_ease,
+            emo,
+            mouth_shape,
+            avatar,
         )
     else:
         _draw_portrait_region_fallback(
-            img, draw, portrait, t, S, width, height, avatar, fonts,
+            img,
+            draw,
+            portrait,
+            t,
+            S,
+            width,
+            height,
+            avatar,
+            fonts,
         )
 
     # ── 5. 人物名片（右上）+ 卡拉OK逐字字幕（right=名片下 / center=底部居中大字）──
@@ -2155,10 +2234,30 @@ def _render_frame(  # noqa: C901
 
 
 def _render_video_frame(
-    f: int, fps: int, duration: float, energy_curve, script_timeline, avatar, bg_hex, fonts,
-    portrait, text_lines, RENDER_W: int, RENDER_H: int, bg_img, subtitle_style, sub_font,
-    sub_cache, emotion, OUT_W: int, OUT_H: int, opening: str, closing: str, watermark: bool,
-    wm_font, frames_dir: str,
+    f: int,
+    fps: int,
+    duration: float,
+    energy_curve,
+    script_timeline,
+    avatar,
+    bg_hex,
+    fonts,
+    portrait,
+    text_lines,
+    RENDER_W: int,
+    RENDER_H: int,
+    bg_img,
+    subtitle_style,
+    sub_font,
+    sub_cache,
+    emotion,
+    OUT_W: int,
+    OUT_H: int,
+    opening: str,
+    closing: str,
+    watermark: bool,
+    wm_font,
+    frames_dir: str,
 ) -> None:
     """渲染单帧：人物帧 + Ken Burns 运镜 + 淡入淡出 + 片头片尾 + 水印 → JPG。"""
     import math
@@ -2168,10 +2267,22 @@ def _render_video_frame(
     energy = energy_curve[min(f, len(energy_curve) - 1)] if energy_curve else 0.0
     mouth_shape = _mouth_shape_at(script_timeline, t)
     frame = _render_frame(
-        avatar=avatar, bg_hex=bg_hex, fonts=fonts, portrait=portrait, text_lines=text_lines,
-        t=t, progress=progress, width=RENDER_W, height=RENDER_H, energy=energy,
-        mouth_shape=mouth_shape, bg_img=bg_img, subtitle_style=subtitle_style,
-        sub_font=sub_font, sub_cache=sub_cache, emotion=emotion,
+        avatar=avatar,
+        bg_hex=bg_hex,
+        fonts=fonts,
+        portrait=portrait,
+        text_lines=text_lines,
+        t=t,
+        progress=progress,
+        width=RENDER_W,
+        height=RENDER_H,
+        energy=energy,
+        mouth_shape=mouth_shape,
+        bg_img=bg_img,
+        subtitle_style=subtitle_style,
+        sub_font=sub_font,
+        sub_cache=sub_cache,
+        emotion=emotion,
     )
     # 镜头运动：Ken Burns 推近 + 缓慢平移 + 呼吸缩放
     zoom = 0.05 * progress + 0.012 * math.sin(t * 0.25)
@@ -2235,7 +2346,9 @@ def _overlay_watermark(frame, wm_font, OUT_W: int, OUT_H: int):
     return frame
 
 
-def _encode_with_fallback(frames_dir: str, audio_path: str, output_path: str, resolution: str, fps: int, total_frames: int, duration: float) -> None:
+def _encode_with_fallback(
+    frames_dir: str, audio_path: str, output_path: str, resolution: str, fps: int, total_frames: int, duration: float
+) -> None:
     """ffmpeg 编码：1080p 失败自动降级 720p 重试。"""
     encode_attempts = [resolution, "720p"] if resolution == "1080p" else [resolution]
     encode_err: Exception | None = None
@@ -2274,7 +2387,6 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
     - 镜头：整体缓慢推近（Ken Burns），开头 0.4s 淡入、结尾 0.4s 淡出
     - 商业水印：watermark=True 时右下角叠加平台半透明水印
     """
-    import math
     import shutil
 
     OUT_W, OUT_H = (1920, 1080) if resolution == "1080p" else (1280, 720)
@@ -2344,10 +2456,31 @@ def _render_video(  # noqa: C901 — 多阶段渲染管线（帧/编码/降级�
     sub_cache = {"sig": None, "layer": None, "lock": threading.Lock()}
 
     def _render_one(f: int) -> None:
-        frame = _render_video_frame(
-            f, fps, duration, energy_curve, script_timeline, avatar, bg_hex, fonts,
-            portrait, text_lines, RENDER_W, RENDER_H, bg_img, subtitle_style, sub_font,
-            sub_cache, emotion, OUT_W, OUT_H, opening, closing, watermark, wm_font, frames_dir,
+        _render_video_frame(
+            f,
+            fps,
+            duration,
+            energy_curve,
+            script_timeline,
+            avatar,
+            bg_hex,
+            fonts,
+            portrait,
+            text_lines,
+            RENDER_W,
+            RENDER_H,
+            bg_img,
+            subtitle_style,
+            sub_font,
+            sub_cache,
+            emotion,
+            OUT_W,
+            OUT_H,
+            opening,
+            closing,
+            watermark,
+            wm_font,
+            frames_dir,
         )
 
     try:
@@ -2393,15 +2526,18 @@ def _ffmpeg_encode(frames_dir: str, audio_path: str, output_path: str, resolutio
         # v14.0 码率按分辨率分级：720p 短视频 5M 已满足观感（编码更快），1080p 保持 6M 画质
         if enc != "libx264":
             quality_args = [
-                "-b:v", "6M" if resolution == "1080p" else "5M",
-                "-maxrate", "8M" if resolution == "1080p" else "7M",
-                "-bufsize", "12M" if resolution == "1080p" else "10M",
+                "-b:v",
+                "6M" if resolution == "1080p" else "5M",
+                "-maxrate",
+                "8M" if resolution == "1080p" else "7M",
+                "-bufsize",
+                "12M" if resolution == "1080p" else "10M",
             ]
         else:
             quality_args = ["-crf", "18"]
         subprocess.run(
             [
-                "ffmpeg",
+                FFMPEG_BIN,
                 "-y",
                 "-framerate",
                 str(fps),
@@ -2741,6 +2877,7 @@ async def upload_photo_avatar(
     filename = f"{avatar_id}.jpg"
     path = os.path.join(UPLOAD_DH_AVATAR_DIR, filename)
     try:
+
         def _process_photo() -> None:
             img = Image.open(BytesIO(content))
             img.load()
@@ -3003,9 +3140,7 @@ async def revoke_voice_clone(clone_id: str, current_user: dict = require_auth())
     conn = get_db()
     try:
         _ensure_tables(conn)
-        row = conn.execute(
-            "SELECT user_id, sample_path FROM voice_clones WHERE id=?", (clone_id,)
-        ).fetchone()
+        row = conn.execute("SELECT user_id, sample_path FROM voice_clones WHERE id=?", (clone_id,)).fetchone()
         if not row:
             raise HTTPException(404, "克隆声音不存在")
         if row["user_id"] != user and role != "admin":
@@ -3032,8 +3167,16 @@ class GenerateRequest(BaseModel):
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：本地版由用户开关自由控制")
-    engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
-    emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或 neutral/happy/sad/angry/gentle/serious 手动指定")
+    engine: str = Field(
+        "2d",
+        pattern="^(2d|live_portrait|sadtalker)$",
+        description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）",
+    )
+    emotion: str = Field(
+        "auto",
+        pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$",
+        description="情绪（v13.24）：auto=LLM自动判断，或 neutral/happy/sad/angry/gentle/serious 手动指定",
+    )
 
 
 # 本地免费版：水印由用户开关控制
@@ -3313,10 +3456,20 @@ async def generate_all_portraits(current_user: dict = require_auth()):
     }
 
 
-
 def _dh_render_with_chain(
-    req, avatar, bg, audio_path, video_path, optimized_text, use_watermark, subtitle_style,
-    opening_text, closing_text, emotion, progress, record_id,
+    req,
+    avatar,
+    bg,
+    audio_path,
+    video_path,
+    optimized_text,
+    use_watermark,
+    subtitle_style,
+    opening_text,
+    closing_text,
+    emotion,
+    progress,
+    record_id,
 ) -> tuple:
     """引擎选择链渲染（sadtalker → live_portrait → 2d），返回 (engine_used, render_size)。"""
     sadtalker_render_size: int | None = None
@@ -3375,7 +3528,23 @@ def _dh_render_with_chain(
     raise render_err if render_err else RuntimeError("渲染失败")
 
 
-def _dh_save_record(conn, record_id: str, user: str, req, avatar, voice, bg, optimized_text: str, status: str, audio_url: str, video_url: str, error_msg: str, use_watermark: bool, engine_used: str, emotion: str) -> None:
+def _dh_save_record(
+    conn,
+    record_id: str,
+    user: str,
+    req,
+    avatar,
+    voice,
+    bg,
+    optimized_text: str,
+    status: str,
+    audio_url: str,
+    video_url: str,
+    error_msg: str,
+    use_watermark: bool,
+    engine_used: str,
+    emotion: str,
+) -> None:
     """保存数字人生成记录。"""
     conn.execute(
         """INSERT INTO digital_human_records
@@ -3410,7 +3579,6 @@ def _dh_save_record(conn, record_id: str, user: str, req, avatar, voice, bg, opt
     conn.commit()
 
 
-
 def _dh_content_scan(text: str) -> list:
     """内容安全扫描：返回风险词列表（硬违规词直接抛 400）。"""
     try:
@@ -3440,7 +3608,9 @@ def _dh_validate_resources(req, user: str) -> tuple:
     if not bg:
         raise HTTPException(400, f"背景场景不存在（{req.background_id}），请重新选择")
     if req.engine in ("live_portrait", "sadtalker"):
-        if not (avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])):
+        if not (
+            avatar.get("is_custom") and avatar.get("local_image_path") and os.path.exists(avatar["local_image_path"])
+        ):
             raise HTTPException(400, "照片数字人引擎需要先上传照片形象（请先在「照片数字人」上传正脸照片）")
     template = next((t for t in INDUSTRY_TEMPLATES if t["id"] == req.template_id), None)
     if req.template_id and not template:
@@ -3482,7 +3652,7 @@ def _dh_quota_setup(uid: str, req, role: str) -> tuple:
             402,
             "今日数字人生成次数已用完，可在次日 0 点自动恢复",
         )
-    quota_info = get_quota_info(uid)
+    get_quota_info(uid)
     record_id = f"dh_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     _ensure_tables(conn)
@@ -3506,6 +3676,7 @@ def _dh_validate_video(video_path: str) -> None:
         except OSError:
             pass
         raise RuntimeError("视频渲染结果无效（文件缺失或损坏）")
+
 
 def _generate_one(  # noqa: C901
     req: GenerateRequest,
@@ -3575,9 +3746,19 @@ def _generate_one(  # noqa: C901
                     video_filename = f"{record_id}.mp4"
                     video_path = os.path.join(UPLOAD_VIDEO_DIR, video_filename)
                     engine_used, sadtalker_render_size = _dh_render_with_chain(
-                        req, avatar, bg, audio_path, video_path, optimized_text,
-                        use_watermark, subtitle_style, opening_text, closing_text,
-                        emotion, progress, record_id,
+                        req,
+                        avatar,
+                        bg,
+                        audio_path,
+                        video_path,
+                        optimized_text,
+                        use_watermark,
+                        subtitle_style,
+                        opening_text,
+                        closing_text,
+                        emotion,
+                        progress,
+                        record_id,
                     )
                 finally:
                     _RENDER_SLOT.release()
@@ -3597,13 +3778,36 @@ def _generate_one(  # noqa: C901
             status, error_msg = _dh_final_failure(stage, audio_path, audio_error)
 
     # 4. 保存记录（含商业参数：分辨率/帧率/水印/引擎/行业模板/情绪）
-    _dh_save_record(conn, record_id, user, req, avatar, voice, bg, optimized_text,
-                    status, audio_url, video_url, error_msg, use_watermark, engine_used, emotion)
+    _dh_save_record(
+        conn,
+        record_id,
+        user,
+        req,
+        avatar,
+        voice,
+        bg,
+        optimized_text,
+        status,
+        audio_url,
+        video_url,
+        error_msg,
+        use_watermark,
+        engine_used,
+        emotion,
+    )
     conn.close()
     _report(95, "记录已保存")
 
     elapsed = round((datetime.now() - start).total_seconds(), 2)
-    log_usage("digital_human", len(req.text), len(optimized_text), elapsed, success=not error_msg, error=error_msg or "", user_id=str(user or ""))
+    log_usage(
+        "digital_human",
+        len(req.text),
+        len(optimized_text),
+        elapsed,
+        success=not error_msg,
+        error=error_msg or "",
+        user_id=str(user or ""),
+    )
     _report(100, "生成完成")
 
     return {
@@ -3648,12 +3852,33 @@ EMOTION_TTS_STYLE = {
     "serious": "serious",
 }
 _EMOTION_ALIAS = {
-    "欢快": "happy", "开心": "happy", "高兴": "happy", "快乐": "happy", "兴奋": "happy",
-    "悲伤": "sad", "难过": "sad", "伤心": "sad", "忧伤": "sad", "失落": "sad",
-    "激昂": "angry", "愤怒": "angry", "激动": "angry", "生气": "angry", "激情": "angry",
-    "温柔": "gentle", "平和": "gentle", "舒缓": "gentle", "亲切": "gentle",
-    "严肃": "serious", "认真": "serious", "郑重": "serious", "正式": "serious",
-    "自然": "neutral", "中性": "neutral", "平静": "neutral", "平淡": "neutral",
+    "欢快": "happy",
+    "开心": "happy",
+    "高兴": "happy",
+    "快乐": "happy",
+    "兴奋": "happy",
+    "悲伤": "sad",
+    "难过": "sad",
+    "伤心": "sad",
+    "忧伤": "sad",
+    "失落": "sad",
+    "激昂": "angry",
+    "愤怒": "angry",
+    "激动": "angry",
+    "生气": "angry",
+    "激情": "angry",
+    "温柔": "gentle",
+    "平和": "gentle",
+    "舒缓": "gentle",
+    "亲切": "gentle",
+    "严肃": "serious",
+    "认真": "serious",
+    "郑重": "serious",
+    "正式": "serious",
+    "自然": "neutral",
+    "中性": "neutral",
+    "平静": "neutral",
+    "平淡": "neutral",
 }
 
 
@@ -3673,7 +3898,7 @@ def _detect_emotion(text: str) -> str:
     except Exception as e:
         logger.warning(f"情绪标注 LLM 失败，回退 neutral: {e}")
         return "neutral"
-    emo = (raw or "").strip().lower().strip('\"\'。，,. ')
+    emo = (raw or "").strip().lower().strip("\"'。，,. ")
     if emo in EMOTION_OPTIONS:
         return emo
     # LLM 可能输出中文标签或带说明：模糊匹配别名
@@ -3891,8 +4116,16 @@ class BatchGenerateRequest(BaseModel):
     resolution: str = Field("720p", pattern="^(720p|1080p)$", description="视频分辨率")
     fps: int = Field(15, ge=10, le=30, description="帧率")
     watermark: bool | None = Field(None, description="水印：本地版由用户开关自由控制")
-    engine: str = Field("2d", pattern="^(2d|live_portrait|sadtalker)$", description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）")
-    emotion: str = Field("auto", pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$", description="情绪（v13.24）：auto=LLM自动判断，或手动指定")
+    engine: str = Field(
+        "2d",
+        pattern="^(2d|live_portrait|sadtalker)$",
+        description="引擎：2d=基础卡通渲染，live_portrait=照片数字人（需先创建照片形象），sadtalker=照片数字人高级版（3D 头部运动）",
+    )
+    emotion: str = Field(
+        "auto",
+        pattern="^(auto|neutral|happy|sad|angry|gentle|serious)$",
+        description="情绪（v13.24）：auto=LLM自动判断，或手动指定",
+    )
 
 
 # 批量任务缓存：batch_id → 任务（DB 为持久真相，内存仅加速轮询；重启后自动从 DB 恢复）
@@ -3961,8 +4194,9 @@ def _load_batch_from_db(batch_id: str) -> dict | None:
     }
 
 
-
-def _batch_process_one(batch_id: str, i: int, text: str, req, user: str, uid: str, role: str, task: dict, item: dict) -> None:
+def _batch_process_one(
+    batch_id: str, i: int, text: str, req, user: str, uid: str, role: str, task: dict, item: dict
+) -> None:
     """批量单条处理：校验 → 生成 → 落库。"""
     if len(text) < 5:
         item["status"] = "failed"
@@ -4049,8 +4283,7 @@ def _prefetch_tts(texts: list, indexes: list | None, req, user: str) -> None:
     warm = [
         i
         for i in (indexes if indexes is not None else range(len(texts)))
-        if 5 <= len(texts[i].strip()) <= 10000
-        and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
+        if 5 <= len(texts[i].strip()) <= 10000 and not any(w.lower() in texts[i].lower() for w in _HARD_BLOCK_WORDS)
     ]
     if not warm:
         return
@@ -4064,6 +4297,7 @@ def _prefetch_tts(texts: list, indexes: list | None, req, user: str) -> None:
 
     with ThreadPoolExecutor(max_workers=min(4, len(warm))) as pool:
         list(pool.map(_warm, warm))
+
 
 def _batch_worker(  # noqa: C901 — 批量主循环含预检/TTS预热/重试多分支，逐段可读
     batch_id: str,
@@ -4428,7 +4662,11 @@ def script_assist(req: ScriptAssistRequest, current_user: dict = require_auth())
     ok = False
     try:
         raw = call_llm(
-            system, user_prompt, max_tokens=1500, temperature=0.9, timeout=60,
+            system,
+            user_prompt,
+            max_tokens=1500,
+            temperature=0.9,
+            timeout=60,
             model=resolve_feature_model(_uid, "dh", ""),
         )
         raw = raw.strip()
@@ -4783,6 +5021,7 @@ register_handler("dh_voice_clone", _dh_voice_clone_handler, user_limit=1)
 # 数字人 lip-sync v2 端点：质量评估 + 口型曲线预览
 # ══════════════════════════════════════════════════════════════
 
+
 @router.post("/lip-sync/quality")
 async def check_lip_sync_quality(
     audio_path: str = Form(..., description="音频文件路径（相对于 DIGITAL_HUMAN_DIR）"),
@@ -4796,6 +5035,7 @@ async def check_lip_sync_quality(
     """
     import os as _os
     from pathlib import Path
+
     logger.warning(f"[lip-sync-debug] audio_path={audio_path!r} file={__file__}")
 
     # 支持三种路径：绝对路径 / uploads 相对路径（audio_url） / digital_human 目录相对路径
@@ -4818,9 +5058,10 @@ async def check_lip_sync_quality(
     # 获取音频时长
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(full_audio)],
-            capture_output=True, text=True, timeout=15,
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(full_audio)],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         duration = float(probe.stdout.strip()) if probe.stdout.strip() else 5.0
     except Exception:
@@ -4844,6 +5085,7 @@ async def get_mouth_curve(
     """
     import os as _os
     from pathlib import Path
+
     logger.warning(f"[lip-sync-debug] audio_path={audio_path!r} file={__file__}")
 
     # 支持三种路径：绝对路径 / uploads 相对路径（audio_url） / digital_human 目录相对路径
@@ -4865,9 +5107,10 @@ async def get_mouth_curve(
 
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(full_audio)],
-            capture_output=True, text=True, timeout=15,
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(full_audio)],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         duration = float(probe.stdout.strip()) if probe.stdout.strip() else 5.0
     except Exception:

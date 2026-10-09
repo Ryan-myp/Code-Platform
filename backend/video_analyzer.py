@@ -18,9 +18,10 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json, _safe_exc_msg
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
+from common.helpers import _notify_progress
+from common.llm import call_llm, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -171,7 +172,7 @@ def _probe_video_meta(filepath: str, vid: str) -> tuple:
             try:
                 subprocess.run(
                     [
-                        "ffmpeg",
+                        FFMPEG_BIN,
                         "-y",
                         "-ss",
                         str(seek_time),
@@ -257,12 +258,15 @@ def _clamp_score(score) -> int | None:
     return max(0, min(100, v))
 
 
-
-def _derive_segment_fallbacks(result: dict, raw_segments: dict, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str) -> tuple:
+def _derive_segment_fallbacks(
+    result: dict, raw_segments: dict, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str
+) -> tuple:
     """派生三段 fallback 内容与要点。返回 (visual_fallback, visual_points, audio_fallback, text_fallback, text_points)。"""
-    visual_points = [
-        f"[{s.get('timestamp') or '00:00'}] {s.get('description') or ''}".strip() for s in key_scenes
-    ] if key_scenes else []
+    visual_points = (
+        [f"[{s.get('timestamp') or '00:00'}] {s.get('description') or ''}".strip() for s in key_scenes]
+        if key_scenes
+        else []
+    )
     visual_fallback = (
         f"共识别 {len(key_scenes)} 个关键场景，涵盖开头钩子、主体推进与结尾收束。"
         if key_scenes
@@ -275,16 +279,14 @@ def _derive_segment_fallbacks(result: dict, raw_segments: dict, key_scenes: list
         else "未能提取音频轨道信息，建议补充视频描述后重新分析。"
     )
     text_parts = [p for p in (detailed, summary, subtitles) if p]
-    text_fallback = (
-        text_parts[0]
-        if text_parts
-        else "未能提取文本轨道信息，建议补充视频描述后重新分析。"
-    )
+    text_fallback = text_parts[0] if text_parts else "未能提取文本轨道信息，建议补充视频描述后重新分析。"
     text_points = [f"字幕片段：{subtitles[:60]}…"] if subtitles else []
     return visual_fallback, visual_points, audio_fallback, text_fallback, text_points
 
 
-def _build_segments(raw_segments: dict, fallbacks: tuple, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str) -> dict:
+def _build_segments(
+    raw_segments: dict, fallbacks: tuple, key_scenes: list, tone: str, subtitles: str, summary: str, detailed: str
+) -> dict:
     """构建三段 segments 结构。"""
     visual_fallback, visual_points, audio_fallback, text_fallback, text_points = fallbacks
 
@@ -307,6 +309,7 @@ def _build_segments(raw_segments: dict, fallbacks: tuple, key_scenes: list, tone
         "text": _segment("text", text_fallback, text_points),
     }
 
+
 def normalize_segments(result: dict) -> dict:
     """分段报告结构化兜底（纯函数，可单测）。
 
@@ -321,12 +324,8 @@ def normalize_segments(result: dict) -> dict:
     detailed = result.get("detailed_summary") or ""
     tone = result.get("tone") or ""
 
-    fallbacks = _derive_segment_fallbacks(
-        result, raw_segments, key_scenes, tone, subtitles, summary, detailed
-    )
-    segments = _build_segments(
-        raw_segments, fallbacks, key_scenes, tone, subtitles, summary, detailed
-    )
+    fallbacks = _derive_segment_fallbacks(result, raw_segments, key_scenes, tone, subtitles, summary, detailed)
+    segments = _build_segments(raw_segments, fallbacks, key_scenes, tone, subtitles, summary, detailed)
 
     overall = _clamp_score(result.get("overall_score"))
     if overall is None:
@@ -339,12 +338,11 @@ def normalize_segments(result: dict) -> dict:
     return result
 
 
-
 def _va_md_sections(analysis: dict) -> list:
     """视频分析报告主要段（标题/摘要/评分）。"""
     lines = []
     if analysis.get("title"):
-        lines += [f"## 标题建议", "", analysis["title"], ""]
+        lines += ["## 标题建议", "", analysis["title"], ""]
     if analysis.get("summary"):
         lines += ["## 内容摘要", "", analysis["summary"], ""]
     if analysis.get("detailed_summary"):
@@ -393,10 +391,11 @@ def _va_md_lists(analysis: dict) -> list:
         lines.append("")
     return lines
 
+
 def build_report_md(record: dict, analysis: dict) -> str:
     """视频分析报告 → Markdown（纯函数，可单测；用于报告导出）。"""
     analysis = analysis or {}
-    segments = analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
+    analysis.get("segments") if isinstance(analysis.get("segments"), dict) else {}
     lines = [
         "# 视频分析报告",
         "",

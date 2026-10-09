@@ -16,26 +16,18 @@
 """
 
 import asyncio
-import glob
 import json
 import logging
 import os
 import re
-import shutil
+import sqlite3
 import subprocess
-import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import httpx
-import sqlite3
-# from loguru import logger
 
-from common.config import (
-    AGNES_API_KEY,
-    AGNES_API_BASE,
-)
+# from loguru import logger
 
 # 本地默认值（优先从环境变量获取）
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -87,9 +79,7 @@ PROMPT_TEMPLATES = {
 def run_cmd(cmd: list[str], timeout: int = 120, capture: bool = True) -> tuple[int, str, str]:
     """运行命令并返回 (returncode, stdout, stderr)。"""
     try:
-        r = subprocess.run(
-            cmd, capture_output=capture, text=True, timeout=timeout, cwd=str(PROJECT_DIR)
-        )
+        r = subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout, cwd=str(PROJECT_DIR))
         return r.returncode, r.stdout or "", r.stderr or ""
     except subprocess.TimeoutExpired:
         return 1, "", f"超时 >{timeout}s"
@@ -199,9 +189,7 @@ class CodeQualityOptimizer:
             line_idx = issue["line"] - 1
             if 0 <= line_idx < len(lines):
                 original = lines[line_idx].strip()
-                lines[line_idx] = original.replace("print(", "logger.info(").replace(
-                    "print(", "logger.debug("
-                )
+                lines[line_idx] = original.replace("print(", "logger.info(").replace("print(", "logger.debug(")
                 path.write_text("\n".join(lines), encoding="utf-8")
         except Exception as e:
             logger.warning(f"  跳过修复 {issue['file']}:{issue['line']} - {e}")
@@ -220,7 +208,12 @@ class TestOptimizer:
         # 运行测试并捕获结果
         cmd = [
             "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-            "-m", "pytest", "tests/unit/", "-q", "--tb=line", "-x",
+            "-m",
+            "pytest",
+            "tests/unit/",
+            "-q",
+            "--tb=line",
+            "-x",
         ]
         rc, stdout, stderr = run_cmd(cmd, timeout=600)
 
@@ -289,8 +282,10 @@ class APIHealthChecker:
                     if method == "GET":
                         r = await client.get(f"{base_url}{path}")
                     else:
-                        r = await client.post(f"{base_url}{path}", json={"username": "admin", "password": ADMIN_PASSWORD})
-                    
+                        r = await client.post(
+                            f"{base_url}{path}", json={"username": "admin", "password": ADMIN_PASSWORD}
+                        )
+
                     elapsed_ms = (datetime.now() - start).total_seconds() * 1000
                     total_time += elapsed_ms
                     results["checked"] += 1
@@ -298,20 +293,26 @@ class APIHealthChecker:
                     if r.status_code == 200 and elapsed_ms <= expected_ms:
                         results["healthy"] += 1
                     else:
-                        results["unhealthy"].append({
-                            "path": path,
-                            "status": r.status_code,
-                            "time_ms": int(elapsed_ms),
-                            "expected_ms": expected_ms,
-                        })
+                        results["unhealthy"].append(
+                            {
+                                "path": path,
+                                "status": r.status_code,
+                                "time_ms": int(elapsed_ms),
+                                "expected_ms": expected_ms,
+                            }
+                        )
                 except Exception as e:
-                    results["unhealthy"].append({
-                        "path": path,
-                        "error": str(e),
-                    })
+                    results["unhealthy"].append(
+                        {
+                            "path": path,
+                            "error": str(e),
+                        }
+                    )
 
         results["avg_response_time_ms"] = int(total_time / max(results["checked"], 1))
-        logger.info(f"  ✅ API健康检查: {results['healthy']}/{results['checked']} 正常，平均响应 {results['avg_response_time_ms']}ms")
+        logger.info(
+            f"  ✅ API健康检查: {results['healthy']}/{results['checked']} 正常，平均响应 {results['avg_response_time_ms']}ms"
+        )
         return results
 
 
@@ -351,9 +352,14 @@ class DataCleaner:
         try:
             with sqlite3.connect(str(Path(Path(PROJECT_DIR).resolve() / "backend" / "platform.db").resolve())) as conn:
                 # 清理过期任务
-                conn.execute("DELETE FROM tasks WHERE created_at < ?", (datetime.now() - timedelta(days=30)).timestamp())
+                conn.execute(
+                    "DELETE FROM tasks WHERE created_at < ?", (datetime.now() - timedelta(days=30)).timestamp()
+                )
                 # 清理过期账单
-                conn.execute("DELETE FROM billing_records WHERE created_at < ?", (datetime.now() - timedelta(days=365)).timestamp())
+                conn.execute(
+                    "DELETE FROM billing_records WHERE created_at < ?",
+                    (datetime.now() - timedelta(days=365)).timestamp(),
+                )
                 results["db_records_deleted"] = conn.total_changes
                 conn.commit()
         except Exception as e:
@@ -361,12 +367,18 @@ class DataCleaner:
 
         # 4d. VACUUM 数据库优化索引
         try:
-            subprocess.run(["sqlite3", str(Path(Path(PROJECT_DIR).resolve() / "backend" / "platform.db").resolve()), "VACUUM"], capture_output=True, timeout=60)
+            subprocess.run(
+                ["sqlite3", str(Path(Path(PROJECT_DIR).resolve() / "backend" / "platform.db").resolve()), "VACUUM"],
+                capture_output=True,
+                timeout=60,
+            )
             logger.info("  数据库 VACUUM 完成")
         except Exception:
             pass
 
-        logger.info(f"  ✅ 数据清理完成: 删除{results['files_cleaned']}文件，释放{results['space_freed_mb']:.1f}MB，清理{results['db_records_deleted']}条记录")
+        logger.info(
+            f"  ✅ 数据清理完成: 删除{results['files_cleaned']}文件，释放{results['space_freed_mb']:.1f}MB，清理{results['db_records_deleted']}条记录"
+        )
         return results
 
 
@@ -393,7 +405,7 @@ class OutputQualityOptimizer:
                 short_prompts = re.findall(r'["\']([^"\']{1,30})["\']', content)
                 if short_prompts:
                     # 自动扩展提示词
-                    for i, p in enumerate(short_prompts):
+                    for _i, p in enumerate(short_prompts):
                         if "prompt" in pf.name.lower():
                             new_p = PROMPT_TEMPLATES.get("video_prompt_prefix", "") + p
                             content = content.replace(f'"{p}"', f'"{new_p}"')
@@ -404,11 +416,6 @@ class OutputQualityOptimizer:
                 pass
 
         # 5b. 优化视频生成参数
-        video_params = {
-            "num_frames": [121, 241, 441],  # 推荐帧数（8n+1规则）
-            "frame_rate": [24, 30],  # 推荐帧率
-            "aspect_ratios": ["16:9", "9:16", "1:1"],  # 推荐画幅
-        }
         # 更新配置文件中的默认值
         config_path = PROJECT_DIR / "backend" / "common" / "config.py"
         if config_path.exists():
@@ -429,7 +436,9 @@ class OutputQualityOptimizer:
                 quality_score = min(100, int(85 + total * 0.1))
                 results["quality_score"] = quality_score
 
-        logger.info(f"  ✅ 产出质量升级完成: 优化{results['prompts_optimized']}提示词，调整{results['params_tuned']}参数，质量分{results['quality_score']}")
+        logger.info(
+            f"  ✅ 产出质量升级完成: 优化{results['prompts_optimized']}提示词，调整{results['params_tuned']}参数，质量分{results['quality_score']}"
+        )
         return results
 
 
@@ -464,16 +473,18 @@ class SecurityHardener:
                     line = file_content[line_start:line_end]
                     if line.strip().startswith("#"):
                         continue
-                    results["vulnerabilities"].append({
-                        "file": str(pf.relative_to(PROJECT_DIR)),
-                        "line": file_content.count("\n", 0, m.start()) + 1,
-                        "type": "hardcoded_secret",
-                        "message": line.strip()[:50],
-                    })
+                    results["vulnerabilities"].append(
+                        {
+                            "file": str(pf.relative_to(PROJECT_DIR)),
+                            "line": file_content.count("\n", 0, m.start()) + 1,
+                            "type": "hardcoded_secret",
+                            "message": line.strip()[:50],
+                        }
+                    )
                     results["checks_failed"] += 1
             except Exception:
                 pass
-        
+
         # 如果没有发现真正的硬编码密钥，算通过
         if results["checks_failed"] == 0:
             results["checks_passed"] += 1
@@ -498,6 +509,7 @@ class SecurityHardener:
             if backups:
                 latest = max(backups, key=lambda x: x.stat().st_mtime)
                 from datetime import datetime, timedelta
+
                 if datetime.now() - datetime.fromtimestamp(latest.stat().st_mtime) < timedelta(hours=24):
                     results["checks_passed"] += 1
                 else:
@@ -506,6 +518,7 @@ class SecurityHardener:
             else:
                 import shutil
                 from datetime import datetime
+
                 try:
                     backup_file = backup_dir / f"platform_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
                     shutil.copy2(db_file, backup_file)
@@ -517,24 +530,26 @@ class SecurityHardener:
             results["checks_passed"] += 1
 
         # 6d. 检查敏感文件权限
-        sensitive_paths = [
-            PROJECT_DIR / ".env",
-            PROJECT_DIR / "backend" / "common" / "config.py"
-        ]
+        sensitive_paths = [PROJECT_DIR / ".env", PROJECT_DIR / "backend" / "common" / "config.py"]
         for sp in sensitive_paths:
             if sp.exists():
                 mode = oct(sp.stat().st_mode)[-3:]
                 if mode[-1] in ("2", "3", "6", "7"):  # 其他用户可写或可读+写
                     results["checks_failed"] += 1
-                    results["vulnerabilities"].append({
-                        "file": str(sp.relative_to(PROJECT_DIR)),
-                        "message": f"权限过于开放: {mode}",
-                    })
+                    results["vulnerabilities"].append(
+                        {
+                            "file": str(sp.relative_to(PROJECT_DIR)),
+                            "message": f"权限过于开放: {mode}",
+                        }
+                    )
                 else:
                     results["checks_passed"] += 1
 
-        logger.info(f"  ✅ 安全加固完成: {results['checks_passed']}通过，{results['checks_failed']}失败，发现{len(results['vulnerabilities'])}个漏洞")
+        logger.info(
+            f"  ✅ 安全加固完成: {results['checks_passed']}通过，{results['checks_failed']}失败，发现{len(results['vulnerabilities'])}个漏洞"
+        )
         return results
+
 
 # ── 模块7：依赖更新检查 ──────────────────────────────────────────────────────
 
@@ -552,8 +567,13 @@ class DependencyChecker:
         }
 
         # 7a. 获取已安装依赖总数
-        cmd_total = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-                     "-m", "pip", "list", "--format=json"]
+        cmd_total = [
+            "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+            "-m",
+            "pip",
+            "list",
+            "--format=json",
+        ]
         rc_total, stdout_total, _ = run_cmd(cmd_total, timeout=60)
         if rc_total == 0:
             try:
@@ -561,50 +581,180 @@ class DependencyChecker:
                 results["total_deps"] = len(all_deps)
             except json.JSONDecodeError:
                 pass
-        
+
         # 7b. 获取过时依赖（只检查requirements.txt中的关键依赖）
-        cmd_old = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-                   "-m", "pip", "list", "--format=json", "--outdated"]
+        cmd_old = [
+            "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+            "-m",
+            "pip",
+            "list",
+            "--format=json",
+            "--outdated",
+        ]
         rc_old, stdout_old, _ = run_cmd(cmd_old, timeout=60)
-        
+
         # 项目关键依赖列表（忽略系统工具包）
         key_deps = {
-            "fastapi", "uvicorn", "httpx", "pydantic", "pydantic-core", "pydantic-settings",
-            "torch", "transformers", "sentence-transformers", "accelerate",
-            "edge-tts", "imageio-ffmpeg", "ffmpeg-python",
-            "chromadb", "sqlparse", "sqlalchemy",
-            "click", "attrs", "anyio", "build", "cachetools",
-            "cffi", "chardet", "charset-normalizer",
-            "aiohttp", "aiohappyeyeballs", "aiofile",
-            "annotated-types", "annotated-doc",
-            "argo", "arrow", "authlib", "bcrypt",
-            "beautifulsoup4", "blinker", "brotli",
-            "certifi", "cryptography",
-            "dnspython", "email-validator", "email-validator",
-            "fastapi-cloud-cli", "fastapi-cli", "filelock", "flask",
-            "fsspec", "furl",
-            "google-auth", "googleapis-common-protos", "grpcio",
-            "h11", "h2", "hpack", "httpcore", "httptools", "httpx", "httpx-sse",
-            "huggingface-hub", "hyperframe",
-            "idna", "importlib-metadata", "iniconfig",
-            "jinja2", "joblib", "jsonschema", "jsonschema-specifications",
-            "kiwisolver", "markdown-it-py", "markupsafe", "mdurl", "mpmath",
-            "multidict", "mypy-extensions",
-            "networkx", "numpy", "nvidia-cublas-cu12", "nvidia-cuda-cupti-cu12", "nvidia-cuda-nvrtc-cu12", "nvidia-cuda-runtime-cu12", "nvidia-cudnn-cu12", "nvidia-cufft-cu12", "nvidia-cufile-cu12", "nvidia-curand-cu12", "nvidia-cusolver-cu12", "nvidia-cusparse-cu12", "nvidia-cusparse-edit-cu12", "nvidia-nccl-cu12", "nvidia-nvjitlink-cu12", "nvidia-nvtx-cu12",
-            "oauthlib", "onnxruntime", "opentelemetry-api", "opentelemetry-sdk", "opentelemetry-semantic-conventions",
-            "orjson", "overrides",
-            "packaging", "partial-json", "pip", "platformdirs", "pluggy", "posthog", "prettytable", "protobuf", "pyasn1", "pyasn1-modules", "pycparser", "pydantic", "pydantic-core", "pydantic-settings", "pygments", "pymdown-extensions", "pynvml", "pyparsing", "pytest", "python-dateutil", "python-dotenv", "python-multipart", "pytz",
+            "fastapi",
+            "uvicorn",
+            "httpx",
+            "pydantic",
+            "pydantic-core",
+            "pydantic-settings",
+            "torch",
+            "transformers",
+            "sentence-transformers",
+            "accelerate",
+            "edge-tts",
+            "imageio-ffmpeg",
+            "ffmpeg-python",
+            "chromadb",
+            "sqlparse",
+            "sqlalchemy",
+            "click",
+            "attrs",
+            "anyio",
+            "build",
+            "cachetools",
+            "cffi",
+            "chardet",
+            "charset-normalizer",
+            "aiohttp",
+            "aiohappyeyeballs",
+            "aiofile",
+            "annotated-types",
+            "annotated-doc",
+            "argo",
+            "arrow",
+            "authlib",
+            "bcrypt",
+            "beautifulsoup4",
+            "blinker",
+            "brotli",
+            "certifi",
+            "cryptography",
+            "dnspython",
+            "email-validator",
+            "fastapi-cloud-cli",
+            "fastapi-cli",
+            "filelock",
+            "flask",
+            "fsspec",
+            "furl",
+            "google-auth",
+            "googleapis-common-protos",
+            "grpcio",
+            "h11",
+            "h2",
+            "hpack",
+            "httpcore",
+            "httptools",
+            "httpx-sse",
+            "huggingface-hub",
+            "hyperframe",
+            "idna",
+            "importlib-metadata",
+            "iniconfig",
+            "jinja2",
+            "joblib",
+            "jsonschema",
+            "jsonschema-specifications",
+            "kiwisolver",
+            "markdown-it-py",
+            "markupsafe",
+            "mdurl",
+            "mpmath",
+            "multidict",
+            "mypy-extensions",
+            "networkx",
+            "numpy",
+            "nvidia-cublas-cu12",
+            "nvidia-cuda-cupti-cu12",
+            "nvidia-cuda-nvrtc-cu12",
+            "nvidia-cuda-runtime-cu12",
+            "nvidia-cudnn-cu12",
+            "nvidia-cufft-cu12",
+            "nvidia-cufile-cu12",
+            "nvidia-curand-cu12",
+            "nvidia-cusolver-cu12",
+            "nvidia-cusparse-cu12",
+            "nvidia-cusparse-edit-cu12",
+            "nvidia-nccl-cu12",
+            "nvidia-nvjitlink-cu12",
+            "nvidia-nvtx-cu12",
+            "oauthlib",
+            "onnxruntime",
+            "opentelemetry-api",
+            "opentelemetry-sdk",
+            "opentelemetry-semantic-conventions",
+            "orjson",
+            "overrides",
+            "packaging",
+            "partial-json",
+            "pip",
+            "platformdirs",
+            "pluggy",
+            "posthog",
+            "prettytable",
+            "protobuf",
+            "pyasn1",
+            "pyasn1-modules",
+            "pycparser",
+            "pygments",
+            "pymdown-extensions",
+            "pynvml",
+            "pyparsing",
+            "pytest",
+            "python-dateutil",
+            "python-dotenv",
+            "python-multipart",
+            "pytz",
             "pyyaml",
-            "regex", "requests", "requests-oauthlib", "rich", "rich-argparse", "rsa", "rubicon-objc",
-            "safetensors", "scikit-learn", "scipy", "shellingham", "six", "sentencepiece", "setuptools",
-            "shellingham", "six", "sklearn", "slowapi", "soupsieve", "sqlalchemy", "sqlparse", "starlette", "sympy",
-            "threadpoolctl", "tokenizers", "tomli", "tomli-w", "tomlkit", "torch", "tqdm", "triton", "typer", "typing-extensions", "tzdata",
-            "ujson", "uvicorn", "uvloop", "urllib3",
-            "watchfiles", "websockets", "werkzeug", "wheel", "wrapt", "yarl", "zipp", "zstandard",
+            "regex",
+            "requests",
+            "requests-oauthlib",
+            "rich",
+            "rich-argparse",
+            "rsa",
+            "rubicon-objc",
+            "safetensors",
+            "scikit-learn",
+            "scipy",
+            "shellingham",
+            "six",
+            "sentencepiece",
+            "setuptools",
+            "sklearn",
+            "slowapi",
+            "soupsieve",
+            "starlette",
+            "sympy",
+            "threadpoolctl",
+            "tokenizers",
+            "tomli",
+            "tomli-w",
+            "tomlkit",
+            "tqdm",
+            "triton",
+            "typer",
+            "typing-extensions",
+            "tzdata",
+            "ujson",
+            "uvloop",
+            "urllib3",
+            "watchfiles",
+            "websockets",
+            "werkzeug",
+            "wheel",
+            "wrapt",
+            "yarl",
+            "zipp",
+            "zstandard",
             # 项目特定依赖
-            "agno", "agnoctl",
+            "agno",
+            "agnoctl",
         }
-        
+
         if rc_old == 0:
             try:
                 deps = json.loads(stdout_old)
@@ -622,16 +772,26 @@ class DependencyChecker:
                 pass
 
         # 7b. 安全漏洞扫描（pip-audit）
-        rc2, stdout2, stderr2 = run_cmd([
-            "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-            "-m", "pip", "list", "--format=json"
-        ], timeout=60)
-        
+        rc2, stdout2, stderr2 = run_cmd(
+            [
+                "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+                "-m",
+                "pip",
+                "list",
+                "--format=json",
+            ],
+            timeout=60,
+        )
+
         if rc2 == 0:
             try:
                 deps = json.loads(stdout2)
-                vuln_cmd = ["/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
-                           "-m", "pip_audit", "--json"]
+                vuln_cmd = [
+                    "/usr/local/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/python3",
+                    "-m",
+                    "pip_audit",
+                    "--json",
+                ]
                 rc3, stdout3, _ = run_cmd(vuln_cmd, timeout=120)
                 if rc3 == 0 and stdout3.strip():
                     vulns = json.loads(stdout3)
@@ -639,7 +799,9 @@ class DependencyChecker:
             except Exception:
                 pass
 
-        logger.info(f"  ✅ 依赖检查完成: {results['total_deps']}个依赖，{results['outdated']}个过时，{results['vulnerable']}个安全漏洞")
+        logger.info(
+            f"  ✅ 依赖检查完成: {results['total_deps']}个依赖，{results['outdated']}个过时，{results['vulnerable']}个安全漏洞"
+        )
         return results
 
 
@@ -673,25 +835,29 @@ class ReportGenerator:
         report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # 打印摘要
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"📊 企业级优化报告 - {timestamp}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"代码质量: {all_results.get('code', {}).get('complexity_score', 0)}/100")
-        logger.info(f"测试通过: {all_results.get('tests', {}).get('passed', 0)} / {all_results.get('tests', {}).get('total', 0)}")
-        logger.info(f"API健康: {all_results.get('api', {}).get('healthy', 0)} / {all_results.get('api', {}).get('checked', 0)}")
+        logger.info(
+            f"测试通过: {all_results.get('tests', {}).get('passed', 0)} / {all_results.get('tests', {}).get('total', 0)}"
+        )
+        logger.info(
+            f"API健康: {all_results.get('api', {}).get('healthy', 0)} / {all_results.get('api', {}).get('checked', 0)}"
+        )
         logger.info(f"安全加固: {all_results.get('security', {}).get('checks_passed', 0)} 通过")
         logger.info(f"依赖更新: {all_results.get('deps', {}).get('outdated', 0)} 个过时")
         logger.info(f"数据清理: {all_results.get('data', {}).get('space_freed_mb', 0):.1f} MB 释放")
         readiness = report["enterprise_readiness"]
         logger.info(f"企业级就绪度: {readiness['score']}/100 ({readiness['grade']})")
-        logger.info(f"{'='*60}\n")
+        logger.info(f"{'=' * 60}\n")
 
         return str(report_file)
 
     def _calculate_readiness(self, results: dict) -> dict:
         """计算企业级就绪度评分。"""
         scores = []
-        
+
         # 代码质量 (20分)
         code = results.get("code", {})
         score = code.get("complexity_score", 50)
@@ -732,8 +898,18 @@ class ReportGenerator:
         scores.append(dep_score)
 
         total_score = int(sum(scores))
-        grade = "A+" if total_score >= 90 else "A" if total_score >= 80 else "B" if total_score >= 70 else "C" if total_score >= 60 else "D"
-        
+        grade = (
+            "A+"
+            if total_score >= 90
+            else "A"
+            if total_score >= 80
+            else "B"
+            if total_score >= 70
+            else "C"
+            if total_score >= 60
+            else "D"
+        )
+
         return {
             "score": total_score,
             "grade": grade,
@@ -743,7 +919,7 @@ class ReportGenerator:
                 "api_health": int(scores[2]),
                 "security": int(scores[3]),
                 "dependencies": int(scores[4]),
-            }
+            },
         }
 
 
@@ -757,7 +933,7 @@ _report_file = None
 def run_enterprise_optimizer() -> str:
     """运行完整的企业级优化流程。"""
     global _optimizer_instance, _report_file
-    
+
     logger.info("=" * 60)
     logger.info("🚀 企业级智能优化器启动")
     logger.info(f"⏰ 时间: {datetime.now().isoformat()}")
@@ -791,7 +967,7 @@ def run_enterprise_optimizer() -> str:
 
     # 生成报告
     _report_file = reporter.run(results)
-    
+
     logger.info(f"✅ 企业级优化器完成，报告: {_report_file}")
     return _report_file
 
@@ -814,7 +990,7 @@ def get_optimizer_status() -> dict:
     latest = get_latest_report()
     if not latest:
         return {"last_run": None, "ready": False}
-    
+
     return {
         "last_run": latest.get("timestamp"),
         "enterprise_readiness": latest.get("enterprise_readiness"),

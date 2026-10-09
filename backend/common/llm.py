@@ -41,9 +41,7 @@ _NETWORK_EXC = (
 )
 
 
-def _build_messages(
-    system_prompt: str, user_prompt: str, messages: list[dict] | None
-) -> list[dict]:
+def _build_messages(system_prompt: str, user_prompt: str, messages: list[dict] | None) -> list[dict]:
     """统一构建 messages：优先使用调用方传入的多轮 messages，否则回退 system+user 两段。"""
     if messages:
         return list(messages)
@@ -87,9 +85,7 @@ def _extract_content(resp_json) -> str:
                 if line.startswith("data: ") and line != "data: [DONE]":
                     try:
                         chunk = json.loads(line[6:])
-                        delta = (
-                            (chunk.get("choices") or [{}])[0].get("delta") or {}
-                        )
+                        delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
                         content = delta.get("content") or ""
                         if content:
                             chunks.append(content)
@@ -113,7 +109,7 @@ def _extract_content(resp_json) -> str:
 
 def _retry_delay(attempt: int) -> float:
     """指数退避：1s → 2s → 4s …（attempt 从 1 开始）。"""
-    return 2 ** attempt
+    return 2**attempt
 
 
 def _readable_error(exc: Exception) -> str:
@@ -124,6 +120,7 @@ def _readable_error(exc: Exception) -> str:
 def _safe_exc_msg(exc: Exception) -> str:
     """从异常中提取安全错误消息，过滤路径、IP、敏感词，防止信息泄露。"""
     import re as _re
+
     msg = str(exc)[:200]
     msg = _re.sub(r"/[^\s,;]{6,}", "<path>", msg)
     msg = _re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<ip>", msg)
@@ -295,7 +292,9 @@ async def call_llm_async(
     raise HTTPException(502, "操作失败，请稍后重试")
 
 
-async def _call_one_async(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
+async def _call_one_async(
+    cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int
+) -> str:
     """单模型异步调用，内置指数退避重试。"""
     url = f"{cfg['api_base']}/chat/completions"
     payload = {
@@ -403,7 +402,7 @@ async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=payload) as resp:
                     if resp.status_code != 200:
-                        body = (await resp.aread()).decode("utf-8", "replace")[:400]
+                        (await resp.aread()).decode("utf-8", "replace")[:400]
                         if resp.status_code in _RETRYABLE_STATUS and attempt < retries:
                             attempt += 1
                             await asyncio.sleep(_retry_delay(attempt))
@@ -476,9 +475,7 @@ def build_conversation_messages(
                 ).fetchall()
         finally:
             conn.close()
-        turns = [
-            dict(r) for r in rows if r["role"] in ("user", "assistant") and str(r["content"] or "").strip()
-        ]
+        turns = [dict(r) for r in rows if r["role"] in ("user", "assistant") and str(r["content"] or "").strip()]
     turns = turns[-max_rounds:]
     while turns and sum(len(t["content"]) for t in turns) > max_chars:
         turns.pop(0)
@@ -494,7 +491,16 @@ def build_conversation_messages(
 # ══════════════════════════════════════════════════════════════
 
 
-def log_usage(task_type: str, input_len: int, output_len: int, elapsed: float, success: bool = True, error: str = "", api_key: str = "", user_id: str = "") -> None:
+def log_usage(
+    task_type: str,
+    input_len: int,
+    output_len: int,
+    elapsed: float,
+    success: bool = True,
+    error: str = "",
+    api_key: str = "",
+    user_id: str = "",
+) -> None:
     """记录使用统计到 usage_logs。失败静默（不影响主流程）。
 
     error 为失败原因摘要（阶段标记 [stage:xxx] 等），供运营诊断失败率。

@@ -9,8 +9,8 @@
 
 本地免费版：无次数限制，AI 费用走用户中转站 Key（与各工厂一致）。
 """
+
 import json
-import os
 import threading
 import time
 import uuid
@@ -95,9 +95,9 @@ class RetryRequest(BaseModel):
 
 def _generate_variants(theme: str, platform: str, count: int) -> list[dict]:
     """主题 → N 组变体（标题+口播正文）。复用 growth_engine 的变体提示词体系。"""
-    from growth_engine import VARIANT_SYSTEM, PLATFORM_LABELS, batch_generate, BatchGenerateRequest
+
     from common.llm import call_llm
-    import json as _json
+    from growth_engine import PLATFORM_LABELS, VARIANT_SYSTEM
 
     platform_name = PLATFORM_LABELS.get(platform, "抖音")
     user_prompt = (
@@ -145,25 +145,27 @@ def _parse_variant_json(raw: str) -> list:
         except Exception:
             pass
     # 4) 最后手段：逐行拼出对象数组
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     if lines and not lines[0].startswith("["):
         # 尝试把「每行一个 JSON 对象」拼成数组
         try:
-            return [_json.loads(l) for l in lines if l.startswith("{")]
+            return [_json.loads(line) for line in lines if line.startswith("{")]
         except Exception:
             pass
     raise ValueError("无法解析 LLM 返回的变体 JSON")
 
 
-def _run_pipeline(project_id: str, texts: list[str], cfg: dict, uid: str, user: str,
-                  target_indexes: list[int] | None = None) -> None:
+def _run_pipeline(
+    project_id: str, texts: list[str], cfg: dict, uid: str, user: str, target_indexes: list[int] | None = None
+) -> None:
     """后台线程：提交数字人批量 → 轮询回填项目 items。
 
     target_indexes: 本次批量对应的项目 item 下标（None=0..n-1，全量首次生成；
     重跑失败项时传原始下标，因为新批次的 index 从 0 重新计数）。
     """
-    from digital_human import BatchGenerateRequest, create_batch
     import asyncio
+
+    from digital_human import BatchGenerateRequest, create_batch
 
     mapping = target_indexes if target_indexes is not None else list(range(len(texts)))
     try:
@@ -189,6 +191,7 @@ def _run_pipeline(project_id: str, texts: list[str], cfg: dict, uid: str, user: 
         _poll_batch_into_project(project_id, batch_id, mapping)
     except Exception as e:  # noqa: BLE001
         import logging
+
         logging.getLogger(__name__).error(f"pipeline {project_id} failed: {e!r}")
         with get_db_context() as conn:
             _ensure_tables(conn)
@@ -334,13 +337,23 @@ async def run_pipeline(req: PipelineRunRequest, current_user: dict = require_aut
                 scene_id, template_id, engine, resolution, status, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'running',?,?)""",
             (
-                project_id, user, theme, req.platform, len(texts),
-                req.avatar_id, req.voice_id, req.background_id,
-                req.scene_id, req.template_id, req.engine, req.resolution,
-                _now(), _now(),
+                project_id,
+                user,
+                theme,
+                req.platform,
+                len(texts),
+                req.avatar_id,
+                req.voice_id,
+                req.background_id,
+                req.scene_id,
+                req.template_id,
+                req.engine,
+                req.resolution,
+                _now(),
+                _now(),
             ),
         )
-        for i, (v, t) in enumerate(zip(variants, texts)):
+        for i, (v, t) in enumerate(zip(variants, texts, strict=False)):
             conn.execute(
                 """INSERT INTO video_project_items
                    (project_id, idx, title, content, status, created_at, updated_at)
@@ -367,9 +380,7 @@ async def list_projects(page: int = 1, page_size: int = 20, current_user: dict =
     conn = get_db()
     _ensure_tables(conn)
     try:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM video_projects WHERE user_id=?", (user,)
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM video_projects WHERE user_id=?", (user,)).fetchone()[0]
         page = max(1, page)
         page_size = max(1, min(page_size, 100))
         rows = conn.execute(
@@ -400,9 +411,7 @@ async def get_project(project_id: str, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
     try:
-        row = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not row:
             raise HTTPException(404, "项目不存在")
         items = conn.execute(
@@ -422,15 +431,14 @@ async def retry_project(project_id: str, req: RetryRequest, current_user: dict =
     conn = get_db()
     _ensure_tables(conn)
     try:
-        proj = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        proj = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not proj:
             raise HTTPException(404, "项目不存在")
         if proj["status"] == "running":
             raise HTTPException(400, "项目正在生成中，请等待完成后再重试")
         targets = req.indexes or [
-            i for i, r in enumerate(
+            i
+            for i, r in enumerate(
                 conn.execute(
                     "SELECT * FROM video_project_items WHERE project_id=? ORDER BY idx",
                     (project_id,),
@@ -485,9 +493,7 @@ async def delete_project(project_id: str, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_tables(conn)
     try:
-        proj = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        proj = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not proj:
             raise HTTPException(404, "项目不存在")
         conn.execute("DELETE FROM video_project_items WHERE project_id=?", (project_id,))
@@ -502,6 +508,7 @@ async def delete_project(project_id: str, current_user: dict = require_auth()):
 # Phase 2：批量矩阵 —— 自动排期发布 + 效果数据 + AI 复盘
 # ══════════════════════════════════════════════════════════════
 
+
 class PipelineScheduleRequest(BaseModel):
     start_at: str = Field("", description="首条发布时间 ISO（空=从现在起 1 小时后）")
     interval_minutes: int = Field(30, ge=5, le=1440, description="相邻两条发布时间间隔（分钟）")
@@ -512,8 +519,11 @@ class PipelineScheduleRequest(BaseModel):
 def _platform_publish_code(platform: str) -> str:
     """流水线平台 → publishing 平台 code。"""
     return {
-        "douyin": "douyin", "kuaishou": "kuaishou", "xiaohongshu": "xiaohongshu",
-        "shipinhao": "wechat", "bilibili": "bilibili",
+        "douyin": "douyin",
+        "kuaishou": "kuaishou",
+        "xiaohongshu": "xiaohongshu",
+        "shipinhao": "wechat",
+        "bilibili": "bilibili",
     }.get(platform, "douyin")
 
 
@@ -524,9 +534,7 @@ async def schedule_project(project_id: str, req: PipelineScheduleRequest, curren
     conn = get_db()
     _ensure_tables(conn)
     try:
-        proj = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        proj = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not proj:
             raise HTTPException(404, "项目不存在")
         if proj["status"] == "running":
@@ -540,7 +548,8 @@ async def schedule_project(project_id: str, req: PipelineScheduleRequest, curren
         if len(items) > 20:
             items = items[:20]
         # 计算发布时间序列
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
 
         try:
             base = _dt.fromisoformat((req.start_at or "").replace("Z", "+00:00"))
@@ -550,14 +559,15 @@ async def schedule_project(project_id: str, req: PipelineScheduleRequest, curren
         platform = req.platforms[0] if req.platforms else _platform_publish_code(proj["platform"])
         # 去重已排期（避免重复点击批量创建重复排期）
         existing = {
-            r["title"] for r in conn.execute(
+            r["title"]
+            for r in conn.execute(
                 "SELECT title FROM publish_schedules WHERE user_id=? AND content_type='video'",
                 (user,),
             ).fetchall()
         }
         created, skipped = [], 0
         for i, it in enumerate(items):
-            title = (req.title_prefix + " " if req.title_prefix else "") + (it["title"] or f"口播视频 {i+1}")
+            title = (req.title_prefix + " " if req.title_prefix else "") + (it["title"] or f"口播视频 {i + 1}")
             if title in existing:
                 skipped += 1
                 continue
@@ -567,10 +577,17 @@ async def schedule_project(project_id: str, req: PipelineScheduleRequest, curren
                    topics, asset_urls, account_id, scheduled_at, status, created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)""",
                 (
-                    sched_id, user, platform, "video", title,
-                    it["content"] or "", "[]",
-                    json.dumps([it["video_url"]], ensure_ascii=False), "",
-                    (base + i * interval).isoformat(), _now(),
+                    sched_id,
+                    user,
+                    platform,
+                    "video",
+                    title,
+                    it["content"] or "",
+                    "[]",
+                    json.dumps([it["video_url"]], ensure_ascii=False),
+                    "",
+                    (base + i * interval).isoformat(),
+                    _now(),
                 ),
             )
             created.append({"sched_id": sched_id, "title": title, "scheduled_at": (base + i * interval).isoformat()})
@@ -594,9 +611,7 @@ async def upsert_project_metrics(project_id: str, req: MetricsUpsertRequest, cur
     conn = get_db()
     _ensure_tables(conn)
     try:
-        proj = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        proj = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not proj:
             raise HTTPException(404, "项目不存在")
         from growth_engine import _ensure_metrics_columns
@@ -626,8 +641,15 @@ async def upsert_project_metrics(project_id: str, req: MetricsUpsertRequest, cur
                        followers_gained, created_at)
                        VALUES (?,?,?,?,?,?,?,?,?)""",
                     (
-                        f"pm_{uuid.uuid4().hex[:10]}", rid, proj["platform"],
-                        req.views, req.likes, req.comments, req.shares, req.followers_gained, now,
+                        f"pm_{uuid.uuid4().hex[:10]}",
+                        rid,
+                        proj["platform"],
+                        req.views,
+                        req.likes,
+                        req.comments,
+                        req.shares,
+                        req.followers_gained,
+                        now,
                     ),
                 )
             saved += 1
@@ -644,9 +666,7 @@ async def review_project(project_id: str, days: int = 30, current_user: dict = r
     conn = get_db()
     _ensure_tables(conn)
     try:
-        proj = conn.execute(
-            "SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)
-        ).fetchone()
+        proj = conn.execute("SELECT * FROM video_projects WHERE id=? AND user_id=?", (project_id, user)).fetchone()
         if not proj:
             raise HTTPException(404, "项目不存在")
         items = conn.execute(
@@ -670,10 +690,10 @@ async def review_project(project_id: str, days: int = 30, current_user: dict = r
             v = m["views"] if m else 0
             lk = m["likes"] if m else 0
             fg = m["followers_gained"] if m else 0
-            total_v += v; total_l += lk; total_f += fg
-            data_lines.append(
-                f"- 《{(it['title'] or '无标题')[:30]}》 播放:{v} 点赞:{lk} 涨粉:{fg}"
-            )
+            total_v += v
+            total_l += lk
+            total_f += fg
+            data_lines.append(f"- 《{(it['title'] or '无标题')[:30]}》 播放:{v} 点赞:{lk} 涨粉:{fg}")
         data_lines.append(f"\n汇总：总播放 {total_v}，总点赞 {total_l}，总涨粉 {total_f}")
         if total_v == 0 and total_l == 0:
             return {
@@ -691,7 +711,13 @@ async def review_project(project_id: str, days: int = 30, current_user: dict = r
             report = call_llm(system, "\n".join(data_lines), max_tokens=1200, temperature=0.6, timeout=90)
         except Exception as e:
             report = f"AI 复盘生成失败（{e}）。以下是原始数据：\n\n" + "\n".join(data_lines)
-        return {"report": report, "data_points": len(items), "total_views": total_v, "total_likes": total_l, "total_followers": total_f}
+        return {
+            "report": report,
+            "data_points": len(items),
+            "total_views": total_v,
+            "total_likes": total_l,
+            "total_followers": total_f,
+        }
     finally:
         conn.close()
 
@@ -699,6 +725,7 @@ async def review_project(project_id: str, days: int = 30, current_user: dict = r
 # ══════════════════════════════════════════════════════════════
 # Phase 3：模板资产化 —— 把成功项目配置存为口播模板，一键复用/分享
 # ══════════════════════════════════════════════════════════════
+
 
 class PipelineTemplateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=40, description="模板名称")
@@ -754,9 +781,23 @@ async def create_pipeline_template(req: PipelineTemplateRequest, current_user: d
                avatar_id, voice_id, background_id, scene_id, template_id, engine, resolution, speed, count, created_at, updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                tid, user, req.name.strip(), req.note.strip(), req.theme_pattern.strip(),
-                req.platform, req.avatar_id, req.voice_id, req.background_id, req.scene_id,
-                req.template_id, req.engine, req.resolution, req.speed, req.count, _now(), _now(),
+                tid,
+                user,
+                req.name.strip(),
+                req.note.strip(),
+                req.theme_pattern.strip(),
+                req.platform,
+                req.avatar_id,
+                req.voice_id,
+                req.background_id,
+                req.scene_id,
+                req.template_id,
+                req.engine,
+                req.resolution,
+                req.speed,
+                req.count,
+                _now(),
+                _now(),
             ),
         )
         conn.commit()
@@ -787,9 +828,7 @@ async def delete_pipeline_template(template_id: str, current_user: dict = requir
     conn = get_db()
     _ensure_template_tables(conn)
     try:
-        row = conn.execute(
-            "SELECT id FROM pipeline_templates WHERE id=? AND user_id=?", (template_id, user)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM pipeline_templates WHERE id=? AND user_id=?", (template_id, user)).fetchone()
         if not row:
             raise HTTPException(404, "模板不存在")
         conn.execute("DELETE FROM pipeline_templates WHERE id=?", (template_id,))
@@ -806,15 +845,29 @@ async def export_pipeline_template(template_id: str, current_user: dict = requir
     conn = get_db()
     _ensure_template_tables(conn)
     try:
-        row = conn.execute(
-            "SELECT * FROM pipeline_templates WHERE id=? AND user_id=?", (template_id, user)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM pipeline_templates WHERE id=? AND user_id=?", (template_id, user)).fetchone()
         if not row:
             raise HTTPException(404, "模板不存在")
-        return {"template": {k: row[k] for k in (
-            "name", "note", "theme_pattern", "platform", "avatar_id", "voice_id",
-            "background_id", "scene_id", "template_id", "engine", "resolution", "speed", "count",
-        )}}
+        return {
+            "template": {
+                k: row[k]
+                for k in (
+                    "name",
+                    "note",
+                    "theme_pattern",
+                    "platform",
+                    "avatar_id",
+                    "voice_id",
+                    "background_id",
+                    "scene_id",
+                    "template_id",
+                    "engine",
+                    "resolution",
+                    "speed",
+                    "count",
+                )
+            }
+        }
     finally:
         conn.close()
 

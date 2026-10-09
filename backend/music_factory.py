@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
 
+
 def _compose_music_simple(music_params: dict) -> dict:
     """简化版音乐合成。"""
     return {
         "status": "success",
         "audio_url": music_params.get("output_path", ""),
-        "duration": music_params.get("duration", 0)
+        "duration": music_params.get("duration", 0),
     }
+
 
 def _prepare_music_params_simple(request_data: dict) -> dict:
     """简化版准备音乐参数。"""
     return {
         "style": request_data.get("style", "pop"),
         "duration": request_data.get("duration", 30),
-        "output_path": request_data.get("output_path", "")
+        "output_path": request_data.get("output_path", ""),
     }
 
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
+from collections.abc import Callable
+
 """音乐工厂模块 - 歌词生成、音乐生成、虚拟人声"""
 
-import asyncio
 import io
 import json
 import logging
@@ -41,7 +36,6 @@ import sys
 import tempfile
 import time
 import wave
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -50,10 +44,11 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from common.artifacts import save_artifact
-from common.helpers import _notify_progress
 from common.auth import require_auth
 from common.config import load_config, resolve_api_key
-from common.llm import api_error_detail, _safe_exc_msg
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
+from common.helpers import _notify_progress
+from common.llm import api_error_detail
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -77,7 +72,11 @@ LYRICS_EXAMPLES = {
 
 # 主流音乐平台发布规格（随发布包附带）
 MUSIC_PACK_SPECS = [
-    {"name": "音频格式", "value": "mp3（≥192k）/ wav / flac 均可", "desc": "本包已同时提供 mp3 + wav(44.1kHz/16bit) + flac 三格式"},
+    {
+        "name": "音频格式",
+        "value": "mp3（≥192k）/ wav / flac 均可",
+        "desc": "本包已同时提供 mp3 + wav(44.1kHz/16bit) + flac 三格式",
+    },
     {"name": "封面", "value": "≥500×500 JPG/PNG，≤1MB", "desc": "本包封面 640×640 满足要求；建议无边框、无水印"},
     {"name": "歌词", "value": "txt 或 lrc 均可上传", "desc": "本包已提供歌词.txt 与歌词.lrc（时间轴估算）"},
     {"name": "曲目信息", "value": "歌名/歌手/作词/作曲/风格", "desc": "AI 生成歌曲建议署名「作词/作曲：AI 创作工坊」"},
@@ -253,14 +252,30 @@ def _music_master_transcode(audio_path) -> tuple:
     wav_data, flac_data = b"", b""
     try:
         r = subprocess.run(
-            [FFMPEG_BIN, "-y", "-i", str(audio_path), "-ar", "44100", "-ac", "2", "-sample_fmt", "s16", "-f", "wav", "-"],
-            capture_output=True, timeout=300,
+            [
+                FFMPEG_BIN,
+                "-y",
+                "-i",
+                str(audio_path),
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-sample_fmt",
+                "s16",
+                "-f",
+                "wav",
+                "-",
+            ],
+            capture_output=True,
+            timeout=300,
         )
         if r.returncode == 0 and r.stdout:
             wav_data = r.stdout
         r = subprocess.run(
             [FFMPEG_BIN, "-y", "-i", str(audio_path), "-ar", "44100", "-ac", "2", "-f", "flac", "-"],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         if r.returncode == 0 and r.stdout:
             flac_data = r.stdout
@@ -269,7 +284,19 @@ def _music_master_transcode(audio_path) -> tuple:
     return wav_data, flac_data
 
 
-def _music_pack_entries(root: str, audio_path, wav_data: bytes, flac_data: bytes, cover_src, lyrics: str, duration: float, title: str, artist_name: str, style_label: str, cover_label: str) -> dict:
+def _music_pack_entries(
+    root: str,
+    audio_path,
+    wav_data: bytes,
+    flac_data: bytes,
+    cover_src,
+    lyrics: str,
+    duration: float,
+    title: str,
+    artist_name: str,
+    style_label: str,
+    cover_label: str,
+) -> dict:
     """构建音乐发布包文件条目。"""
     entries: dict = {f"{root}/01_歌曲.mp3": str(audio_path)}
     if wav_data:
@@ -353,7 +380,9 @@ async def music_publish_pack(
     wav_data, flac_data = _music_master_transcode(audio_path)
 
     root = pack_dir_name("music_release")
-    entries = _music_pack_entries(root, audio_path, wav_data, flac_data, cover_src, lyrics, duration, title, artist_name, style_label, cover_label)
+    entries = _music_pack_entries(
+        root, audio_path, wav_data, flac_data, cover_src, lyrics, duration, title, artist_name, style_label, cover_label
+    )
 
     # 生产级内容保障：质量自检报告
     qc_report = _music_qc_report(lyrics, audio_path, cover_label, cover_src, title)
@@ -371,6 +400,7 @@ async def music_publish_pack(
         },
     )
 
+
 @router.get("/lyrics/examples")
 async def get_lyrics_examples():
     """获取歌词示例"""
@@ -378,13 +408,32 @@ async def get_lyrics_examples():
 
 
 # ── v20：歌词段落解析（[Verse 1]/[Chorus]/[Bridge]/[Outro] 标注 → 段落卡片数据）──
-_SECTION_TAG_RE = re.compile(r"^\s*[\[［（(【]\s*([A-Za-z-]+(?:\s*\d*)?|副歌|主歌|桥段|桥|尾声|前奏|间奏|说唱|预副歌)\s*[]］）)】]\s*$")
-_SECTION_ALIASES = {"V": "Verse", "VERSE": "Verse", "CHORUS": "Chorus", "HOOK": "Chorus",
-                    "BRIDGE": "Bridge", "OUTRO": "Outro", "INTRO": "Intro", "PRE": "Pre-Chorus",
-                    "PRE-CHORUS": "Pre-Chorus", "RAP": "Rap", "VERSE1": "Verse 1",
-                    "副歌": "Chorus", "主歌": "Verse", "桥段": "Bridge", "桥": "Bridge",
-                    "尾声": "Outro", "前奏": "Intro", "间奏": "Interlude", "说唱": "Rap",
-                    "预副歌": "Pre-Chorus"}
+_SECTION_TAG_RE = re.compile(
+    r"^\s*[\[［（(【]\s*([A-Za-z-]+(?:\s*\d*)?|副歌|主歌|桥段|桥|尾声|前奏|间奏|说唱|预副歌)\s*[]］）)】]\s*$"
+)
+_SECTION_ALIASES = {
+    "V": "Verse",
+    "VERSE": "Verse",
+    "CHORUS": "Chorus",
+    "HOOK": "Chorus",
+    "BRIDGE": "Bridge",
+    "OUTRO": "Outro",
+    "INTRO": "Intro",
+    "PRE": "Pre-Chorus",
+    "PRE-CHORUS": "Pre-Chorus",
+    "RAP": "Rap",
+    "VERSE1": "Verse 1",
+    "副歌": "Chorus",
+    "主歌": "Verse",
+    "桥段": "Bridge",
+    "桥": "Bridge",
+    "尾声": "Outro",
+    "前奏": "Intro",
+    "间奏": "Interlude",
+    "说唱": "Rap",
+    "预副歌": "Pre-Chorus",
+}
+
 
 def _normalize_section_tag(tag: str) -> str:
     """归一化段落标签（大写 + 中文别名映射）"""
@@ -394,7 +443,7 @@ def _normalize_section_tag(tag: str) -> str:
     # "CHORUS 1" / "VERSE2" 等带序号形式（保留序号）
     for k in ("PRE-CHORUS", "VERSE", "CHORUS", "BRIDGE", "OUTRO", "INTRO"):
         if t.startswith(k):
-            return k.title() + t[len(k):]
+            return k.title() + t[len(k) :]
     return t.title()
 
 
@@ -420,7 +469,12 @@ def parse_lyrics_sections(text: str) -> list[dict]:
             _push()
             tag = m.group(1).strip().upper()
             title = _normalize_section_tag(tag)
-            current = {"tag": title.upper(), "title": title, "lines": [], "is_hook": "CHORUS" in title.upper() or "HOOK" in title.upper()}
+            current = {
+                "tag": title.upper(),
+                "title": title,
+                "lines": [],
+                "is_hook": "CHORUS" in title.upper() or "HOOK" in title.upper(),
+            }
             continue
         if current is None:
             current = {"tag": "TEXT", "title": "歌词", "lines": [], "is_hook": False}
@@ -629,8 +683,9 @@ async def generate_lyrics(
 # ══════════════════════════════════════════════════════════════
 # 本地 AI 音乐合成引擎：numpy 伴奏 + edge-tts 人声 + ffmpeg 混音
 # ══════════════════════════════════════════════════════════════
-FFMPEG_BIN = "/usr/local/bin/ffmpeg"
-FFPROBE_BIN = "/usr/local/bin/ffprobe"
+from common.ffmpeg_bin import ffprobe_bin as _ffprobe_bin  # noqa: E402
+
+FFPROBE_BIN = _ffprobe_bin() or "ffprobe"
 _SR = 44100
 _EDGE_WORKER = str(Path(__file__).resolve().parent / "edge_tts_worker.py")
 
@@ -681,14 +736,62 @@ _MOOD_LABEL = {
 
 # 风格 → 合成参数：BPM / 和弦进行（midi 绝对音级） / 琶音模式 / 鼓模式 / 贝斯模式
 _STYLE_CFG = {
-    "pop": {"bpm": 108, "chords": [[48, 52, 55], [55, 59, 62], [57, 60, 64], [53, 57, 60]], "pattern": "arp8", "drums": "pop", "bass": "eighth"},
-    "rock": {"bpm": 126, "chords": [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]], "pattern": "block", "drums": "rock", "bass": "eighth"},
-    "rap": {"bpm": 88, "chords": [[50, 53, 57], [46, 49, 53], [53, 57, 60], [48, 52, 55]], "pattern": "block", "drums": "rap", "bass": "eighth"},
-    "ballad": {"bpm": 72, "chords": [[48, 52, 55, 59], [55, 59, 62, 65], [57, 60, 64, 67], [53, 57, 60, 64]], "pattern": "arp16", "drums": "ballad", "bass": "half"},
-    "jazz": {"bpm": 108, "chords": [[48, 52, 55, 59], [50, 53, 57, 60], [52, 55, 59, 62], [50, 53, 57, 60]], "pattern": "arp8", "drums": "jazz", "bass": "walk"},
-    "classical": {"bpm": 78, "chords": [[48, 52, 55], [45, 48, 52], [53, 57, 60], [55, 59, 62]], "pattern": "arp16", "drums": "none", "bass": "half"},
-    "folk": {"bpm": 96, "chords": [[55, 59, 62], [50, 54, 57], [52, 55, 59], [48, 52, 55]], "pattern": "strum", "drums": "folk", "bass": "quarter"},
-    "electronic": {"bpm": 122, "chords": [[45, 49, 52], [41, 44, 48], [48, 52, 55], [43, 47, 50]], "pattern": "pad", "drums": "electronic", "bass": "eighth"},
+    "pop": {
+        "bpm": 108,
+        "chords": [[48, 52, 55], [55, 59, 62], [57, 60, 64], [53, 57, 60]],
+        "pattern": "arp8",
+        "drums": "pop",
+        "bass": "eighth",
+    },
+    "rock": {
+        "bpm": 126,
+        "chords": [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]],
+        "pattern": "block",
+        "drums": "rock",
+        "bass": "eighth",
+    },
+    "rap": {
+        "bpm": 88,
+        "chords": [[50, 53, 57], [46, 49, 53], [53, 57, 60], [48, 52, 55]],
+        "pattern": "block",
+        "drums": "rap",
+        "bass": "eighth",
+    },
+    "ballad": {
+        "bpm": 72,
+        "chords": [[48, 52, 55, 59], [55, 59, 62, 65], [57, 60, 64, 67], [53, 57, 60, 64]],
+        "pattern": "arp16",
+        "drums": "ballad",
+        "bass": "half",
+    },
+    "jazz": {
+        "bpm": 108,
+        "chords": [[48, 52, 55, 59], [50, 53, 57, 60], [52, 55, 59, 62], [50, 53, 57, 60]],
+        "pattern": "arp8",
+        "drums": "jazz",
+        "bass": "walk",
+    },
+    "classical": {
+        "bpm": 78,
+        "chords": [[48, 52, 55], [45, 48, 52], [53, 57, 60], [55, 59, 62]],
+        "pattern": "arp16",
+        "drums": "none",
+        "bass": "half",
+    },
+    "folk": {
+        "bpm": 96,
+        "chords": [[55, 59, 62], [50, 54, 57], [52, 55, 59], [48, 52, 55]],
+        "pattern": "strum",
+        "drums": "folk",
+        "bass": "quarter",
+    },
+    "electronic": {
+        "bpm": 122,
+        "chords": [[45, 49, 52], [41, 44, 48], [48, 52, 55], [43, 47, 50]],
+        "pattern": "pad",
+        "drums": "electronic",
+        "bass": "eighth",
+    },
 }
 
 
@@ -766,13 +869,21 @@ def _compose_mix(vocal_wav: str, acc_wav: str, filename: str) -> Path:
     out_mp3 = MUSIC_DIR / filename
     r = subprocess.run(
         [
-            FFMPEG_BIN, "-y", "-i", vocal_wav, "-i", acc_wav,
+            FFMPEG_BIN,
+            "-y",
+            "-i",
+            vocal_wav,
+            "-i",
+            acc_wav,
             "-filter_complex",
             "[0:a]volume=1.5,acompressor=threshold=-24dB:ratio=3:attack=6:release=120:makeup=9dB,alimiter=limit=0.93[v];"
             "[1:a]equalizer=f=480:t=q:w=1.1:g=-6,equalizer=f=1400:t=q:w=1.1:g=-4,volume=0.26[a];"
             "[v][a]amix=inputs=2:normalize=0:duration=longest,alimiter=limit=0.95[out]",
-            "-map", "[out]",
-            "-b:a", "192k", str(out_mp3),
+            "-map",
+            "[out]",
+            "-b:a",
+            "192k",
+            str(out_mp3),
         ],
         capture_output=True,
         timeout=300,
@@ -786,7 +897,6 @@ def _compose_mix(vocal_wav: str, acc_wav: str, filename: str) -> Path:
             pass
         raise RuntimeError("最终混音结果无法解析（音频无效）")
     return out_mp3
-
 
 
 def _compose_params(payload: dict) -> dict:
@@ -806,17 +916,21 @@ def _compose_params(payload: dict) -> dict:
         except Exception:  # noqa: BLE001
             pass
     theme = (payload.get("theme") or "").strip()
-    for label, t in (("歌词", lyrics), ("主题", theme)):
+    for _label, t in (("歌词", lyrics), ("主题", theme)):
         if not t:
             continue
         res = check_text(t, "歌词")
         if not res["ok"]:
             raise HTTPException(400, "内容审核不通过")
     return {
-        "lyrics": lyrics, "style": style, "mood": payload.get("mood") or "happy",
-        "voice": payload.get("voice") or "female", "theme": theme,
+        "lyrics": lyrics,
+        "style": style,
+        "mood": payload.get("mood") or "happy",
+        "voice": payload.get("voice") or "female",
+        "theme": theme,
         "project_id": payload.get("project_id") or "",
     }
+
 
 async def _compose_music_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """音乐合成执行体（同步/异步任务共用）：numpy 伴奏 + edge-tts 分句人声 + ffmpeg 混音 → mp3 + 封面。"""
@@ -826,8 +940,12 @@ async def _compose_music_worker(payload: dict, progress: Callable | None = None)
 
     params = _compose_params(payload)
     lyrics, style, mood, voice, theme, project_id = (
-        params["lyrics"], params["style"], params["mood"],
-        params["voice"], params["theme"], params["project_id"],
+        params["lyrics"],
+        params["style"],
+        params["mood"],
+        params["voice"],
+        params["theme"],
+        params["project_id"],
     )
 
     # ACE-Step 大模型引擎优先（auto 模式可用时；失败自动回退本地链路）
@@ -908,10 +1026,18 @@ def _synth_note(freq: float, dur: float, kind: str = "piano", vel: float = 0.8) 
     n = max(int(_SR * dur), 1)
     t = np.linspace(0, dur, n, endpoint=False)
     if kind == "piano":
-        w = np.sin(2 * np.pi * freq * t) + 0.45 * np.sin(2 * np.pi * 2 * freq * t) + 0.2 * np.sin(2 * np.pi * 3 * freq * t)
+        w = (
+            np.sin(2 * np.pi * freq * t)
+            + 0.45 * np.sin(2 * np.pi * 2 * freq * t)
+            + 0.2 * np.sin(2 * np.pi * 3 * freq * t)
+        )
         env = (1 - np.exp(-t * 80)) * np.exp(-t * 5.0)
     elif kind == "pad":
-        w = np.sin(2 * np.pi * freq * t) + 0.5 * np.sin(2 * np.pi * freq * 1.005 * t) + 0.4 * np.sin(2 * np.pi * 2 * freq * t)
+        w = (
+            np.sin(2 * np.pi * freq * t)
+            + 0.5 * np.sin(2 * np.pi * freq * 1.005 * t)
+            + 0.4 * np.sin(2 * np.pi * 2 * freq * t)
+        )
         env = (1 - np.exp(-t * 4)) * np.exp(-t * 0.8)
     elif kind == "bass":
         w = np.sin(2 * np.pi * freq * t) + 0.35 * np.sin(2 * np.pi * 2 * freq * t)
@@ -984,7 +1110,6 @@ def _place_arpeggio(place, chord: list[int], t0: float, beat: float, pattern: st
                 place(_synth_note(_note_freq(ci + 12), beat * 0.28, "strum", 0.32), t0 + b_i * beat + k * 0.045)
 
 
-
 # 鼓模式定义：k=底鼓(s), s=军鼓, h=踩镲, o=开踩镲, 每个元组 (乐器, 节拍位置, 力度)
 _DRUM_PATTERNS = {
     "pop": [("k", 0, 1.0), ("k", 2, 1.0), ("s", 1, 1.0), ("s", 3, 1.0)],
@@ -1018,6 +1143,7 @@ def _place_drum_hats(place, drums: str, t0: float, beat: float, kit: dict) -> No
     for i in range(steps):
         swing = 0.5 if drums != "jazz" or i % 2 == 0 else 0.55
         place(kit["h"], t0 + (i + swing - 0.5) * beat * 0.5, vol)
+
 
 def _place_drums(place, drums: str, t0: float, beat: float) -> None:
     """按鼓模式铺鼓点（4/4 拍，数据驱动）。"""
@@ -1067,7 +1193,10 @@ def _synthesize_accompaniment(style: str, seconds: float, seed: int) -> np.ndarr
                 for i in range(8):
                     if rng.random() < 0.35:
                         note = chord[int(rng.integers(0, len(chord)))] + 24
-                        place(_synth_note(_note_freq(note), beat * (0.4 + rng.random() * 0.6), "pluck", 0.16), t0 + i * beat * 0.5)
+                        place(
+                            _synth_note(_note_freq(note), beat * (0.4 + rng.random() * 0.6), "pluck", 0.16),
+                            t0 + i * beat * 0.5,
+                        )
     # 结尾淡出 + 归一化
     fade = int(1.2 * _SR)
     if len(track) > fade:
@@ -1267,12 +1396,11 @@ def _vocalize_word(cut: np.ndarray, f1: float, target_dur: float, ref_f0: float 
     return shifted * env, f0
 
 
-
 def _estimate_word_f0s(raw: np.ndarray, valid: list, ref_f0: float | None, sr: int) -> list:
     """逐词 F0 预估计：自相关 + 中位数 + 八度对齐 + 极端回退。"""
     f0_list: list[float | None] = []
     for w0, w1 in valid:
-        f0, vr = _estimate_f0_mono(raw[int(w0 * sr): int(w1 * sr)], pct=50)
+        f0, vr = _estimate_f0_mono(raw[int(w0 * sr) : int(w1 * sr)], pct=50)
         if f0 is None or f0 < 70 or vr < 0.15:
             f0_list.append(None)
             continue
@@ -1289,8 +1417,13 @@ def _estimate_word_f0s(raw: np.ndarray, valid: list, ref_f0: float | None, sr: i
 
 
 def _synthesize_word_vocal(
-    raw: np.ndarray, valid: list, f0_list: list, notes: list,
-    seg_dur: float, target_n: int, sr: int,
+    raw: np.ndarray,
+    valid: list,
+    f0_list: list,
+    notes: list,
+    seg_dur: float,
+    target_n: int,
+    sr: int,
 ) -> np.ndarray:
     """逐词演唱化：槽位按词长比例分配 + raw 段直接变调 + 包络防爆音。"""
     n = len(valid)
@@ -1303,7 +1436,7 @@ def _synthesize_word_vocal(
         pos = s1
         if s1 <= s0:
             continue
-        seg_in = raw[int(w0 * sr): int(w1 * sr)]
+        seg_in = raw[int(w0 * sr) : int(w1 * sr)]
         if len(seg_in) < 64:
             continue
         f0 = f0_list[i]
@@ -1326,6 +1459,7 @@ def _synthesize_word_vocal(
         end = min(s0 + len(voiced), target_n)
         vocal[s0:end] = voiced[: end - s0]
     return vocal
+
 
 def _vocalize_phrase(  # noqa: C901
     mp3_path: str, json_path: str, melody: list[dict], seg_start: float, seg_dur: float, sr: int = _SR
@@ -1372,7 +1506,7 @@ def _vocalize_phrase(  # noqa: C901
                 valid.append((w0, w1))
         if not valid or not notes:
             return None
-        n = len(valid)
+        len(valid)
         target_n = int(seg_dur * sr)
 
         # ── 1. 逐词 F0 预估计（raw 段，不受重采样伪相关影响）──
@@ -1383,7 +1517,6 @@ def _vocalize_phrase(  # noqa: C901
         return vocal
     except Exception:
         return None
-
 
 
 def _melody_pool(chord: list, root: int, penta: tuple, lo: int, hi: int) -> list:
@@ -1415,11 +1548,7 @@ def _note_start(usable: list, prev: int | None, root: int, rng) -> int:
 
 def _note_end(usable: list, prev: int | None, root: int, rng) -> int:
     """句尾音：回落收束（根音/三音，平滑）。"""
-    cands = [
-        p for p in usable
-        if (p - root) % 12 in (0, 4)
-        and (prev is None or prev - 3 <= p <= prev + 2)
-    ]
+    cands = [p for p in usable if (p - root) % 12 in (0, 4) and (prev is None or prev - 3 <= p <= prev + 2)]
     return rng.choice(cands) if cands else (prev or root + 12)
 
 
@@ -1428,45 +1557,6 @@ def _note_middle(usable: list, prev: int | None, root: int, rng) -> int:
     base = prev if prev is not None else root + 12
     near = [p for p in usable if abs(p - base) <= 3]
     return rng.choice(near) if near else base
-
-def _generate_melody(style: str, phrases: list[dict], seed: int, voice: str = "female") -> list[dict]:  # noqa: C901
-    """为歌词生成主旋律（midi 音符序列）：和弦进行 + 五声音阶随机游走，音域受限。
-
-    规则：句首取和弦根音/五音（强拍），句尾回落收束，中间字 ≤3 半音平滑游走。
-    """
-    cfg = _STYLE_CFG.get(style, _STYLE_CFG["pop"])
-    beat = 60.0 / cfg["bpm"]
-    bar_dur = beat * 4
-    # 音域：女声 C4~C5，男声 C3~C4（贴近说话音高，升调 ≤2.5x 内补拉伸质量可控）
-    lo, hi = (50, 62) if voice == "male" else (60, 72)
-    penta = (0, 2, 4, 7, 9)
-    rng = random.Random(seed)
-    melody: list[dict] = []
-    prev: int | None = None
-    for ph in phrases:
-        n = max(ph["n"], 1)
-        dur_per = ph["dur"] / n
-        bar_idx = int(ph["start"] / bar_dur)
-        chord = cfg["chords"][bar_idx % len(cfg["chords"])]
-        root = chord[0]
-        usable = _melody_pool(chord, root, penta, lo, hi)
-        for i in range(n):
-            if i == 0:
-                note = _note_start(usable, prev, root, rng)
-            elif i == n - 1:
-                note = _note_end(usable, prev, root, rng)
-            else:
-                note = _note_middle(usable, prev, root, rng)
-            note = int(np.clip(note, lo, hi))
-            melody.append(
-                {
-                    "midi": note,
-                    "start": round(ph["start"] + i * dur_per, 3),
-                    "dur": round(dur_per, 3),
-                }
-            )
-            prev = note
-    return melody
 
 
 def _chunk_long(s: str) -> list[str]:
@@ -2078,7 +2168,7 @@ def _generate_melody(style: str, key: str = "C", duration: int = 16) -> list:
     # 简化的旋律生成逻辑
     notes = ["C", "D", "E", "F", "G", "A", "B"]
     melody = []
-    
+
     for i in range(duration):
         # 根据风格选择音符
         if style == "major":
@@ -2087,50 +2177,40 @@ def _generate_melody(style: str, key: str = "C", duration: int = 16) -> list:
             idx = (i + 2) % 7
         else:
             idx = i % 7
-        
+
         note = f"{notes[idx]}4"
         melody.append({"note": note, "duration": 0.5})
-    
+
     return melody
 
 
 def _arrange_chords(key: str, progression: str = "I-V-vi-IV") -> list:
     """编排和弦进行。"""
     # 简化的和弦编排
-    chord_map = {
-        "I": "C",
-        "V": "G",
-        "vi": "Am",
-        "IV": "F"
-    }
-    
+    chord_map = {"I": "C", "V": "G", "vi": "Am", "IV": "F"}
+
     chords = []
     for prog in progression.split("-"):
         chord = chord_map.get(prog, "C")
         chords.append({"chord": chord, "duration": 2.0})
-    
+
     return chords
 
 
 async def _synthesize_audio(melody: list, chords: list, output_format: str = "mp3") -> str:
     """合成音频。"""
-    import subprocess
     import json
-    
+
     # 使用简化的音频合成逻辑
     output_path = f"/tmp/music_{id(asyncio.get_event_loop())}.{output_format}"
-    
+
     # 生成 MIDI 数据（简化）
-    midi_data = json.dumps({
-        "melody": melody,
-        "chords": chords,
-        "tempo": 120
-    })
-    
+    midi_data = json.dumps({"melody": melody, "chords": chords, "tempo": 120})
+
     # 调用音频合成工具
     try:
         # 这里可以调用更多的音频合成库
-        with open("/tmp/music_midi.json", 'w') as f:
+        with open("/tmp/music_midi.json", "w") as f:
             f.write(midi_data)
         output_path = "/tmp/music_output.mp3"
         # 实际应该调用音频合成引擎
@@ -2138,34 +2218,30 @@ async def _synthesize_audio(melody: list, chords: list, output_format: str = "mp
         logger.info(f"音频合成失败: {e}")
         output_path = ""
         pass
-    
+
     return output_path
 
 
 def _apply_mixing(audio_path: str, effects: dict) -> str:
     """应用混音效果。"""
     import subprocess
-    
+
     if not audio_path:
         return ""
-    
+
     output_path = audio_path.replace(".mp3", "_mixed.mp3")
-    
+
     # 应用音频效果
     filter_complex = []
-    
+
     if effects.get("reverb"):
         filter_complex.append("aecho=0.8:0.9:1000:0.3")
-    
+
     if effects.get("compression"):
         filter_complex.append("acompressor")
-    
+
     if filter_complex:
-        cmd = [
-            "ffmpeg", "-i", audio_path,
-            "-af", ",".join(filter_complex),
-            output_path
-        ]
+        cmd = [FFMPEG_BIN, "-i", audio_path, "-af", ",".join(filter_complex), output_path]
         subprocess.run(cmd, capture_output=True, timeout=120)
-    
+
     return output_path

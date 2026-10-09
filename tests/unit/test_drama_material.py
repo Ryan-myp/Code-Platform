@@ -52,11 +52,11 @@ class TestScriptSearchField:
 
 
 class TestScriptSecClamp:
-    """v13.27 长剧能力：单镜 sec 放宽到 45s、长剧本（20+ 场）解析通过。"""
+    """v13.27 长剧能力 + v1.0.64 单镜 sec 上限 45→60s（10 分钟剧单场可达 50-60s）、长剧本（20+ 场）解析通过。"""
 
-    def test_sec_clamped_to_45(self):
+    def test_sec_clamped_to_60(self):
         raw = json.dumps({"scenes": [{"id": 1, "shot": "镜头", "narrator": "旁白", "sec": 99}]})
-        assert sd._parse_script(raw)["scenes"][0]["sec"] == 45
+        assert sd._parse_script(raw)["scenes"][0]["sec"] == 60
 
     def test_sec_min_2(self):
         raw = json.dumps({"scenes": [{"id": 1, "shot": "镜头", "narrator": "旁白", "sec": 1}]})
@@ -214,16 +214,22 @@ class TestLocalMaterial:
 
 
 class TestBgm:
-    """背景音乐选择。"""
+    """背景音乐选择（含音乐工厂作品复用兑底：music_factory/*.mp3 也进候选池）。"""
+
+    @staticmethod
+    def _empty_bgm_dirs(mp, tmp_path):
+        """把两个 BGM 候选目录都指到空目录（隔离仓库内真实产物干扰）。"""
+        mp.setattr(sd, "MUSIC_DIR", tmp_path)
+        mp.setattr(sd, "DRAMA_DIR", tmp_path / "drama_factory")  # 使 music_factory 兑底目录不存在
 
     def test_empty_music_dir_returns_none(self, tmp_path):
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "MUSIC_DIR", tmp_path)
+            self._empty_bgm_dirs(mp, tmp_path)
             assert sd._pick_bgm() is None
 
     def test_picks_audio_track(self, tmp_path):
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "MUSIC_DIR", tmp_path)
+            self._empty_bgm_dirs(mp, tmp_path)
             (tmp_path / "a.mp3").write_bytes(b"x")
             (tmp_path / "b.txt").write_bytes(b"x")
             bgm = sd._pick_bgm()
@@ -289,24 +295,24 @@ class TestSceneVideoMotion:
         assert "fade=t=in" in vf and "fade=t=out" not in vf
 
     def test_motion_variants_alternate(self, tmp_path):
-        # 4 种运镜交替：zoom_in 推近 / zoom_out 拉远 / pan_in / pan_out 带横摇
+        # 4 种运镜交替：zoom_in 推近 / zoom_out 拉远 / pan_left / pan_right 取景窗平移（v1.0.73 词表）
         zexprs = []
         for motion in sd._SCENE_MOTIONS:
             cmd = self._run_captured(tmp_path, motion=motion)
             vf = self._vf(cmd)
             assert "zoompan" in vf
             if motion.startswith("pan"):
-                assert "sin(2*PI*on" in vf  # 横摇带 sin 摆动
+                assert "iw*" in vf or "ih*" in vf  # 平移带取景窗漂移项
             else:
-                assert "sin(" not in vf
+                assert "iw*" not in vf and "ih*" not in vf
             zexprs.append(vf)
-        # zoom_out/pan_out 从 1+amp 起（拉远），zoom_in/pan_in 从 1 起（推近）
-        assert "z='1+" in zexprs[0] and "z='1.1-" in zexprs[1]
+        # zoom_out 从 1+amp 起（拉远），zoom_in 从 1 起（推近）；duration=10s→total=250→amp=0.16
+        assert "z='1+" in zexprs[0] and "z='1.16-" in zexprs[1]
 
-    def test_still_motion_no_zoompan(self, tmp_path):
-        # 卡片兜底镜 still：无 zoompan（渐变海报文字不放大移动）
+    def test_still_motion_gentle_zoompan(self, tmp_path):
+        # 卡片兜底镜 still：微幅推近（v13.31 静止镜也避免死画面，不再无运镜）
         cmd = self._run_captured(tmp_path, motion="still")
-        assert "zoompan" not in self._vf(cmd)
+        assert "zoompan" in self._vf(cmd)
 
     def test_real_encoding_with_motion(self, tmp_path):
         # 真实编码：2s Ken Burns 片段，产物 720x1280、时长≈2s
@@ -434,7 +440,7 @@ class TestSceneCardFallback:
         buf = io.BytesIO()
         Image.new("RGB", (720, 1280), (10, 20, 30)).save(buf, format="JPEG")
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "_generate_scene_image", lambda shot: buf.getvalue())
+            mp.setattr(sd, "_generate_scene_image", lambda *a, **k: buf.getvalue())
             ok = sd._make_scene_card("台词", 0, 3, "测试剧", str(tmp_path / "a.jpg"), "雨夜街道")
         assert ok
         assert Image.open(tmp_path / "a.jpg").size == (720, 1280)
@@ -443,7 +449,7 @@ class TestSceneCardFallback:
         from PIL import Image
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "_generate_scene_image", lambda shot: None)
+            mp.setattr(sd, "_generate_scene_image", lambda *a, **k: None)
             ok = sd._make_scene_card("台词" * 50, 1, 3, "测试剧", str(tmp_path / "b.jpg"), "雨夜街道")
         assert ok
         assert Image.open(tmp_path / "b.jpg").size == (720, 1280)
@@ -472,7 +478,8 @@ class TestGenerateScript:
             mp.setattr(sd, "call_llm_async", fake_llm)
             script = asyncio.run(sd._generate_script("主题", 45))
         assert calls["n"] == 3
-        assert script["scenes"][0]["sec"] == 45  # clamp + 防御收敛
+        # duration_hint=45/1场 → base=ceil(45*0.95)=43；sec 99 超出 [base*0.75, base*1.25] 收敛到 base
+        assert script["scenes"][0]["sec"] == 43
 
     def test_all_fail_raises(self):
         async def fake_llm(system, prompt, **kw):
@@ -599,7 +606,9 @@ class TestSceneImageRefs:
 
         img = self._mock_image()
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "AGNES_API_KEY", "k")
+            import common.config as cc
+            mp.setattr(sd, "resolve_api_key", lambda: "k")
+            mp.setattr(cc, "require_model", lambda m, label: m or "mock-model")
             mp.setattr("requests.post", fake_post)
             mp.setattr("requests.get", lambda *a, **k: types.SimpleNamespace(status_code=200, content=img))
             out = sd._generate_scene_image("雨夜便利店", "林小满，女，黑色长发", [img, img])
@@ -608,7 +617,7 @@ class TestSceneImageRefs:
         assert len(body["image"]) == 2  # 多图参考（多角色同镜）
         assert body["image"][0].startswith("data:image/jpeg;base64,")
         assert "林小满，女，黑色长发" in body["prompt"]  # anchors 文字锚定
-        assert body["size"] == "1K" and body["ratio"] == "9:16"
+        assert body["ratio"] == "9:16"
 
     def test_no_refs_pure_t2i(self):
         captured = {}
@@ -619,9 +628,11 @@ class TestSceneImageRefs:
 
         img = self._mock_image()
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "AGNES_API_KEY", "k")
+            import common.config as cc
+            mp.setattr(sd, "resolve_api_key", lambda: "k")
+            mp.setattr(cc, "require_model", lambda m, label: m or "mock-model")
             mp.setattr("requests.post", fake_post)
             mp.setattr("requests.get", lambda *a, **k: SimpleResp(200, img))
             sd._generate_scene_image("雨夜便利店")
         assert "image" not in captured["json"]  # 无参考图 → 纯文生图
-        assert captured["json"]["prompt"].endswith("雨夜便利店")
+        assert "雨夜便利店" in captured["json"]["prompt"]

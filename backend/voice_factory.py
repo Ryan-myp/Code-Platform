@@ -1,27 +1,15 @@
 #!/usr/bin/env python3
 
+
 async def _voice_generate_simple(text: str, speaker: str, output_path: str) -> dict:
     """简化版语音生成。"""
     return {"status": "success", "output_path": output_path}
 
-async def _prepare_voice_params_simple(request_data: dict) -> dict:
-    """简化版准备语音参数。"""
-    return {
-        "text": request_data.get("text", ""),
-        "speaker": request_data.get("speaker", ""),
-        "output_path": request_data.get("output_path", "")
-    }
 
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from collections.abc import Callable
 from datetime import datetime
+
 """AI 配音工坊 — 文字转语音（TTS）。
 
 - 调用 Agnes 中转站 OpenAI 兼容 /audio/speech（模型 tts-1，Azure Neural 音色）
@@ -30,7 +18,6 @@ from datetime import datetime
 - 产物保存到 voice_factory/ 目录并登记 artifacts 表（type=audio）
 """
 
-import asyncio
 import io
 import json
 import logging
@@ -41,8 +28,6 @@ import subprocess
 import tempfile
 import time
 import zipfile
-from collections.abc import Callable
-from datetime import datetime
 
 import requests
 from fastapi import APIRouter, Form, HTTPException, Query
@@ -52,7 +37,7 @@ from pydantic import BaseModel, Field
 from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import load_config, resolve_api_key
-from common.llm import _safe_exc_msg
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -60,7 +45,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/voice", tags=["AI配音工坊"])
 
 load_config()
-from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
+from common.config import AGNES_API_BASE  # noqa: E402
 
 VOICE_DIR = os.path.join(os.path.dirname(__file__), "voice_factory")
 os.makedirs(VOICE_DIR, exist_ok=True)
@@ -301,8 +286,8 @@ def _tts_one(text: str, voice: str, speed: float, pitch: int = 0, emotion: str =
         logger.warning("中转站 TTS 失败，回试 edge-tts")
         try:
             return _edge_with_retry(2)
-        except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试")
+        except Exception:
+            raise HTTPException(500, "操作失败，请稍后重试") from None
 
 
 def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0, emotion: str = "") -> bytes:
@@ -317,7 +302,9 @@ def _tts_edge(text: str, voice: str, speed: float, pitch: int = 0, emotion: str 
 
     if emotion:
         # cheerful 为 happy 的 Azure 风格别名（数字人/短剧调用方映射），一并映射高亢
-        pitch = pitch + {"happy": 15, "cheerful": 15, "sad": -15, "angry": 12, "gentle": -5, "serious": 0}.get(emotion, 0)
+        pitch = pitch + {"happy": 15, "cheerful": 15, "sad": -15, "angry": 12, "gentle": -5, "serious": 0}.get(
+            emotion, 0
+        )
         emotion = ""  # v13.28 不再使用 SSML style（语速黑洞）
     worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge_tts_worker.py")
     rate = f"{int(round((speed - 1) * 100)):+d}%"
@@ -357,7 +344,7 @@ def _merge_mp3(seg_files: list[str], out_path: str) -> None:
         list_file = f.name
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
+            [FFMPEG_BIN, "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
             capture_output=True,
             stdin=subprocess.DEVNULL,  # 防后台环境继承 tty 触发 SIGTTIN 进程组停止
             timeout=120,
@@ -378,7 +365,7 @@ def _master_audio(in_path: str, out_path: str, fmt: str = "mp3") -> None:
     if duration and duration > 0.6:
         fade_out_start = max(0.0, duration - 0.3)
         af += f",afade=t=in:st=0:d=0.15,afade=t=out:st={fade_out_start:.2f}:d=0.3"
-    cmd = ["ffmpeg", "-y", "-i", in_path, "-af", af]
+    cmd = [FFMPEG_BIN, "-y", "-i", in_path, "-af", af]
     if fmt == "wav":
         cmd += ["-codec:a", "pcm_s16le", "-ar", "44100", out_path]
     else:
@@ -482,14 +469,14 @@ def _artifact_meta() -> dict:
     return meta
 
 
-
 def _voice_generate_simple(voice_params: dict) -> dict:
     """简化版语音生成。"""
     return {
         "status": "success",
         "audio_url": voice_params.get("output_path", ""),
-        "duration": voice_params.get("duration", 0)
+        "duration": voice_params.get("duration", 0),
     }
+
 
 def _prepare_voice_params_simple(request_data: dict) -> dict:
     """简化版准备语音参数。"""
@@ -497,7 +484,7 @@ def _prepare_voice_params_simple(request_data: dict) -> dict:
         "text": request_data.get("text", ""),
         "speaker": request_data.get("speaker", ""),
         "output_path": request_data.get("output_path", ""),
-        "duration": request_data.get("duration", 0)
+        "duration": request_data.get("duration", 0),
     }
 
 
@@ -524,8 +511,15 @@ def _resolve_voice_params(payload: dict) -> dict:
     tts_speed = speed if scene == "custom" else (scene_cfg["speed"] if scene_cfg else speed)
     tts_speed = max(0.5, min(2.0, float(tts_speed)))
     return {
-        "text": text, "scene": scene, "voice": voice, "speed": speed, "pitch": pitch,
-        "format": fmt, "emotion": emotion, "tts_voice": tts_voice, "tts_speed": tts_speed,
+        "text": text,
+        "scene": scene,
+        "voice": voice,
+        "speed": speed,
+        "pitch": pitch,
+        "format": fmt,
+        "emotion": emotion,
+        "tts_voice": tts_voice,
+        "tts_speed": tts_speed,
     }
 
 
@@ -537,7 +531,11 @@ async def _synthesize_audio(params: dict, progress: Callable | None) -> dict:
         _notify_progress(progress, pct, stage)
 
     text, tts_voice, tts_speed, pitch, emotion = (
-        params["text"], params["tts_voice"], params["tts_speed"], params["pitch"], params["emotion"],
+        params["text"],
+        params["tts_voice"],
+        params["tts_speed"],
+        params["pitch"],
+        params["emotion"],
     )
     fmt = params["format"]
     segments = _split_text(text)
@@ -567,10 +565,16 @@ async def _synthesize_audio(params: dict, progress: Callable | None) -> dict:
     srt_path = os.path.join(VOICE_DIR, f"{stem}.srt")
     _make_srt(segments, seg_durations, srt_path)
     return {
-        "segments": segments, "seg_durations": seg_durations, "out_path": out_path,
-        "srt_path": srt_path, "has_srt": os.path.exists(srt_path), "tmp_dir": tmp_dir,
-        "filename": filename, "duration": duration,
+        "segments": segments,
+        "seg_durations": seg_durations,
+        "out_path": out_path,
+        "srt_path": srt_path,
+        "has_srt": os.path.exists(srt_path),
+        "tmp_dir": tmp_dir,
+        "filename": filename,
+        "duration": duration,
     }
+
 
 async def _voice_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """文字转语音全流程（同步/异步任务共用执行体，异步时回报进度）。"""
@@ -582,6 +586,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     if tpl_id:
         try:
             from voice_templates import record_usage
+
             record_usage(tpl_id)
         except Exception:  # noqa: BLE001
             pass
@@ -609,7 +614,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
         shutil.rmtree(syn["tmp_dir"], ignore_errors=True) if "syn" in dir() else None
 
     filename = syn["filename"]
-    out_path = syn["out_path"]
+    syn["out_path"]
     duration = syn["duration"]
     has_srt = syn["has_srt"]
 
@@ -632,6 +637,7 @@ async def _voice_generate_worker(payload: dict, progress: Callable | None = None
     log_usage("voice_generate", len(text), 0, elapsed)
     try:
         from common.helpers import _notify_progress
+
         _notify_progress(progress, 100, "配音已生成")
     except Exception:
         pass

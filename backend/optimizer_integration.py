@@ -4,11 +4,8 @@
 调度由 backend/scheduler.py 统一处理（每小时20分自动运行）。
 """
 
-import asyncio
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
@@ -52,10 +49,10 @@ def get_optimizer_metrics(current_user: dict = Depends(require_auth)):
     report = get_latest_report()
     if not report:
         return {"message": "暂无数据"}
-    
+
     summary = report.get("summary", {})
     readiness = report.get("enterprise_readiness", {})
-    
+
     return {
         "total_score": readiness.get("score", 0),
         "grade": readiness.get("grade", "N/A"),

@@ -55,7 +55,7 @@ def parse_conclusion(output: str) -> dict:
         m = _SECTION_RE.match(line)
         if m:
             current = _SECTION_LABELS[m.group(1)]
-            line = line[m.end():].strip()
+            line = line[m.end() :].strip()
         item = _strip_number(line)
         if item:
             sections[current].append(item)
@@ -67,6 +67,7 @@ def _strip_number(line: str) -> str:
     import re as _re
 
     return _re.sub(r"^\s*\d+[.、．)]\s*", "", line)
+
 
 _ANALYZER_SYSTEM_PROMPT = """你是资深数据分析师与 Python 工程师。用户会上传一个 CSV 表格（UTF-8，可能含中文表头）并提出数据分析问题。
 请生成一段可直接执行的 Python 代码来回答用户的问题，代码必须遵守以下约束：
@@ -231,9 +232,7 @@ async def data_analyzer_analyze(req: dict, current_user: dict = require_auth()):
     start = datetime.now()
     raw_code = ""
     try:
-        raw_code = await call_llm_async(
-            _ANALYZER_SYSTEM_PROMPT, user_prompt, max_tokens=4000, temperature=0.2
-        )
+        raw_code = await call_llm_async(_ANALYZER_SYSTEM_PROMPT, user_prompt, max_tokens=4000, temperature=0.2)
     except HTTPException as e:
         log_usage("data_analyzer", len(user_prompt), 0, 0.0, success=False)
         raise e

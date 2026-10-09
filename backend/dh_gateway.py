@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
 
 
 async def _create_dh_simple(dh_params: dict) -> dict:
     """简化版数字人视频创建。"""
     return {"status": "success", "video_url": dh_params.get("output_path", "")}
 
-async def _prepare_dh_params_simple(request_data: dict) -> dict:
-    """简化版准备数字人参数。"""
-    return {
-        "image_path": request_data.get("image", ""),
-        "audio_path": request_data.get("audio", ""),
-        "output_path": request_data.get("output_path", "")
-    }
 
+from datetime import datetime
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
-import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 """数字人按量计费 API 网关 — 对外开发者计费入口（Phase 5.1 商业化预留，最小实现）。
 
 复用 openai_gateway 的 API Key 认证模式（api_keys 表 + Bearer xt-xxx）：
@@ -43,7 +27,6 @@ from datetime import datetime
 import json
 import logging
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -166,9 +149,7 @@ def _refund(billing_id: str) -> float | None:
     """账单退费（任务失败/创建失败）：余额回补 + 账单标记 refunded。返回回补后余额。"""
     with get_db_context() as conn:
         _ensure_billing_tables(conn)
-        row = conn.execute(
-            "SELECT * FROM dh_billing_records WHERE id=? AND status='charged'", (billing_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM dh_billing_records WHERE id=? AND status='charged'", (billing_id,)).fetchone()
         if not row:
             return None
         urow = conn.execute("SELECT balance FROM users WHERE id=?", (row["user_id"],)).fetchone()
@@ -176,7 +157,9 @@ def _refund(billing_id: str) -> float | None:
         new_balance = round(balance + float(row["price"] or 0), 2)
         conn.execute("UPDATE users SET balance=? WHERE id=?", (new_balance, row["user_id"]))
         conn.execute("UPDATE dh_billing_records SET status='refunded' WHERE id=?", (billing_id,))
-        logger.info("数字人计费退费: billing=%s user=%s +%.2f -> %.2f", billing_id, row["user_id"], row["price"], new_balance)
+        logger.info(
+            "数字人计费退费: billing=%s user=%s +%.2f -> %.2f", billing_id, row["user_id"], row["price"], new_balance
+        )
         return new_balance
 
 
@@ -210,52 +193,45 @@ async def _validate_dh_inputs(text: str, voice_id: str, face_id: str) -> bool:
         return False
     return True
 
+
 def _prepare_dh_request(params: dict) -> dict:
     """准备数字人请求参数。"""
     return {
         "text": params.get("text", ""),
         "voice_id": params.get("voice_id", ""),
         "face_id": params.get("face_id", ""),
-        "resolution": params.get("resolution", "720p")
+        "resolution": params.get("resolution", "720p"),
     }
+
 
 def _parse_dh_response(response: dict) -> dict:
     """解析数字人响应。"""
     return {
         "video_url": response.get("video_url", ""),
         "duration": response.get("duration", 0),
-        "status": response.get("status", "failed")
+        "status": response.get("status", "failed"),
     }
-
-
 
 
 def _prepare_dh_video_context(dh_params):
     """准备数字人视频生成上下文。"""
-    return {
-        "params": dh_params,
-        "status": "prepared"
-    }
+    return {"params": dh_params, "status": "prepared"}
+
 
 def _validate_dh_video_params(params):
     """验证数字人视频参数。"""
     required = ["image", "audio", "speaker"]
     return all(p in params for p in required)
 
+
 def _execute_dh_video_generation(params):
     """执行数字人视频生成。"""
-    return {
-        "status": "generating",
-        "task_id": params.get("task_id")
-    }
+    return {"status": "generating", "task_id": params.get("task_id")}
+
 
 def _finalize_dh_video_result(result):
     """汇总数字人视频生成结果。"""
-    return {
-        "video_url": result.get("video_url"),
-        "duration": result.get("duration"),
-        "status": "completed"
-    }
+    return {"video_url": result.get("video_url"), "duration": result.get("duration"), "status": "completed"}
 
 
 def _create_dh_simple(dh_params: dict) -> dict:
@@ -263,8 +239,9 @@ def _create_dh_simple(dh_params: dict) -> dict:
     return {
         "status": "success",
         "video_url": dh_params.get("output_path", ""),
-        "duration": dh_params.get("duration", 0)
+        "duration": dh_params.get("duration", 0),
     }
+
 
 def _prepare_dh_params_simple(request_data: dict) -> dict:
     """简化版准备数字人参数。"""
@@ -273,9 +250,8 @@ def _prepare_dh_params_simple(request_data: dict) -> dict:
         "audio_path": request_data.get("audio", ""),
         "speaker": request_data.get("speaker", ""),
         "output_path": request_data.get("output_path", ""),
-        "duration": request_data.get("duration", 0)
+        "duration": request_data.get("duration", 0),
     }
-
 
 
 def _build_dh_request(body: dict) -> tuple:
@@ -306,6 +282,7 @@ def _build_dh_request(body: dict) -> tuple:
     if req.template_id and req.template_id not in {t["id"] for t in INDUSTRY_TEMPLATES}:
         return None, _err(400, f"未知行业模板: {req.template_id}", "invalid_template")
     return req, None
+
 
 def _apply_free_tier_downgrade(req, auth: dict) -> tuple:
     """免费档降级：非 admin 免费 Key 的高级引擎/分辨率静默降级为 2D+720p。"""
@@ -344,7 +321,7 @@ def _create_billing_task(req, auth: dict, billing_id: str, price: float) -> dict
             user_id=auth["user_id"],
             role=auth.get("role", ""),
         )
-    except HTTPException as e:
+    except HTTPException:
         _refund(billing_id)
         raise
     with get_db_context() as conn:
@@ -353,6 +330,7 @@ def _create_billing_task(req, auth: dict, billing_id: str, price: float) -> dict
             (task["id"], req.engine, req.resolution, billing_id),
         )
     return task
+
 
 @router.post("/v1/dh/videos")
 def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分层/计费多分支，逐段可读
@@ -370,7 +348,7 @@ def create_dh_video(request: Request, body: dict):  # noqa: C901 — 校验/分�
     if isinstance(auth, JSONResponse):
         return auth
 
-    from digital_human import GenerateRequest, _precheck_generate
+    from digital_human import _precheck_generate
 
     req, param_err = _build_dh_request(body)
     if param_err:
@@ -500,7 +478,12 @@ async def admin_recharge(req: RechargeRequest, current_user: dict = require_auth
         new_balance = round(float(row["balance"] or 0) + req.amount, 2)
         conn.execute("UPDATE users SET balance=? WHERE id=?", (new_balance, req.user_id))
     logger.info("数字人余额充值: user=%s +%.2f -> %.2f（%s）", req.user_id, req.amount, new_balance, req.remark)
-    return {"user_id": req.user_id, "amount": req.amount, "balance": new_balance, "message": f"充值成功，当前余额 {new_balance:.2f} 元"}
+    return {
+        "user_id": req.user_id,
+        "amount": req.amount,
+        "balance": new_balance,
+        "message": f"充值成功，当前余额 {new_balance:.2f} 元",
+    }
 
 
 @router.get("/api/dh/billing/records")

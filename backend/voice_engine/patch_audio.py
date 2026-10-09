@@ -5,6 +5,7 @@ ABI 不兼容（libtorchcodec_core4.dylib 加载失败）。本补丁将 torchau
 替换为 soundfile 实现（与 CosyVoice 官方 load_wav 的 backend='soundfile' 同源），
 在 import CosyVoice 前调用 patch_audio() 即可。
 """
+
 import io
 
 import torch
@@ -16,8 +17,9 @@ except ImportError:  # 无 soundfile 时保持原行为
     sf = None
 
 
-def _soundfile_load(uri, frame_offset=0, num_frames=-1, normalize=True,
-                    channels_first=True, format=None, buffer_size=None, backend=None):
+def _soundfile_load(
+    uri, frame_offset=0, num_frames=-1, normalize=True, channels_first=True, format=None, buffer_size=None, backend=None
+):
     if sf is None:
         raise ImportError("soundfile required for voice_engine audio patch")
     if torch.is_tensor(uri):  # 已加载的 tensor 直接返回（兼容内部调用）
@@ -29,16 +31,25 @@ def _soundfile_load(uri, frame_offset=0, num_frames=-1, normalize=True,
     n = int(num_frames) if num_frames is not None and num_frames > 0 else -1
     data, sr = sf.read(f, dtype="float32", always_2d=True, frames=n)
     if frame_offset > 0:
-        data = data[int(frame_offset):]
+        data = data[int(frame_offset) :]
     wav = torch.from_numpy(data.T)  # (channels, frames)
     if not normalize:
         wav = wav * 32768.0
     return wav, sr
 
 
-def _soundfile_save(uri, src, sample_rate, channels_first=True, format=None,
-                    encoding=None, bits_per_sample=None, buffer_size=None,
-                    backend=None, compression=None):
+def _soundfile_save(
+    uri,
+    src,
+    sample_rate,
+    channels_first=True,
+    format=None,
+    encoding=None,
+    bits_per_sample=None,
+    buffer_size=None,
+    backend=None,
+    compression=None,
+):
     if sf is None:
         raise ImportError("soundfile required for voice_engine audio patch")
     data = src.numpy()

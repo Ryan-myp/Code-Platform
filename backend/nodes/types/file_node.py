@@ -209,7 +209,9 @@ class FileOperationNode(BusinessNode):
             handler = ops.get(self.operation_type)
             if not handler:
                 raise ValueError(f"不支持的操作类型: {self.operation_type}")
-            return handler(resolved_path, context) if self.operation_type in ("write", "move") else handler(resolved_path)
+            return (
+                handler(resolved_path, context) if self.operation_type in ("write", "move") else handler(resolved_path)
+            )
         except FileNotFoundError as e:
             logger.error(f"文件操作失败: {e}")
             return NodeResult.failed(f"文件不存在: {str(e)}")

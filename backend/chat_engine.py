@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _sse_event
+from common.helpers import (
+    _sse_event,
+)
 
 
 def _run_workflow_simple(workflow_data: dict) -> dict:
@@ -7,26 +9,18 @@ def _run_workflow_simple(workflow_data: dict) -> dict:
     return {
         "status": "success",
         "workflow_id": workflow_data.get("workflow_id", ""),
-        "result": workflow_data.get("result", {})
+        "result": workflow_data.get("result", {}),
     }
+
 
 def _prepare_workflow_params(request_data: dict) -> dict:
     """简化版准备工作流参数。"""
-    return {
-        "workflow_id": request_data.get("workflow_id", ""),
-        "inputs": request_data.get("inputs", {})
-    }
+    return {"workflow_id": request_data.get("workflow_id", ""), "inputs": request_data.get("inputs", {})}
 
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
 from datetime import datetime
+
 """对话执行引擎 - Agent/Team/Workflow 运行 + 会话消息 + 插件市场"""
 
 import json
@@ -34,7 +28,6 @@ import logging
 import sys
 import time
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -247,9 +240,19 @@ def run_agent(agent_id: str, req: dict):
     session_id = req.get("session_id")
     try:
         if conv_id:
-            result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system))
+            result = call_llm(
+                "",
+                "",
+                max_tokens=2000,
+                messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system),
+            )
         elif session_id:
-            result = call_llm("", "", max_tokens=2000, messages=build_conversation_messages(session_id=session_id, system_prompt=system))
+            result = call_llm(
+                "",
+                "",
+                max_tokens=2000,
+                messages=build_conversation_messages(session_id=session_id, system_prompt=system),
+            )
         else:
             result = call_llm(system, message, max_tokens=2000)
     except HTTPException as e:
@@ -362,7 +365,6 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
     - sequential（顺序）：成员按顺序执行，上一步输出作为下一步输入
     - parallel（并行）：所有成员并行执行，返回各自结果
     """
-    import asyncio
 
     message = (req.get("message") or "").strip()
     if not message:
@@ -464,11 +466,11 @@ def _wf_node_summary(res: dict) -> str:
     return "```json\n" + json.dumps(res, ensure_ascii=False, default=str) + "\n```"
 
 
-
 def _load_workflow_config(workflow_id: str) -> dict:
     """加载工作流配置。"""
     # 简化的工作流加载
     return {"id": workflow_id, "steps": [], "config": {}}
+
 
 def _validate_workflow_steps(workflow: dict) -> list:
     """验证工作流步骤。"""
@@ -479,13 +481,10 @@ def _validate_workflow_steps(workflow: dict) -> list:
             valid_steps.append(step)
     return valid_steps
 
+
 def _format_workflow_output(execution_results: list) -> dict:
     """格式化工作流输出。"""
-    return {
-        "status": "completed",
-        "results": execution_results,
-        "total_steps": len(execution_results)
-    }
+    return {"status": "completed", "results": execution_results, "total_steps": len(execution_results)}
 
 
 async def _run_executor_workflow(workflow_id: str, message: str, nodes: list) -> dict:
@@ -564,6 +563,7 @@ def _wf_elapsed(run_dict: dict | None) -> float | None:
     except (ValueError, TypeError):
         pass
     return None
+
 
 @router.post("/api/workflows/{workflow_id}/run")
 async def run_workflow(workflow_id: str, req: dict):  # noqa: C901

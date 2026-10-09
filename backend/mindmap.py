@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db_context
+from common.helpers import _notify_progress
 from common.llm import call_llm, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
@@ -161,6 +161,7 @@ async def _mindmap_generate_worker(payload: dict, progress: Callable | None = No
         try:
             from common.template_utils import load_one, record_usage
             from mindmap_templates import TEMPLATE_DIR, build_structure_prompt
+
             tpl = load_one(TEMPLATE_DIR, tpl_id, "思维导图模板不存在")
             user_prompt += build_structure_prompt(tpl)
             record_usage(tpl_id)

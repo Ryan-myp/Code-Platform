@@ -21,13 +21,13 @@ from collections.abc import Callable
 from datetime import datetime
 
 from fastapi import APIRouter, Body, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
 from common.helpers import _notify_progress
-from common.llm import call_llm, call_llm_async, log_usage, _safe_exc_msg
+from common.llm import call_llm, call_llm_async, log_usage
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, publish_registry
 from task_queue import create_task, register_handler
@@ -738,7 +738,6 @@ async def deploy_guide(current_user: dict = require_auth()):
     }
 
 
-
 @router.get("/projects")
 async def list_projects(current_user: dict = require_auth()):
     conn = get_db()
@@ -761,18 +760,18 @@ async def list_projects(current_user: dict = require_auth()):
 
 async def _game_llm_with_retry(system: str, prompt: str, max_tokens: int, temperature: float, _report) -> str:
     """LLM 调用带指数退避重试（上游抖动，最多3次）。"""
-    last_err = ""
     for _attempt in range(3):
         try:
             _report(25, f"AI 正在生成双版本代码（第 {_attempt + 1} 次尝试）…")
-            return await asyncio.to_thread(call_llm, system, prompt, max_tokens=max_tokens, temperature=temperature, timeout=300)
+            return await asyncio.to_thread(
+                call_llm, system, prompt, max_tokens=max_tokens, temperature=temperature, timeout=300
+            )
         except HTTPException as e:
             if e.status_code < 500:
                 raise
-            last_err = f"{e.status_code}: {e.detail}"
             logger.warning("game LLM upstream error (attempt %d): %s", _attempt + 1, str(e.detail)[:200])
         except Exception as e:
-            last_err = str(e)
+            str(e)
             logger.warning("game LLM exception (attempt %d): %s", _attempt + 1, str(e)[:200])
         await asyncio.sleep(2 * (_attempt + 1))
     raise HTTPException(502, "操作失败，请稍后重试")
@@ -796,12 +795,17 @@ async def _game_quality_gate(user_prompt: str, _report) -> tuple:
                 f"问题清单：{last_err}\n"
                 "请针对性地修复以上问题，重新输出完整的双版本 JSON（不要省略任何文件、不要截断）。"
             )
-            result = await asyncio.to_thread(call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=22000, temperature=0.3, timeout=300)
+            result = await asyncio.to_thread(
+                call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=22000, temperature=0.3, timeout=300
+            )
         except (ValueError, json.JSONDecodeError) as e:
             last_err = str(e)
             logger.warning(
                 "game JSON parse failed (attempt %d): %s (output_len=%d, head=%r)",
-                attempt + 1, e, len(result or ""), (result or "")[:200],
+                attempt + 1,
+                e,
+                len(result or ""),
+                (result or "")[:200],
             )
             retry_prompt = user_prompt + (
                 "\n\n重要：上次输出未通过解析，错误为：" + str(e) + "。\n"
@@ -810,7 +814,9 @@ async def _game_quality_gate(user_prompt: str, _report) -> tuple:
                 "2. 所有字符串正确转义（引号/换行），内容不要截断\n"
                 "3. web 版 index.html 控制在 300 行以内，wx 版 game.js 控制在 250 行以内，总字符数不超过 20000"
             )
-            result = await asyncio.to_thread(call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=14000, temperature=0.3, timeout=300)
+            result = await asyncio.to_thread(
+                call_llm, _GENERATE_SYSTEM, retry_prompt, max_tokens=14000, temperature=0.3, timeout=300
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -828,8 +834,16 @@ def _save_game_project(proj_id: str, req, files: dict, qc: dict) -> None:
     conn.execute(
         """INSERT INTO game_projects (id, name, template, requirement, files, qc, created_at, updated_at)
            VALUES (?,?,?,?,?,?,?,?)""",
-        (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False), now, now),
+        (
+            proj_id,
+            req.name,
+            req.template,
+            req.requirement,
+            json.dumps(files, ensure_ascii=False),
+            json.dumps(qc, ensure_ascii=False),
+            now,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -879,6 +893,7 @@ async def _game_generate_worker(payload: dict, progress: Callable | None = None)
         "qc": qc,
     }
 
+
 class EvolveRequest(BaseModel):
     requirement: str = Field(..., min_length=2, max_length=2000, description="迭代需求")
 
@@ -921,12 +936,14 @@ def _evolve_history(row: dict, req, files: dict, result: str) -> tuple:
         history = json.loads(row["version_history"] or "[]")
     except Exception:
         history = []
-    history.append({
-        "version": len(history) + 1,
-        "created_at": datetime.now().isoformat(),
-        "requirement": f"迭代前快照：{req.requirement[:60]}",
-        "files": files,
-    })
+    history.append(
+        {
+            "version": len(history) + 1,
+            "created_at": datetime.now().isoformat(),
+            "requirement": f"迭代前快照：{req.requirement[:60]}",
+            "files": files,
+        }
+    )
     return log, history
 
 
@@ -944,6 +961,7 @@ def _save_evolved_game(conn, proj_id: str, new_files: dict, log: list, history: 
         ),
     )
     conn.commit()
+
 
 async def _game_evolve_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 二次迭代（同步/异步任务共用执行体）。"""
@@ -1116,7 +1134,6 @@ async def export_zip(proj_id: str, current_user: dict = require_auth()):
     )
 
 
-
 def _game_pack_entries(root: str, files: dict, row: dict) -> dict:
     """游戏发布包文件条目（web/wx 双版本 + 封面）。"""
     entries: dict = {}
@@ -1140,14 +1157,31 @@ def _game_pack_readme(row: dict) -> str:
     """游戏发布包 README 内容。"""
     NL = "\n"
     return (
-        "# 《" + row["name"] + "》AI 小游戏" + NL + NL + "- 模板：" + row.get("template", "自定义") + NL
-        + "- 说明：" + str(row.get("requirement", ""))[:200] + NL + NL
-        + "## 目录" + NL
-        + "- `web/`：网页版，index.html 双击即玩，也可部署到 GitHub Pages/云托管等任意静态站点" + NL
-        + "- `wx/`：微信小游戏原生项目，用微信开发者工具导入即可编译" + NL
-        + "- `封面`：游戏封面图（平台审核与商店展示用）" + NL + NL
-        + "## 发布方式" + NL
-        + "1. 网页版：静态托管（GitHub Pages / 腾讯云 / 自有服务器），分享链接即可传播；" + NL
+        "# 《"
+        + row["name"]
+        + "》AI 小游戏"
+        + NL
+        + NL
+        + "- 模板："
+        + row.get("template", "自定义")
+        + NL
+        + "- 说明："
+        + str(row.get("requirement", ""))[:200]
+        + NL
+        + NL
+        + "## 目录"
+        + NL
+        + "- `web/`：网页版，index.html 双击即玩，也可部署到 GitHub Pages/云托管等任意静态站点"
+        + NL
+        + "- `wx/`：微信小游戏原生项目，用微信开发者工具导入即可编译"
+        + NL
+        + "- `封面`：游戏封面图（平台审核与商店展示用）"
+        + NL
+        + NL
+        + "## 发布方式"
+        + NL
+        + "1. 网页版：静态托管（GitHub Pages / 腾讯云 / 自有服务器），分享链接即可传播；"
+        + NL
         + "2. 微信小游戏：mp.weixin.qq.com 注册小游戏账号 → 开发者工具上传 → 提交审核 → 发布。"
     )
 
@@ -1156,14 +1190,29 @@ def _game_pack_guide(guide: dict) -> str:
     """游戏上线清单内容。"""
     NL = "\n"
     return (
-        "# 上线清单（发布前逐项核对）" + NL + NL + "## 部署步骤" + NL
+        "# 上线清单（发布前逐项核对）"
+        + NL
+        + NL
+        + "## 部署步骤"
+        + NL
         + NL.join(f"{i + 1}. {s}" for i, s in enumerate(guide.get("steps", [])))
-        + NL + NL + "## 备注" + NL + str(guide.get("note", "")) + NL + NL
-        + "## 提交审核物料" + NL
-        + "- 游戏名称、简介（取自项目名，可在公众平台修改）" + NL
-        + "- 封面图（本包已附带，建议 ≥800×800）" + NL
-        + "- 截图：试玩页面截图 1-5 张（微信审核必填，需含主要玩法画面）" + NL
-        + "- 类目：选择「游戏」类目，个人主体支持大部分休闲游戏" + NL
+        + NL
+        + NL
+        + "## 备注"
+        + NL
+        + str(guide.get("note", ""))
+        + NL
+        + NL
+        + "## 提交审核物料"
+        + NL
+        + "- 游戏名称、简介（取自项目名，可在公众平台修改）"
+        + NL
+        + "- 封面图（本包已附带，建议 ≥800×800）"
+        + NL
+        + "- 截图：试玩页面截图 1-5 张（微信审核必填，需含主要玩法画面）"
+        + NL
+        + "- 类目：选择「游戏」类目，个人主体支持大部分休闲游戏"
+        + NL
         + "- 隐私声明：如涉及用户信息需在后台填写（本项目默认不采集）"
     )
 
@@ -1181,7 +1230,9 @@ def _game_pack_qc_report(row: dict) -> str | None:
         ]
         return quality_report(
             f"小游戏《{row['name']}》",
-            text_check=name_check if name_check and not name_check["ok"] else (req_check if req_check and not req_check["ok"] else None),
+            text_check=name_check
+            if name_check and not name_check["ok"]
+            else (req_check if req_check and not req_check["ok"] else None),
             image_quality=None,
             extra=extra,
         )
@@ -1279,9 +1330,7 @@ async def project_history(proj_id: str, current_user: dict = require_auth()):
     """迭代历史：版本时间线 + 逐版变更行数统计（相对上一版）。"""
     conn = get_db()
     _ensure_history_column(conn)
-    row = conn.execute(
-        "SELECT name, iterations, version_history FROM game_projects WHERE id=?", (proj_id,)
-    ).fetchone()
+    row = conn.execute("SELECT name, iterations, version_history FROM game_projects WHERE id=?", (proj_id,)).fetchone()
     conn.close()
     if not row:
         raise HTTPException(404, "游戏项目不存在")
@@ -1389,8 +1438,6 @@ async def restore_project(proj_id: str, req: RestoreRequest, current_user: dict 
         "iterations": len(log),
         "message": f"已回滚到 v{req.version}",
     }
-
-
 
 
 # ══════════════════════════════════════════════════════════════

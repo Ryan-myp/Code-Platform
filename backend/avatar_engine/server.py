@@ -9,6 +9,7 @@
 推理约束：M4 Pro 24GB 统一内存 → 串行推理（ThreadPoolExecutor(1)），
 模型懒加载；Face Renderer Conv3D 在 MPS 不可用 → CPU + 多线程优化。
 """
+
 from __future__ import annotations
 
 import json
@@ -54,7 +55,9 @@ def _run_inference(task_id: str, image_path: str, audio_path: str, opts: dict) -
         out_dir = os.path.join(OUTPUT_ROOT, task_id)
         os.makedirs(out_dir, exist_ok=True)
         mp4 = get_engine().generate(
-            image_path, audio_path, out_dir,
+            image_path,
+            audio_path,
+            out_dir,
             pose_style=int(opts.get("pose_style", 0)),
             size=int(opts.get("size", 256)),
             still=bool(opts.get("still", True)),
@@ -65,13 +68,11 @@ def _run_inference(task_id: str, image_path: str, audio_path: str, opts: dict) -
         )
         rel = os.path.relpath(mp4, os.path.expanduser("~"))
         result = json.dumps([{"file": rel}], ensure_ascii=False)
-        _set_task(task_id, status="success", result=result,
-                  elapsed=round(time.monotonic() - t0, 1))
+        _set_task(task_id, status="success", result=result, elapsed=round(time.monotonic() - t0, 1))
         logger.info(f"task {task_id} 完成，耗时 {time.monotonic() - t0:.1f}s")
     except Exception as e:  # noqa: BLE001 — 任务级错误上报，不中断服务
         logger.exception(f"task {task_id} 失败")
-        _set_task(task_id, status="failed", error=str(e),
-                  elapsed=round(time.monotonic() - t0, 1))
+        _set_task(task_id, status="failed", error=str(e), elapsed=round(time.monotonic() - t0, 1))
     finally:
         for p in (image_path, audio_path):
             try:
@@ -110,12 +111,21 @@ async def release_task(
 
     with _tasks_lock:
         _tasks[task_id] = {
-            "task_id": task_id, "status": "pending", "stage": "",
-            "result": "", "error": "", "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "task_id": task_id,
+            "status": "pending",
+            "stage": "",
+            "result": "",
+            "error": "",
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-    opts = {"pose_style": pose_style, "size": size, "still": still,
-            "preprocess": preprocess, "batch_size": batch_size,
-            "expression_scale": expression_scale}
+    opts = {
+        "pose_style": pose_style,
+        "size": size,
+        "still": still,
+        "preprocess": preprocess,
+        "batch_size": batch_size,
+        "expression_scale": expression_scale,
+    }
     _pool.submit(_run_inference, task_id, img_path, aud_path, opts)
     return JSONResponse({"code": 200, "message": "task released", "data": {"task_id": task_id}})
 

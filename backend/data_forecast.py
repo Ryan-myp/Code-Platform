@@ -18,9 +18,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db_context
-from common.llm import call_llm, log_usage, parse_llm_json, _safe_exc_msg
+from common.helpers import _notify_progress
+from common.llm import call_llm, log_usage, parse_llm_json
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,6 @@ def _num_or_none(value):
         return None
 
 
-
 def _normalize_forecast_values(values: list) -> None:
     """规范化预测值区间：low ≤ value ≤ high，缺失补 value。"""
     for item in values:
@@ -268,13 +267,14 @@ def _normalize_chart_bounds(charts: dict) -> None:
     norm_upper, norm_lower = [], []
     for i in range(n):
         u = _num_or_none(upper[i]) if i < len(upper) else None
-        l = _num_or_none(lower[i]) if i < len(lower) else None
-        if u is not None and l is not None and l > u:
-            u, l = l, u
+        lo = _num_or_none(lower[i]) if i < len(lower) else None
+        if u is not None and lo is not None and lo > u:
+            u, lo = lo, u
         norm_upper.append(u)
-        norm_lower.append(l)
+        norm_lower.append(lo)
     charts["upper_bound"] = norm_upper
     charts["lower_bound"] = norm_lower
+
 
 def normalize_forecast_ranges(result: dict | None) -> dict:
     """规范化预测区间：确保 low ≤ value ≤ high，charts 上下界与 labels 对齐。
@@ -419,9 +419,7 @@ async def _forecast_analyze_worker(payload: dict, progress: Callable | None = No
         "data_id": data_id,
         "filename": filename,
         **result,
-        "method_explanation": build_method_explanation(
-            (result.get("predictions") or {}).get("method")
-        ),
+        "method_explanation": build_method_explanation((result.get("predictions") or {}).get("method")),
     }
 
 

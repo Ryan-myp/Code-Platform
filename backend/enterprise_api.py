@@ -15,10 +15,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from common.auth import require_auth
-from admin_api import _check_admin
+from common.auth import ENTERPRISE_PRICING, require_auth
 from common.db import get_db
-from common.auth import MEMBERSHIP_PLANS, ENTERPRISE_PRICING
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/enterprise", tags=["企业服务"])
@@ -67,15 +65,31 @@ async def submit_inquiry(req: EnterpriseInquiryRequest, current_user: dict = req
                estimated_setup_fee, estimated_yearly_service, estimated_total,
                status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-            (inquiry_id, current_user["user_id"], req.company_name, req.contact_name,
-             req.contact_email, req.contact_phone or "", req.team_size, req.plan_tier,
-             req.requirements, setup_fee, yearly_service, setup_fee + yearly_service,
-             datetime.now().isoformat()),
+            (
+                inquiry_id,
+                current_user["user_id"],
+                req.company_name,
+                req.contact_name,
+                req.contact_email,
+                req.contact_phone or "",
+                req.team_size,
+                req.plan_tier,
+                req.requirements,
+                setup_fee,
+                yearly_service,
+                setup_fee + yearly_service,
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
 
-        logger.info("企业询价提交: %s (%s) 团队 %d 人, 预计 ¥%d",
-                     inquiry_id, req.company_name, req.team_size, setup_fee + yearly_service)
+        logger.info(
+            "企业询价提交: %s (%s) 团队 %d 人, 预计 ¥%d",
+            inquiry_id,
+            req.company_name,
+            req.team_size,
+            setup_fee + yearly_service,
+        )
 
         return EnterpriseInquiryResponse(
             inquiry_id=inquiry_id,
@@ -92,13 +106,12 @@ async def submit_inquiry(req: EnterpriseInquiryRequest, current_user: dict = req
 async def list_inquiries(current_user: dict = require_auth()):
     """列出所有企业询价（仅管理员）。"""
     from common.auth import _check_admin
+
     _check_admin(current_user)
 
     conn = get_db()
     try:
-        rows = conn.execute(
-            """SELECT * FROM enterprise_inquiries ORDER BY created_at DESC LIMIT 50"""
-        ).fetchall()
+        rows = conn.execute("""SELECT * FROM enterprise_inquiries ORDER BY created_at DESC LIMIT 50""").fetchall()
         return {"inquiries": [dict(r) for r in rows]}
     finally:
         conn.close()
@@ -108,6 +121,7 @@ async def list_inquiries(current_user: dict = require_auth()):
 async def update_inquiry_status(inquiry_id: str, status: str, current_user: dict = require_auth()):
     """更新询价状态（仅管理员）。"""
     from common.auth import _check_admin
+
     _check_admin(current_user)
 
     if status not in ("pending", "contacted", "quoted", "won", "lost"):
@@ -135,13 +149,28 @@ async def get_enterprise_features(current_user: dict = require_auth()):
     """返回企业级功能清单及定价。"""
     return {
         "features": [
-            {"id": "sso", "name": "SSO 单点登录", "description": "支持 SAML 2.0 / OAuth 2.0 企业认证", "available": True},
+            {
+                "id": "sso",
+                "name": "SSO 单点登录",
+                "description": "支持 SAML 2.0 / OAuth 2.0 企业认证",
+                "available": True,
+            },
             {"id": "audit_log", "name": "审计日志", "description": "完整操作审计，保留 365 天", "available": True},
             {"id": "sla", "name": "SLA 保障", "description": "99.9% 可用性承诺，优先技术支持", "available": True},
-            {"id": "private_deploy", "name": "私有化部署", "description": "全量代码部署至客户自有服务器", "available": True},
+            {
+                "id": "private_deploy",
+                "name": "私有化部署",
+                "description": "全量代码部署至客户自有服务器",
+                "available": True,
+            },
             {"id": "custom_branding", "name": "品牌定制", "description": "Logo/域名/界面白标", "available": True},
             {"id": "data_export", "name": "数据导出 API", "description": "批量导出业务数据", "available": True},
-            {"id": "dedicated_support", "name": "专属技术支持", "description": "7×24 专属技术对接人", "available": True},
+            {
+                "id": "dedicated_support",
+                "name": "专属技术支持",
+                "description": "7×24 专属技术对接人",
+                "available": True,
+            },
         ],
         "pricing_tiers": {
             tier: {"setup_fee": info["setup_fee"], "yearly_service": info["yearly_service"], "name": info["name"]}

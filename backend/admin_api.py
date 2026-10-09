@@ -241,7 +241,9 @@ async def admin_permission_matrix(
     conn = get_db()
     try:
         if user_id:
-            row = conn.execute("SELECT id, role, membership, membership_expires FROM users WHERE id=?", (user_id,)).fetchone()
+            row = conn.execute(
+                "SELECT id, role, membership, membership_expires FROM users WHERE id=?", (user_id,)
+            ).fetchone()
             if not row:
                 raise HTTPException(404, "用户不存在")
             user_ctx = {
@@ -264,7 +266,10 @@ async def admin_permission_matrix(
         try:
             from tool_hub import TOOL_DEFINITIONS
 
-            resources = [{"id": t.get("id", tid), "label": t.get("name", tid), "category": t.get("category", "")} for tid, t in TOOL_DEFINITIONS.items()]
+            resources = [
+                {"id": t.get("id", tid), "label": t.get("name", tid), "category": t.get("category", "")}
+                for tid, t in TOOL_DEFINITIONS.items()
+            ]
         except Exception:
             resources = []
 
@@ -671,6 +676,7 @@ async def admin_delete_share(share_id: str, current_user: dict = require_auth())
 # 门户管理 API（v16.0）
 # ══════════════════════════════════════════════════════════════
 
+
 class AdminPortalUserUpdateRequest(BaseModel):
     """管理员批量设置用户门户类型。"""
 
@@ -682,7 +688,7 @@ class AdminPortalUserUpdateRequest(BaseModel):
 async def admin_list_portals(current_user: dict = require_auth()):
     """获取所有门户定义（管理后台用）。"""
     _check_admin(current_user)
-    from portals import get_all_portals, PORTAL_DEFS
+    from portals import PORTAL_DEFS, get_all_portals
 
     db_portals = {p["id"]: p for p in get_all_portals()}
     result = []

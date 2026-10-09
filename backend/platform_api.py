@@ -28,6 +28,7 @@ def _home_cache_get(key: str) -> object | None:
 def _home_cache_set(key: str, value: object) -> None:
     _HOME_CACHE[key] = (time.time(), value)
 
+
 router = APIRouter()
 
 

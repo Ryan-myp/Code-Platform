@@ -30,16 +30,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/api-key-billing", tags=["API Key 计费"])
 
 # ── 配置 ──────────────────────────────────────────────────────
-DEFAULT_RATE_PER_CALL = int(os.environ.get("API_KEY_DEFAULT_RATE", "5"))          # 5 分/次
+DEFAULT_RATE_PER_CALL = int(os.environ.get("API_KEY_DEFAULT_RATE", "5"))  # 5 分/次
 PLAN_PRO_MONTHLY_CALLS = int(os.environ.get("API_KEY_PLAN_PRO_MONTHLY", "5000"))  # 5000 次/月
-PLAN_VIP_MONTHLY_CALLS = int(os.environ.get("API_KEY_PLAN_VIP_MONTHLY", "50000")) # 50000 次/月
-ALERT_THRESHOLD_PERCENT = int(os.environ.get("API_KEY_ALERT_THRESHOLD", "20"))    # 剩余 20% 时告警
+PLAN_VIP_MONTHLY_CALLS = int(os.environ.get("API_KEY_PLAN_VIP_MONTHLY", "50000"))  # 50000 次/月
+ALERT_THRESHOLD_PERCENT = int(os.environ.get("API_KEY_ALERT_THRESHOLD", "20"))  # 剩余 20% 时告警
 
 
 class APIKeyCreateRequest(BaseModel):
     name: str
     plan: str = "pay_as_you_go"  # pay_as_you_go | pro | vip
-    monthly_limit: int = 0       # 自定义月度限额（仅自定义计划）
+    monthly_limit: int = 0  # 自定义月度限额（仅自定义计划）
 
 
 class APIKeyUpdateRequest(BaseModel):
@@ -97,15 +97,26 @@ async def create_key(req: APIKeyCreateRequest, current_user: dict = require_auth
 
         key_id = f"xt_{uuid.uuid4().hex[:20]}"
         plan = req.plan
-        monthly_limit = req.monthly_limit or (PLAN_PRO_MONTHLY_CALLS if plan == "pro" else PLAN_VIP_MONTHLY_CALLS if plan == "vip" else 0)
+        monthly_limit = req.monthly_limit or (
+            PLAN_PRO_MONTHLY_CALLS if plan == "pro" else PLAN_VIP_MONTHLY_CALLS if plan == "vip" else 0
+        )
 
         billing_id = f"key_{uuid.uuid4().hex[:12]}"
         conn.execute(
             """INSERT INTO api_key_billing (id, user_id, name, key_prefix, plan,
                monthly_limit, rate_per_call, remaining, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (billing_id, user_id, req.name, key_id[:8], plan,
-             monthly_limit, DEFAULT_RATE_PER_CALL, monthly_limit, datetime.now().isoformat()),
+            (
+                billing_id,
+                user_id,
+                req.name,
+                key_id[:8],
+                plan,
+                monthly_limit,
+                DEFAULT_RATE_PER_CALL,
+                monthly_limit,
+                datetime.now().isoformat(),
+            ),
         )
         conn.commit()
 
@@ -127,23 +138,30 @@ async def update_key(key_id: str, req: APIKeyUpdateRequest, current_user: dict =
     """更新 API Key 配置。"""
     conn = get_db()
     try:
-        key = conn.execute("SELECT * FROM api_key_billing WHERE id=? AND user_id=?", (key_id, current_user["user_id"])).fetchone()
+        key = conn.execute(
+            "SELECT * FROM api_key_billing WHERE id=? AND user_id=?", (key_id, current_user["user_id"])
+        ).fetchone()
         key = dict(key) if key else None
         if not key:
             raise HTTPException(404, "Key 不存在")
 
         sets, params = [], []
         if req.name is not None:
-            sets.append("name=?"); params.append(req.name)
+            sets.append("name=?")
+            params.append(req.name)
         if req.plan is not None:
-            sets.append("plan=?"); params.append(req.plan)
+            sets.append("plan=?")
+            params.append(req.plan)
             # 切换套餐时重置月度限额
             if req.plan in ("pro", "vip"):
                 new_limit = PLAN_PRO_MONTHLY_CALLS if req.plan == "pro" else PLAN_VIP_MONTHLY_CALLS
-                sets.append("monthly_limit=?"); params.append(new_limit)
-                sets.append("remaining=?"); params.append(new_limit)
+                sets.append("monthly_limit=?")
+                params.append(new_limit)
+                sets.append("remaining=?")
+                params.append(new_limit)
         if req.monthly_limit is not None:
-            sets.append("monthly_limit=?"); params.append(req.monthly_limit)
+            sets.append("monthly_limit=?")
+            params.append(req.monthly_limit)
 
         if sets:
             params.append(key_id)
@@ -352,9 +370,7 @@ def refund_api_key_quota(key_id: str, amount: int = 1) -> bool:
     """API Key 退费（请求失败时回退）。"""
     conn = get_db()
     try:
-        conn.execute(
-            "UPDATE api_key_billing SET remaining=remaining+? WHERE id=?", (amount, key_id)
-        )
+        conn.execute("UPDATE api_key_billing SET remaining=remaining+? WHERE id=?", (amount, key_id))
         # 删除最新的 api_usage 记录
         conn.execute(
             "DELETE FROM api_usage WHERE key_id=? ORDER BY created_at DESC LIMIT ?",

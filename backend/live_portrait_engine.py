@@ -23,11 +23,14 @@ import subprocess
 import tempfile
 import threading
 import time
+
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
 from common.helpers import _notify_progress
 
 try:
     import numpy as np  # 轻量且 torch 必带；cv2/mediapipe/librosa 仍在函数内懒加载
     import torch  # 模型类继承依赖；缺失时降级（类可加载不可实例化），由 _require_deps() 拦截
+
     _ModuleBase = torch.nn.Module
 except ImportError:
     # 重型依赖缺失：模块仍可加载（2D 主链路与错误提示不受影响），运行时由 _require_deps() 抛安装指引
@@ -72,9 +75,7 @@ def _require_deps() -> None:
             "pip3 install torch torchvision opencv-python-headless mediapipe librosa numpy scipy soundfile"
         )
     if not os.path.exists(_MODEL_PATH):
-        raise RuntimeError(
-            f"照片数字人模型权重缺失: {_MODEL_PATH}，请下载 wav2lip_gan.pth 后重试"
-        )
+        raise RuntimeError(f"照片数字人模型权重缺失: {_MODEL_PATH}，请下载 wav2lip_gan.pth 后重试")
 
 
 def _pick_video_encoder() -> str:
@@ -83,7 +84,7 @@ def _pick_video_encoder() -> str:
 
     try:
         out = sp.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
+            [FFMPEG_BIN, "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -96,6 +97,7 @@ def _pick_video_encoder() -> str:
 
 
 # ── Wav2Lip 模型定义（官方结构精简版，仅推理所需） ──────────────────
+
 
 class _Conv2d(_ModuleBase):
     def __init__(self, cin, cout, kernel_size, stride, padding, residual=False):
@@ -138,26 +140,40 @@ class _Wav2Lip(_ModuleBase):
         super().__init__()
         # 官方 Wav2Lip GAN 结构（wav2lip_gan.pth）：block2 有 3 个 residual；block5 仅 1 个；
         # block6 为 3x3(s1,p0)+1x1 —— 与官方非 GAN 版（每 block 3 层）不同，权重结构实测对齐
-        self.face_encoder_blocks = torch.nn.ModuleList([
-            torch.nn.Sequential(_Conv2d(6, 16, kernel_size=7, stride=1, padding=3)),
-            torch.nn.Sequential(_Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
-                                _Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
-                                _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-                                _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
-                                _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
-                                _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
-                                _Conv2d(512, 512, kernel_size=1, stride=1, padding=0)),
-        ])
+        self.face_encoder_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.Sequential(_Conv2d(6, 16, kernel_size=7, stride=1, padding=3)),
+                torch.nn.Sequential(
+                    _Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
+                    _Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+                    _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+                    _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+                    _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
+                    _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2d(512, 512, kernel_size=3, stride=1, padding=0),
+                    _Conv2d(512, 512, kernel_size=1, stride=1, padding=0),
+                ),
+            ]
+        )
         self.audio_encoder = torch.nn.Sequential(
             _Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
             _Conv2d(32, 32, kernel_size=3, stride=1, padding=1, residual=True),
@@ -173,26 +189,40 @@ class _Wav2Lip(_ModuleBase):
             _Conv2d(256, 512, kernel_size=3, stride=1, padding=0),
             _Conv2d(512, 512, kernel_size=1, stride=1, padding=0),
         )
-        self.face_decoder_blocks = torch.nn.ModuleList([
-            torch.nn.Sequential(_Conv2d(512, 512, kernel_size=1, stride=1, padding=0)),
-            torch.nn.Sequential(_Conv2dTranspose(1024, 512, kernel_size=3, stride=1, padding=0),
-                                _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2dTranspose(1024, 512, kernel_size=3, stride=2, padding=1, output_padding=1),
-                                _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2dTranspose(768, 384, kernel_size=3, stride=2, padding=1, output_padding=1),
-                                _Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2dTranspose(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
-                                _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2dTranspose(320, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
-                                _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True)),
-            torch.nn.Sequential(_Conv2dTranspose(160, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
-                                _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
-                                _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True)),
-        ])
+        self.face_decoder_blocks = torch.nn.ModuleList(
+            [
+                torch.nn.Sequential(_Conv2d(512, 512, kernel_size=1, stride=1, padding=0)),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(1024, 512, kernel_size=3, stride=1, padding=0),
+                    _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(1024, 512, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(512, 512, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(768, 384, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    _Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(384, 384, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(512, 256, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(256, 256, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(320, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(128, 128, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+                torch.nn.Sequential(
+                    _Conv2dTranspose(160, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+                    _Conv2d(64, 64, kernel_size=3, stride=1, padding=1, residual=True),
+                ),
+            ]
+        )
         self.output_block = torch.nn.Sequential(
             _Conv2d(80, 32, kernel_size=3, stride=1, padding=1),
             torch.nn.Conv2d(32, 3, kernel_size=1, stride=1, padding=0),
@@ -215,6 +245,7 @@ class _Wav2Lip(_ModuleBase):
 
 
 # ── 模型加载（懒加载单例） ─────────────────────────────────────────
+
 
 def _load_model():
     """懒加载 Wav2Lip 模型（全局单例，线程安全）。返回 (model, device)。"""
@@ -241,6 +272,7 @@ def _load_model():
 
 
 # ── 音频 → mel 频谱（Tacotron2 参数，与 Wav2Lip 训练一致） ──────────
+
 
 def _melspectrogram(wav: np.ndarray) -> np.ndarray:
     """wav (16000Hz mono) → 归一化 mel 频谱 (80, T)，范围 [-4, 4]。"""
@@ -282,6 +314,7 @@ def _mel_chunks(wav_path: str) -> list:
 
 # ── 人脸检测与 5 点仿射对齐（mediapipe FaceMesh → Wav2Lip 标准坐标系） ──
 
+
 def _face_align_params(bgr: np.ndarray) -> tuple:
     """检测照片正脸并计算 Wav2Lip 对齐参数。
 
@@ -297,7 +330,9 @@ def _face_align_params(bgr: np.ndarray) -> tuple:
 
     h, w = bgr.shape[:2]
     mesh = mp.solutions.face_mesh.FaceMesh(
-        static_image_mode=True, max_num_faces=1, refine_landmarks=True,
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
         min_detection_confidence=0.5,
     )
     try:
@@ -312,9 +347,7 @@ def _face_align_params(bgr: np.ndarray) -> tuple:
     # 5 点：左右眼中心 / 鼻尖 / 左右嘴角（mediapipe 33=右眼外角, 263=左眼外角）
     left_eye = (pts[33] + pts[133]) / 2
     right_eye = (pts[263] + pts[362]) / 2
-    src = np.array(
-        [left_eye, right_eye, pts[1], pts[61], pts[291]], dtype=np.float32
-    )
+    src = np.array([left_eye, right_eye, pts[1], pts[61], pts[291]], dtype=np.float32)
     dst = np.array(
         [
             _STANDARD_LANDMARKS["left_eye"],
@@ -332,13 +365,12 @@ def _face_align_params(bgr: np.ndarray) -> tuple:
     if tform is None:
         raise RuntimeError("照片人脸关键点检测异常，请使用正脸、无遮挡的照片")
     inv_tform = cv2.invertAffineTransform(tform)
-    aligned = cv2.warpAffine(
-        bgr, tform, (_WAV2LIP_IMG_SIZE, _WAV2LIP_IMG_SIZE), borderMode=cv2.BORDER_REPLICATE
-    )
+    aligned = cv2.warpAffine(bgr, tform, (_WAV2LIP_IMG_SIZE, _WAV2LIP_IMG_SIZE), borderMode=cv2.BORDER_REPLICATE)
     return tform, inv_tform, aligned
 
 
 # ── 帧合成（16:9 画布：模糊背景 + 照片居中） ───────────────────────
+
 
 def _compose_frame(out_bgr: np.ndarray, photo_bgr: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
     import cv2
@@ -361,6 +393,7 @@ def _compose_frame(out_bgr: np.ndarray, photo_bgr: np.ndarray, out_w: int, out_h
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────
+
 
 def generate_from_photo(  # noqa: C901 — 推理主流程，分步注释保持可读
     photo_path: str,
@@ -453,9 +486,7 @@ def generate_from_photo(  # noqa: C901 — 推理主流程，分步注释保持�
                 p = p.astype(np.uint8)
                 p = cv2.resize(p, (_WAV2LIP_IMG_SIZE, _WAV2LIP_IMG_SIZE))
                 # 逆变换贴回原图（BGR，模型与 cv2 通道语义一致，无需转换）
-                frame = cv2.warpAffine(
-                    p, inv_tform, (photo.shape[1], photo.shape[0]), borderMode=cv2.BORDER_REPLICATE
-                )
+                frame = cv2.warpAffine(p, inv_tform, (photo.shape[1], photo.shape[0]), borderMode=cv2.BORDER_REPLICATE)
                 composed = _compose_frame(frame, photo, OUT_W, OUT_H)
                 cv2.imwrite(os.path.join(frames_dir, f"{i + j:04d}.jpg"), composed, [cv2.IMWRITE_JPEG_QUALITY, 95])
             if progress:
@@ -512,25 +543,39 @@ def _ffmpeg_compose(frames_dir: str, audio_path: str, output_path: str, out_w: i
     if enc != "libx264":
         hd = out_h >= 1080
         quality_args = [
-            "-b:v", "6M" if hd else "5M",
-            "-maxrate", "8M" if hd else "7M",
-            "-bufsize", "12M" if hd else "10M",
+            "-b:v",
+            "6M" if hd else "5M",
+            "-maxrate",
+            "8M" if hd else "7M",
+            "-bufsize",
+            "12M" if hd else "10M",
         ]
     else:
         quality_args = ["-crf", "18"]
     cmd = [
-        "ffmpeg", "-y",
-        "-framerate", str(_FPS),
-        "-i", os.path.join(frames_dir, "%04d.jpg"),
-        "-i", audio_path,
+        FFMPEG_BIN,
+        "-y",
+        "-framerate",
+        str(_FPS),
+        "-i",
+        os.path.join(frames_dir, "%04d.jpg"),
+        "-i",
+        audio_path,
     ]
     if wm_path:
         cmd += ["-i", wm_path, "-filter_complex", "[0:v][2:v]overlay=(W-w-30):(H-h-30)"]
     cmd += [
-        "-c:v", enc, *quality_args,
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
+        "-c:v",
+        enc,
+        *quality_args,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
         output_path,
     ]
     subprocess.run(cmd, check=True, capture_output=True, timeout=600)

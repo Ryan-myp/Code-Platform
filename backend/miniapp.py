@@ -1,34 +1,15 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
+from common.helpers import _notify_progress
 
-
-def _build_review_simple(review_data: dict) -> dict:
-    """简化版构建评测材料。"""
-    return {
-        "title": review_data.get("title", ""),
-        "content": review_data.get("content", ""),
-        "score": review_data.get("score", 0)
-    }
 
 def _prepare_review_params(request_data: dict) -> dict:
     """简化版准备评测参数。"""
-    return {
-        "template_id": request_data.get("template_id", ""),
-        "data": request_data.get("data", {})
-    }
+    return {"template_id": request_data.get("template_id", ""), "data": request_data.get("data", {})}
 
 
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from collections.abc import Callable
 from datetime import datetime
-import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
-from template_base import TemplateBase, create_template
+
 """小程序工坊 — AI 生成微信小程序项目。
 
 - 内置常用模板（电商/预约/展示/工具/资讯），选模板 + 输入需求 → LLM 生成完整项目代码
@@ -36,6 +17,7 @@ from template_base import TemplateBase, create_template
 - 支持在线预览、复制、ZIP 打包下载（导入微信开发者工具即可运行）
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -43,18 +25,15 @@ import re
 import time
 import uuid
 import zipfile
-import hashlib
 from pathlib import Path
-from collections.abc import Callable
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm_async, log_usage, _safe_exc_msg
+from common.llm import call_llm_async, log_usage
 from content_safety import check_text, quality_report
 from publish_kit import license_text, pack_dir_name
 from task_queue import create_task, register_handler
@@ -531,7 +510,6 @@ def _page_desc(files: dict, page: str) -> str:
     return _PAGE_NAME_HINT.get(last, last)
 
 
-
 def _validate_app_config(files: dict) -> tuple:
     """验证小程序配置。"""
     app_json = files.get("app.json")
@@ -542,6 +520,7 @@ def _validate_app_config(files: dict) -> tuple:
         return config, [{"item": "app.json", "ok": True}]
     except Exception as e:
         return {}, [{"item": "app.json", "ok": False, "error": str(e)}]
+
 
 def _check_page_files(app_config: dict, files: dict) -> list:
     """检查页面文件。"""
@@ -555,6 +534,7 @@ def _check_page_files(app_config: dict, files: dict) -> list:
         checks.append({"item": "页面注册", "ok": True})
     return checks
 
+
 def _generate_review_report(checks: list) -> dict:
     """生成审核报告。"""
     passed = sum(1 for c in checks if c.get("ok"))
@@ -562,43 +542,29 @@ def _generate_review_report(checks: list) -> dict:
     return {
         "passed": passed,
         "total": total,
-        "pass_rate": f"{passed/total*100:.1f}%" if total > 0 else "0%",
-        "checks": checks
+        "pass_rate": f"{passed / total * 100:.1f}%" if total > 0 else "0%",
+        "checks": checks,
     }
 
 
 def _prepare_review_context(review_data):
     """准备评测材料构建上下文。"""
-    return {
-        "data": review_data,
-        "materials": [],
-        "status": "prepared"
-    }
+    return {"data": review_data, "materials": [], "status": "prepared"}
+
 
 def _build_review_material(material_type, material_content):
     """构建单个评测材料。"""
-    return {
-        "type": material_type,
-        "content": material_content,
-        "status": "built"
-    }
+    return {"type": material_type, "content": material_content, "status": "built"}
+
 
 def _finalize_review_results(materials):
     """汇总评测材料构建结果。"""
-    return {
-        "total_materials": len(materials),
-        "materials": materials,
-        "status": "completed"
-    }
+    return {"total_materials": len(materials), "materials": materials, "status": "completed"}
 
 
 def _build_review_simple(review_data: dict) -> dict:
     """简化版评测材料构建。"""
-    return {
-        "title": review_data.get("title", ""),
-        "content": review_data.get("content", ""),
-        "status": "completed"
-    }
+    return {"title": review_data.get("title", ""), "content": review_data.get("content", ""), "status": "completed"}
 
 
 def _review_check_appjson(files: dict, checks: list) -> dict:
@@ -606,7 +572,9 @@ def _review_check_appjson(files: dict, checks: list) -> dict:
     app_cfg: dict = {}
     raw_app = files.get("app.json")
     if raw_app is None or not str(raw_app).strip():
-        checks.append({"item": "app.json 可解析", "ok": False, "level": "error", "detail": "app.json 缺失（小程序运行必需）"})
+        checks.append(
+            {"item": "app.json 可解析", "ok": False, "level": "error", "detail": "app.json 缺失（小程序运行必需）"}
+        )
     else:
         try:
             app_cfg = json.loads(raw_app)
@@ -616,56 +584,68 @@ def _review_check_appjson(files: dict, checks: list) -> dict:
     registered = set(app_cfg.get("pages") or [])
     generated = {p.rsplit(".", 1)[0] for p in files if p.startswith("pages/")}
     unregistered = sorted(generated - registered)
-    checks.append({
-        "item": "app.json 注册全部页面",
-        "ok": not unregistered,
-        "level": "error" if unregistered else "ok",
-        "detail": "OK" if not unregistered else f"未注册: {unregistered}",
-    })
+    checks.append(
+        {
+            "item": "app.json 注册全部页面",
+            "ok": not unregistered,
+            "level": "error" if unregistered else "ok",
+            "detail": "OK" if not unregistered else f"未注册: {unregistered}",
+        }
+    )
     missing_quartet = sorted(
         {f"{rp}.{ext}" for rp in registered for ext in ("js", "wxml", "wxss", "json") if f"{rp}.{ext}" not in files}
     )
-    checks.append({
-        "item": "注册页面四件套齐全",
-        "ok": not missing_quartet,
-        "level": "error" if missing_quartet else "ok",
-        "detail": "OK" if not missing_quartet else f"缺失: {missing_quartet}",
-    })
+    checks.append(
+        {
+            "item": "注册页面四件套齐全",
+            "ok": not missing_quartet,
+            "level": "error" if missing_quartet else "ok",
+            "detail": "OK" if not missing_quartet else f"缺失: {missing_quartet}",
+        }
+    )
     return app_cfg
 
 
 def _review_check_meta(app_cfg: dict, files: dict, checks: list) -> None:
     """导航栏标题 + tabBar 图标 + sitemap。"""
     title = ((app_cfg.get("window") or {}).get("navigationBarTitleText") or "").strip()
-    checks.append({
-        "item": "导航栏标题已设置",
-        "ok": bool(title),
-        "level": "warn" if not title else "ok",
-        "detail": f"「{title}」" if title else "window.navigationBarTitleText 缺失，审核截图展示异常",
-    })
+    checks.append(
+        {
+            "item": "导航栏标题已设置",
+            "ok": bool(title),
+            "level": "warn" if not title else "ok",
+            "detail": f"「{title}」" if title else "window.navigationBarTitleText 缺失，审核截图展示异常",
+        }
+    )
     tabbar = app_cfg.get("tabBar")
     if isinstance(tabbar, dict) and tabbar.get("list"):
-        missing_icons = sorted({
-            p.lstrip("/")
-            for it in tabbar["list"]
-            for p in (it.get("iconPath"), it.get("selectedIconPath"))
-            if p and p.lstrip("/") not in files
-        })
-        checks.append({
-            "item": "tabBar 图标资源齐全",
-            "ok": not missing_icons,
-            "level": "warn" if missing_icons else "ok",
-            "detail": "OK" if not missing_icons else f"图标缺失: {missing_icons}",
-        })
+        missing_icons = sorted(
+            {
+                p.lstrip("/")
+                for it in tabbar["list"]
+                for p in (it.get("iconPath"), it.get("selectedIconPath"))
+                if p and p.lstrip("/") not in files
+            }
+        )
+        checks.append(
+            {
+                "item": "tabBar 图标资源齐全",
+                "ok": not missing_icons,
+                "level": "warn" if missing_icons else "ok",
+                "detail": "OK" if not missing_icons else f"图标缺失: {missing_icons}",
+            }
+        )
     else:
         checks.append({"item": "tabBar 配置", "ok": True, "level": "ok", "detail": "未使用 tabBar（无需图标资源）"})
     has_sitemap = "sitemap.json" in files
-    checks.append({
-        "item": "sitemap.json 存在",
-        "ok": has_sitemap,
-        "level": "warn" if not has_sitemap else "ok",
-        "detail": "存在（页面收录规则）" if has_sitemap else "缺失：建议保留 sitemap.json 以控制搜索收录范围",
-    })
+    checks.append(
+        {
+            "item": "sitemap.json 存在",
+            "ok": has_sitemap,
+            "level": "warn" if not has_sitemap else "ok",
+            "detail": "存在（页面收录规则）" if has_sitemap else "缺失：建议保留 sitemap.json 以控制搜索收录范围",
+        }
+    )
 
 
 def _review_check_permissions(app_cfg: dict, files: dict, checks: list) -> list:
@@ -675,20 +655,26 @@ def _review_check_permissions(app_cfg: dict, files: dict, checks: list) -> list:
     private_declared = set(app_cfg.get("requiredPrivateInfos") or [])
     for rule in used_apis:
         if rule["key"] == "permission":
-            declared = bool((permission.get("scope.userLocation") or {}).get("desc")) and rule["private"] in private_declared
-            need = f"permission.scope.userLocation（desc） + requiredPrivateInfos: [\"{rule['private']}\"]"
+            declared = (
+                bool((permission.get("scope.userLocation") or {}).get("desc")) and rule["private"] in private_declared
+            )
+            need = f'permission.scope.userLocation（desc） + requiredPrivateInfos: ["{rule["private"]}"]'
         elif rule["key"] == "private":
             declared = rule["private"] in private_declared
-            need = f"requiredPrivateInfos: [\"{rule['private']}\"]"
+            need = f'requiredPrivateInfos: ["{rule["private"]}"]'
         else:
             declared = True
             need = rule["desc"]
-        checks.append({
-            "item": f"权限声明：{rule['name']}（{rule['api']}）",
-            "ok": declared,
-            "level": rule["level"] if not declared else "ok",
-            "detail": "已声明" if declared else f"代码使用 wx.{rule['api'][3:]} 但未声明，需在 app.json 配置 {need}",
-        })
+        checks.append(
+            {
+                "item": f"权限声明：{rule['name']}（{rule['api']}）",
+                "ok": declared,
+                "level": rule["level"] if not declared else "ok",
+                "detail": "已声明"
+                if declared
+                else f"代码使用 wx.{rule['api'][3:]} 但未声明，需在 app.json 配置 {need}",
+            }
+        )
     return used_apis
 
 
@@ -738,6 +724,7 @@ def _review_material_md(files: dict, name: str, template: str, app_cfg: dict, ch
     ]
     return "\n".join(lines)
 
+
 def build_review_material(files: dict, name: str, template: str = "") -> dict:
     """自动生成微信小程序提审材料：app.json 字段核对 + 代码权限扫描 + 提审清单 md。"""
     files = files or {}
@@ -751,12 +738,13 @@ def build_review_material(files: dict, name: str, template: str = "") -> dict:
     used_apis = _review_check_permissions(app_cfg, files, checks)
 
     failed = [c for c in checks if c["level"] == "error"]
-    warns = [c for c in checks if c["level"] == "warn"]
+    [c for c in checks if c["level"] == "warn"]
     ok = not failed
 
     # ── 提审材料 Markdown ──
     material = _review_material_md(files, name, template, app_cfg, checks, used_apis)
     return {"ok": ok, "checks": checks, "material": material}
+
 
 @router.get("/projects")
 async def list_projects(current_user: dict = require_auth()):
@@ -838,12 +826,19 @@ def _save_miniapp_project(proj_id: str, req, files: dict, qc: dict) -> None:
     conn.execute(
         """INSERT INTO miniapp_projects (id, name, template, requirement, files, qc, created_at)
            VALUES (?,?,?,?,?,?,?)""",
-        (proj_id, req.name, req.template, req.requirement,
-         json.dumps(files, ensure_ascii=False), json.dumps(qc, ensure_ascii=False),
-         datetime.now().isoformat()),
+        (
+            proj_id,
+            req.name,
+            req.template,
+            req.requirement,
+            json.dumps(files, ensure_ascii=False),
+            json.dumps(qc, ensure_ascii=False),
+            datetime.now().isoformat(),
+        ),
     )
     conn.commit()
     conn.close()
+
 
 async def _miniapp_generate_worker(payload: dict, progress: Callable | None = None) -> dict:  # noqa: C901
     """AI 生成完整小程序项目（同步/异步任务共用执行体，异步时回报进度）。"""
@@ -982,7 +977,12 @@ MOCK_DATA_TEMPLATES = {
             {"id": 3, "name": "新品上市C", "price": 59, "image": "/static/prod3.jpg", "sales": 432},
             {"id": 4, "name": "限时特惠D", "price": 149, "image": "/static/prod4.jpg", "sales": 2100},
         ],
-        "categories": [{"id": 1, "name": "全部"}, {"id": 2, "name": "新品"}, {"id": 3, "name": "热卖"}, {"id": 4, "name": "促销"}],
+        "categories": [
+            {"id": 1, "name": "全部"},
+            {"id": 2, "name": "新品"},
+            {"id": 3, "name": "热卖"},
+            {"id": 4, "name": "促销"},
+        ],
         "banners": [
             {"id": 1, "image": "/static/banner1.jpg", "link": "/pages/goods/detail?id=1"},
             {"id": 2, "image": "/static/banner2.jpg", "link": "/pages/goods/detail?id=2"},
@@ -1002,12 +1002,31 @@ MOCK_DATA_TEMPLATES = {
             {"id": 2, "name": "香辣虾仁", "price": 58, "image": "/static/dish2.jpg", "sales": 180, "rating": 4.9},
             {"id": 3, "name": "清蒸鲈鱼", "price": 88, "image": "/static/dish3.jpg", "sales": 95, "rating": 4.7},
         ],
-        "categories": [{"id": 1, "name": "热销"}, {"id": 2, "name": "主食"}, {"id": 3, "name": "海鲜"}, {"id": 4, "name": "饮料"}],
+        "categories": [
+            {"id": 1, "name": "热销"},
+            {"id": 2, "name": "主食"},
+            {"id": 3, "name": "海鲜"},
+            {"id": 4, "name": "饮料"},
+        ],
     },
     "news": {
         "articles": [
-            {"id": 1, "title": "今日要闻：行业最新动态", "summary": "简短摘要内容...", "author": "编辑", "date": "2024-01-15", "views": 1500},
-            {"id": 2, "title": "深度报道：趋势分析", "summary": "更多内容...", "author": "记者", "date": "2024-01-14", "views": 890},
+            {
+                "id": 1,
+                "title": "今日要闻：行业最新动态",
+                "summary": "简短摘要内容...",
+                "author": "编辑",
+                "date": "2024-01-15",
+                "views": 1500,
+            },
+            {
+                "id": 2,
+                "title": "深度报道：趋势分析",
+                "summary": "更多内容...",
+                "author": "记者",
+                "date": "2024-01-14",
+                "views": 890,
+            },
         ],
         "categories": ["热点", "科技", "生活", "财经"],
     },
@@ -1048,20 +1067,23 @@ async def preview_html(proj_id: str, current_user: dict = require_auth()):
 
     # 构建 HTML 预览（首页 + 各页面 tab 切换）
     from common.auth import get_user_profile
-    user = get_user_profile(current_user.get("user_id", ""))
+
+    get_user_profile(current_user.get("user_id", ""))
 
     mock_data = MOCK_DATA_TEMPLATES.get(tpl, {})
 
     # 收集所有页面
-    pages = {p.replace(".js", "").replace(".wxml", "").replace(".wxss", "").replace(".json", "")
-             for p in files if p.startswith("pages/") and p.endswith((".wxml", ".js", ".wxss"))}
+    pages = {
+        p.replace(".js", "").replace(".wxml", "").replace(".wxss", "").replace(".json", "")
+        for p in files
+        if p.startswith("pages/") and p.endswith((".wxml", ".js", ".wxss"))
+    }
     page_list = sorted(set(p.split("/")[1] for p in pages if len(p.split("/")) >= 2))
 
     # 构建单页 HTML（含所有页面的简单渲染）
     html_content = _build_preview_html(files, page_list, mock_data, row["name"], tpl)
 
     # 保存预览文件
-    import hashlib
     html_filename = f"preview_{hashlib.md5(proj_id.encode()).hexdigest()[:8]}.html"
     preview_dir = Path(__file__).parent / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
@@ -1079,23 +1101,20 @@ async def preview_html(proj_id: str, current_user: dict = require_auth()):
 def _build_preview_html(files: dict, page_list: list, mock_data: dict, project_name: str, template: str) -> str:
     """将小程序文件转换为可浏览器预览的 HTML。"""
     # 提取首页 wxml
-    home_wxml = ""
-    for path, content in files.items():
+    for path, _content in files.items():
         if path.endswith("index/index.wxml"):
-            home_wxml = content
             break
 
     # 提取 JS 数据
-    home_js_data = {}
     for path, content in files.items():
         if path.endswith("index/index.js"):
             # 简单提取 data 字段
-            match = re.search(r'data\s*:\s*\{([^}]+)\}', content, re.DOTALL)
+            match = re.search(r"data\s*:\s*\{([^}]+)\}", content, re.DOTALL)
             if match:
                 try:
-                    js_str = "data:" + match.group(1) + "}"
+                    "data:" + match.group(1) + "}"
                     # 简化处理：只提取字符串值
-                    home_js_data = {"raw": match.group(1)[:500]}
+                    {"raw": match.group(1)[:500]}
                 except Exception:
                     pass
             break
@@ -1104,12 +1123,11 @@ def _build_preview_html(files: dict, page_list: list, mock_data: dict, project_n
     pages_html_parts = []
     for page_name in page_list:
         wxml = ""
-        js_data = ""
         for path, content in files.items():
             if f"pages/{page_name}/{page_name}.wxml" in path:
                 wxml = content
             if f"pages/{page_name}/{page_name}.js" in path:
-                js_data = content
+                pass
 
         # 简单 wxml → html 转换
         html_body = wxml
@@ -1122,11 +1140,11 @@ def _build_preview_html(files: dict, page_list: list, mock_data: dict, project_n
             html_body = html_body.replace("<swiper", "<div class='swiper'")
             html_body = html_body.replace("<swiper-item", "<div class='swiper-item'")
             html_body = html_body.replace("<block", "<!-- block -->")
-            html_body = re.sub(r'\{\{(.*?)\}\}', r'<span class="dynamic">\1</span>', html_body)
+            html_body = re.sub(r"\{\{(.*?)\}\}", r'<span class="dynamic">\1</span>', html_body)
             html_body = re.sub(r'bindtap="(.*?)"', r'data-action="\1"', html_body)
 
         pages_html_parts.append(f"""
-<div class="preview-page" id="page-{page_name}" style="display:{'block' if page_name==page_list[0] else 'none'}">
+<div class="preview-page" id="page-{page_name}" style="display:{"block" if page_name == page_list[0] else "none"}">
   <h3>📄 {page_name}</h3>
   <div class="page-content" style="border:1px solid #eee;padding:12px;margin:8px 0;border-radius:8px;">
     <pre style="font-size:11px;white-space:pre-wrap;word-break:break-all;color:#555;">{html_body[:2000]}</pre>
@@ -1162,15 +1180,15 @@ def _build_preview_html(files: dict, page_list: list, mock_data: dict, project_n
 <body>
 <div class="header">
   <h1>📱 {project_name}</h1>
-  <p>模板：{template} | Mock 数据：{('已注入' if mock_data else '无')} | 共 {len(page_list)} 个页面</p>
+  <p>模板：{template} | Mock 数据：{("已注入" if mock_data else "无")} | 共 {len(page_list)} 个页面</p>
 </div>
 <div class="tabs">
-  {''.join('<div class="tab active" onclick="showPage(' + p + ')">' + p + '</div>' for p in page_list)}
+  {"".join('<div class="tab active" onclick="showPage(' + p + ')">' + p + "</div>" for p in page_list)}
 </div>
 <div class="preview-container">
   <div class="info-box">
     💡 预览模式：此为代码结构预览，非真实运行环境。导入微信开发者工具可获得完整预览体验。
-    {('<br>Mock 数据已注入：<code>' + json.dumps(mock_data, ensure_ascii=False)[:200] + '</code>') if mock_data else ''}
+    {("<br>Mock 数据已注入：<code>" + json.dumps(mock_data, ensure_ascii=False)[:200] + "</code>") if mock_data else ""}
   </div>
   {pages_html}
 </div>
@@ -1264,9 +1282,6 @@ async def get_extended_templates(current_user: dict = require_auth()):
     return {"templates": extended, "mock_available": True}
 
 
-from fastapi.responses import FileResponse
-
-
 @router.get("/{proj_id}/export-zip")
 async def export_zip(proj_id: str, current_user: dict = require_auth()):
     conn = get_db()
@@ -1353,8 +1368,6 @@ async def review_material(proj_id: str, current_user: dict = require_auth()):
     result = build_review_material(files, row["name"], row.get("template") or "")
     result["name"] = row["name"]
     return result
-
-
 
 
 async def _miniapp_generate_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:

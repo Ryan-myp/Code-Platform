@@ -42,9 +42,7 @@ def _load_relays() -> list[dict]:
     """读取中转站列表。"""
     try:
         with get_db_context() as conn:
-            row = conn.execute(
-                "SELECT value FROM config WHERE key=?", (_CONFIG_KEY,)
-            ).fetchone()
+            row = conn.execute("SELECT value FROM config WHERE key=?", (_CONFIG_KEY,)).fetchone()
         if row and row["value"]:
             data = json.loads(row["value"])
             if isinstance(data, list):
@@ -154,12 +152,11 @@ async def import_relay_models(relay_id: str, keep_global: bool = Query(False, de
         def _save_models(models):
             with get_db_context() as conn:
                 import json as _json
+
                 conn.execute(
-                    "INSERT INTO config (key, value) VALUES ('model_list',?) "
-                    "ON CONFLICT(key) DO UPDATE SET value=?",
+                    "INSERT INTO config (key, value) VALUES ('model_list',?) ON CONFLICT(key) DO UPDATE SET value=?",
                     (_json.dumps(models, ensure_ascii=False), _json.dumps(models, ensure_ascii=False)),
                 )
-
 
     current = _get_models()
     existing = {m.get("name") for m in current}
@@ -254,7 +251,9 @@ def _load_user_relay_keys(uid: str) -> dict:
     try:
         conn = get_db()
         try:
-            row = conn.execute("SELECT relay_keys, relay_api_key, relay_provider FROM users WHERE id=?", (uid,)).fetchone()
+            row = conn.execute(
+                "SELECT relay_keys, relay_api_key, relay_provider FROM users WHERE id=?", (uid,)
+            ).fetchone()
         finally:
             conn.close()
         if not row:
@@ -307,7 +306,6 @@ def _active_provider(uid: str) -> str:
 
 def _save_provider_models(provider: str, model_list: list) -> None:
     """模型列表按供应商分存（model_list:{provider}），并同步到当前 model_list。"""
-    import os
 
     with get_db_context() as conn:
         conn.execute(
@@ -333,7 +331,8 @@ async def get_my_relay(current_user: dict = require_auth()):
     """读取当前用户的中转站配置（key 脱敏；各供应商独立状态）。"""
     uid = current_user.get("user_id", "")
     keys = _load_user_relay_keys(uid)
-    from common.config import AGNES_API_BASE as _DEFAULT_BASE, RELAY_PROVIDERS
+    from common.config import AGNES_API_BASE as _DEFAULT_BASE
+    from common.config import RELAY_PROVIDERS
 
     provider = _active_provider(uid)
     _base = RELAY_PROVIDERS.get(provider, _DEFAULT_BASE)
@@ -388,9 +387,7 @@ async def update_my_relay(req: UserRelayRequest, current_user: dict = require_au
                 data = resp.json()
                 raw = data.get("data") if isinstance(data, dict) else data
                 if isinstance(raw, list):
-                    model_list = [
-                        {"name": m.get("id")} for m in raw if isinstance(m, dict) and m.get("id")
-                    ]
+                    model_list = [{"name": m.get("id")} for m in raw if isinstance(m, dict) and m.get("id")]
                     if model_list:
                         _save_provider_models(provider, model_list)
                         models_saved = len(model_list)
@@ -406,7 +403,9 @@ async def update_my_relay(req: UserRelayRequest, current_user: dict = require_au
         "api_base": _DEFAULT_BASE,
         "provider": provider,
         "models": models_saved,
-        "model_hint": "模型列表已从中转站同步" if models_saved else "已保存 Key（模型列表同步失败，请重试或检查中转站）",
+        "model_hint": "模型列表已从中转站同步"
+        if models_saved
+        else "已保存 Key（模型列表同步失败，请重试或检查中转站）",
     }
 
 
@@ -493,7 +492,9 @@ async def clear_my_relay(provider: str = "", current_user: dict = require_auth()
             conn.execute("DELETE FROM config WHERE key LIKE 'model_list:%'")
     return {
         "success": True,
-        "message": f"已清除 {target} 的中转站配置" + ("与模型列表" if not keys else "") + "，可重新配置 Key 后使用 AI 功能",
+        "message": f"已清除 {target} 的中转站配置"
+        + ("与模型列表" if not keys else "")
+        + "，可重新配置 Key 后使用 AI 功能",
     }
 
 
@@ -571,7 +572,6 @@ async def save_my_pexels_key(req: PexelsKeyRequest, current_user: dict = require
 async def get_my_pexels_key(current_user: dict = require_auth()):
     """读取用户 Pexels Key 配置状态（脱敏）。"""
     uid = current_user.get("user_id", "")
-    from common.auth import get_user_relay_config
 
     relay = get_user_relay_config(uid) or {}
     key = (relay.get("pexels_key") or "").strip()

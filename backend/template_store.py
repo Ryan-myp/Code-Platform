@@ -24,15 +24,14 @@ import uuid
 import zipfile
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.config import load_config
 from common.db import get_db
-from common.llm import _safe_exc_msg
+from common.helpers import _notify_progress
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -198,9 +197,7 @@ def record_usage(template_id: str) -> None:
 
 def _deduct_credits(conn, username: str, amount: int) -> None:
     """扣积分（余额不足抛 402）。"""
-    quota = conn.execute(
-        "SELECT credits FROM user_quotas WHERE username=?", (username,)
-    ).fetchone()
+    quota = conn.execute("SELECT credits FROM user_quotas WHERE username=?", (username,)).fetchone()
     balance = int(quota["credits"]) if quota else 0
     if balance < amount:
         raise HTTPException(402, "余额不足，请先充值")
@@ -217,7 +214,6 @@ def _deduct_credits(conn, username: str, amount: int) -> None:
 
 class PurchaseRequest(BaseModel):
     access_type: str = "once"  # once | day | month
-
 
 
 def _market_load_templates() -> list:
@@ -237,19 +233,21 @@ def _market_load_templates() -> list:
             if not tid or t.get("hidden"):
                 continue
             pricing = get_pricing(t)
-            items.append({
-                "id": tid,
-                "name": t.get("name", "未命名模板"),
-                "category": t.get("category", "通用") or "通用",
-                "width": t.get("width", 1080),
-                "height": t.get("height", 1920),
-                "preview": f"/api/image-factory/template-preview/{tid}",
-                "pricing": pricing,
-                "pricing_label": MODE_LABELS[pricing["mode"]],
-                "seller": t.get("seller", "platform"),
-                "usage": _get_usage(tid),
-                "created_at": t.get("created_at", ""),
-            })
+            items.append(
+                {
+                    "id": tid,
+                    "name": t.get("name", "未命名模板"),
+                    "category": t.get("category", "通用") or "通用",
+                    "width": t.get("width", 1080),
+                    "height": t.get("height", 1920),
+                    "preview": f"/api/image-factory/template-preview/{tid}",
+                    "pricing": pricing,
+                    "pricing_label": MODE_LABELS[pricing["mode"]],
+                    "seller": t.get("seller", "platform"),
+                    "usage": _get_usage(tid),
+                    "created_at": t.get("created_at", ""),
+                }
+            )
     return items
 
 
@@ -257,9 +255,7 @@ def _market_access_map(user: str) -> dict:
     """查询用户对模板的访问权限映射。"""
     conn = get_db()
     _ensure_tables(conn)
-    access_rows = conn.execute(
-        "SELECT * FROM image_template_access WHERE user_id=?", (user,)
-    ).fetchall()
+    access_rows = conn.execute("SELECT * FROM image_template_access WHERE user_id=?", (user,)).fetchall()
     conn.close()
     owned: dict = {}
     for r in access_rows:
@@ -299,6 +295,7 @@ def _market_categories(items: list) -> list:
         cats.setdefault(c, {"label": c, "count": 0})
         cats[c]["count"] += 1
     return list(cats.values())
+
 
 @router.get("/list")
 async def market_list(
@@ -351,9 +348,7 @@ async def my_access(current_user: dict = require_auth()):
 
 
 @router.post("/templates/{template_id}/purchase")
-async def purchase_template(
-    template_id: str, req: PurchaseRequest, current_user: dict = require_auth()
-):
+async def purchase_template(template_id: str, req: PurchaseRequest, current_user: dict = require_auth()):
     """购买/订阅模板：once 永久；day 1 天；month 30 天。从积分余额扣减。"""
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     if req.access_type not in ("once", "day", "month"):
@@ -382,18 +377,10 @@ async def purchase_template(
         if req.access_type == "once":
             expires = ""
         elif req.access_type == "day":
-            base = (
-                datetime.fromisoformat(existing["expires_at"])
-                if existing and existing["expires_at"]
-                else now
-            )
+            base = datetime.fromisoformat(existing["expires_at"]) if existing and existing["expires_at"] else now
             expires = (base + timedelta(days=1)).isoformat()
         else:
-            base = (
-                datetime.fromisoformat(existing["expires_at"])
-                if existing and existing["expires_at"]
-                else now
-            )
+            base = datetime.fromisoformat(existing["expires_at"]) if existing and existing["expires_at"] else now
             expires = (base + timedelta(days=30)).isoformat()
         aid = f"imga_{uuid.uuid4().hex[:10]}"
         conn.execute(
@@ -489,7 +476,6 @@ def _layer_types(template: dict) -> dict:
     return m
 
 
-
 def _build_row_overrides(row: dict, field_map: dict, layer_types: dict) -> dict:
     """按字段映射构建单行渲染参数（图片/文本分离）。"""
     overrides = {}
@@ -508,9 +494,11 @@ def _build_row_overrides(row: dict, field_map: dict, layer_types: dict) -> dict:
     return overrides
 
 
-async def _render_batch_rows(rows: list, field_map: dict, layer_types: dict, template, total: int, _report, template_id: str) -> list:
+async def _render_batch_rows(
+    rows: list, field_map: dict, layer_types: dict, template, total: int, _report, template_id: str
+) -> list:
     """逐行渲染模板，返回图片 URL 列表。"""
-    from image_factory import save_image, render_template_image
+    from image_factory import render_template_image, save_image
 
     results = []
     for i, row in enumerate(rows):
@@ -520,7 +508,7 @@ async def _render_batch_rows(rows: list, field_map: dict, layer_types: dict, tem
             imgs = await render_template_image(template, overrides)
         except Exception as e:
             logger.warning(f"批量渲染第 {i + 1} 行失败: {e}")
-            raise HTTPException(500, "操作失败，请稍后重试")
+            raise HTTPException(500, "操作失败，请稍后重试") from None
         fname = save_image(imgs[0])
         results.append(f"/api/image-factory/images/{fname}")
         record_usage(template_id)
@@ -529,7 +517,6 @@ async def _render_batch_rows(rows: list, field_map: dict, layer_types: dict, tem
 
 def _zip_batch_results(results: list, rows: list, batch_name: str, task_id: str) -> str:
     """批量结果 zip 打包 + 生成清单。"""
-    import zipfile
 
     from image_factory import IMAGE_DIR
 
@@ -542,15 +529,16 @@ def _zip_batch_results(results: list, rows: list, batch_name: str, task_id: str)
             if os.path.exists(src):
                 zf.write(src, f"{i + 1:03d}_{batch_name}_{fname}")
     manifest = "\n".join(
-        f"{i + 1}\t{row.get(next(iter(row), ''), '')}\t{url}" for i, (row, url) in enumerate(zip(rows, results))
+        f"{i + 1}\t{row.get(next(iter(row), ''), '')}\t{url}"
+        for i, (row, url) in enumerate(zip(rows, results, strict=False))
     )
     with zipfile.ZipFile(zip_path, "a") as zf:
         zf.writestr("生成清单.tsv", f"序号\t首列值\t图片地址\n{manifest}")
     return zip_path
 
+
 async def _image_batch_worker(task_id: str, payload: dict, update, ctx: dict) -> dict:
     """Excel/CSV 批量套版：逐行渲染 → 保存 → zip 打包。"""
-    from image_factory import IMAGE_DIR, render_template_image, save_image
 
     username = ctx.get("username", "") or payload.get("username", "")
     template_id = payload.get("template_id", "")
@@ -680,7 +668,7 @@ async def batch_generate(
     return {
         "task_id": task["id"],
         "status": "pending",
-        "message": f"批量生成任务已提交（共需读取表格行数），可在任务中心查看进度",
+        "message": "批量生成任务已提交（共需读取表格行数），可在任务中心查看进度",
         "task": task,
     }
 

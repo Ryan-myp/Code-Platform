@@ -7,9 +7,9 @@
 启动：python app_creation.py（默认 8888，PORT 环境变量可覆盖）
 """
 
+import json  # noqa: E402
 import os
 import sys
-import json  # noqa: E402
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -27,10 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from common.auth import (  # noqa: E402
-    decode_access_token,
-    get_current_user,
     get_user_profile,
-    get_user_relay_config,
     require_auth,
 )
 from common.config import ALLOWED_ORIGINS  # noqa: E402
@@ -69,9 +66,7 @@ async def lifespan(app: FastAPI):
             pass
         # 迁移旧数据：relay_api_key（旧单列）→ relay_keys[relay_provider]，避免升级后丢 key
         try:
-            rows = conn.execute(
-                "SELECT id, relay_api_key, relay_provider, relay_keys FROM users"
-            ).fetchall()
+            rows = conn.execute("SELECT id, relay_api_key, relay_provider, relay_keys FROM users").fetchall()
             for r in rows:
                 old_key = (r["relay_api_key"] or "").strip()
                 if not old_key:
@@ -146,9 +141,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     from task_queue import start_workers  # noqa: E402
+
     start_workers()
     yield
     from task_queue import stop_workers  # noqa: E402
+
     stop_workers()
 
 
@@ -227,9 +224,7 @@ async def auto_login():
             "ORDER BY created_at LIMIT 1"
         ).fetchone()
         if not row:
-            row = conn.execute(
-                "SELECT id, username, role FROM users WHERE username=?", (username,)
-            ).fetchone()
+            row = conn.execute("SELECT id, username, role FROM users WHERE username=?", (username,)).fetchone()
     finally:
         conn.close()
     if not row:
@@ -257,64 +252,92 @@ async def me(current_user: dict = require_auth()):
 
 
 # ── 创作模块路由 ──────────────────────────────────────────
-from image_factory import router as image_factory_router  # noqa: E402
-from video_factory import router as video_factory_router  # noqa: E402
-from music_factory import router as music_factory_router  # noqa: E402
-from voice_factory import router as voice_factory_router  # noqa: E402
-from meme_factory import router as meme_factory_router  # noqa: E402
-from game_factory import router as game_factory_router  # noqa: E402
-from miniapp import router as miniapp_router  # noqa: E402
-from short_drama import router as drama_router  # noqa: E402
-from digital_human import router as digital_human_router  # noqa: E402
-from relay_api import router as relay_router  # noqa: E402
-from drafts import router as drafts_router  # noqa: E402
-from gallery import router as gallery_router  # noqa: E402
-# ── 应用与工具模块（v2：效率工具箱/PDF/思维导图/数据分析等）──
-from tool_hub import router as tool_hub_router  # noqa: E402
-from pdf_tools import router as pdf_tools_router  # noqa: E402
-from mindmap import router as mindmap_router  # noqa: E402
-from seo_analyzer import router as seo_analyzer_router  # noqa: E402
-from stock_tools import router as stock_tools_router  # noqa: E402
+from app_extra import router as app_extra_router  # noqa: E402
+
+from ai_video_api import router as ai_video_router  # noqa: E402
+from apikey_api import router as apikey_api_router  # noqa: E402
+from competitor_monitor import router as competitor_monitor_router  # noqa: E402
+from content_strategy import router as content_strategy_router  # noqa: E402
 from data_analyzer import router as data_analyzer_router  # noqa: E402
 from data_forecast import router as data_forecast_router  # noqa: E402
-from content_strategy import router as content_strategy_router  # noqa: E402
-from growth_engine import router as growth_engine_router  # noqa: E402
-from smart_dashboard import router as smart_dashboard_router  # noqa: E402
-from competitor_monitor import router as competitor_monitor_router  # noqa: E402
+from digital_human import router as digital_human_router  # noqa: E402
 from doc_qa import router as doc_qa_router  # noqa: E402
-from web_search import router as web_search_router  # noqa: E402
-from publishing import router as publishing_router  # noqa: E402
-from video_analyzer import router as video_analyzer_router  # noqa: E402
-from ai_video_api import router as ai_video_router  # noqa: E402
-from favorites_api import router as favorites_api_router  # noqa: E402
-from search_api import router as search_api_router  # noqa: E402
-from realtime import router as realtime_router  # noqa: E402
+from drafts import router as drafts_router  # noqa: E402
 from extended_api import router as extended_api_router  # noqa: E402
+from favorites_api import router as favorites_api_router  # noqa: E402
+from gallery import router as gallery_router  # noqa: E402
+from game_factory import router as game_factory_router  # noqa: E402
+from growth_engine import router as growth_engine_router  # noqa: E402
+from image_factory import router as image_factory_router  # noqa: E402
+from meme_factory import router as meme_factory_router  # noqa: E402
+from mindmap import router as mindmap_router  # noqa: E402
+from miniapp import router as miniapp_router  # noqa: E402
+from music_factory import router as music_factory_router  # noqa: E402
+from pdf_tools import router as pdf_tools_router  # noqa: E402
+from pipeline import router as pipeline_router  # noqa: E402
+from platform_api import router as platform_api_router  # noqa: E402
+from publishing import router as publishing_router  # noqa: E402
+from realtime import router as realtime_router  # noqa: E402
+from relay_api import router as relay_router  # noqa: E402
+from search_api import router as search_api_router  # noqa: E402
+from seo_analyzer import router as seo_analyzer_router  # noqa: E402
+from short_drama import router as drama_router  # noqa: E402
+from smart_dashboard import router as smart_dashboard_router  # noqa: E402
+from stock_tools import router as stock_tools_router  # noqa: E402
+from task_queue import router as task_queue_router  # noqa: E402
 from template_store import router as template_store_router  # noqa: E402
 from templates_market import router as templates_market_router  # noqa: E402
-from apikey_api import router as apikey_api_router  # noqa: E402
-from task_queue import router as task_queue_router  # noqa: E402
-from platform_api import router as platform_api_router  # noqa: E402
+
+# ── 应用与工具模块（v2：效率工具箱/PDF/思维导图/数据分析等）──
+from tool_hub import router as tool_hub_router  # noqa: E402
+from video_analyzer import router as video_analyzer_router  # noqa: E402
+from video_factory import router as video_factory_router  # noqa: E402
 from video_templates import router as video_templates_router  # noqa: E402
-from app_extra import router as app_extra_router  # noqa: E402
-from pipeline import router as pipeline_router  # noqa: E402
+from voice_factory import router as voice_factory_router  # noqa: E402
+from web_search import router as web_search_router  # noqa: E402
 
 # 注意注册顺序：/api/tasks 冲突时 task_queue 优先（与主仓库 routers.py 一致）
 for r in [
-    image_factory_router, video_factory_router, music_factory_router,
-    voice_factory_router, meme_factory_router, game_factory_router,
-    miniapp_router, drama_router, digital_human_router,
-    relay_router, drafts_router, gallery_router,
-    tool_hub_router, pdf_tools_router, mindmap_router, seo_analyzer_router,
-    stock_tools_router, data_analyzer_router, data_forecast_router,
-    content_strategy_router, growth_engine_router, smart_dashboard_router,
-    competitor_monitor_router, doc_qa_router, web_search_router,
-    publishing_router, video_analyzer_router, ai_video_router,
-    favorites_api_router, search_api_router,
-    realtime_router, extended_api_router, template_store_router,
-    templates_market_router, apikey_api_router,
-    task_queue_router, platform_api_router, video_templates_router,
-    app_extra_router, pipeline_router,
+    image_factory_router,
+    video_factory_router,
+    music_factory_router,
+    voice_factory_router,
+    meme_factory_router,
+    game_factory_router,
+    miniapp_router,
+    drama_router,
+    digital_human_router,
+    relay_router,
+    drafts_router,
+    gallery_router,
+    tool_hub_router,
+    pdf_tools_router,
+    mindmap_router,
+    seo_analyzer_router,
+    stock_tools_router,
+    data_analyzer_router,
+    data_forecast_router,
+    content_strategy_router,
+    growth_engine_router,
+    smart_dashboard_router,
+    competitor_monitor_router,
+    doc_qa_router,
+    web_search_router,
+    publishing_router,
+    video_analyzer_router,
+    ai_video_router,
+    favorites_api_router,
+    search_api_router,
+    realtime_router,
+    extended_api_router,
+    template_store_router,
+    templates_market_router,
+    apikey_api_router,
+    task_queue_router,
+    platform_api_router,
+    video_templates_router,
+    app_extra_router,
+    pipeline_router,
 ]:
     app.include_router(r)
 

@@ -62,6 +62,11 @@ jobs:
           pip install -r backend/requirements.txt
           pip install python-jose[cryptography] bcrypt ruff pytest pytest-asyncio pytest-cov httpx
 
+      - name: Install system deps (ffmpeg for 数字人/短剧/视频工厂用例)
+        # 数字人/短剧渲染用例依赖 ffmpeg；runner 镜像未预装，自动补齐（失败不阻断，纯环境性用例会被 skip）
+        run: |
+          bash scripts/check_environment.sh --fix || true
+
       - name: Run unit tests
         run: pytest tests/unit/ -v --cov=backend --cov-report=term-missing --cov-report=xml
 

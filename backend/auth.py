@@ -143,10 +143,11 @@ def login_user(username: str, password: str) -> dict:
     token = authenticate_user(username, password)
     if not token:
         from common.audit import log_audit
+
         log_audit(user_id=username, action="login", success=False, error="用户名或密码错误")
         raise HTTPException(401, "用户名或密码错误")
-    from common.db import get_db
     from common.audit import log_audit
+    from common.db import get_db
 
     conn = get_db()
     try:
@@ -206,6 +207,7 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
             conn.commit()
             # 记录邀请历史和奖励流水
             from common.auth import record_invite_history, record_invite_reward
+
             record_invite_history(inviter["id"], uid, invite_code.strip().upper())
             record_invite_reward(uid, INVITE_REWARD, "invite", f"邀请码 {invite_code} 注册奖励")
             record_invite_reward(inviter["id"], INVITE_REWARD, "invite", f"邀请 {username} 注册奖励")
@@ -216,6 +218,7 @@ def register_user(username: str, password: str, invite_code: str = "", share_fro
     # v17.0：新注册用户自动授予 7 天 Pro 试用
     grant_free_trial(uid)
     from common.audit import log_audit
+
     log_audit(user_id=uid, action="register", target_id=username, success=True)
     return login_user(username, password)
 
@@ -234,8 +237,8 @@ MEMBERSHIP_PLANS = {
         "name": "专业版",
         "price": 19.9,
         "days": 30,
-        "yearly_price": 199,       # 年付 199 元（≈83 折）
-        "yearly_discount": 17,     # 年付节省百分比
+        "yearly_price": 199,  # 年付 199 元（≈83 折）
+        "yearly_discount": 17,  # 年付节省百分比
         "daily_quota": 200,
         "features": ["每日 200 次生成额度", "全部工具畅用", "专属客服支持"],
     },
@@ -243,7 +246,7 @@ MEMBERSHIP_PLANS = {
         "name": "至尊版",
         "price": 99.0,
         "days": 30,
-        "yearly_price": 990,       # 年付 990 元（≈83 折）
+        "yearly_price": 990,  # 年付 990 元（≈83 折）
         "yearly_discount": 17,
         "daily_quota": 9999,
         "features": ["无限生成额度", "全部工具畅用", "专属客服支持", "新功能抢先体验"],
@@ -252,8 +255,8 @@ MEMBERSHIP_PLANS = {
 
 # 团队版按席位定价（元 / 人 / 月），年付 8 折
 TEAM_SEAT_PRICING = {
-    "pro": {"monthly": 15.0, "yearly": 144.0, "name": "专业版席位"},   # 15/人/月 或 144/人/年
-    "vip": {"monthly": 79.0, "yearly": 790.0, "name": "至尊版席位"},   # 79/人/月 或 790/人/年
+    "pro": {"monthly": 15.0, "yearly": 144.0, "name": "专业版席位"},  # 15/人/月 或 144/人/年
+    "vip": {"monthly": 79.0, "yearly": 790.0, "name": "至尊版席位"},  # 79/人/月 或 790/人/年
 }
 
 # 企业定制版基础定价（一次性部署费 + 年服务费）
@@ -303,6 +306,7 @@ def get_ab_pricing_override(plan: str) -> int | None:
 def get_ab_discount_code() -> str:
     """返回 A/B 实验组的促销码（可为空）。"""
     return AB_DISCOUNT_CODE
+
 
 # 邀请注册双方各奖励的一次性额度（不随天重置）
 INVITE_REWARD = 5
@@ -426,8 +430,7 @@ def get_user_profile(user_id: str) -> dict:
         "total_usage": row.get("total_usage") or 0,
         "created_at": row.get("created_at"),
         "relay_configured": bool(
-            row.get("relay_api_key")
-            or (row.get("relay_keys") and row["relay_keys"].strip() not in ("", "{}"))
+            row.get("relay_api_key") or (row.get("relay_keys") and row["relay_keys"].strip() not in ("", "{}"))
         ),
     }
 
@@ -883,7 +886,16 @@ def create_order(user_id: str, plan: str, coupon_code: str = "", stripe_session_
         conn.execute(
             """INSERT INTO orders (id, user_id, plan, amount, original_amount, coupon_code, stripe_session_id, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-            (order_id, user_id, plan, amount, original, coupon["code"] if coupon else "", stripe_session_id, datetime.now().isoformat()),
+            (
+                order_id,
+                user_id,
+                plan,
+                amount,
+                original,
+                coupon["code"] if coupon else "",
+                stripe_session_id,
+                datetime.now().isoformat(),
+            ),
         )
         if coupon:
             conn.execute("UPDATE coupons SET used_count=used_count+1 WHERE id=?", (coupon["id"],))
@@ -1012,8 +1024,10 @@ def get_invite_info(user_id: str) -> dict:
 
 def record_invite_history(inviter_id: str, invitee_id: str, invite_code: str) -> None:
     """记录邀请历史。"""
-    from common.db import get_db
     import uuid
+
+    from common.db import get_db
+
     hid = f"ih_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     try:
@@ -1028,14 +1042,16 @@ def record_invite_history(inviter_id: str, invitee_id: str, invite_code: str) ->
 
 def record_invite_reward(user_id: str, amount: int, source: str, description: str) -> None:
     """记录奖励流水。"""
-    from common.db import get_db
     import uuid
+
+    from common.db import get_db
+
     rid = f"ir_{uuid.uuid4().hex[:12]}"
     conn = get_db()
     try:
         conn.execute(
             "INSERT INTO invite_rewards (id, user_id, reward_type, amount, source, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (rid, user_id, 'invite', amount, source, description, datetime.now().isoformat()),
+            (rid, user_id, "invite", amount, source, description, datetime.now().isoformat()),
         )
         conn.commit()
     finally:
@@ -1045,6 +1061,7 @@ def record_invite_reward(user_id: str, amount: int, source: str, description: st
 def get_invite_history(user_id: str, limit: int = 50) -> dict:
     """获取邀请历史列表。"""
     from common.db import get_db
+
     conn = get_db()
     try:
         rows = conn.execute(
@@ -1066,6 +1083,7 @@ def get_invite_history(user_id: str, limit: int = 50) -> dict:
 def get_invite_rewards(user_id: str, limit: int = 50) -> dict:
     """获取奖励流水列表。"""
     from common.db import get_db
+
     conn = get_db()
     try:
         rows = conn.execute(
@@ -1273,9 +1291,7 @@ def grant_free_trial(user_id: str) -> bool:
 
     conn = get_db()
     try:
-        row = conn.execute(
-            "SELECT membership, trial_expires FROM users WHERE id=?", (user_id,)
-        ).fetchone()
+        row = conn.execute("SELECT membership, trial_expires FROM users WHERE id=?", (user_id,)).fetchone()
         if not row:
             return False
         m = row["membership"] or "free"
@@ -1317,13 +1333,15 @@ def get_usage_detail(user_id: str, days: int = 30) -> list[dict]:
         ).fetchall()
         result = []
         for r in rows:
-            result.append({
-                "feature": r["feature"] or r["model"] or "unknown",
-                "model": r["model"] or "",
-                "count": r["cnt"],
-                "success": r["ok"],
-                "error": r["err"],
-            })
+            result.append(
+                {
+                    "feature": r["feature"] or r["model"] or "unknown",
+                    "model": r["model"] or "",
+                    "count": r["cnt"],
+                    "success": r["ok"],
+                    "error": r["err"],
+                }
+            )
         return result
     except Exception as e:
         logger.error("get_usage_detail failed: %s", e)
@@ -1369,16 +1387,18 @@ def get_billing_history(user_id: str) -> list[dict]:
         ).fetchall()
         result = []
         for r in rows:
-            result.append({
-                "order_id": r["id"],
-                "plan": r["plan"],
-                "amount": r["amount"],
-                "status": r["status"],
-                "voucher": r["voucher"] or "",
-                "remark": r["remark"] or "",
-                "created_at": r["created_at"],
-                "reviewed_at": r["reviewed_at"] or "",
-            })
+            result.append(
+                {
+                    "order_id": r["id"],
+                    "plan": r["plan"],
+                    "amount": r["amount"],
+                    "status": r["status"],
+                    "voucher": r["voucher"] or "",
+                    "remark": r["remark"] or "",
+                    "created_at": r["created_at"],
+                    "reviewed_at": r["reviewed_at"] or "",
+                }
+            )
         return result
     except Exception as e:
         logger.error("get_billing_history failed: %s", e)

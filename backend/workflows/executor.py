@@ -252,8 +252,9 @@ class WorkflowExecutor:
 
         return adjacency, in_degree
 
-
-    async def _run_dag_layers(self, nodes, node_map, in_degree, adjacency, results, input_data, run_id, ws_channel, processed) -> dict:
+    async def _run_dag_layers(
+        self, nodes, node_map, in_degree, adjacency, results, input_data, run_id, ws_channel, processed
+    ) -> dict:
         """Kahn 拓扑排序分层并行执行节点。"""
         while len(processed) < len(nodes):
             ready = [nid for nid in in_degree if in_degree[nid] == 0 and nid not in processed]
@@ -263,14 +264,18 @@ class WorkflowExecutor:
                     results[nid] = {"status": "error", "message": "检测到循环依赖，节点未执行"}
                     self._log_node(run_id, nid, "failed", results[nid])
                 break
-            await asyncio.gather(*[self._exec_one(nid, node_map, results, input_data, run_id, ws_channel) for nid in ready])
+            await asyncio.gather(
+                *[self._exec_one(nid, node_map, results, input_data, run_id, ws_channel) for nid in ready]
+            )
             for nid in ready:
                 processed.add(nid)
                 for downstream in adjacency.get(nid, []):
                     in_degree[downstream] -= 1
         return results
 
-    async def _exec_one(self, node_id: str, node_map: dict, results: dict, input_data: dict, run_id: str, ws_channel: str) -> str:
+    async def _exec_one(
+        self, node_id: str, node_map: dict, results: dict, input_data: dict, run_id: str, ws_channel: str
+    ) -> str:
         """执行单个节点并记录日志 + WS 推送。"""
         node = node_map[node_id]
         node_type = node.get("type", "")

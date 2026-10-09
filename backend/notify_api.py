@@ -18,7 +18,6 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import _safe_exc_msg
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +177,8 @@ def update_config(payload: dict, current_user: dict = Depends(require_auth)):
 @router.post("/test-email")
 def test_email(current_user: dict = Depends(require_auth)):
     """发送测试邮件（优先使用平台全局 SMTP，其次用户自定义配置）。"""
-    from common.mailer import is_smtp_configured, send_email as global_send
+    from common.mailer import is_smtp_configured
+    from common.mailer import send_email as global_send
 
     # 优先：平台全局 SMTP（backend/.env 配置）
     if is_smtp_configured():

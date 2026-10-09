@@ -31,8 +31,9 @@ def _quick_tts(*args, **kwargs):
         import tempfile
 
         tmp = tempfile.mktemp(suffix=".mp3")
+        from common.ffmpeg_bin import FFMPEG_BIN
         subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-ar", "22050", tmp],
+            [FFMPEG_BIN, "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-ar", "22050", tmp],
             capture_output=True,
             check=True,
         )
@@ -57,8 +58,9 @@ def _fake_render(*args, **kwargs):
         import tempfile
 
         tmp = tempfile.mktemp(suffix=".mp4")
+        from common.ffmpeg_bin import FFMPEG_BIN
         subprocess.run(
-            ["ffmpeg", "-y",
+            [FFMPEG_BIN, "-y",
              "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1",
              "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
              "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",

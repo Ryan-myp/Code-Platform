@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from template_base import TemplateBase, create_template
 """模板市场 — 内置模板聚合 + C2C 用户模板交易。
 
 聚合来源：
@@ -372,6 +371,7 @@ async def delete_template(template_id: str, current_user: dict = require_auth())
 
 # ── 创作者中心 ───────────────────────────────────────────────
 
+
 @router.get("/creator/stats")
 async def creator_stats(current_user: dict = require_auth()):
     """我的创作者统计：模板数/销量/收益。"""
@@ -385,9 +385,9 @@ async def creator_stats(current_user: dict = require_auth()):
             "SELECT COALESCE(SUM(sales), 0) FROM user_templates WHERE user_id=? AND active=1", (user,)
         ).fetchone()[0]
         total_revenue = conn.execute(
-            """SELECT COALESCE(SUM(p.price * 0.7), 0) 
-               FROM template_purchases p 
-               JOIN user_templates t ON p.template_id = t.id 
+            """SELECT COALESCE(SUM(p.price * 0.7), 0)
+               FROM template_purchases p
+               JOIN user_templates t ON p.template_id = t.id
                WHERE t.user_id = ?""",
             (user,),
         ).fetchone()[0]
@@ -412,7 +412,7 @@ async def top_creators(limit: int = 10, current_user: dict = require_auth()):
     conn = get_db()
     try:
         rows = conn.execute(
-            """SELECT t.user_id, u.username, u.nickname, 
+            """SELECT t.user_id, u.username, u.nickname,
                     COUNT(t.id) as template_count,
                     SUM(t.sales) as total_sales,
                     SUM(p.price * 0.7) as total_revenue
@@ -427,14 +427,16 @@ async def top_creators(limit: int = 10, current_user: dict = require_auth()):
         ).fetchall()
         creators = []
         for r in rows:
-            creators.append({
-                "user_id": r["user_id"],
-                "username": r["username"] or r["user_id"],
-                "nickname": r["nickname"] or r["username"] or "",
-                "template_count": r["template_count"] or 0,
-                "total_sales": r["total_sales"] or 0,
-                "total_revenue": r["total_revenue"] or 0,
-            })
+            creators.append(
+                {
+                    "user_id": r["user_id"],
+                    "username": r["username"] or r["user_id"],
+                    "nickname": r["nickname"] or r["username"] or "",
+                    "template_count": r["template_count"] or 0,
+                    "total_sales": r["total_sales"] or 0,
+                    "total_revenue": r["total_revenue"] or 0,
+                }
+            )
     finally:
         conn.close()
     return {"creators": creators}
@@ -451,13 +453,13 @@ async def creator_profile(username: str, current_user: dict = require_auth()):
         if not user_row:
             raise HTTPException(404, "创作者不存在")
         user = dict(user_row)
-        
+
         tpl_rows = conn.execute(
             "SELECT * FROM user_templates WHERE user_id=? AND active=1 ORDER BY sales DESC, created_at DESC",
             (user["id"],),
         ).fetchall()
         templates = [dict(r) for r in tpl_rows]
-        
+
         stats = {
             "template_count": len(templates),
             "total_sales": sum(t.get("sales", 0) or 0 for t in templates),

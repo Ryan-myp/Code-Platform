@@ -19,12 +19,12 @@ import os
 import zipfile
 from abc import ABC, abstractmethod
 from datetime import datetime
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------- zip 打包
+
 
 def build_publish_zip(entries: dict[str, str | bytes | os.PathLike], pack_name: str) -> io.BytesIO:
     """将 ``entries``（zip 内相对路径 → 文件内容或磁盘路径）打包为内存 zip。
@@ -69,6 +69,7 @@ def pack_dir_name(prefix: str) -> str:
 
 # ---------------------------------------------------------------- 授权说明
 
+
 def license_text(product: str, generated_by: str = "AI 创作工坊") -> str:
     """AI 生成内容商用授权说明（随发布包附带的 LICENSE.txt）。"""
     return f"""{product} —— AI 生成内容商用授权说明
@@ -103,6 +104,7 @@ def license_text(product: str, generated_by: str = "AI 创作工坊") -> str:
 
 # ---------------------------------------------------------------- 平台规格
 
+
 def platform_spec_text(platform: str, specs: list[dict], notes: str = "") -> str:
     """平台规格说明（随发布包附带的 platform_spec.md）。
 
@@ -127,6 +129,7 @@ def platform_spec_text(platform: str, specs: list[dict], notes: str = "") -> str
 
 
 # ---------------------------------------------------------------- 自动发布接口位
+
 
 class PublishProvider(ABC):
     """自动发布 Provider 抽象基类（预留接口位）。

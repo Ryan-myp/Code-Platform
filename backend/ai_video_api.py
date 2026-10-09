@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db_context
+from common.ffmpeg_bin import FFMPEG_BIN  # noqa: E402  # ffmpeg 二进制兜底解析
 from dh_gateway import _charge, _ensure_billing_tables, _refund
 from task_queue import create_task, register_handler
 
@@ -137,10 +138,11 @@ def _query_cloud(cloud_task_id: str) -> dict:
     if resp.status_code != 200:
         raise RuntimeError(f"云端查询返回 {resp.status_code}: {resp.text[:200]}")
     data = resp.json()
-    out = data.get("output", {}) or {}
+    data.get("output", {}) or {}
 
 
 # ── AGNES 通道（v17.7：用 agnes-video-v2.0 + audio 驱动口型，免百炼 Key）──
+
 
 def _agnes_available() -> bool:
     """AGNES 视频通道是否可用（已配置 API Key）。"""
@@ -153,7 +155,7 @@ def _agnes_avatar_submit(payload: dict) -> str:
     """提交 AGNES 视频任务（口型同步：image + audio → 说话视频），返回 video_id。"""
     import requests as _req
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY, resolve_api_base
+    from common.config import AGNES_API_KEY, resolve_api_base
 
     mode = payload.get("mode", "text2video")
     prompt = payload.get("prompt", "")
@@ -168,7 +170,9 @@ def _agnes_avatar_submit(payload: dict) -> str:
     from common.config import require_model, resolve_feature_model
 
     body = {
-        "model": require_model(payload.get("model") or resolve_feature_model(payload.get("user_id") or "", "video", ""), "视频"),
+        "model": require_model(
+            payload.get("model") or resolve_feature_model(payload.get("user_id") or "", "video", ""), "视频"
+        ),
         "prompt": prompt,
         "width": width,
         "height": height,
@@ -219,7 +223,7 @@ def _agnes_avatar_poll(video_id: str, update: callable) -> str:
 
     import requests as _req
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY, resolve_api_base
+    from common.config import AGNES_API_KEY, resolve_api_base
 
     deadline = _time.monotonic() + _POLL_DEADLINE
     consecutive_err = 0
@@ -414,7 +418,6 @@ def _validate_upload_refs(req: VideoGenerateRequest) -> None:
 # ── 异步任务处理器 ─────────────────────────────────────────────
 
 
-
 def _tts_dub_audio(filename: str, payload: dict) -> str | None:
     """获取/生成配音音频：优先外部 audio_url，否则平台 TTS。"""
     audio_url = payload.get("audio_url") or ""
@@ -447,19 +450,37 @@ def _ffmpeg_dub_video(local_path: str, audio_path: str, filename: str) -> tuple:
         raise RuntimeError("配音音频无效")
     out_path = os.path.join(_UPLOAD_VIDEO_DIR, f"ai_dub_{filename}")
     cmd = [
-        "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", local_path,
-        "-i", audio_path,
-        "-map", "0:v:0", "-map", "1:a:0",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-shortest", out_path,
+        FFMPEG_BIN,
+        "-y",
+        "-stream_loop",
+        "-1",
+        "-i",
+        local_path,
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-shortest",
+        out_path,
     ]
     r = _sp.run(cmd, capture_output=True, timeout=300)
     if r.returncode != 0 or not os.path.exists(out_path) or not is_valid_video(out_path):
         raise RuntimeError("ffmpeg 合成失败")
-    _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
-            capture_output=True, timeout=15)
+    _sp.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out_path],
+        capture_output=True,
+        timeout=15,
+    )
     return out_path, local_path
+
 
 def _try_tts_dub(filename: str, local_path: str, payload: dict, update: callable) -> tuple | None:
     """混合方案：为 AGNES 照片活化视频叠加 TTS 配音（音频驱动口型的近似方案）。
@@ -510,8 +531,12 @@ def _probe_duration_s(path: str) -> float:
     import subprocess as _sp
 
     try:
-        r = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
-                    capture_output=True, text=True, timeout=15)
+        r = _sp.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         return float(r.stdout.strip() or 0)
     except Exception:
         return 0.0
@@ -530,7 +555,6 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
         aspect = payload.get("aspect_ratio", "16:9")
 
         # v17.7：优先走 AGNES 通道（音频驱动口型），失败时回退百炼
-        agnes_err: Exception | None = None
         if _agnes_available() and mode in ("lipsync", "image2video", "text2video"):
             try:
                 update(5, "正在提交 AGNES 云端任务…")
@@ -555,20 +579,37 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
                     "dubbed": bool(mixed),
                 }
             except Exception as e:  # noqa: BLE001 — AGNES 失败回退百炼
-                agnes_err = e
                 logger.warning("AGNES 通道失败，回退百炼: %s", e)
         # 口型同步：omni 模型 + 音频/图片引用（内部路径转绝对路径）
         if mode == "lipsync":
-            body = {"model": _OMNI_MODEL, "input": {"prompt": prompt, "audio_url": _resolve_local_upload(payload.get("audio_url", ""))}}
+            body = {
+                "model": _OMNI_MODEL,
+                "input": {"prompt": prompt, "audio_url": _resolve_local_upload(payload.get("audio_url", ""))},
+            }
             if payload.get("image_url"):
                 body["input"]["img_url"] = _resolve_local_upload(payload["image_url"])
             body["parameters"] = {"mode": "std", "aspect_ratio": aspect, "duration": duration, "watermark": False}
         elif mode == "image2video":
-            body = {"model": _VIDEO_MODEL, "input": {"prompt": prompt, "img_url": _resolve_local_upload(payload.get("image_url", ""))}}
-            body["parameters"] = {"mode": "std", "aspect_ratio": aspect, "duration": duration, "audio": True, "watermark": False}
+            body = {
+                "model": _VIDEO_MODEL,
+                "input": {"prompt": prompt, "img_url": _resolve_local_upload(payload.get("image_url", ""))},
+            }
+            body["parameters"] = {
+                "mode": "std",
+                "aspect_ratio": aspect,
+                "duration": duration,
+                "audio": True,
+                "watermark": False,
+            }
         else:
             body = {"model": _VIDEO_MODEL, "input": {"prompt": prompt}}
-            body["parameters"] = {"mode": "std", "aspect_ratio": aspect, "duration": duration, "audio": True, "watermark": False}
+            body["parameters"] = {
+                "mode": "std",
+                "aspect_ratio": aspect,
+                "duration": duration,
+                "audio": True,
+                "watermark": False,
+            }
 
         update(5, "正在提交云端生成任务…")
         cloud_tid = _submit_cloud(body)
@@ -585,7 +626,10 @@ def _ai_video_handler(task_id: str, payload: dict, update: callable, ctx: dict) 
                 break
             if state["status"] in ("FAILED", "CANCELED", "UNKNOWN"):
                 raise RuntimeError(f"云端生成失败（{state['status']}）: {state['error'] or '未知错误'}")
-            update(min(80, 10 + int((time.monotonic() - (deadline - _POLL_DEADLINE)) / 5)), f"云端生成中（{state['status']}）…")
+            update(
+                min(80, 10 + int((time.monotonic() - (deadline - _POLL_DEADLINE)) / 5)),
+                f"云端生成中（{state['status']}）…",
+            )
         if result is None:
             raise TimeoutError(f"云端生成超时（>{_POLL_DEADLINE // 60} 分钟），请稍后重试")
 

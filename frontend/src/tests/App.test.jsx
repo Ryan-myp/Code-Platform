@@ -15,9 +15,9 @@ describe('App', () => {
     expect(screen.getAllByText(/小团智能平台/i).length).toBeGreaterThan(0)
   })
 
-  it('shows navigation menu items', () => {
+  it('shows navigation menu items', async () => {
     render(<App />)
-    // 登录后重定向到 /agents，Sidebar 可见
-    expect(screen.getByText(/研发管理/i)).toBeInTheDocument()
+    // 懒加载路由就绪前整棵子树处于 Suspense fallback，需等待 chunk 加载后 Sidebar 才出现
+    expect(await screen.findByText(/研发管理/i)).toBeInTheDocument()
   })
 })

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context
 
 
 def _compute_five_dim_simple(stock_data: dict) -> dict:
@@ -10,16 +9,18 @@ def _compute_five_dim_simple(stock_data: dict) -> dict:
         "momentum": "strong" if abs(stock_data.get("volume_change", 0)) > 0.1 else "weak",
         "volatility": "high" if stock_data.get("volatility", 0) > 0.3 else "low",
         "liquidity": "good" if stock_data.get("volume", 0) > 1000000 else "poor",
-        "sentiment": "positive" if stock_data.get("news_score", 0) > 0 else "negative"
+        "sentiment": "positive" if stock_data.get("news_score", 0) > 0 else "negative",
     }
+
 
 def _prepare_five_dim_params(request_data: dict) -> dict:
     """简化版准备五维信号参数。"""
     return {
         "symbol": request_data.get("symbol", ""),
         "period": request_data.get("period", "1d"),
-        "indicators": request_data.get("indicators", [])
+        "indicators": request_data.get("indicators", []),
     }
+
 
 def _calculate_returns_simple(closes: list) -> list:
     """简化版计算收益率。"""
@@ -30,6 +31,7 @@ def _calculate_returns_simple(closes: list) -> list:
             returns.append((c - prev) / prev)
         prev = c
     return returns
+
 
 def _calculate_drawdown_simple(points: list) -> dict:
     """简化版计算回撤（含谷底日期）。兼容 dict 序列（含 close/date）或数字序列。"""
@@ -58,44 +60,34 @@ def _calculate_drawdown_simple(points: list) -> dict:
         "drawdown_peak_date": peak_date,
     }
 
+
 def _compute_risk_simple(portfolio: dict, market_data: dict) -> dict:
     """简化版风险计算。"""
     # 简化的风险计算逻辑
     volatility = market_data.get("volatility", 0.2)
     correlation = portfolio.get("correlation", 0.5)
-    
+
     risk_score = volatility * (1 + correlation)
-    
+
     return {
         "risk_score": risk_score,
-        "level": "high" if risk_score > 0.3 else ("medium" if risk_score > 0.2 else "low")
+        "level": "high" if risk_score > 0.3 else ("medium" if risk_score > 0.2 else "low"),
     }
+
 
 def _prepare_risk_params(request_data: dict) -> dict:
     """简化版准备风险参数。"""
-    return {
-        "portfolio": request_data.get("portfolio", {}),
-        "market_data": request_data.get("market_data", {})
-    }
+    return {"portfolio": request_data.get("portfolio", {}), "market_data": request_data.get("market_data", {})}
 
 
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
-import asyncio
 import math
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
-from dataclasses import dataclass, field
-from enum import Enum, auto
 from datetime import datetime
+
 """股票分析工具 - 行情获取、趋势分析、模拟交易"""
 
 import statistics
 import time
 import uuid
-from datetime import datetime
 
 import pandas as pd
 import yfinance as yf
@@ -104,7 +96,7 @@ from pydantic import BaseModel
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm_async, _safe_exc_msg
+from common.llm import call_llm_async
 
 router = APIRouter()
 
@@ -296,15 +288,15 @@ def _liquidity_level(avg_volume: float | None) -> str:
     return "低迷"
 
 
-
 def _calculate_var(prices: list, confidence: float = 0.95) -> float:
     """计算风险价值（VaR）。"""
     if len(prices) < 2:
         return 0.0
-    returns = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
+    returns = [(prices[i] - prices[i - 1]) / prices[i - 1] for i in range(1, len(prices))]
     sorted_returns = sorted(returns)
     index = int((1 - confidence) * len(sorted_returns))
     return abs(sorted_returns[max(0, index)] or 0)
+
 
 def _calculate_sharpe_ratio(returns: list, risk_free_rate: float = 0.02) -> float:
     """计算夏普比率。"""
@@ -314,6 +306,7 @@ def _calculate_sharpe_ratio(returns: list, risk_free_rate: float = 0.02) -> floa
     variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
     std_dev = math.sqrt(variance) if variance > 0 else 0.001
     return (avg_return - risk_free_rate) / std_dev
+
 
 def _calculate_max_drawdown(prices: list) -> float:
     """计算最大回撤。"""
@@ -330,40 +323,40 @@ def _calculate_max_drawdown(prices: list) -> float:
     return max_dd
 
 
-
 def _calculate_volatility_metrics(price_data):
     """计算波动率指标。"""
     if len(price_data) < 2:
         return {"volatility": 0, "level": "low"}
-    
+
     returns = []
     for i in range(1, len(price_data)):
-        ret = (price_data[i] - price_data[i-1]) / price_data[i-1] if price_data[i-1] != 0 else 0
+        ret = (price_data[i] - price_data[i - 1]) / price_data[i - 1] if price_data[i - 1] != 0 else 0
         returns.append(ret)
-    
+
     if not returns:
         return {"volatility": 0, "level": "low"}
-    
+
     avg = sum(returns) / len(returns)
     variance = sum((r - avg) ** 2 for r in returns) / len(returns)
-    volatility = variance ** 0.5
-    
+    volatility = variance**0.5
+
     if volatility > 0.03:
         level = "high"
     elif volatility > 0.015:
         level = "medium"
     else:
         level = "low"
-    
+
     return {"volatility": volatility, "level": level}
+
 
 def _calculate_volume_metrics(volume_data):
     """计算成交量指标。"""
     if not volume_data:
         return {"avg_volume": 0, "trend": "stable"}
-    
+
     avg_vol = sum(volume_data) / len(volume_data)
-    
+
     if len(volume_data) >= 2:
         recent = volume_data[-1]
         previous = volume_data[-2]
@@ -375,24 +368,25 @@ def _calculate_volume_metrics(volume_data):
             trend = "stable"
     else:
         trend = "stable"
-    
+
     return {"avg_volume": avg_vol, "trend": trend}
+
 
 def _calculate_position_risk(price_data, current_price):
     """计算位置风险。"""
     if not price_data or current_price is None:
         return {"risk_level": "unknown", "percentile": 0.5}
-    
+
     sorted_prices = sorted(price_data)
     percentile = sum(1 for p in sorted_prices if p <= current_price) / len(sorted_prices)
-    
+
     if percentile > 0.8:
         risk_level = "high"
     elif percentile > 0.6:
         risk_level = "medium"
     else:
         risk_level = "low"
-    
+
     return {"risk_level": risk_level, "percentile": percentile}
 
 
@@ -401,16 +395,16 @@ def compute_risk_metrics(data: dict | None) -> dict:
     points = (data or {}).get("data_points") or []
     closes = [p.get("close") for p in points]
     volumes = [p.get("volume") for p in points]
-    dates = [p.get("date", "") for p in points]
+    [p.get("date", "") for p in points]
 
     # 使用简化辅助函数
     returns = _calculate_returns_simple(closes)
     volatility_pct = round(statistics.stdev(returns) * (252**0.5) * 100, 2) if len(returns) >= 2 else None
-    
+
     dd_result = _calculate_drawdown_simple(points)
     max_drawdown_pct = dd_result.get("max_drawdown_pct")
     drawdown_trough_date = dd_result.get("drawdown_trough_date")
-    
+
     # 流动性（日均成交量）
     valid_volumes = [v for v in volumes if v is not None]
     avg_volume = round(sum(valid_volumes) / len(valid_volumes)) if valid_volumes else None
@@ -531,21 +525,22 @@ def compute_support_resistance(data: dict | None) -> dict:
     return {"support": support, "resistance": resistance}
 
 
-
 def _analyze_price_trend(prices: list, window: int = 5) -> float:
     """分析价格趋势。"""
     if len(prices) < window:
         return 0.0
     recent = prices[-window:]
-    trend = sum(recent[i] - recent[i-1] for i in range(1, len(recent))) / window
+    trend = sum(recent[i] - recent[i - 1] for i in range(1, len(recent))) / window
     return trend / (recent[-1] or 1)
+
 
 def _analyze_momentum(prices: list, window: int = 10) -> float:
     """分析动量指标。"""
     if len(prices) < window + 1:
         return 0.0
-    change = (prices[-1] - prices[-window-1]) / (prices[-window-1] or 1)
+    change = (prices[-1] - prices[-window - 1]) / (prices[-window - 1] or 1)
     return change
+
 
 def _analyze_volatility(prices: list, window: int = 20) -> float:
     """分析波动率。"""
@@ -556,48 +551,39 @@ def _analyze_volatility(prices: list, window: int = 20) -> float:
     variance = sum((p - mean) ** 2 for p in recent) / len(recent)
     return math.sqrt(variance) / (mean or 1)
 
-def _analyze_volume_price(prices: list, volumes: list) -> float:
-    """分析量价关系。"""
-    if len(prices) < 2 or len(volumes) < 2:
-        return 0.0
-    price_change = (prices[-1] - prices[-2]) / (prices[-2] or 1)
-    volume_change = (volumes[-1] - volumes[-2]) / (volumes[-2] or 1)
-    return price_change * volume_change
-
-
 
 def _prepare_signal_context(stock_data):
     """准备信号计算上下文。"""
     return {
         "stock_data": stock_data,
-        "signals": {
-            "momentum": [],
-            "trend": [],
-            "volatility": [],
-            "volume": [],
-            "sentiment": []
-        }
+        "signals": {"momentum": [], "trend": [], "volatility": [], "volume": [], "sentiment": []},
     }
+
 
 def _calculate_momentum_signal(data):
     """计算动量信号。"""
     return {"type": "momentum", "value": 0.5, "strength": "medium"}
 
+
 def _calculate_trend_signal(data):
     """计算趋势信号。"""
     return {"type": "trend", "direction": "up", "strength": "strong"}
+
 
 def _calculate_volatility_signal(data):
     """计算波动率信号。"""
     return {"type": "volatility", "value": 0.3, "level": "low"}
 
+
 def _calculate_volume_signal(data):
     """计算成交量信号。"""
     return {"type": "volume", "ratio": 1.2, "status": "normal"}
 
+
 def _calculate_sentiment_signal(data):
     """计算情绪信号。"""
     return {"type": "sentiment", "score": 0.7, "sentiment": "positive"}
+
 
 def _merge_five_signals(momentum, trend, volatility, volume, sentiment):
     """合并五维信号。"""
@@ -607,7 +593,10 @@ def _merge_five_signals(momentum, trend, volatility, volume, sentiment):
         "volatility": volatility,
         "volume": volume,
         "sentiment": sentiment,
-        "overall_score": (momentum["value"] + trend["strength"] + volatility["value"] + volume["ratio"] + sentiment["score"]) / 5
+        "overall_score": (
+            momentum["value"] + trend["strength"] + volatility["value"] + volume["ratio"] + sentiment["score"]
+        )
+        / 5,
     }
 
 
@@ -616,9 +605,9 @@ def _compute_trend_signal(points: list, latest: dict) -> dict:
     ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
     macd = latest.get("macd")
     close = latest.get("close")
-    
+
     ev, pos, neg = [], 0, 0
-    
+
     if None not in (ma5, ma20, ma60):
         if ma5 > ma20 > ma60:
             ev.append("均线多头排列（MA5>MA20>MA60）")
@@ -628,7 +617,7 @@ def _compute_trend_signal(points: list, latest: dict) -> dict:
             neg += 1
         else:
             ev.append("均线交织，方向不明")
-    
+
     if close and ma20:
         if close > ma20:
             ev.append("价格站上 MA20")
@@ -636,7 +625,7 @@ def _compute_trend_signal(points: list, latest: dict) -> dict:
         else:
             ev.append("价格跌破 MA20")
             neg += 1
-    
+
     if macd is not None:
         if macd > 0:
             ev.append("MACD 为正（多头动能）")
@@ -644,18 +633,18 @@ def _compute_trend_signal(points: list, latest: dict) -> dict:
         else:
             ev.append("MACD 为负（空头动能）")
             neg += 1
-    
+
     level = "bullish" if pos >= 2 else ("bearish" if neg >= 2 else "neutral")
     return {"level": level, "evidence": ev}
 
+
 def _compute_momentum_signal(points: list, latest: dict) -> dict:
     """计算动量维度信号。"""
-    from stock_tools import _LEVEL_LABELS
-    
+
     rsi = latest.get("rsi")
     ev = []
     rsi_zone = "unknown"
-    
+
     if rsi is not None:
         if rsi >= 70:
             rsi_zone = "overbought"
@@ -666,7 +655,7 @@ def _compute_momentum_signal(points: list, latest: dict) -> dict:
         else:
             rsi_zone = "neutral"
             ev.append(f"RSI={rsi:.1f} 中性区间")
-    
+
     cross = "none"
     if len(points) >= 2:
         p2 = points[-2]
@@ -679,14 +668,14 @@ def _compute_momentum_signal(points: list, latest: dict) -> dict:
             elif m0 >= s0 and m1 < s1:
                 cross = "death"
                 ev.append("MACD 死叉（DIF 下穿 DEA）")
-    
+
     if cross == "golden" or rsi_zone == "oversold":
         level = "bullish"
     elif cross == "death" or rsi_zone == "overbought":
         level = "bearish"
     else:
         level = "neutral"
-    
+
     return {"level": level, "evidence": ev, "rsi_zone": rsi_zone, "macd_cross": cross}
 
 
@@ -694,60 +683,62 @@ def _compute_trend_signal_simplified(points: list, latest: dict) -> dict:
     """简化版：计算趋势信号。"""
     ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
     close = latest.get("close")
-    
+
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
             return {"level": "bullish", "evidence": ["均线多头排列"]}
         elif ma5 < ma20 < ma60:
             return {"level": "bearish", "evidence": ["均线空头排列"]}
-    
+
     if close and ma20:
         if close > ma20:
             return {"level": "bullish", "evidence": ["价格站上MA20"]}
         else:
             return {"level": "bearish", "evidence": ["价格跌破MA20"]}
-    
+
     return {"level": "neutral", "evidence": []}
+
 
 def _compute_momentum_signal_simplified(points: list, latest: dict) -> dict:
     """简化版：计算动量信号。"""
     rsi = latest.get("rsi")
-    
+
     if rsi is not None:
         if rsi >= 70:
             return {"level": "bearish", "evidence": [f"RSI={rsi:.1f}超买"]}
         elif rsi <= 30:
             return {"level": "bullish", "evidence": [f"RSI={rsi:.1f}超卖"]}
-    
+
     return {"level": "neutral", "evidence": []}
 
 
 def _compute_trend_simplified(points, latest):
     """简化版：计算趋势信号。"""
     ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
-    
+
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
             return {"level": "bullish"}
         elif ma5 < ma20 < ma60:
             return {"level": "bearish"}
-    
+
     close = latest.get("close")
     if close and ma20:
         return {"level": "bullish" if close > ma20 else "bearish"}
-    
+
     return {"level": "neutral"}
+
 
 def _compute_momentum_simplified(points, latest):
     """简化版：计算动量信号。"""
     rsi = latest.get("rsi")
-    
+
     if rsi is not None:
         if rsi >= 70:
             return {"level": "bearish"}
         elif rsi <= 30:
             return {"level": "bullish"}
-    
+
     return {"level": "neutral"}
 
 
@@ -756,7 +747,7 @@ def _compute_simple(points: list, latest: dict) -> dict:
     ma5, ma20, ma60 = latest.get("ma5"), latest.get("ma20"), latest.get("ma60")
     close = latest.get("close")
     rsi = latest.get("rsi")
-    
+
     # 趋势判断
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
@@ -769,14 +760,15 @@ def _compute_simple(points: list, latest: dict) -> dict:
         trend = "bullish" if close > ma20 else "bearish"
     else:
         trend = "neutral"
-    
+
     # 动量判断
     if rsi is not None:
         momentum = "overbought" if rsi >= 70 else ("oversold" if rsi <= 30 else "neutral")
     else:
         momentum = "unknown"
-    
+
     return {"trend": trend, "momentum": momentum}
+
 
 def _dim_trend(points: list, latest: dict) -> dict:
     """趋势维度：均线排列 + 价格 vs MA20 + MACD 方向。"""
@@ -844,8 +836,11 @@ def _dim_momentum(points: list, latest: dict, ind: dict) -> dict:
     else:
         level = "neutral"
     return {
-        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
-        "rsi_zone": rsi_zone, "macd_cross": cross,
+        "level": level,
+        "label": _LEVEL_LABELS[level],
+        "evidence": ev,
+        "rsi_zone": rsi_zone,
+        "macd_cross": cross,
     }
 
 
@@ -869,8 +864,11 @@ def _dim_volatility(points: list, latest: dict, data: dict) -> dict:
         ev.append(f"年化波动率等级：{vol_level}")
     level = "bullish" if boll_pos == "lower" else ("bearish" if boll_pos == "upper" else "neutral")
     return {
-        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
-        "boll_position": boll_pos, "volatility_level": vol_level,
+        "level": level,
+        "label": _LEVEL_LABELS[level],
+        "evidence": ev,
+        "boll_position": boll_pos,
+        "volatility_level": vol_level,
     }
 
 
@@ -903,10 +901,15 @@ def _dim_volume_price(points: list, latest: dict) -> dict:
                 ev.append("缩量回调，抛压有限（健康整理）")
         else:
             ev.append("量能数据不足")
-    level = {"confirmed": "bullish", "shakeout": "bullish", "weak": "bearish", "divergence": "bearish"}.get(pattern, "neutral")
+    level = {"confirmed": "bullish", "shakeout": "bullish", "weak": "bearish", "divergence": "bearish"}.get(
+        pattern, "neutral"
+    )
     return {
-        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
-        "volume_ratio": vol_ratio, "pattern": pattern,
+        "level": level,
+        "label": _LEVEL_LABELS[level],
+        "evidence": ev,
+        "volume_ratio": vol_ratio,
+        "pattern": pattern,
     }
 
 
@@ -930,8 +933,11 @@ def _dim_position(points: list, latest: dict, data: dict) -> dict:
             ev.append(f"价格处于 52 周区间 {pct_52w}% 分位")
     level = {"high": "bearish", "low": "bullish"}.get(zone, "neutral")
     return {
-        "level": level, "label": _LEVEL_LABELS[level], "evidence": ev,
-        "pct_52w": pct_52w, "zone": zone,
+        "level": level,
+        "label": _LEVEL_LABELS[level],
+        "evidence": ev,
+        "pct_52w": pct_52w,
+        "zone": zone,
     }
 
 
@@ -951,7 +957,9 @@ def _dim_summary(dims: dict) -> dict:
         verdict = "多空分歧"
     else:
         verdict = "信号分歧，方向待确认"
-    strength = "强" if bullish_dims >= 4 or bearish_dims >= 4 else ("中" if bullish_dims >= 2 or bearish_dims >= 2 else "弱")
+    strength = (
+        "强" if bullish_dims >= 4 or bearish_dims >= 4 else ("中" if bullish_dims >= 2 or bearish_dims >= 2 else "弱")
+    )
     return {
         "bullish_dims": bullish_dims,
         "bearish_dims": bearish_dims,
@@ -980,6 +988,7 @@ def compute_five_dim_signals(data: dict | None) -> dict:
     }
     return {"dimensions": dims, "summary": _dim_summary(dims)}
 
+
 # ══════════════════════════════════════════════════════════════
 # 热门股票表（v22：搜索兜底 + 前端一键直达）
 # ══════════════════════════════════════════════════════════════
@@ -994,7 +1003,13 @@ _HOT_STOCKS = [
     {"symbol": "META", "name": "Meta Platforms", "cn_name": "Meta", "exchange": "NASDAQ", "type": "Equity"},
     {"symbol": "TSLA", "name": "Tesla", "cn_name": "特斯拉", "exchange": "NASDAQ", "type": "Equity"},
     {"symbol": "NFLX", "name": "Netflix", "cn_name": "奈飞", "exchange": "NASDAQ", "type": "Equity"},
-    {"symbol": "AMD", "name": "Advanced Micro Devices", "cn_name": "超威半导体", "exchange": "NASDAQ", "type": "Equity"},
+    {
+        "symbol": "AMD",
+        "name": "Advanced Micro Devices",
+        "cn_name": "超威半导体",
+        "exchange": "NASDAQ",
+        "type": "Equity",
+    },
     {"symbol": "BABA", "name": "Alibaba Group", "cn_name": "阿里巴巴", "exchange": "NYSE", "type": "Equity"},
     {"symbol": "PDD", "name": "Pinduoduo", "cn_name": "拼多多", "exchange": "NASDAQ", "type": "Equity"},
     {"symbol": "JPM", "name": "JPMorgan Chase", "cn_name": "摩根大通", "exchange": "NYSE", "type": "Equity"},
@@ -1217,9 +1232,22 @@ def _fmt_num(v, digits=2) -> str:
 
 # technical / fundamental 模板占位符字段（与旧实现一致的注入字段）
 _BASE_FIELDS = (
-    "symbol", "name", "current_price", "52w_high", "52w_low",
-    "rsi", "macd", "ma5", "ma20", "ma60",
-    "market_cap", "pe_ratio", "eps", "dividend_yield", "sector", "industry",
+    "symbol",
+    "name",
+    "current_price",
+    "52w_high",
+    "52w_low",
+    "rsi",
+    "macd",
+    "ma5",
+    "ma20",
+    "ma60",
+    "market_cap",
+    "pe_ratio",
+    "eps",
+    "dividend_yield",
+    "sector",
+    "industry",
 )
 
 
@@ -1286,7 +1314,9 @@ def _build_analysis_prompt(data: dict, risk_metrics: dict, signals: dict, levels
         risk_level=risk_metrics.get("risk_level", "N/A"),
         volatility_pct=risk_metrics.get("volatility_pct") if risk_metrics.get("volatility_pct") is not None else "N/A",
         volatility_level=risk_metrics.get("volatility_level", "N/A"),
-        max_drawdown_pct=risk_metrics.get("max_drawdown_pct") if risk_metrics.get("max_drawdown_pct") is not None else "N/A",
+        max_drawdown_pct=risk_metrics.get("max_drawdown_pct")
+        if risk_metrics.get("max_drawdown_pct") is not None
+        else "N/A",
         peak_date=risk_metrics.get("drawdown_peak_date") or "N/A",
         trough_date=risk_metrics.get("drawdown_trough_date") or "N/A",
         liquidity_level=risk_metrics.get("liquidity_level", "N/A"),
@@ -1367,8 +1397,7 @@ async def list_stock_reports(limit: int = 20, current_user: dict = require_auth(
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, symbol, period, report, created_at FROM stock_reports "
-            "WHERE user_id=? ORDER BY id DESC LIMIT ?",
+            "SELECT id, symbol, period, report, created_at FROM stock_reports WHERE user_id=? ORDER BY id DESC LIMIT ?",
             (uid, min(max(limit, 1), 100)),
         ).fetchall()
         return {"items": [dict(r) for r in rows]}
@@ -1612,14 +1641,14 @@ async def reset_portfolio(current_user: dict = require_auth()):
 def _analyze_trend(data: dict) -> dict:
     """趋势分析：均线排列、MACD 金叉死叉。"""
     ind = (data or {}).get("indicators") or {}
-    points = (data or {}).get("data_points") or []
-    
+    (data or {}).get("data_points") or []
+
     ma5 = ind.get("ma5")
     ma20 = ind.get("ma20")
     ma60 = ind.get("ma60")
     macd = ind.get("macd")
     signal = ind.get("signal")
-    
+
     # 均线排列
     if ma5 and ma20 and ma60:
         if ma5 > ma20 > ma60:
@@ -1634,7 +1663,7 @@ def _analyze_trend(data: dict) -> dict:
     else:
         trend_level = "neutral"
         trend_label = "数据不足"
-    
+
     # MACD
     if macd and signal:
         if macd > signal and macd > 0:
@@ -1645,26 +1674,23 @@ def _analyze_trend(data: dict) -> dict:
             macd_signal = "震荡"
     else:
         macd_signal = "数据不足"
-    
-    evidence = [f"MA5={ma5:.2f}" if ma5 else "MA5=N/A", 
-                f"MA20={ma20:.2f}" if ma20 else "MA20=N/A",
-                f"MA60={ma60:.2f}" if ma60 else "MA60=N/A",
-                f"MACD={macd:.4f}" if macd else "MACD=N/A"]
-    
-    return {
-        "level": trend_level,
-        "label": trend_label,
-        "evidence": evidence,
-        "macd_signal": macd_signal
-    }
+
+    evidence = [
+        f"MA5={ma5:.2f}" if ma5 else "MA5=N/A",
+        f"MA20={ma20:.2f}" if ma20 else "MA20=N/A",
+        f"MA60={ma60:.2f}" if ma60 else "MA60=N/A",
+        f"MACD={macd:.4f}" if macd else "MACD=N/A",
+    ]
+
+    return {"level": trend_level, "label": trend_label, "evidence": evidence, "macd_signal": macd_signal}
 
 
 def _analyze_momentum(data: dict) -> dict:
     """动量分析：RSI 超买超卖、KDJ。"""
     ind = (data or {}).get("indicators") or {}
-    
+
     rsi = ind.get("rsi")
-    
+
     if rsi is not None:
         if rsi >= 70:
             momentum_level = "bearish"
@@ -1678,34 +1704,35 @@ def _analyze_momentum(data: dict) -> dict:
     else:
         momentum_level = "neutral"
         momentum_label = "RSI 数据不足"
-    
+
     return {
         "level": momentum_level,
         "label": momentum_label,
         "evidence": [f"RSI={rsi:.1f}" if rsi else "RSI=N/A"],
-        "rsi": rsi
+        "rsi": rsi,
     }
 
 
 def _analyze_volatility(data: dict) -> dict:
     """波动分析：ATR、标准差。"""
     points = (data or {}).get("data_points") or []
-    
+
     if not points:
         return {"level": "neutral", "label": "数据不足", "evidence": []}
-    
+
     closes = [p.get("close") for p in points if p.get("close")]
     if len(closes) < 2:
         return {"level": "neutral", "label": "数据不足", "evidence": []}
-    
+
     # 计算日收益率标准差
     returns = []
     for i in range(1, len(closes)):
-        if closes[i-1] > 0:
-            returns.append((closes[i] - closes[i-1]) / closes[i-1])
-    
+        if closes[i - 1] > 0:
+            returns.append((closes[i] - closes[i - 1]) / closes[i - 1])
+
     if returns:
         import statistics
+
         vol_std = statistics.stdev(returns) * 100
         if vol_std > 3:
             vol_level = "high"
@@ -1719,30 +1746,30 @@ def _analyze_volatility(data: dict) -> dict:
     else:
         vol_level = "neutral"
         vol_label = "波动率计算失败"
-    
+
     return {
         "level": vol_level,
         "label": vol_label,
         "evidence": [f"日波动率={vol_std:.2f}%" if returns else "波动率=N/A"],
-        "vol_std": round(vol_std, 2) if returns else None
+        "vol_std": round(vol_std, 2) if returns else None,
     }
 
 
 def _analyze_volume_price(data: dict) -> dict:
     """量价分析：成交量变化、资金流向。"""
     points = (data or {}).get("data_points") or []
-    
+
     if not points:
         return {"level": "neutral", "label": "数据不足", "evidence": []}
-    
+
     # 最近5日均量 vs 前5日均量
     recent_vols = [p.get("volume", 0) for p in points[-5:] if p.get("volume")]
     prev_vols = [p.get("volume", 0) for p in points[-10:-5] if p.get("volume")]
-    
+
     if recent_vols and prev_vols:
         avg_recent = sum(recent_vols) / len(recent_vols)
         avg_prev = sum(prev_vols) / len(prev_vols)
-        
+
         if avg_prev > 0:
             vol_change = (avg_recent - avg_prev) / avg_prev * 100
             if vol_change > 20:
@@ -1760,7 +1787,7 @@ def _analyze_volume_price(data: dict) -> dict:
     else:
         vol_level = "neutral"
         vol_label = "量能数据不足"
-    
+
     # 价格趋势
     recent_closes = [p.get("close") for p in points[-5:] if p.get("close")]
     if len(recent_closes) >= 2:
@@ -1769,12 +1796,14 @@ def _analyze_volume_price(data: dict) -> dict:
     else:
         price_change = 0
         price_trend = "持平"
-    
+
     return {
         "level": vol_level,
         "label": vol_label,
-        "evidence": [f"量能变化={vol_change:.1f}%" if recent_vols and prev_vols else "量能=N/A",
-                     f"价格趋势={price_trend} ({price_change:+.2f}%)"],
+        "evidence": [
+            f"量能变化={vol_change:.1f}%" if recent_vols and prev_vols else "量能=N/A",
+            f"价格趋势={price_trend} ({price_change:+.2f}%)",
+        ],
         "vol_change": round(vol_change, 2) if recent_vols and prev_vols else None,
-        "price_change": round(price_change, 2)
+        "price_change": round(price_change, 2),
     }

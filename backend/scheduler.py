@@ -69,7 +69,7 @@ def _ensure_table():
         )
         # v24：幂等补列（旧库升级：缺 last_status 时 ALTER 补齐，否则回写 last_run/last_status 报 no such column）
         cols = {row[1] for row in conn.execute("PRAGMA table_info(scheduler_jobs)").fetchall()}
-        if 'last_status' not in cols:
+        if "last_status" not in cols:
             conn.execute("ALTER TABLE scheduler_jobs ADD COLUMN last_status TEXT DEFAULT ''")
         conn.commit()
     finally:
@@ -186,9 +186,7 @@ def _execute_job(job) -> tuple:
 
             conn = get_db()
             try:
-                row = conn.execute(
-                    "SELECT username FROM users WHERE id=?", (str(job.get("user_id", 0)),)
-                ).fetchone()
+                row = conn.execute("SELECT username FROM users WHERE id=?", (str(job.get("user_id", 0)),)).fetchone()
             finally:
                 conn.close()
             username = row["username"] if row else "all"
@@ -211,8 +209,8 @@ def _execute_job(job) -> tuple:
             period = str(cfg.get("period") or "3mo")
             analysis_type = str(cfg.get("analysis_type") or "comprehensive")
 
-            from stock_tools import run_stock_analysis
             from notify_api import send_webhook_message
+            from stock_tools import run_stock_analysis
 
             out = asyncio.run(run_stock_analysis(symbol, period, analysis_type))
             report = str(out.get("result") or "")
@@ -224,8 +222,7 @@ def _execute_job(job) -> tuple:
             conn = get_db()
             try:
                 conn.execute(
-                    "INSERT INTO stock_reports (user_id, symbol, period, report, created_at) "
-                    "VALUES (?,?,?,?,?)",
+                    "INSERT INTO stock_reports (user_id, symbol, period, report, created_at) VALUES (?,?,?,?,?)",
                     (uid, out.get("symbol") or symbol, period, report, datetime.now().isoformat()),
                 )
                 conn.commit()
@@ -239,6 +236,7 @@ def _execute_job(job) -> tuple:
             # v18：企业级智能优化（每小时20分运行，全面提升系统到商用级别）
             try:
                 from enterprise_optimizer import run_enterprise_optimizer
+
                 report_path = run_enterprise_optimizer()
                 return True, f"优化完成，报告：{report_path}"
             except Exception as e:
@@ -280,19 +278,30 @@ def _run_job(job) -> None:
     ok, out = _run_with_retry(lambda: _execute_job(job))
     _record_run(job["id"], "success" if ok else "failed", output=out if ok else "", error="" if ok else out)
     logger.info("[Scheduler] 任务 %s 执行%s: %s", job.get("name"), "成功" if ok else "失败", out)
-    
+
     # v18: 企业级优化任务执行后自动生成报告并提交
     if job.get("job_type") == "enterprise_optimizer" and ok:
         try:
             import subprocess as _sp
+
             # 1. 生成优化报告（已运行，这里只是确认）
             # 2. Git提交报告
             report_dir = Path(__file__).parent / ".optimizer_reports"
             if report_dir.exists():
                 _sp.run(["git", "add", str(report_dir)], cwd=str(PROJECT_DIR), capture_output=True)
                 # 3. Git推送
-                r = _sp.run(["git", "commit", "-m", f"docs: 自动优化报告 {datetime.now().strftime('%Y-%m-%d %H:%M')}", "--allow-empty"], 
-                           cwd=str(PROJECT_DIR), capture_output=True, text=True)
+                r = _sp.run(
+                    [
+                        "git",
+                        "commit",
+                        "-m",
+                        f"docs: 自动优化报告 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                        "--allow-empty",
+                    ],
+                    cwd=str(PROJECT_DIR),
+                    capture_output=True,
+                    text=True,
+                )
                 if r.returncode == 0:
                     _sp.run(["git", "push", "origin", "main"], cwd=str(PROJECT_DIR), capture_output=True, timeout=30)
                     logger.info("[Scheduler] 优化报告已自动提交推送")
@@ -338,10 +347,10 @@ def _run_scheduler_loop():
                         conn.commit()
                     finally:
                         conn.close()
-            
+
             # 2. 检查通知文件（v18 企业级优化）
             _check_notification_files()
-            
+
         except Exception as e:
             logger.error(f"[Scheduler] 调度循环异常: {e}")
 
@@ -351,25 +360,25 @@ def _run_scheduler_loop():
 def _check_notification_files():
     """检查通知文件并自动执行（v18 企业级优化）。"""
     import json as _json
-    from pathlib import Path as _Path
-    
+
     try:
         if not NOTIFY_DIR.exists():
             return
-        
+
         # 查找未处理的通知文件
         for f in list(NOTIFY_DIR.glob("*.json")):
             try:
                 content = _json.loads(f.read_text())
                 job_type = content.get("job_type")
-                
+
                 # 只处理企业级优化通知
                 if job_type == "enterprise_optimizer":
                     logger.info(f"[Scheduler] 发现通知文件: {f.name}，自动执行优化")
                     # 执行优化
                     from enterprise_optimizer import run_enterprise_optimizer
+
                     report_path = run_enterprise_optimizer()
-                    
+
                     # 标记为已处理（重命名为.done）
                     done_file = f.with_suffix(".done")
                     try:
@@ -378,9 +387,9 @@ def _check_notification_files():
                         # 如果重命名失败，创建标记文件
                         (f.parent / f"{f.stem}_done").touch()
                         f.unlink(missing_ok=True)
-                    
+
                     logger.info(f"[Scheduler] 通知文件驱动优化完成: {report_path}")
-                    
+
             except Exception as e:
                 logger.warning(f"[Scheduler] 处理通知文件失败 {f.name}: {e}")
     except Exception as e:
@@ -391,16 +400,12 @@ def create_notification(job_type: str, **kwargs):
     """创建通知文件（v18）。"""
     import json as _json
     from datetime import datetime as _dt
-    
-    notify_data = {
-        "job_type": job_type,
-        "created_at": _dt.now().isoformat(),
-        **kwargs
-    }
-    
+
+    notify_data = {"job_type": job_type, "created_at": _dt.now().isoformat(), **kwargs}
+
     filename = f"notify_{_dt.now().strftime('%Y%m%d_%H%M%S')}_{hash(str(notify_data)) % 10000:04d}.json"
     filepath = NOTIFY_DIR / filename
-    
+
     try:
         filepath.write_text(_json.dumps(notify_data, ensure_ascii=False, indent=2))
         logger.info(f"[Scheduler] 创建通知文件: {filepath.name}")
@@ -480,7 +485,14 @@ def create_job(payload: dict, current_user: dict = Depends(require_auth)):
         )
         conn.commit()
         job_id = cur.lastrowid
-        return {"id": job_id, "name": name, "cron_expression": cron, "next_run": next_run, "created_at": now, "message": "任务创建成功"}
+        return {
+            "id": job_id,
+            "name": name,
+            "cron_expression": cron,
+            "next_run": next_run,
+            "created_at": now,
+            "message": "任务创建成功",
+        }
     finally:
         conn.close()
 
@@ -593,6 +605,7 @@ def trigger_job(job_id: int, current_user: dict = Depends(require_auth)):
         "error": run.get("error", ""),
     }
 
+
 # ══════════════════════════════════════════════════════════════
 # 企业级优化器任务注册（v18.0）
 # ══════════════════════════════════════════════════════════════
@@ -601,9 +614,7 @@ def _ensure_optimizer_job():
     conn = get_db()
     try:
         # 检查是否已存在
-        row = conn.execute(
-            "SELECT id FROM scheduler_jobs WHERE name='企业级智能优化'"
-        ).fetchone()
+        row = conn.execute("SELECT id FROM scheduler_jobs WHERE name='企业级智能优化'").fetchone()
         if row:
             # 更新 cron 表达式为每小时20分
             conn.execute(
@@ -615,7 +626,14 @@ def _ensure_optimizer_job():
             # 插入新任务
             conn.execute(
                 "INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, enabled) VALUES (?, ?, ?, ?, ?, ?)",
-                ("admin", "企业级智能优化", "每小时自动运行，全面提升系统到商用级别", "enterprise_optimizer", "20 * * * *", 1)
+                (
+                    "admin",
+                    "企业级智能优化",
+                    "每小时自动运行，全面提升系统到商用级别",
+                    "enterprise_optimizer",
+                    "20 * * * *",
+                    1,
+                ),
             )
             conn.commit()
             logger.info("✅ 企业级优化器任务已注册: 每小时20分")

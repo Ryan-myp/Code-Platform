@@ -15,7 +15,7 @@ from fastapi.responses import Response, StreamingResponse
 from common.auth import decode_access_token, get_user_profile, require_auth
 from common.config import BIZ_DELIVERY_DIR, DEFAULT_MODELS, load_config
 from common.db import get_db
-from common.llm import call_llm, call_llm_async, log_usage, stream_llm_async, _safe_exc_msg
+from common.llm import call_llm, call_llm_async, log_usage, stream_llm_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["研发流程"])
@@ -541,20 +541,21 @@ def _enhance_review_system(base_system: str, domain: str) -> str:
 def _parse_review_to_structured(text: str, resolved_ids: list) -> dict:
     """将审查文本解析为结构化 JSON（v20）。"""
     import re as _re
+
     issues = []
     # 匹配 P0/P1/P2 级别的问题行（P0 为两位，注意 [P012]+ 匹配一个或多个）
     patterns = [
-        r'\*?\s*(\d+)\.\s*\*\*?([P012]{1,2})\*\*?.*?问题[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)',
-        r'\*?\s*(\d+)\.\s*([P012]{1,2})\s*.+?[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)',
-        r'\|\s*(\d+)\s*\|\s*([P012]{1,2})\s*\|\s*(.+?)\s*\|',
-        r'\[([P012]{1,2})\]\s*[:：]\s*(.+?)(?=\n|$)',
+        r"\*?\s*(\d+)\.\s*\*\*?([P012]{1,2})\*\*?.*?问题[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)",
+        r"\*?\s*(\d+)\.\s*([P012]{1,2})\s*.+?[：:]\s*(.+?)(?=\n\s*\*?\s*\d+\.|\n\s*##|\n\s*###|$)",
+        r"\|\s*(\d+)\s*\|\s*([P012]{1,2})\s*\|\s*(.+?)\s*\|",
+        r"\[([P012]{1,2})\]\s*[:：]\s*(.+?)(?=\n|$)",
     ]
     seen = set()
     for pat in patterns:
         for m in _re.finditer(pat, text, _re.DOTALL):
             # 表格模式：group(1)=编号, group(2)=级别, group(3)=描述
             # 带编号模式：同上
-            if pat.startswith(r'\[['):
+            if pat.startswith(r"\[["):
                 num = str(len(issues) + 1)
                 level = m.group(1)
                 desc = m.group(2)
@@ -565,12 +566,12 @@ def _parse_review_to_structured(text: str, resolved_ids: list) -> dict:
             if num in seen:
                 continue
             level = level.upper()
-            desc = _re.sub(r'\*\*', '', desc).strip()[:200]
+            desc = _re.sub(r"\*\*", "", desc).strip()[:200]
             if desc and num not in resolved_ids:
                 issues.append({"id": num, "level": level, "description": desc})
                 seen.add(num)
     # 计算评分
-    score_match = _re.search(r'(\d+)\s*/\s*100', text)
+    score_match = _re.search(r"(\d+)\s*/\s*100", text)
     score = int(score_match.group(1)) if score_match else None
     return {
         "score": score,
@@ -585,6 +586,7 @@ def _parse_review_to_structured(text: str, resolved_ids: list) -> dict:
 def ensure_requirements_tables():
     """幂等补列：requirements 表扩展 v20 字段。"""
     from common.db import get_db
+
     conn = get_db()
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(requirements)").fetchall()]
     if "resolved_review_ids" not in cols:
@@ -1233,8 +1235,8 @@ async def usage_stats(
     success = conn.execute(f"SELECT COUNT(*) c FROM usage_logs WHERE 1=1{where} AND success=1", params).fetchone()["c"]
     avg_time = conn.execute(f"SELECT AVG(response_time) a FROM usage_logs WHERE 1=1{where}", params).fetchone()["a"]
     by_type = conn.execute(
-        f"SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs WHERE 1=1{where} GROUP BY task_type"
-        , params
+        f"SELECT task_type, COUNT(*) c, AVG(response_time) a FROM usage_logs WHERE 1=1{where} GROUP BY task_type",
+        params,
     ).fetchall()
     recent = conn.execute(
         f"SELECT * FROM usage_logs WHERE 1=1{where} ORDER BY timestamp DESC LIMIT 10", params
@@ -1290,9 +1292,7 @@ async def usage_stats_users(current_user: dict = Depends(require_auth)):
     if "user_id" not in cols:
         conn.execute("ALTER TABLE usage_logs ADD COLUMN user_id TEXT DEFAULT ''")
         conn.commit()
-    rows = conn.execute(
-        "SELECT DISTINCT user_id FROM usage_logs WHERE user_id != '' ORDER BY user_id"
-    ).fetchall()
+    rows = conn.execute("SELECT DISTINCT user_id FROM usage_logs WHERE user_id != '' ORDER BY user_id").fetchall()
     conn.close()
     if not rows:
         return []

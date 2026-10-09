@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 
 
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from collections.abc import Callable
 from datetime import datetime
+
 """短剧工厂模块 - LLM 剧本分镜 + CosyVoice 配音 + ffmpeg 视频组装（本地管线）。
 
 流水线：主题 → LLM 剧本（分幕/分镜/台词/旁白）→ 每镜 CosyVoice 配音 →
@@ -18,7 +12,6 @@ PIL 镜头背景图 → ffmpeg 逐镜合成 → 拼接 + 字幕烧录 → mp4 �
 镜头素材当前为本地生成（渐变+文案背景图），后续可平滑替换为数字人口播/云 API 视频素材。
 """
 
-import asyncio
 import hashlib
 import io
 import json
@@ -31,18 +24,17 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, Form, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from common.artifacts import save_artifact
 from common.auth import require_auth
-from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config, resolve_api_key, resolve_api_base
+from common.config import load_config, resolve_api_base, resolve_api_key
 from common.db import get_db
-from common.llm import call_llm_async, api_error_detail
-from pydantic import BaseModel, Field
+from common.llm import api_error_detail, call_llm_async
 from task_queue import create_task, register_handler
 
 logger = logging.getLogger(__name__)
@@ -61,8 +53,7 @@ CACHE_DIR = DRAMA_DIR / "cache"  # Pexels 下载缓存（按 URL 哈希去重）
 MUSIC_DIR = DRAMA_DIR / "music"  # 背景音乐目录（*.mp3/wav，可选）
 for _d in (MATERIALS_DIR, CACHE_DIR, MUSIC_DIR):
     _d.mkdir(parents=True, exist_ok=True)
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
-
+from common.helpers import _notify_progress
 
 
 def _ffmpeg_bin() -> str:
@@ -129,7 +120,8 @@ def _pexels_search_video(query: str) -> str | None:
             if not (8 <= dur <= 40):  # 太短循环突兀 / 太长超出单镜
                 continue
             files = [
-                f for f in (v.get("video_files") or [])
+                f
+                for f in (v.get("video_files") or [])
                 if f.get("file_type") == "video/mp4" and f.get("link") and f.get("width") and f.get("height")
             ]
             pool = [f for f in files if f["height"] >= f["width"]] or files
@@ -202,6 +194,7 @@ def _fetch_material(query: str) -> tuple[Path | None, str]:
         return local, ("video" if local.suffix.lower() in _VIDEO_EXTS else "image")
     return None, ""
 
+
 _SCRIPT_SYSTEM = """你是资深短剧编剧。把用户主题扩写成一部节奏紧凑的竖屏短剧脚本。
 要求：
 1. 输出严格的 JSON（不要 markdown 代码块，不要多余文字）
@@ -222,7 +215,6 @@ async def _generate_script(theme: str, duration_hint: int, template: dict | None
     保证接口返回的剧本与最终成片剧本一致（所见即所得）。
     题材模板（drama_templates）注入人设/结构/风格/钩子，让 AI 按爆款套路创作。
     """
-    last_err = ""
     tpl_prompt = ""
     if template:
         tpl_prompt = (
@@ -244,7 +236,7 @@ async def _generate_script(theme: str, duration_hint: int, template: dict | None
             script = _parse_script(raw)
             break
         except (ValueError, json.JSONDecodeError) as e:
-            last_err = str(e)
+            str(e)
             logger.warning(f"剧本解析失败（第 {attempt + 1} 次）: {e}")
     else:
         raise HTTPException(502, "剧本生成失败，请稍后重试")
@@ -267,9 +259,7 @@ def _enforce_duration(scenes: list[dict], duration_hint: int) -> list[dict]:
         scenes = scenes[:max_scenes]
         logger.info(f"[时长防御] 场次截断至 {max_scenes}（目标 {duration_hint}s）")
     budget = max(120, int(duration_hint * 2.5))
-    words = sum(
-        len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes
-    )
+    words = sum(len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes)
     if words > budget:
         ratio = budget / words
         for s in scenes:
@@ -286,10 +276,11 @@ def _enforce_duration(scenes: list[dict], duration_hint: int) -> list[dict]:
             orig = max(2, int(s.get("sec") or base))
             if orig > base * 1.25 or orig < base * 0.75:
                 s["sec"] = base
-        words_now = sum(
-            len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes
+        words_now = sum(len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) for s in scenes)
+        est = sum(
+            max(len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) / 1.5, s.get("sec", base))
+            for s in scenes
         )
-        est = sum(max(len(" ".join(x for x in (s.get("narrator"), s.get("dialogue")) if x)) / 1.5, s.get("sec", base)) for s in scenes)
         logger.info(
             f"[时长防御] {len(scenes)} 场 / 台词 {words_now} 字 / 均场 sec {base} / 预估成片约 {est:.0f}s（目标 {duration_hint}s）"
         )
@@ -306,9 +297,14 @@ def _parse_characters(data: dict) -> list[dict]:
     for c in data.get("characters") or []:
         if not isinstance(c, dict):
             continue
-        cid = re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").lower())
+        cid = re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").strip().lower())
         name = str(c.get("name") or "").strip()[:20]
-        if not cid or not name or cid in seen:
+        if not name:
+            continue
+        if not cid:
+            # 无 id 时自动分配（与 1.0.70 t2v 管线行为对齐）
+            cid = f"c{len(chars) + 1}"
+        if cid in seen:
             continue
         seen.add(cid)
         gender = str(c.get("gender") or "").strip()[:6]
@@ -317,10 +313,18 @@ def _parse_characters(data: dict) -> list[dict]:
         outfit = str(c.get("outfit") or "").strip()[:80]
         search = re.sub(r"[\"'\[\]]", "", str(c.get("search") or "").strip())[:60]
         anchor = "，".join(x for x in (name, gender, age, appearance, outfit) if x)
-        chars.append({
-            "id": cid, "name": name, "gender": gender, "age": age,
-            "appearance": appearance, "outfit": outfit, "search": search, "anchor": anchor,
-        })
+        chars.append(
+            {
+                "id": cid,
+                "name": name,
+                "gender": gender,
+                "age": age,
+                "appearance": appearance,
+                "outfit": outfit,
+                "search": search,
+                "anchor": anchor,
+            }
+        )
     return chars
 
 
@@ -366,12 +370,26 @@ def _parse_script(raw: str) -> dict:
         # v13.24 情绪白名单清洗：LLM 可能输出非法/中文情绪标签，非法回落 neutral
         emo = str(s.get("emotion") or "neutral").strip().lower()
         if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
-            emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
-                   "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
+            emo = {
+                "欢快": "happy",
+                "开心": "happy",
+                "悲伤": "sad",
+                "难过": "sad",
+                "激昂": "angry",
+                "愤怒": "angry",
+                "温柔": "gentle",
+                "严肃": "serious",
+            }.get(emo, "neutral")
         s["emotion"] = emo
         # v1.0.40 景别规范化（漫剧镜头语言）
         _sz = str(s.get("shot_size") or "").strip()
-        _sz = _sz.replace("特写", "closeup").replace("近景", "medium").replace("中景", "medium").replace("全景", "wide").replace("远景", "wide")
+        _sz = (
+            _sz.replace("特写", "closeup")
+            .replace("近景", "medium")
+            .replace("中景", "medium")
+            .replace("全景", "wide")
+            .replace("远景", "wide")
+        )
         s["shot_size"] = _sz if _sz in ("closeup", "medium", "wide") else ""
         # v13.25 素材关键词：search 清洗（限长/去引号），缺失回退 shot 前 30 字符（Pexels 兼容中文）
         search = str(s.get("search") or "").strip()
@@ -440,8 +458,9 @@ def _portrait_key(cid: str, char: dict, art_style: str = "") -> str:
     return f"{cid}_{hashlib.sha256(sig.encode()).hexdigest()[:8]}"
 
 
-def _load_char_portrait(cid: str, char: dict, uid: str = "", art_style: str = "",
-                       _api_key: str = "", _api_base: str = "") -> bytes | None:
+def _load_char_portrait(
+    cid: str, char: dict, uid: str = "", art_style: str = "", _api_key: str = "", _api_base: str = ""
+) -> bytes | None:
     """读取角色立绘缓存（无则生成）。"""
     key = _portrait_key(cid, char, art_style)
     path = PORTRAIT_DIR / f"{key}.jpg"
@@ -463,7 +482,9 @@ def _save_char_portrait(cid: str, char: dict, data: bytes, art_style: str = "") 
         pass
 
 
-def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "", _api_key: str = "", _api_base: str = "") -> bytes | None:
+def _generate_character_portrait(
+    char: dict, uid: str = "", art_style: str = "", _api_key: str = "", _api_base: str = ""
+) -> bytes | None:
     """生成角色定妆立绘（漫剧模式：全剧同脸同装的核心）。
 
     根据角色圣经的外貌/服装描述 + 画风预设，生成一张竖屏半身立绘，
@@ -477,10 +498,11 @@ def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "",
     if not char or not _api_key:
         return None
     try:
-        import base64
         import io
+
         import requests
         from PIL import Image
+
         from common.config import IMAGE_MODEL, require_model, resolve_feature_model
 
         name = char.get("name") or ""
@@ -523,9 +545,17 @@ def _generate_character_portrait(char: dict, uid: str = "", art_style: str = "",
         return None
 
 
-def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None = None, uid: str = "",
-                           art_style: str = "", dialogue: str = "", shot_size: str = "",
-                           _api_key: str = "", _api_base: str = "") -> bytes | None:
+def _generate_scene_image(
+    shot: str,
+    anchors: str = "",
+    refs: list[bytes] | None = None,
+    uid: str = "",
+    art_style: str = "",
+    dialogue: str = "",
+    shot_size: str = "",
+    _api_key: str = "",
+    _api_base: str = "",
+) -> bytes | None:
     """AGNES 文生图/图生图镜头插画（v13.30 角色一致性 + 画风统一）。
 
     参考图 refs（角色立绘）非空 → 图生图/多图合成锚定角色形象；
@@ -537,8 +567,10 @@ def _generate_scene_image(shot: str, anchors: str = "", refs: list[bytes] | None
     try:
         import base64
         import io
+
         import requests
         from PIL import Image
+
         # 函数内取最新配置：config 表运行中修改后无需重启即时生效
         from common.config import IMAGE_MODEL, require_model, resolve_feature_model
         from common.llm import api_error_detail
@@ -649,7 +681,9 @@ def _make_scene_card(text: str, idx: int, total: int, title: str, path: str, sho
         heading = (shot or text or "").strip()[:12]
         if heading:
             draw.text((w // 2, 520), heading, fill=(255, 255, 255, 230), font=font_mid, anchor="mm")
-        draw.text((w // 2, 1060), f"第 {idx + 1} 镜 / 共 {total} 镜", fill=(255, 255, 255, 180), font=font_mid, anchor="mm")
+        draw.text(
+            (w // 2, 1060), f"第 {idx + 1} 镜 / 共 {total} 镜", fill=(255, 255, 255, 180), font=font_mid, anchor="mm"
+        )
         img.save(path, quality=88)
         return True
     except Exception as e:
@@ -664,16 +698,16 @@ def _make_intro_card(title: str, art_style: str = "", subtitle: str = "", bg_img
     "画面+标题"开场），无则回退画风渐变底。返回图片路径（PNG），失败返回 None。
     """
     try:
-        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
         w, h = 720, 1280
         # 按画风选色调
         style = (art_style or DEFAULT_ART_STYLE).strip().lower()
         palettes = {
-            "guoman": ((147, 51, 234), (236, 72, 153)),     # 紫粉（国漫）
-            "hanman": ((59, 130, 246), (16, 185, 129)),     # 蓝绿（韩漫清新）
-            "3d": ((245, 158, 11), (239, 68, 68)),          # 橙红（3D 温暖）
-            "realistic": ((30, 30, 30), (120, 120, 120)),   # 灰黑（写实沉稳）
+            "guoman": ((147, 51, 234), (236, 72, 153)),  # 紫粉（国漫）
+            "hanman": ((59, 130, 246), (16, 185, 129)),  # 蓝绿（韩漫清新）
+            "3d": ((245, 158, 11), (239, 68, 68)),  # 橙红（3D 温暖）
+            "realistic": ((30, 30, 30), (120, 120, 120)),  # 灰黑（写实沉稳）
         }
         c1, c2 = palettes.get(style, palettes["guoman"])
         img = None
@@ -736,16 +770,39 @@ def _make_intro_video(img_path: str, bgm_path: str, out_path: str, duration: flo
         "fade=t=in:st=0:d=0.4,fade=t=out:st=3.0:d=0.5"
     )
     cmd = [
-        FFMPEG_BIN, "-nostdin", "-y",
-        "-loop", "1", "-i", img_path,
-        "-i", bgm_path,
-        "-t", f"{duration:.2f}",
+        FFMPEG_BIN,
+        "-nostdin",
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        img_path,
+        "-i",
+        bgm_path,
+        "-t",
+        f"{duration:.2f}",
         "-filter_complex",
         f"[1:a]atrim=0:{duration},afade=t=in:st=0:d=0.8,afade=t=out:st={max(0.5, duration - 1.0):.2f}:d=0.8,volume=0.5[a]",
-        "-map", "0:v", "-map", "[a]",
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-r", str(FPS),
+        "-map",
+        "0:v",
+        "-map",
+        "[a]",
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-r",
+        str(FPS),
         out_path,
     ]
     r = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -770,8 +827,15 @@ def _i2v_motion_prompt(emotion: str, dialogue: str = "") -> str:
     return base + ", cinematic, realistic motion, smooth"
 
 
-def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", max_wait: int = 240,
-                   _api_key: str = "", _api_base: str = "") -> bool:
+def _i2v_scene_clip(
+    img_path: str,
+    prompt: str,
+    out_path: str,
+    uid: str = "",
+    max_wait: int = 240,
+    _api_key: str = "",
+    _api_base: str = "",
+) -> bool:
     """图生视频（i2v）：主图 → AGNES 动态视频 → 裁剪竖屏 → 保存。
 
     返回是否成功；队列满/超时/失败均返回 False（由调用方回退静态子镜，不阻塞）。
@@ -785,6 +849,7 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
         return False
     try:
         import base64 as _b64
+
         import requests as _req
 
         img_b64 = _b64.b64encode(open(img_path, "rb").read()).decode()
@@ -798,7 +863,8 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
         resp = _req.post(
             f"{_api_base}/videos",
             headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
-            json=body, timeout=60,
+            json=body,
+            timeout=60,
         )
         # 队列满：指数退避重试（30/60/120s，共 4 次约 210s），保证动态密度；
         # 大并发/夜间排队时比固定 3×30s 更耐等；仍失败才回退静态
@@ -810,7 +876,8 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
                 resp = _req.post(
                     f"{_api_base}/videos",
                     headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
-                    json=body, timeout=60,
+                    json=body,
+                    timeout=60,
                 )
                 if resp.status_code == 200:
                     break
@@ -828,8 +895,10 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
         for _ in range(int(max_wait / 15) + 1):
             time.sleep(15)
             q = _req.get(
-                f"{_api_base}/agnesapi", params={"video_id": vid},
-                headers={"Authorization": f"Bearer {_api_key}"}, timeout=30,
+                f"{_api_base}/agnesapi",
+                params={"video_id": vid},
+                headers={"Authorization": f"Bearer {_api_key}"},
+                timeout=30,
             )
             try:
                 d = q.json()
@@ -851,10 +920,26 @@ def _i2v_scene_clip(img_path: str, prompt: str, out_path: str, uid: str = "", ma
         with open(tmp_v, "wb") as f:
             f.write(vresp.content)
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", tmp_v,
-            "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", out_path,
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            tmp_v,
+            "-vf",
+            "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=120)
         try:
@@ -882,13 +967,41 @@ def _mix_dyn_audio(video_path: str, audio_path: str, out_path: str, target_dur: 
         adur = _probe_seconds(audio_path)
         out_dur = target_dur if target_dur else max(2.0, vdur or 8.0)
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path, "-i", audio_path,
-            "-t", f"{max(out_dur, vdur or 0, adur or 0):.2f}",
-            "-map", "0:v", "-map", "1:a",
-            "-vf", f"tpad=stop_mode=clone:stop_duration={max(0.0, out_dur - vdur):.2f}" if (target_dur and vdur and vdur < target_dur) else "null",
-            "-af", "apad",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            video_path,
+            "-i",
+            audio_path,
+            "-t",
+            f"{max(out_dur, vdur or 0, adur or 0):.2f}",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-vf",
+            f"tpad=stop_mode=clone:stop_duration={max(0.0, out_dur - vdur):.2f}"
+            if (target_dur and vdur and vdur < target_dur)
+            else "null",
+            "-af",
+            "apad",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -922,11 +1035,26 @@ def _split_dyn_video(video_path: str, n_seg: int, prefix: str) -> list[str]:
             # -c:v copy 时不能挂滤镜（Filtering and streamcopy cannot be used together）；
             # 切分点在动作中段，无爆音/闪帧风险，直接纯 copy 切分（秒级）
             r = subprocess.run(
-                [FFMPEG_BIN, "-nostdin", "-y",
-                 "-ss", f"{st:.3f}", "-i", video_path, "-t", f"{seg_len:.3f}",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                 o],
-                capture_output=True, timeout=60,
+                [
+                    FFMPEG_BIN,
+                    "-nostdin",
+                    "-y",
+                    "-ss",
+                    f"{st:.3f}",
+                    "-i",
+                    video_path,
+                    "-t",
+                    f"{seg_len:.3f}",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    o,
+                ],
+                capture_output=True,
+                timeout=60,
             )
             if r.returncode == 0 and os.path.exists(o) and os.path.getsize(o) > 4096:
                 out_files.append(o)
@@ -950,11 +1078,31 @@ def _stretch_clip(video_path: str, target_dur: float, out_path: str) -> bool:
         if not (0.5 <= atempo <= 2.0):
             return False
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
-            "-vf", f"setpts={1/speed:.4f}*PTS",
-            "-af", f"atempo={atempo:.4f}",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k",
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            video_path,
+            "-vf",
+            f"setpts={1 / speed:.4f}*PTS",
+            "-af",
+            f"atempo={atempo:.4f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=120)
@@ -982,8 +1130,18 @@ def _probe_video_seconds(path: str) -> float:
     取 format.duration（可能=音频长）导致拉伸判断失误，此函数精确取视频流。"""
     try:
         out = subprocess.run(
-            [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=duration", "-of", "csv=p=0", path],
+            [
+                FFPROBE_BIN,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=duration",
+                "-of",
+                "csv=p=0",
+                path,
+            ],
             capture_output=True,
             text=True,
             timeout=20,
@@ -995,14 +1153,14 @@ def _probe_video_seconds(path: str) -> float:
 
 # 子镜头机位类型（同一主图的不同取景方式 → 视觉上的镜头切换）
 _SUB_SHOT_TYPES = (
-    "zoom_in",      # 推近：从全景推至近景（聚焦）
-    "zoom_out",     # 拉远：从近景拉至全景（交代环境）
-    "pan_left",     # 左移：取景窗从左向右扫（环境过渡）
-    "pan_right",    # 右移：取景窗从右向左扫
-    "tilt_up",      # 上移：从下往上（强调高度/气场）
-    "tilt_down",    # 下移：从上往下（压迫/揭示）
-    "close_zoom",   # 特写放大：聚焦面部/细节（情绪戏）
-    "slow_push",    # 缓慢推进：情绪沉淀（温柔/悲伤）
+    "zoom_in",  # 推近：从全景推至近景（聚焦）
+    "zoom_out",  # 拉远：从近景拉至全景（交代环境）
+    "pan_left",  # 左移：取景窗从左向右扫（环境过渡）
+    "pan_right",  # 右移：取景窗从右向左扫
+    "tilt_up",  # 上移：从下往上（强调高度/气场）
+    "tilt_down",  # 下移：从上往下（压迫/揭示）
+    "close_zoom",  # 特写放大：聚焦面部/细节（情绪戏）
+    "slow_push",  # 缓慢推进：情绪沉淀（温柔/悲伤）
 )
 
 
@@ -1041,9 +1199,16 @@ def _shot_sequence(emotion: str, n: int, scene_idx: int) -> list[str]:
     return base
 
 
-def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
-                 motion: str = "zoom_in", fade_in: bool = True, fade_out: bool = True,
-                 win: tuple = (0, 0, 1.0, 1.0)) -> None:
+def _scene_video(
+    img_path: str,
+    audio_path: str,
+    out_path: str,
+    duration: float,
+    motion: str = "zoom_in",
+    fade_in: bool = True,
+    fade_out: bool = True,
+    win: tuple = (0, 0, 1.0, 1.0),
+) -> None:
     """单镜合成：背景图 + 配音 → mp4 片段（Ken Burns 运镜 + 可选首尾淡入淡出）。
 
     v13.31 插画镜流畅度：zoompan 运镜（motion 交替推近/拉远/横摇，静态图动起来）；
@@ -1058,8 +1223,10 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
     total = max(1, int(duration * FPS))
     # 取景窗口（归一化）：默认全图；子镜头给局部区域
     nx, ny, nw, nh = win
-    nw = max(0.3, min(1.0, nw)); nh = max(0.3, min(1.0, nh))
-    nx = max(0.0, min(1.0 - nw, nx)); ny = max(0.0, min(1.0 - nh, ny))
+    nw = max(0.3, min(1.0, nw))
+    nh = max(0.3, min(1.0, nh))
+    nx = max(0.0, min(1.0 - nw, nx))
+    ny = max(0.0, min(1.0 - nh, ny))
     # 短镜（<8s）幅度加大、长镜放缓：保证 2-4s 子镜头也有可见运镜
     # v1.0.68：幅度整体上调（0.14→0.22 / 0.10→0.16 / 0.06→0.12）——
     # 此前长镜/静镜幅度 0.06 观感接近静止（"录播图"），放大推拉让静态子镜也有明显动态
@@ -1067,8 +1234,10 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
     # 2x 放大防抖基础缩放：先裁取景窗口再放大
     vf = "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560"
     # 应用取景窗口（crop 到窗口区域，窗口比例保持 9:16 输出）
-    win_w = int(1440 * nw); win_h = int(2560 * nh)
-    win_x = int(1440 * nx); win_y = int(2560 * ny)
+    win_w = int(1440 * nw)
+    win_h = int(2560 * nh)
+    win_x = int(1440 * nx)
+    win_y = int(2560 * ny)
     # 窗口先切出（保持 9:16 比例：以窗口中心为基准放大到满幅）
     vf += f",crop={win_w}:{win_h}:{win_x}:{win_y}"
     vf += ",scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560"
@@ -1102,9 +1271,7 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
         else:  # zoom_in
             zexpr = f"1+{amp}*on/{total}"
             sx = sy = ""
-        vf += (
-            f",zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2){sx}':y='ih/2-(ih/zoom/2){sy}':d={total}:s=720x1280:fps={FPS}"
-        )
+        vf += f",zoompan=z='{zexpr}':x='iw/2-(iw/zoom/2){sx}':y='ih/2-(ih/zoom/2){sy}':d={total}:s=720x1280:fps={FPS}"
     else:
         # 静止子镜也做微推（避免死画面）
         vf += f",zoompan=z='1+{amp * 0.3}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS}"
@@ -1113,29 +1280,67 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
     if fade_out:
         vf += f",fade=t=out:st={max(0.15, duration - 0.15):.2f}:d=0.15"
     cmd = [
-        FFMPEG_BIN, "-nostdin", "-y",
-        "-loop", "1", "-i", img_path,
-        "-i", audio_path,
-        "-t", f"{duration:.2f}",
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+        FFMPEG_BIN,
+        "-nostdin",
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        img_path,
+        "-i",
+        audio_path,
+        "-t",
+        f"{duration:.2f}",
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
         # v1.0.66：统一 48000Hz stereo——配音子镜原为 44100Hz mono，与片头(48000stereo)/
         # 片尾(44100stereo) concat 时参数不一致导致音频流截断（空洞）
-        "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0,apad", "-c:a", "aac", "-b:a", "128k",
-        "-r", str(FPS),
+        "-af",
+        "aresample=48000,pan=stereo|c0=c0|c1=c0,apad",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-r",
+        str(FPS),
         out_path,
     ]
     if audio_path is None:
         # v1.0.51：无音频镜（片尾卡等）→ lavfi 静音轨，避免 ffmpeg 收到 None 崩溃
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y",
-            "-loop", "1", "-i", img_path,
-            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-            "-t", f"{duration:.2f}",
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
-            "-r", str(FPS),
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-loop",
+            "1",
+            "-i",
+            img_path,
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-t",
+            f"{duration:.2f}",
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-r",
+            str(FPS),
             out_path,
         ]
     r = subprocess.run(cmd, capture_output=True, timeout=180)
@@ -1143,15 +1348,15 @@ def _scene_video(img_path: str, audio_path: str, out_path: str, duration: float,
         raise RuntimeError("单镜合成失败: " + r.stderr.decode(errors="replace")[-200:])
 
 
-_SCENE_MOTIONS = ("zoom_in", "zoom_out", "pan_in", "pan_out")
+_SCENE_MOTIONS = ("zoom_in", "zoom_out", "pan_left", "pan_right")
 
-# 情绪 → 运镜（漫剧模式：情绪不同，镜头语言不同，红果漫剧标准）
+# 情绪 → 运镜（漫剧模式：情绪不同，镜头语言不同，红果漫剧标准；词表与 _scene_video 处理器对齐 v1.0.73）
 _EMOTION_MOTION = {
-    "happy": "zoom_in",       # 欢快：推近聚焦
-    "gentle": "pan_out",      # 温柔：缓慢横移
-    "sad": "zoom_out",        # 悲伤：拉远留白
-    "angry": "zoom_in",       # 激昂：快速推近（幅度大）
-    "serious": "pan_in",      # 严肃：缓慢推近
+    "happy": "zoom_in",  # 欢快：推近聚焦
+    "gentle": "pan_left",  # 温柔：缓慢横移
+    "sad": "zoom_out",  # 悲伤：拉远留白
+    "angry": "close_zoom",  # 激昂：特写再推近（幅度最大）
+    "serious": "slow_push",  # 严肃：缓慢推进
     "neutral": "zoom_in",
 }
 
@@ -1173,7 +1378,6 @@ def _split_audio_segments(audio_path: str, seg_count: int) -> list[str]:
     """
     if seg_count <= 1:
         return [audio_path]
-    segs = []
     dur = _probe_seconds(audio_path)
     if dur <= 0:
         return [audio_path]
@@ -1185,10 +1389,26 @@ def _split_audio_segments(audio_path: str, seg_count: int) -> list[str]:
         st = i * seg_len
         o = os.path.join(tmpdir, f"subseg_{i:03d}.mp3")
         r = subprocess.run(
-            [FFMPEG_BIN, "-nostdin", "-y", "-ss", f"{st:.3f}", "-t", f"{seg_len:.3f}",
-             "-i", audio_path, "-af", "afade=t=in:st=0:d=0.015",
-             "-c:a", "libmp3lame", "-b:a", "128k", o],
-            capture_output=True, timeout=60,
+            [
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-ss",
+                f"{st:.3f}",
+                "-t",
+                f"{seg_len:.3f}",
+                "-i",
+                audio_path,
+                "-af",
+                "afade=t=in:st=0:d=0.015",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "128k",
+                o,
+            ],
+            capture_output=True,
+            timeout=60,
         )
         if r.returncode == 0 and os.path.exists(o) and os.path.getsize(o) > 1024:
             out_files.append(o)
@@ -1205,15 +1425,17 @@ def _concat_sub_shots(seg_paths: list[str], out_path: str) -> None:
             f.write("file '" + p + "'\n")
     r = subprocess.run(
         [FFMPEG_BIN, "-nostdin", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path],
-        capture_output=True, timeout=300,
+        capture_output=True,
+        timeout=300,
     )
     os.remove(list_file)
     if r.returncode != 0 or not os.path.exists(out_path):
         raise RuntimeError("子镜头拼接失败: " + r.stderr.decode(errors="replace")[-200:])
 
 
-def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
-             _api_key: str = "", _api_base: str = "") -> bool:
+def _t2v_shot(
+    prompt: str, audio_path: str, out_path: str, duration: float, _api_key: str = "", _api_base: str = ""
+) -> bool:
     """v1.0.70 文生视频镜头：直接用 video 大模型生成动态画面（替代静态图+缩放）。
 
     用户反馈：静态图+锚点方案观感像"录播图"，要求直接用 video 大模型生成。
@@ -1223,6 +1445,7 @@ def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
     """
     try:
         import requests as _req
+
         if not _api_key:
             _api_key = resolve_api_key()
         if not _api_base:
@@ -1236,11 +1459,15 @@ def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
         vid = ""
         for _a in range(6):
             try:
-                resp = _req.post(f"{_api_base}/videos",
-                                 headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
-                                 json=body, timeout=60)
+                resp = _req.post(
+                    f"{_api_base}/videos",
+                    headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+                    json=body,
+                    timeout=60,
+                )
             except Exception:
-                time.sleep(15); continue
+                time.sleep(15)
+                continue
             if resp.status_code == 200:
                 vid = (resp.json().get("video_id") or resp.json().get("task_id") or "").strip()
                 break
@@ -1257,8 +1484,12 @@ def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
         for _i in range(int(240 / 15) + 1):
             time.sleep(15)
             try:
-                q = _req.get(f"{_api_base}/agnesapi", params={"video_id": vid},
-                             headers={"Authorization": f"Bearer {_api_key}"}, timeout=30)
+                q = _req.get(
+                    f"{_api_base}/agnesapi",
+                    params={"video_id": vid},
+                    headers={"Authorization": f"Bearer {_api_key}"},
+                    timeout=30,
+                )
                 d = q.json()
             except Exception:
                 continue
@@ -1280,29 +1511,72 @@ def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
         vf = "crop=468:832:310:0,scale=720:1280"
         vert = out_path + ".vert.mp4"
         r = subprocess.run(
-            [FFMPEG_BIN, "-nostdin", "-y", "-i", tmp_v, "-vf", vf,
-             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-             "-c:a", "aac", "-b:a", "128k", vert],
-            capture_output=True, timeout=120,
+            [
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-i",
+                tmp_v,
+                "-vf",
+                vf,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "20",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                vert,
+            ],
+            capture_output=True,
+            timeout=120,
         )
         if r.returncode != 0 or not os.path.exists(vert):
             return False
         # 配音合入 + 目标时长撑满（音频 apad、视频 tpad 冻结末帧）
         tgt = max(duration, 2.0)
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", vert, "-i", audio_path,
-            "-t", f"{tgt:.2f}",
-            "-map", "0:v", "-map", "1:a",
-            "-vf", f"tpad=stop_mode=clone:stop_duration={max(0.0, tgt - _probe_video_seconds(vert)):.2f}",
-            "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0,apad",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k",
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            vert,
+            "-i",
+            audio_path,
+            "-t",
+            f"{tgt:.2f}",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-vf",
+            f"tpad=stop_mode=clone:stop_duration={max(0.0, tgt - _probe_video_seconds(vert)):.2f}",
+            "-af",
+            "aresample=48000,pan=stereo|c0=c0|c1=c0,apad",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             out_path,
         ]
         r2 = subprocess.run(cmd, capture_output=True, timeout=120)
         for _f in (tmp_v, vert):
             try:
-                if os.path.exists(_f): os.remove(_f)
+                if os.path.exists(_f):
+                    os.remove(_f)
             except Exception:
                 pass
         return r2.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 10000
@@ -1311,8 +1585,9 @@ def _t2v_shot(prompt: str, audio_path: str, out_path: str, duration: float,
         return False
 
 
-def _material_scene_video(query: str, audio_path: str, out_path: str, duration: float,
-                          fade_in: bool = True, fade_out: bool = True) -> bool:
+def _material_scene_video(
+    query: str, audio_path: str, out_path: str, duration: float, fade_in: bool = True, fade_out: bool = True
+) -> bool:
     """素材镜头合成：Pexels/本地真实素材（视频 cover 裁剪或图片 Ken Burns 推近）+ 配音。
 
     v13.25 核心升级（借鉴 MoneyPrinterTurbo 素材管线）：告别纯渐变卡片，镜头画面改为
@@ -1331,15 +1606,37 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
             # cover 裁剪无黑边 + 短素材循环补足时长 + 丢弃素材原音、混入配音
             # v13.28 移除 -shortest 改 apad：短配音时画面按 sec 循环补足到目标时长
             cmd = [
-                FFMPEG_BIN, "-nostdin", "-y",
-                "-stream_loop", "-1", "-i", str(material),
-                "-i", audio_path,
-                "-t", f"{duration:.2f}",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-vf", vf_base,
-                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-af", "apad", "-c:a", "aac", "-b:a", "128k",
-                "-r", str(FPS),
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(material),
+                "-i",
+                audio_path,
+                "-t",
+                f"{duration:.2f}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-vf",
+                vf_base,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-pix_fmt",
+                "yuv420p",
+                "-af",
+                "apad",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-r",
+                str(FPS),
                 out_path,
             ]
         else:
@@ -1348,19 +1645,41 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
             total = max(1, int(duration * FPS))
             amp = 0.16 if total >= 250 else 0.12  # v1.0.68 幅度上调
             cmd = [
-                FFMPEG_BIN, "-nostdin", "-y",
-                "-loop", "1", "-i", str(material),
-                "-i", audio_path,
-                "-t", f"{duration:.2f}",
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-vf", (
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-loop",
+                "1",
+                "-i",
+                str(material),
+                "-i",
+                audio_path,
+                "-t",
+                f"{duration:.2f}",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-vf",
+                (
                     "scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560,"
                     f"zoompan=z='1+{amp}*on/{total}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total}:s=720x1280:fps={FPS},"
                     + vf_base.split(",", 1)[1]  # 复用 fade 段（去掉 cover 裁剪前缀）
                 ),
-                "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-                "-af", "apad", "-c:a", "aac", "-b:a", "128k",
-                "-r", str(FPS),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-pix_fmt",
+                "yuv420p",
+                "-af",
+                "apad",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-r",
+                str(FPS),
                 out_path,
             ]
         r = subprocess.run(cmd, capture_output=True, timeout=300)
@@ -1373,8 +1692,12 @@ def _material_scene_video(query: str, audio_path: str, out_path: str, duration: 
         return False
 
 
-def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int] | None = None,
-                   transitions: dict[int, str] | None = None) -> None:
+def _concat_videos(  # noqa: C901 — 多段拼接滤镜链，复杂度来自分支合并而非逻辑深套
+    clip_paths: list[str],
+    out_path: str,
+    scene_bounds: list[int] | None = None,
+    transitions: dict[int, str] | None = None,
+) -> None:
     """拼接镜头片段：子镜头间硬切（快节奏），场次间交叉淡化（大段落转场）。
 
     scene_bounds: 场次起始 clip 下标列表（如 [0, 5, 11] 表示第 0/5/11 个 clip 是新场次）。
@@ -1414,7 +1737,7 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
         if len(g) == 1:
             tmp_group.append(g[0])
         else:
-            gp = os.path.join(os.path.dirname(out_path), "grp_%d.mp4" % gi)
+            gp = os.path.join(os.path.dirname(out_path), f"grp_{gi}.mp4")
             _concat_videos(g, gp)
             tmp_group.append(gp)
     if len(tmp_group) == 1:
@@ -1438,21 +1761,45 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
         if _tr not in ("fade", "fadeblack", "smoothleft", "fadewhite", "slideup", "circleopen"):
             _tr = "fade"
         if gi == 1:
-            f += "[0:v][1:v]xfade=transition=%s:duration=0.35:offset=%.3f[v%d]" % (_tr, off, gi)
+            f += f"[0:v][1:v]xfade=transition={_tr}:duration=0.35:offset={off:.3f}[v{gi}]"
         else:
-            f += "[v%d][%d:v]xfade=transition=%s:duration=0.35:offset=%.3f[v%d]" % (gi - 1, gi, _tr, off, gi)
+            f += f"[v{gi - 1}][{gi}:v]xfade=transition={_tr}:duration=0.35:offset={off:.3f}[v{gi}]"
     for gi in range(1, len(tmp_group)):
         if gi == 1:
-            f += "[0:a][1:a]acrossfade=d=0.35[a%d]" % gi
+            f += f"[0:a][1:a]acrossfade=d=0.35[a{gi}]"
         else:
-            f += "[a%d][%d:a]acrossfade=d=0.35[a%d]" % (gi - 1, gi, gi)
+            f += f"[a{gi - 1}][{gi}:a]acrossfade=d=0.35[a{gi}]"
     last = len(tmp_group) - 1
     r = subprocess.run(
-        [FFMPEG_BIN, "-nostdin", "-y"] + inputs + ["-filter_complex", f,
-         "-map", "[v%d]" % last, "-map", "[a%d]" % last,
-         "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-         "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "128k", out_path],
-        capture_output=True, timeout=600,
+        [FFMPEG_BIN, "-nostdin", "-y"]
+        + inputs
+        + [
+            "-filter_complex",
+            f,
+            "-map",
+            f"[v{last}]",
+            "-map",
+            f"[a{last}]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            out_path,
+        ],
+        capture_output=True,
+        timeout=600,
     )
     for gp in tmp_group:
         if gp.startswith(os.path.dirname(out_path) + os.sep + "grp_"):
@@ -1469,18 +1816,35 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
     try:
         chk = subprocess.run(
             [FFMPEG_BIN, "-nostdin", "-i", out_path, "-f", "null", "-"],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         if b"Error submitting packet" in (chk.stderr or b"") or b"Invalid data found" in (chk.stderr or b""):
             logger.warning("拼接产物音轨损坏，重编码修复（视频 copy）")
             _fix = out_path + ".fix.mp4"
             r2 = subprocess.run(
-                [FFMPEG_BIN, "-nostdin", "-y", "-i", out_path,
-                 "-map", "0:v", "-map", "0:a",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                 "-af", "aresample=48000",
-                 _fix],
-                capture_output=True, timeout=600,
+                [
+                    FFMPEG_BIN,
+                    "-nostdin",
+                    "-y",
+                    "-i",
+                    out_path,
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "0:a",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-af",
+                    "aresample=48000",
+                    _fix,
+                ],
+                capture_output=True,
+                timeout=600,
             )
             if r2.returncode == 0 and os.path.exists(_fix) and os.path.getsize(_fix) > 4096:
                 os.replace(_fix, out_path)
@@ -1488,6 +1852,7 @@ def _concat_videos(clip_paths: list[str], out_path: str, scene_bounds: list[int]
                 logger.warning(f"音轨修复失败: {(r2.stderr or b'')[-120:]}")
     except Exception:
         pass
+
 
 def _pick_bgm() -> str | None:
     """选一首背景音乐：优先 drama_factory/music（用户自备），
@@ -1498,22 +1863,18 @@ def _pick_bgm() -> str | None:
 
     candidates: list[str] = []
     if MUSIC_DIR.exists():
-        candidates += [
-            str(p) for p in MUSIC_DIR.iterdir()
-            if p.is_file() and p.suffix.lower() in _MUSIC_EXTS
-        ]
+        candidates += [str(p) for p in MUSIC_DIR.iterdir() if p.is_file() and p.suffix.lower() in _MUSIC_EXTS]
     mf_dir = DRAMA_DIR.parent / "music_factory"
     if mf_dir.exists():
-        candidates += [
-            str(p) for p in mf_dir.glob("*.mp3")
-            if p.is_file() and p.stat().st_size > 50_000
-        ]
+        candidates += [str(p) for p in mf_dir.glob("*.mp3") if p.is_file() and p.stat().st_size > 50_000]
     if not candidates:
         return None
     return random.choice(candidates)
 
 
-def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None, margin_v: int = 24) -> None:
+def _burn_subtitles(
+    video_path: str, srt_path: str, out_path: str, bgm_path: str | None = None, margin_v: int = 24
+) -> None:
     """字幕烧录（subtitles 滤镜）+ 背景音乐混音（v13.25：合并一次 re-encode）。
 
     BGM 音量 12%（配音优先）+ 首尾 2s 淡入淡出；无 BGM 时保持原逻辑。
@@ -1530,10 +1891,23 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
     _burn_ok = False
     try:
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", video_path,
-            "-vf", subtitle_vf,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "copy",
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            video_path,
+            "-vf",
+            subtitle_vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "copy",
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=600)
@@ -1554,7 +1928,8 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
     try:
         chk = subprocess.run(
             [FFMPEG_BIN, "-nostdin", "-i", out_path, "-f", "null", "-"],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         _err = (chk.stderr or b"").decode(errors="replace")
         if "Error submitting packet" in _err or "Invalid data found" in _err:
@@ -1565,12 +1940,28 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             _sys_ff = "/usr/local/bin/ffmpeg"
             _fix_cmd = _sys_ff if os.path.exists(_sys_ff) else FFMPEG_BIN
             r2 = subprocess.run(
-                [_fix_cmd, "-nostdin", "-y", "-i", out_path,
-                 "-map", "0:v", "-map", "0:a",
-                 "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                 "-af", "aresample=48000,pan=stereo|c0=c0|c1=c0",
-                 _fix],
-                capture_output=True, timeout=600,
+                [
+                    _fix_cmd,
+                    "-nostdin",
+                    "-y",
+                    "-i",
+                    out_path,
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "0:a",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-af",
+                    "aresample=48000,pan=stereo|c0=c0|c1=c0",
+                    _fix,
+                ],
+                capture_output=True,
+                timeout=600,
             )
             if r2.returncode == 0 and os.path.exists(_fix) and os.path.getsize(_fix) > 4096:
                 os.replace(_fix, out_path)
@@ -1591,8 +1982,12 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
         # 读原声采样率，BGM 对齐（避免 amix 隐式重采样在 aac 的队列 bug）
         ar = "44100"
         try:
-            pr = subprocess.run([FFPROBE_BIN, "-v", "quiet", "-print_format", "json",
-                                 "-show_streams", out_path], capture_output=True, text=True, timeout=30)
+            pr = subprocess.run(
+                [FFPROBE_BIN, "-v", "quiet", "-print_format", "json", "-show_streams", out_path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
             info = json.loads(pr.stdout or "{}")
             for s in info.get("streams", []):
                 if s.get("codec_type") == "audio" and s.get("sample_rate"):
@@ -1602,9 +1997,15 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             pass
         tmp_mix = out_path + ".mix.mp4"
         cmd = [
-            sys_ff, "-nostdin", "-y",
-            "-stream_loop", "-1", "-i", bgm_path,   # v1.0.52：BGM 循环铺满全片（30s 短曲不再尾部静音）
-            "-i", out_path,
+            sys_ff,
+            "-nostdin",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            bgm_path,  # v1.0.52：BGM 循环铺满全片（30s 短曲不再尾部静音）
+            "-i",
+            out_path,
             "-filter_complex",
             f"[0:a]atrim=0:{total:.2f},aresample={ar},volume=0.12,"
             f"afade=t=in:st=0:d=2,afade=t=out:st={fade_st:.2f}:d=2[bgm];"
@@ -1613,8 +2014,16 @@ def _burn_subtitles(video_path: str, srt_path: str, out_path: str, bgm_path: str
             # 均衡，消除 16dB 级响度跳变（红果漫剧全程音量一致）。
             # 注：loudnorm 单遍在长音频（>60s）aac 编码会 Conversion failed，改用 dynaudnorm。
             f"dynaudnorm=f=150:g=15:p=0.9[a]",
-            "-map", "1:v", "-map", "[a]",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+            "-map",
+            "1:v",
+            "-map",
+            "[a]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             tmp_mix,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=600)
@@ -1647,9 +2056,21 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
     # 音轨存在（ffprobe 探测更稳：动态锚/i2v 音轨可能让 ffmpeg 解码探测误报）
     try:
         r = subprocess.run(
-            [FFPROBE_BIN, "-v", "error", "-select_streams", "a:0",
-             "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=30,
+            [
+                FFPROBE_BIN,
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if r.returncode != 0 or not (r.stdout or "").strip():
             findings.append("成片缺少音轨")
@@ -1664,9 +2085,21 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
     # 分辨率/黑边：竖屏 720x1280 期望（ffprobe 宽高）
     try:
         r = subprocess.run(
-            [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=30,
+            [
+                FFPROBE_BIN,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         parts = (r.stdout or "").strip().split(",")
         if len(parts) == 2:
@@ -1682,11 +2115,12 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
     # 原片配音间隙会出现 >2s 静音）。silencedetect 仅在音轨存在时执行。
     try:
         r = subprocess.run(
-            [FFMPEG_BIN, "-nostdin", "-i", path,
-             "-af", "silencedetect=n=-50dB:d=3.0", "-f", "null", "-"],
-            capture_output=True, timeout=120,
+            [FFMPEG_BIN, "-nostdin", "-i", path, "-af", "silencedetect=n=-50dB:d=3.0", "-f", "null", "-"],
+            capture_output=True,
+            timeout=120,
         )
         import re as _re
+
         silences = _re.findall(r"silence_start:\s*([\d.]+)", (r.stderr or "").decode(errors="replace"))
         # 长静音段（>3s）数量：BGM 循环垫底后为 0（实测）；BGM 缺失/未循环的
         # 长片配音间隙会出现几十段（10 分钟无 BGM 片实测 27 段）。
@@ -1700,7 +2134,8 @@ def _qc_check(final_path: str, srt_path: str | None = None, min_duration: float 
     try:
         r = subprocess.run(
             [FFMPEG_BIN, "-nostdin", "-i", path, "-f", "null", "-"],
-            capture_output=True, timeout=300,
+            capture_output=True,
+            timeout=300,
         )
         _err = (r.stderr or b"").decode(errors="replace")
         _bad = _err.count("Error submitting packet") + _err.count("Invalid data found")
@@ -1716,10 +2151,20 @@ def _extract_cover(video_path: str, out_jpg: str) -> None:
     try:
         subprocess.run(
             [
-                FFMPEG_BIN, "-nostdin", "-y", "-ss", "0.4", "-i", video_path,
-                "-frames:v", "1",
-                "-vf", "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
-                "-q:v", "2", out_jpg,
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-ss",
+                "0.4",
+                "-i",
+                video_path,
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280",
+                "-q:v",
+                "2",
+                out_jpg,
             ],
             capture_output=True,
             timeout=30,
@@ -1733,9 +2178,24 @@ def _make_preview(video_path: str, out_mp4: str) -> None:
     try:
         subprocess.run(
             [
-                FFMPEG_BIN, "-nostdin", "-y", "-ss", "0", "-t", "6", "-i", video_path,
-                "-c:v", "libx264", "-preset", "fast", "-c:a", "aac",
-                "-movflags", "+faststart", out_mp4,
+                FFMPEG_BIN,
+                "-nostdin",
+                "-y",
+                "-ss",
+                "0",
+                "-t",
+                "6",
+                "-i",
+                video_path,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-c:a",
+                "aac",
+                "-movflags",
+                "+faststart",
+                out_mp4,
             ],
             capture_output=True,
             timeout=60,
@@ -1816,16 +2276,25 @@ def _tts_scene(text: str, emotion: str = "neutral") -> bytes:
     from voice_factory import _tts_one
 
     if emotion and emotion != "neutral":
-        style = {"happy": "cheerful", "sad": "sad", "angry": "angry",
-                 "gentle": "gentle", "serious": "serious"}.get(emotion, "")
+        style = {"happy": "cheerful", "sad": "sad", "angry": "angry", "gentle": "gentle", "serious": "serious"}.get(
+            emotion, ""
+        )
         if style:
             return _tts_one(text, "zh-CN-XiaoxiaoNeural", 1.05, 0, style)
     return _tts_one(text, "中文女", 1.05)
 
 
 def _dh_scene_video(
-    text: str, avatar_id: str, engine: str, user: str, uid: str, role: str, out_path: str,
-    emotion: str = "neutral", fade_in: bool = False, fade_out: bool = False,
+    text: str,
+    avatar_id: str,
+    engine: str,
+    user: str,
+    uid: str,
+    role: str,
+    out_path: str,
+    emotion: str = "neutral",
+    fade_in: bool = False,
+    fade_out: bool = False,
 ) -> bool:
     """单镜数字人口播：调 digital_human._generate_one 生成人像视频并转竖屏 720x1280。
 
@@ -1870,10 +2339,27 @@ def _dh_scene_video(
             dur = _probe_seconds(src)
             vf += f",fade=t=out:st={max(0.25, dur - 0.25):.2f}:d=0.25"
         cmd = [
-            FFMPEG_BIN, "-nostdin", "-y", "-i", src,
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-r", str(FPS),
+            FFMPEG_BIN,
+            "-nostdin",
+            "-y",
+            "-i",
+            src,
+            "-vf",
+            vf,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "20",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-r",
+            str(FPS),
             out_path,
         ]
         r = subprocess.run(cmd, capture_output=True, timeout=300)
@@ -1891,32 +2377,19 @@ def _dh_scene_video(
         return False
 
 
-
 def _prepare_drama_context(task_id, drama_config):
     """准备短剧生成上下文。"""
-    return {
-        "task_id": task_id,
-        "config": drama_config,
-        "scenes": [],
-        "status": "prepared"
-    }
+    return {"task_id": task_id, "config": drama_config, "scenes": [], "status": "prepared"}
+
 
 def _generate_drama_scene(scene_index, script_data, visual_style):
     """生成单个短剧场景。"""
-    return {
-        "index": scene_index,
-        "script": script_data,
-        "style": visual_style,
-        "status": "generated"
-    }
+    return {"index": scene_index, "script": script_data, "style": visual_style, "status": "generated"}
+
 
 def _finalize_drama_result(scenes):
     """汇总短剧生成结果。"""
-    return {
-        "total_scenes": len(scenes),
-        "scenes": scenes,
-        "status": "completed"
-    }
+    return {"total_scenes": len(scenes), "scenes": scenes, "status": "completed"}
 
 
 def _drama_generate_simple(drama_params: dict) -> dict:
@@ -1925,16 +2398,18 @@ def _drama_generate_simple(drama_params: dict) -> dict:
     return {
         "status": "success",
         "video_url": drama_params.get("output_path", ""),
-        "duration": drama_params.get("duration", 0)
+        "duration": drama_params.get("duration", 0),
     }
+
 
 def _prepare_drama_params(request_data: dict) -> dict:
     """简化版：准备短剧生成参数。"""
     return {
         "script": request_data.get("script", ""),
         "style": request_data.get("style", ""),
-        "output_path": request_data.get("output_path", "")
+        "output_path": request_data.get("output_path", ""),
     }
+
 
 def _drama_quota_check(uid: str, avatar_mode: bool) -> None:
     """额度检查：经典动画卡模式 worker 内扣费。"""
@@ -1976,12 +2451,30 @@ async def _drama_load_script(theme: str, scenes_override: list, duration_hint: i
     return script
 
 
-
-async def _drama_render_one(
-    i: int, sc: dict, text: str, tmpdir: str, avatar_mode: bool, avatar_id: str, dh_engine: str,
-    user: str, uid: str, role: str, illust_mode: bool, char_map: dict, char_refs: dict,
-    dh_off: bool, fade_in: bool, fade_out: bool, motion: str, title: str, _report, total: int,
-    art_style: str = "", last_frame: bytes | None = None, dynamic_on: bool = True,
+async def _drama_render_one(  # noqa: C901 — 单集渲染编排器，多阶段流水线固有权重
+    i: int,
+    sc: dict,
+    text: str,
+    tmpdir: str,
+    avatar_mode: bool,
+    avatar_id: str,
+    dh_engine: str,
+    user: str,
+    uid: str,
+    role: str,
+    illust_mode: bool,
+    char_map: dict,
+    char_refs: dict,
+    dh_off: bool,
+    fade_in: bool,
+    fade_out: bool,
+    motion: str,
+    title: str,
+    _report,
+    total: int,
+    art_style: str = "",
+    last_frame: bytes | None = None,
+    dynamic_on: bool = True,
 ) -> tuple:
     """dynamic_on: 本场是否启用 i2v 动态锚（render_scenes 按 dynamic_level 算好传入）。"""
     """单镜渲染：数字人 → 素材 → 插画/卡片 三级回退。返回 (clip, audio_path, dh_off)。"""
@@ -1991,8 +2484,17 @@ async def _drama_render_one(
     if avatar_mode and not dh_off:
         try:
             ok = await asyncio.to_thread(
-                _dh_scene_video, text, avatar_id, dh_engine, user, uid, role, clip,
-                sc.get("emotion", "neutral"), fade_in, fade_out,
+                _dh_scene_video,
+                text,
+                avatar_id,
+                dh_engine,
+                user,
+                uid,
+                role,
+                clip,
+                sc.get("emotion", "neutral"),
+                fade_in,
+                fade_out,
             )
         except HTTPException as e:
             if e.status_code == 402:
@@ -2011,14 +2513,17 @@ async def _drama_render_one(
         for _tretry in range(2):
             _chk = subprocess.run(
                 [FFMPEG_BIN, "-nostdin", "-i", audio_path, "-f", "null", "-"],
-                capture_output=True, timeout=60,
+                capture_output=True,
+                timeout=60,
             )
             _chkerr = (_chk.stderr or b"").decode(errors="replace")
-            if b"Error submitting packet" not in (_chk.stderr or b"") and \
-               b"Invalid data found" not in (_chk.stderr or b"") and \
-               _probe_seconds(audio_path) > 0.3:
+            if (
+                b"Error submitting packet" not in (_chk.stderr or b"")
+                and b"Invalid data found" not in (_chk.stderr or b"")
+                and _probe_seconds(audio_path) > 0.3
+            ):
                 break
-            logger.warning(f"配音损坏（第 {i+1} 镜），重试 TTS（{_tretry+1}/2）")
+            logger.warning(f"配音损坏（第 {i + 1} 镜），重试 TTS（{_tretry + 1}/2）")
             audio = await asyncio.to_thread(_tts_scene, text, sc.get("emotion", "neutral"))
             with open(audio_path, "wb") as f:
                 f.write(audio)
@@ -2035,7 +2540,7 @@ async def _drama_render_one(
         # v1.0.70 优先 t2v 直接生成动态镜头（用户要求"直接用 video 大模型生成"）
         if shot and not avatar_mode:
             _t2v_chars = []
-            for _c in (sc.get("chars") or []):
+            for _c in sc.get("chars") or []:
                 _ch = char_map.get(_c)
                 if _ch:
                     _t2v_chars.append(f"{_ch.get('name')}（{_ch.get('appearance') or ''}，{_ch.get('outfit') or ''}）")
@@ -2046,8 +2551,10 @@ async def _drama_render_one(
             _t2v_scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             _t2v_sc = [c for c in _t2v_scene_chars if char_map[c].get("anchor")]
             if len(_t2v_sc) >= 2:
-                _t2v_pos = ["左边", "右边", "中间"][:len(_t2v_sc)]
-                _t2v_anchors = "；".join(f"{_t2v_pos[i]}的是{char_map[c]['name']}（{char_map[c]['anchor']}）" for i, c in enumerate(_t2v_sc))
+                _t2v_pos = ["左边", "右边", "中间"][: len(_t2v_sc)]
+                _t2v_anchors = "；".join(
+                    f"{_t2v_pos[i]}的是{char_map[c]['name']}（{char_map[c]['anchor']}）" for i, c in enumerate(_t2v_sc)
+                )
             else:
                 _t2v_anchors = "、".join(char_map[c]["anchor"] for c in _t2v_sc)
             _t2v_refs = [char_refs[c] for c in _t2v_scene_chars if c in char_refs]
@@ -2055,9 +2562,16 @@ async def _drama_render_one(
             if last_frame and _t2v_refs2:
                 _t2v_refs2.append(last_frame)
             _t2v_data = await asyncio.to_thread(
-                _generate_scene_image, shot, _t2v_anchors, _t2v_refs2, uid, art_style,
-                sc.get("dialogue") or "", sc.get("shot_size") or "",
-                resolve_api_key(), resolve_api_base(),
+                _generate_scene_image,
+                shot,
+                _t2v_anchors,
+                _t2v_refs2,
+                uid,
+                art_style,
+                sc.get("dialogue") or "",
+                sc.get("shot_size") or "",
+                resolve_api_key(),
+                resolve_api_base(),
             )
             _t2v_base_ok = False
             if _t2v_data:
@@ -2076,18 +2590,31 @@ async def _drama_render_one(
             _t2v_shot_list = []
             for _ti in range(_t2v_n):
                 _t2v_v = _t2v_variants[_ti % len(_t2v_variants)]
-                _t2v_motion = f"{shot}。{_t2v_v}，人物动作自然连贯，情绪符合（{sc.get('emotion') or 'neutral'}），电影质感"
+                _t2v_motion = (
+                    f"{shot}。{_t2v_v}，人物动作自然连贯，情绪符合（{sc.get('emotion') or 'neutral'}），电影质感"
+                )
                 _t2v_c = os.path.join(tmpdir, f"t2v_{i:03d}_{_ti}.mp4")
                 if _t2v_base_ok:
                     # 用场景主图做 i2v（角色锚定）：图生视频
                     _t2v_ok2 = await asyncio.to_thread(
-                        _i2v_scene_clip, _t2v_img, _t2v_motion, _t2v_c, uid, 240,
-                        resolve_api_key(), resolve_api_base(),
+                        _i2v_scene_clip,
+                        _t2v_img,
+                        _t2v_motion,
+                        _t2v_c,
+                        uid,
+                        240,
+                        resolve_api_key(),
+                        resolve_api_base(),
                     )
                 else:
                     _t2v_ok2 = await asyncio.to_thread(
-                        _t2v_shot, _t2v_motion, audio_path, _t2v_c, 5.0,
-                        resolve_api_key(), resolve_api_base(),
+                        _t2v_shot,
+                        _t2v_motion,
+                        audio_path,
+                        _t2v_c,
+                        5.0,
+                        resolve_api_key(),
+                        resolve_api_base(),
                     )
                 if _t2v_ok2 and os.path.exists(_t2v_c) and os.path.getsize(_t2v_c) > 10000:
                     _t2v_shot_list.append(_t2v_c)
@@ -2112,7 +2639,7 @@ async def _drama_render_one(
             _sc = [c for c in scene_chars if char_map[c].get("anchor")]
             if len(_sc) >= 2:
                 # 多角色同框：按出场顺序标注位置（左/右），模型对位参考图
-                _pos = ["左边", "右边", "中间"][:len(_sc)]
+                _pos = ["左边", "右边", "中间"][: len(_sc)]
                 anchors = "；".join(
                     f"{_pos[i]}的是{char_map[c]['name']}（{char_map[c]['anchor']}）" for i, c in enumerate(_sc)
                 )
@@ -2124,9 +2651,16 @@ async def _drama_render_one(
             if last_frame and _refs2:
                 _refs2.append(last_frame)
             data = await asyncio.to_thread(
-                _generate_scene_image, shot, anchors, _refs2, uid, art_style,
-                sc.get("dialogue") or "", sc.get("shot_size") or "",
-                resolve_api_key(), resolve_api_base(),
+                _generate_scene_image,
+                shot,
+                anchors,
+                _refs2,
+                uid,
+                art_style,
+                sc.get("dialogue") or "",
+                sc.get("shot_size") or "",
+                resolve_api_key(),
+                resolve_api_base(),
             )
         if data:
             with open(img_path, "wb") as f:
@@ -2143,7 +2677,9 @@ async def _drama_render_one(
                 else:
                     sub_audios = _split_audio_segments(audio_path, n_sub)
                     if len(sub_audios) < 2:
-                        await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                        await asyncio.to_thread(
+                            _scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out
+                        )
                     else:
                         sub_clips = []
                         _shot_seq = _shot_sequence(sc.get("emotion") or "", len(sub_audios), i)
@@ -2166,20 +2702,27 @@ async def _drama_render_one(
                             if shot_type == "close_zoom":
                                 win = (0.15, 0.15, 0.7, 0.7)  # 中心偏上：面部
                             elif shot_type == "pan_left":
-                                win = (0.0, 0.0, 0.8, 1.0)   # 左侧起始，右扫
+                                win = (0.0, 0.0, 0.8, 1.0)  # 左侧起始，右扫
                             elif shot_type == "pan_right":
-                                win = (0.2, 0.0, 0.8, 1.0)   # 右侧起始，左扫
+                                win = (0.2, 0.0, 0.8, 1.0)  # 右侧起始，左扫
                             elif shot_type == "tilt_up":
-                                win = (0.1, 0.2, 0.8, 0.8)   # 偏下起始，上移
+                                win = (0.1, 0.2, 0.8, 0.8)  # 偏下起始，上移
                             elif shot_type == "tilt_down":
-                                win = (0.1, 0.0, 0.8, 0.8)   # 偏上起始，下移
+                                win = (0.1, 0.0, 0.8, 0.8)  # 偏上起始，下移
                             else:
-                                win = (0.0, 0.0, 1.0, 1.0)   # 全图推拉
+                                win = (0.0, 0.0, 1.0, 1.0)  # 全图推拉
                             # 每个子镜带 0.1s 微淡（平滑镜头切换，防取景窗口跳变生硬）；
                             # 场首子镜用整场 fade_in、场末子镜用 fade_out
                             await asyncio.to_thread(
-                                _scene_video, img_path, sa, sclip, s_dur,
-                                shot_type, True, True, win,
+                                _scene_video,
+                                img_path,
+                                sa,
+                                sclip,
+                                s_dur,
+                                shot_type,
+                                True,
+                                True,
+                                win,
                             )
                             if os.path.exists(sclip) and os.path.getsize(sclip) > 4096:
                                 sub_clips.append(sclip)
@@ -2213,8 +2756,14 @@ async def _drama_render_one(
                                 dyn_clip = os.path.join(tmpdir, f"dyn_{i:03d}_{_ai}.mp4")
                                 _motion_p = _i2v_motion_prompt(sc.get("emotion") or "", sc.get("dialogue") or "")
                                 dyn_ok = await asyncio.to_thread(
-                                    _i2v_scene_clip, img_path, _motion_p, dyn_clip, uid, 240,
-                                    _ctx_key, _ctx_base,
+                                    _i2v_scene_clip,
+                                    img_path,
+                                    _motion_p,
+                                    dyn_clip,
+                                    uid,
+                                    240,
+                                    _ctx_key,
+                                    _ctx_base,
                                 )
                                 if not dyn_ok or not (os.path.exists(dyn_clip) and os.path.getsize(dyn_clip) > 10000):
                                     logger.warning(f"i2v 动态锚{_ai + 1}失败（第 {i + 1} 镜），回退静态")
@@ -2224,10 +2773,14 @@ async def _drama_render_one(
                                 _mux_ok = False
                                 if _dyn_audio and os.path.exists(_dyn_audio):
                                     _mux_ok = await asyncio.to_thread(
-                                        _mix_dyn_audio, dyn_clip, _dyn_audio, _dyn_final, _target_dur,
+                                        _mix_dyn_audio,
+                                        dyn_clip,
+                                        _dyn_audio,
+                                        _dyn_final,
+                                        _target_dur,
                                     )
                                 _dyn_src = _dyn_final if (_mux_ok and os.path.exists(_dyn_final)) else dyn_clip
-                                _dyn_segs = [ _dyn_src ]
+                                _dyn_segs = [_dyn_src]
                                 if _anchor_idx + 1 < len(sub_clips):
                                     _dyn_segs = _split_dyn_video(_dyn_src, 2, f"dynseg_{i:03d}_{_ai}")
                                 for _di, _seg in enumerate(_dyn_segs):
@@ -2236,17 +2789,28 @@ async def _drama_render_one(
                                         if _di > 0:
                                             _seg_audio = sub_audios[_rep] if _rep < len(sub_audios) else None
                                             if _seg_audio and os.path.exists(_seg_audio):
-                                                _seg_final = os.path.join(tmpdir, f"dynseg_audio_{i:03d}_{_ai}_{_di:02d}.mp4")
+                                                _seg_final = os.path.join(
+                                                    tmpdir, f"dynseg_audio_{i:03d}_{_ai}_{_di:02d}.mp4"
+                                                )
                                                 _seg_ok = await asyncio.to_thread(
-                                                    _mix_dyn_audio, _seg, _seg_audio, _seg_final, _target_dur,
+                                                    _mix_dyn_audio,
+                                                    _seg,
+                                                    _seg_audio,
+                                                    _seg_final,
+                                                    _target_dur,
                                                 )
                                                 if _seg_ok and os.path.exists(_seg_final):
                                                     _seg = _seg_final
                                         _seg_dur = _probe_video_seconds(_seg)
                                         if _seg_dur > 0 and _seg_dur < _target_dur * 0.9:
-                                            _stretch = os.path.join(tmpdir, f"dynseg_stretch_{i:03d}_{_ai}_{_di:02d}.mp4")
+                                            _stretch = os.path.join(
+                                                tmpdir, f"dynseg_stretch_{i:03d}_{_ai}_{_di:02d}.mp4"
+                                            )
                                             _sok = await asyncio.to_thread(
-                                                _stretch_clip, _seg, _target_dur, _stretch,
+                                                _stretch_clip,
+                                                _seg,
+                                                _target_dur,
+                                                _stretch,
                                             )
                                             if _sok and os.path.exists(_stretch):
                                                 _seg = _stretch
@@ -2255,9 +2819,12 @@ async def _drama_render_one(
                             _concat_sub_shots(sub_clips, clip)
                         elif sub_clips:
                             import shutil as _sh
+
                             _sh.copyfile(sub_clips[0], clip)
                         else:
-                            await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out)
+                            await asyncio.to_thread(
+                                _scene_video, img_path, audio_path, clip, dur, motion, fade_in, fade_out
+                            )
                 ok = True
             except Exception as e:
                 logger.warning(f"子镜头拆分失败，回退单镜: {e}")
@@ -2269,7 +2836,10 @@ async def _drama_render_one(
                 await asyncio.to_thread(_scene_video, img_path, audio_path, clip, dur, "still", fade_in, fade_out)
     return (clip if ok else None), audio_path, dh_off
 
-async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str, role: str, tmpdir: str, _report) -> tuple:
+
+async def _drama_render_scenes(
+    scenes: list, payload: dict, user: str, uid: str, role: str, tmpdir: str, _report
+) -> tuple:
     """逐镜配音 + 画面（三级回退：数字人 → 素材 → 插画/卡片）。返回 (clip_paths, srt_durations, voice_durations)。"""
     avatar_mode = bool(payload.get("avatar_mode"))
     avatar_id = (payload.get("avatar_id") or "business-female").strip()
@@ -2303,16 +2873,36 @@ async def _drama_render_scenes(scenes: list, payload: dict, user: str, uid: str,
         if not text:
             continue
         clip = os.path.join(tmpdir, f"seg_{i:03d}.mp4")
-        scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
+        [c for c in (sc.get("chars") or []) if c in char_map]
         fade_in, fade_out = i == 0, i == total - 1
         motion = _motion_for(sc, i)
         _last_frame = _last_scene_frame
         # auto 模式：每场都尝试动态（红果漫剧密度），i2v 队列忙时由 _i2v_scene_clip 内部重试/回退
         _dyn_on = _dyn_lv == "on" or _dyn_lv == "auto"
         result = await _drama_render_one(
-            i, sc, text, tmpdir, avatar_mode, avatar_id, dh_engine, user, uid, role,
-            illust_mode, char_map, char_refs, dh_off, fade_in, fade_out, motion,
-            payload.get("title") or "未命名短剧", _report, total, art_style, _last_frame, _dyn_on,
+            i,
+            sc,
+            text,
+            tmpdir,
+            avatar_mode,
+            avatar_id,
+            dh_engine,
+            user,
+            uid,
+            role,
+            illust_mode,
+            char_map,
+            char_refs,
+            dh_off,
+            fade_in,
+            fade_out,
+            motion,
+            payload.get("title") or "未命名短剧",
+            _report,
+            total,
+            art_style,
+            _last_frame,
+            _dyn_on,
         )
         clip, audio_path, dh_off = result
         if clip:
@@ -2386,8 +2976,10 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
             if not os.path.exists(_intro_bg):
                 _intro_bg = None
             intro_path = await asyncio.to_thread(
-                _make_intro_card, title, _intro_style,
-                f"第 {payload.get('episode') or 1} 集" if payload.get('episode') else "",
+                _make_intro_card,
+                title,
+                _intro_style,
+                f"第 {payload.get('episode') or 1} 集" if payload.get("episode") else "",
                 _intro_bg,
             )
             if intro_path:
@@ -2398,12 +2990,23 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
                         # 片头：标题卡 + BGM 前奏（2s 淡入）
                         _report(71, "片头配乐中…")
                         await asyncio.to_thread(
-                            _make_intro_video, intro_path, _bgm, intro_clip, 3.5,
+                            _make_intro_video,
+                            intro_path,
+                            _bgm,
+                            intro_clip,
+                            3.5,
                         )
                     else:
                         await asyncio.to_thread(
-                            _scene_video, intro_path, None, intro_clip, 3.5,
-                            "slow_push", True, True, (0.0, 0.0, 1.0, 1.0),
+                            _scene_video,
+                            intro_path,
+                            None,
+                            intro_clip,
+                            3.5,
+                            "slow_push",
+                            True,
+                            True,
+                            (0.0, 0.0, 1.0, 1.0),
                         )
                 except Exception as e:
                     logger.warning(f"片头生成失败: {e}")
@@ -2415,20 +3018,28 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
             try:
                 # v1.0.53：片尾用末场景主图做背景
                 _outro_bg = None
-                _segs = sorted(
-                    [f for f in os.listdir(tmpdir) if f.startswith("seg_") and f.endswith(".jpg")]
-                )
+                _segs = sorted([f for f in os.listdir(tmpdir) if f.startswith("seg_") and f.endswith(".jpg")])
                 if _segs:
                     _outro_bg = os.path.join(tmpdir, _segs[-1])
                 outro_path = await asyncio.to_thread(
-                    _make_intro_card, title, _intro_style,
-                    "本集完 · 下集更精彩", _outro_bg,
+                    _make_intro_card,
+                    title,
+                    _intro_style,
+                    "本集完 · 下集更精彩",
+                    _outro_bg,
                 )
                 if outro_path:
                     outro_clip = os.path.join(tmpdir, "outro.mp4")
                     await asyncio.to_thread(
-                        _scene_video, outro_path, None, outro_clip, 3.0,
-                        "slow_push", True, True, (0.0, 0.0, 1.0, 1.0),
+                        _scene_video,
+                        outro_path,
+                        None,
+                        outro_clip,
+                        3.0,
+                        "slow_push",
+                        True,
+                        True,
+                        (0.0, 0.0, 1.0, 1.0),
                     )
             except Exception as e:
                 logger.warning(f"片尾生成失败: {e}")
@@ -2447,9 +3058,12 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
         #   angry/serious → fadeblack（闪黑强调张力）  sad/gentle → fade（柔和叠化）
         #   happy → smoothleft（轻快横推）           其他 → fade
         _emotion_transition = {
-            "angry": "fadeblack", "serious": "fadeblack",
-            "sad": "fade", "gentle": "fade",
-            "happy": "smoothleft", "neutral": "fade",
+            "angry": "fadeblack",
+            "serious": "fadeblack",
+            "sad": "fade",
+            "gentle": "fade",
+            "happy": "smoothleft",
+            "neutral": "fade",
         }
         _transitions: dict[int, str] = {}
         for _bi in range(1, len(scene_bounds)):
@@ -2514,6 +3128,7 @@ async def _drama_generate_worker(payload: dict, progress: Callable | None = None
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
+
 def _drama_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务 handler（register_handler 约定签名）。"""
 
@@ -2532,8 +3147,7 @@ async def drama_config(current_user: dict = require_auth()):
     local_count = 0
     if MATERIALS_DIR.exists():
         local_count = sum(
-            1 for p in MATERIALS_DIR.rglob("*")
-            if p.is_file() and p.suffix.lower() in _VIDEO_EXTS + _IMAGE_EXTS
+            1 for p in MATERIALS_DIR.rglob("*") if p.is_file() and p.suffix.lower() in _VIDEO_EXTS + _IMAGE_EXTS
         )
     music_count = sum(1 for p in MUSIC_DIR.glob("*") if p.is_file() and p.suffix.lower() in _MUSIC_EXTS)
     return {
@@ -2553,7 +3167,16 @@ _EMOTION_CN = {
     "serious": "严肃",
 }
 
-_SHOT_SHEET_COLS = ["镜号", "时长(秒)", "情绪", "出场角色", "画面描述(shot)", "素材关键词(search)", "旁白(narrator)", "台词(dialogue)"]
+_SHOT_SHEET_COLS = [
+    "镜号",
+    "时长(秒)",
+    "情绪",
+    "出场角色",
+    "画面描述(shot)",
+    "素材关键词(search)",
+    "旁白(narrator)",
+    "台词(dialogue)",
+]
 
 
 def build_shot_sheet(scenes: list[dict], title: str = "", characters: list[dict] | None = None) -> bytes:
@@ -2669,7 +3292,9 @@ async def export_shot_sheet(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构") from e
+        raise HTTPException(
+            400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构"
+        ) from e
     characters = []
     if characters_json:
         try:
@@ -2688,7 +3313,7 @@ async def export_shot_sheet(
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'},
+        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"},
     )
 
 
@@ -2703,7 +3328,9 @@ async def material_manifest(
         if not isinstance(scenes, list) or not scenes:
             raise ValueError("分镜为空")
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构") from e
+        raise HTTPException(
+            400, "分镜 JSON 格式错误，请检查 scenes_json 是否符合 [{shot,narrator,dialogue,sec}] 结构"
+        ) from e
     return build_material_manifest(scenes)
 
 
@@ -2886,8 +3513,6 @@ async def list_dramas(current_user: dict = require_auth()):
             )
 
 
-
-
 # ══════════════════════════════════════════════════════════════
 # 红果短剧升级：① 小说原文转剧本 ② 角色圣经（跨集一致性）③ 系列连载
 # ══════════════════════════════════════════════════════════════
@@ -2907,30 +3532,6 @@ _NOVEL_SYSTEM = """你是资深短剧编剧。把用户提供的小说/故事原
 10. 剧情有起承转合，结尾留悬念钩子（为下一集铺垫）"""
 
 
-def _parse_characters(data: dict) -> list[dict]:
-    """解析剧本 JSON 里的角色表（兼容无角色表）。"""
-    chars = data.get("characters") or []
-    out = []
-    if isinstance(chars, list):
-        for c in chars:
-            if not isinstance(c, dict) or not c.get("name"):
-                continue
-            out.append(
-                {
-                    "id": re.sub(r"[^a-z0-9]", "", str(c.get("id") or "").strip().lower()) or f"c{len(out) + 1}",
-                    "name": str(c.get("name"))[:30],
-                    "gender": str(c.get("gender") or "女")[:10],
-                    "age": str(c.get("age") or "")[:10],
-                    "appearance": str(c.get("appearance") or "")[:100],
-                    "outfit": str(c.get("outfit") or "")[:100],
-                    "search": str(c.get("search") or "")[:80],
-                }
-            )
-    return out
-
-
-
-
 def _repair_json_quotes(candidate: str) -> str:
     """修复 LLM 短剧 JSON 中台词/画面里的裸 ASCII 引号（如 写着"清欢"。）。
 
@@ -2939,7 +3540,6 @@ def _repair_json_quotes(candidate: str) -> str:
     这里采用安全做法：把「中文语境下成对的 ASCII 引号」替换为中文引号。
     """
     # 成对 ASCII 引号 → 中文引号（只处理中文字符夹着的引号对）
-    import re as _re
 
     # 模式：非 ASCII 引号开头的引号对（"xx"）且两侧是中文/标点 → 中文引号
     out = []
@@ -2949,15 +3549,15 @@ def _repair_json_quotes(candidate: str) -> str:
         ch = candidate[i]
         if ch == '"':
             # 向前找是否是「中文内容里的引号」：前一个字符是中文或中缀标点，且找到配对引号后跟中文
-            prev_is_cjk = i > 0 and (ord(candidate[i-1]) > 0x2E80 or candidate[i-1] in "，。！？、；：）】」…—")
+            prev_is_cjk = i > 0 and (ord(candidate[i - 1]) > 0x2E80 or candidate[i - 1] in "，。！？、；：）】」…—")
             if prev_is_cjk:
                 j = candidate.find('"', i + 1)
                 if j != -1:
-                    nxt = candidate[j+1] if j + 1 < n else ""
+                    nxt = candidate[j + 1] if j + 1 < n else ""
                     next_is_cjk = nxt and (ord(nxt) > 0x2E80 or nxt in "，。！？、；：）】」…—")
                     if next_is_cjk:
                         out.append("\u201c")
-                        out.append(candidate[i+1:j].replace('\\"', '"'))
+                        out.append(candidate[i + 1 : j].replace('\\"', '"'))
                         out.append("\u201d")
                         i = j + 1
                         continue
@@ -3023,18 +3623,37 @@ def _drama_parse_script(raw: str) -> dict:
         s["sec"] = max(2, min(60, int(s.get("sec") or 5)))
         emo = str(s.get("emotion") or "neutral").strip().lower()
         if emo not in ("neutral", "happy", "sad", "angry", "gentle", "serious"):
-            emo = {"欢快": "happy", "开心": "happy", "悲伤": "sad", "难过": "sad",
-                   "激昂": "angry", "愤怒": "angry", "温柔": "gentle", "严肃": "serious"}.get(emo, "neutral")
+            emo = {
+                "欢快": "happy",
+                "开心": "happy",
+                "悲伤": "sad",
+                "难过": "sad",
+                "激昂": "angry",
+                "愤怒": "angry",
+                "温柔": "gentle",
+                "严肃": "serious",
+            }.get(emo, "neutral")
         s["emotion"] = emo
         _sz = str(s.get("shot_size") or "").strip()
-        _sz = _sz.replace("特写", "closeup").replace("近景", "medium").replace("中景", "medium").replace("全景", "wide").replace("远景", "wide")
+        _sz = (
+            _sz.replace("特写", "closeup")
+            .replace("近景", "medium")
+            .replace("中景", "medium")
+            .replace("全景", "wide")
+            .replace("远景", "wide")
+        )
         s["shot_size"] = _sz if _sz in ("closeup", "medium", "wide") else ""
         search = str(s.get("search") or "").strip()
         search = re.sub(r"[\"'\[\]]", "", search)[:60]
         if not search:
             search = (s.get("shot") or "").strip()[:30]
         s["search"] = search
-    return {"title": data.get("title") or "未命名短剧", "episode": data.get("episode") or 1, "scenes": scenes, "characters": _parse_characters(data)}
+    return {
+        "title": data.get("title") or "未命名短剧",
+        "episode": data.get("episode") or 1,
+        "scenes": scenes,
+        "characters": _parse_characters(data),
+    }
 
 
 @router.post("/novel-to-script")
@@ -3074,15 +3693,14 @@ async def novel_to_script(
 
     chars_block = ""
     if series_chars:
-        chars_block = (
-            "\n【本系列已确立的角色圣经（必须沿用，禁止改外貌服装）】\n"
-            + "\n".join(
-                f"- {c['name']}（{c['gender']} {c['age']}）：{c['appearance']}，{c['outfit']}；英文特征 {c['search']}"
-                for c in series_chars
-            )
+        chars_block = "\n【本系列已确立的角色圣经（必须沿用，禁止改外貌服装）】\n" + "\n".join(
+            f"- {c['name']}（{c['gender']} {c['age']}）：{c['appearance']}，{c['outfit']}；英文特征 {c['search']}"
+            for c in series_chars
         )
 
-    ep_block = f"\n本集为第 {episode} 集，开头 5-10 秒要承接上一集结尾的悬念钩子。" if episode and int(episode) > 1 else ""
+    ep_block = (
+        f"\n本集为第 {episode} 集，开头 5-10 秒要承接上一集结尾的悬念钩子。" if episode and int(episode) > 1 else ""
+    )
 
     # 长剧分块：>240s 时 LLM 单次输出 24+ 镜 JSON 极易格式错误，
     # 改为按「每块 ≤12 镜」分批生成再合并（每块独立 JSON，短输出更稳定）
@@ -3142,7 +3760,12 @@ async def novel_to_script(
             raise HTTPException(502, "剧本生成失败，请稍后重试")
     if not scenes_all:
         raise HTTPException(502, "剧本没有分镜")
-    script = {"title": title_out or "未命名短剧", "episode": int(episode or 1), "scenes": scenes_all, "characters": chars_all}
+    script = {
+        "title": title_out or "未命名短剧",
+        "episode": int(episode or 1),
+        "scenes": scenes_all,
+        "characters": chars_all,
+    }
     # 系列角色库优先：LLM 可能改了角色，用已存角色表覆盖（保证跨集稳定）
     if series_chars:
         script["characters"] = series_chars
@@ -3207,7 +3830,9 @@ class SeriesCreateRequest(BaseModel):
 
 
 class CharacterSaveRequest(BaseModel):
-    characters: list[dict] = Field(default_factory=list, description="角色表（id/name/gender/age/appearance/outfit/search）")
+    characters: list[dict] = Field(
+        default_factory=list, description="角色表（id/name/gender/age/appearance/outfit/search）"
+    )
 
 
 @router.post("/series")
@@ -3235,15 +3860,11 @@ async def list_series(current_user: dict = require_auth()):
     conn = get_db()
     _ensure_drama_tables(conn)
     try:
-        rows = conn.execute(
-            "SELECT * FROM drama_series WHERE user_id=? ORDER BY created_at DESC", (user,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM drama_series WHERE user_id=? ORDER BY created_at DESC", (user,)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
-            cnt = conn.execute(
-                "SELECT COUNT(*) c FROM drama_characters WHERE series_id=?", (d["id"],)
-            ).fetchone()["c"]
+            cnt = conn.execute("SELECT COUNT(*) c FROM drama_characters WHERE series_id=?", (d["id"],)).fetchone()["c"]
             d["character_count"] = cnt
             out.append(d)
         return {"series": out}
@@ -3258,9 +3879,7 @@ async def delete_series(series_id: str, current_user: dict = require_auth()):
     conn = get_db()
     _ensure_drama_tables(conn)
     try:
-        row = conn.execute(
-            "SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)).fetchone()
         if not row:
             raise HTTPException(404, "系列不存在")
         conn.execute("DELETE FROM drama_characters WHERE series_id=?", (series_id,))
@@ -3278,9 +3897,7 @@ async def save_series_characters(series_id: str, req: CharacterSaveRequest, curr
     conn = get_db()
     _ensure_drama_tables(conn)
     try:
-        row = conn.execute(
-            "SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM drama_series WHERE id=? AND user_id=?", (series_id, user)).fetchone()
         if not row:
             raise HTTPException(404, "系列不存在")
         if len(req.characters) > 10:
@@ -3295,11 +3912,18 @@ async def save_series_characters(series_id: str, req: CharacterSaveRequest, curr
                 """INSERT INTO drama_characters (series_id, user_id, idx, cid, name, gender, age, appearance, outfit, search, created_at, updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    series_id, user, i, cid,
-                    str(c.get("name") or "")[:30], str(c.get("gender") or "女")[:10],
-                    str(c.get("age") or "")[:10], str(c.get("appearance") or "")[:100],
-                    str(c.get("outfit") or "")[:100], str(c.get("search") or "")[:80],
-                    now, now,
+                    series_id,
+                    user,
+                    i,
+                    cid,
+                    str(c.get("name") or "")[:30],
+                    str(c.get("gender") or "女")[:10],
+                    str(c.get("age") or "")[:10],
+                    str(c.get("appearance") or "")[:100],
+                    str(c.get("outfit") or "")[:100],
+                    str(c.get("search") or "")[:80],
+                    now,
+                    now,
                 ),
             )
         conn.commit()

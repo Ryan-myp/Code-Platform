@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """视频模板工厂：专业级短视频广告模板（TikTok/电商/社媒/节日/生活）。
 
 架构：
@@ -8,10 +7,9 @@
   → xfade 转场串联 → 电商节拍 BGM 合成 → MP4 + 封面抽帧。
 - 商业化：模板定价（free/once/day/month，积分），购买授权 + 渲染校验 + 热度统计。
 """
-import asyncio
+
 import json
 import logging
-import math
 import os
 import subprocess
 import tempfile
@@ -34,7 +32,6 @@ router = APIRouter(prefix="/api/video-templates", tags=["视频模板"])
 from common.template_utils import load_all, load_one
 
 
-
 def _ffmpeg_bin() -> str:
     """ffmpeg 选择：优先 imageio-ffmpeg 自带二进制（libass 支持），回退系统 ffmpeg。"""
     try:
@@ -49,7 +46,9 @@ def _has_audio(src: Path) -> bool:
     try:
         out = subprocess.run(
             [_ffmpeg_bin(), "-i", str(src), "-f", "null", "-"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         ).stderr
         return "Audio:" in out
     except Exception:  # noqa: BLE001
@@ -60,11 +59,19 @@ def _has_audio(src: Path) -> bool:
 # 模板数据：16 个专业视频模板（写盘 video_templates/*.json）
 # ══════════════════════════════════════════════════════════════
 
+
 def _tpl(tid, name, category, platform, scenes, pricing, w=1080, h=1920, fps=30, desc=""):
     return {
-        "id": tid, "name": name, "category": category, "platform": platform,
-        "width": w, "height": h, "fps": fps, "scenes": scenes,
-        "pricing": pricing, "desc": desc,
+        "id": tid,
+        "name": name,
+        "category": category,
+        "platform": platform,
+        "width": w,
+        "height": h,
+        "fps": fps,
+        "scenes": scenes,
+        "pricing": pricing,
+        "desc": desc,
         "created_at": datetime.now().isoformat(),
         "updated_at": datetime.now().isoformat(),
     }
@@ -103,10 +110,35 @@ def _line(x, y, length, angle, color, width=2, opacity=1.0):
     return d
 
 
-def _txt(key, x, y, text, fs, color, bold=False, align="left", mw=0, family="hiragino",
-         shadow="", sc="#00000055", lh=1.35, sp=0):
-    d = {"type": "text", "key": key, "x": x, "y": y, "text": text, "font_size": fs,
-         "color": color, "align": align, "max_width": mw, "bold": bold, "family": family}
+def _txt(
+    key,
+    x,
+    y,
+    text,
+    fs,
+    color,
+    bold=False,
+    align="left",
+    mw=0,
+    family="hiragino",
+    shadow="",
+    sc="#00000055",
+    lh=1.35,
+    sp=0,
+):
+    d = {
+        "type": "text",
+        "key": key,
+        "x": x,
+        "y": y,
+        "text": text,
+        "font_size": fs,
+        "color": color,
+        "align": align,
+        "max_width": mw,
+        "bold": bold,
+        "family": family,
+    }
     if shadow:
         d["shadow"] = shadow
         d["shadow_color"] = sc
@@ -128,13 +160,26 @@ def _img(key, x, y, w, h, radius=0, border=0, border_color="#FFFFFF"):
 # ── 场景工厂：钩子开场 / 卖点轮播 / 价格行动 / 结尾引导 ──
 def _hook(bg, tag, title, subtitle, accent, accent2, seconds=3.2, motion="zoom_in"):
     return _scene(
-        bg, seconds,
+        bg,
+        seconds,
         [
             _dot(540, 320, 280, accent, opacity=0.35),
             _rect(300, 130, 480, 78, "#FFFFFF", radius=39, opacity=0.12, border=2, border_color=accent2),
             _txt("tag", 300, 150, tag, 26, accent2, bold=True, align="center", mw=480),
-            _txt("title", 80, 260, title, 92, "#FFFFFF", bold=True, align="center", mw=920, lh=1.25,
-                 shadow="0,8", sc="#00000066"),
+            _txt(
+                "title",
+                80,
+                260,
+                title,
+                92,
+                "#FFFFFF",
+                bold=True,
+                align="center",
+                mw=920,
+                lh=1.25,
+                shadow="0,8",
+                sc="#00000066",
+            ),
             _txt("subtitle", 80, 560, subtitle, 32, "#DDDDDD", align="center", mw=920),
             _line(280, 640, 520, 0, "#FFFFFF33", width=2),
             _img("product", 140, 1240, 800, 520, radius=28, border=6, border_color="#FFFFFF22"),
@@ -147,10 +192,31 @@ def _feat(bg, num, point, desc, accent, accent2, product=True, seconds=2.8, moti
     layers = [
         _dot(540, 240, 230, accent, opacity=0.22),
         _dot(200, 320, 66, accent2),
-        _txt(f"num{num}", 200, 294, f"{num:02d}", 52, "#FFFFFF" if accent2 != "#FFFFFF" else "#1A1A1A",
-             bold=True, align="center", mw=132),
-        _txt(f"point{num}", 80, 480, point, 76, "#FFFFFF", bold=True, align="center", mw=920, lh=1.3,
-             shadow="0,6", sc="#00000066"),
+        _txt(
+            f"num{num}",
+            200,
+            294,
+            f"{num:02d}",
+            52,
+            "#FFFFFF" if accent2 != "#FFFFFF" else "#1A1A1A",
+            bold=True,
+            align="center",
+            mw=132,
+        ),
+        _txt(
+            f"point{num}",
+            80,
+            480,
+            point,
+            76,
+            "#FFFFFF",
+            bold=True,
+            align="center",
+            mw=920,
+            lh=1.3,
+            shadow="0,6",
+            sc="#00000066",
+        ),
         _txt(f"desc{num}", 80, 760, desc, 30, "#CCCCCC", align="center", mw=920),
     ]
     if product:
@@ -160,12 +226,25 @@ def _feat(bg, num, point, desc, accent, accent2, product=True, seconds=2.8, moti
 
 def _price(bg, price, old, cta, accent, accent2, sub="", seconds=2.8, motion="zoom_in"):
     return _scene(
-        bg, seconds,
+        bg,
+        seconds,
         [
             _dot(540, 380, 170, "#FFFFFF", opacity=0.1),
             _dot(540, 380, 150, "", border=8, border_color="#FFFFFF44"),
-            _txt("price", 80, 230, price, 120, "#FFFFFF", bold=True, align="center", mw=920, lh=1.15,
-                 shadow="0,10", sc="#00000055"),
+            _txt(
+                "price",
+                80,
+                230,
+                price,
+                120,
+                "#FFFFFF",
+                bold=True,
+                align="center",
+                mw=920,
+                lh=1.15,
+                shadow="0,10",
+                sc="#00000055",
+            ),
             _txt("old", 80, 430, f"原价 {old}", 36, "#FFFFFF99", align="center", mw=920),
             _txt("flash", 80, 520, sub, 42, accent2, bold=True, align="center", mw=920),
             _line(240, 620, 600, 0, "#FFFFFF33", width=2),
@@ -179,7 +258,8 @@ def _price(bg, price, old, cta, accent, accent2, sub="", seconds=2.8, motion="zo
 
 def _outro(bg, brand, slogan, accent, accent2, seconds=2.0, motion="zoom_out"):
     return _scene(
-        bg, seconds,
+        bg,
+        seconds,
         [
             _dot(540, 560, 120, "", border=8, border_color=accent),
             _dot(540, 560, 92, "", border=6, border_color=accent2),
@@ -203,8 +283,23 @@ def _category_for(tid: str) -> str:
     return "生活"
 
 
-def _build(tid, name, platform, hook, feats, price, outro, pricing, desc="",
-           hseconds=3.2, fseconds=2.8, pseconds=2.8, oseconds=2.0, w=1080, h=1920):
+def _build(
+    tid,
+    name,
+    platform,
+    hook,
+    feats,
+    price,
+    outro,
+    pricing,
+    desc="",
+    hseconds=3.2,
+    fseconds=2.8,
+    pseconds=2.8,
+    oseconds=2.0,
+    w=1080,
+    h=1920,
+):
     scenes = [hook]
     scenes += feats
     scenes += [price, outro]
@@ -216,7 +311,9 @@ def _video_templates():
     T = []
     # ══ 电商 8：TikTok Shop / 秒杀 / 新品 / 套装 / 美食 / 美妆 / 服饰 / 3C ══
     t, _ = _build(
-        "vt_tiktok_shop", "TikTok Shop 跨境带货", "tiktok",
+        "vt_tiktok_shop",
+        "TikTok Shop 跨境带货",
+        "tiktok",
         _hook("#1A1A1A→#FF2E4D", "TikTok Shop", "3 秒心动\n好物推荐", "海外爆款 · 今日直降", "#FF2E4D", "#00F2EA"),
         [
             _feat("#1A1A1A→#2D2D2D", 1, "跨境直邮\n3 天到手", "欧美仓直发 · 全程物流可查", "#00F2EA", "#00F2EA"),
@@ -230,7 +327,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_flash_sale", "限时秒杀", "通用",
+        "vt_flash_sale",
+        "限时秒杀",
+        "通用",
         _hook("#0F2027→#203A43", "FLASH SALE", "限时秒杀\n整点开抢", "库存仅 50 件 · 抢完即止", "#FFC107", "#FFC107"),
         [
             _feat("#0F2027→#203A43", 1, "限量 50 件", "每人限购 2 件 · 手慢无", "#FFC107", "#FFC107"),
@@ -243,7 +342,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_new_arrival", "新品首发", "通用",
+        "vt_new_arrival",
+        "新品首发",
+        "通用",
         _hook("#F0F4FF→#DBEAFE", "NEW ARRIVAL", "新品首发\n抢先体验", "全新升级 · 首批限定", "#3B82F6", "#7C3AED"),
         [
             _feat("#F0F4FF→#DBEAFE", 1, "首发 7 折", "新品上市专属优惠", "#3B82F6", "#7C3AED"),
@@ -256,7 +357,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_bundle", "超值套装", "通用",
+        "vt_bundle",
+        "超值套装",
+        "通用",
         _hook("#FFF7E6→#FFE9C4", "BUNDLE DEAL", "超值套装\n一次买齐", "组合装 · 更划算", "#FF8A00", "#FF5C00"),
         [
             _feat("#FFF7E6→#FFE9C4", 1, "买 2 送 1", "多买多送 · 上不封顶", "#FF8A00", "#FF5C00"),
@@ -269,7 +372,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_food", "美食诱惑", "通用",
+        "vt_food",
+        "美食诱惑",
+        "通用",
         _hook("#FFF1E6→#FFD9B8", "FOOD TIME", "深夜食堂\n治愈上线", "现点现做 · 暖胃更暖心", "#E65100", "#FF6B00"),
         [
             _feat("#FFF1E6→#FFD9B8", 1, "现点现做", "明档厨房 · 新鲜看得见", "#E65100", "#FF6B00"),
@@ -282,7 +387,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_beauty", "美妆焕颜", "通用",
+        "vt_beauty",
+        "美妆焕颜",
+        "通用",
         _hook("#FFF0F5→#FFD6E8", "BEAUTY DROP", "素颜也敢拍\n水光肌养成", "28 天焕亮 · 告别暗沉", "#FF6B9D", "#E75A8D"),
         [
             _feat("#FFF0F5→#FFD6E8", 1, "28 天焕亮", "烟酰胺 + 玻尿酸双效", "#FF6B9D", "#E75A8D"),
@@ -295,7 +402,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_fashion", "穿搭展示", "通用",
+        "vt_fashion",
+        "穿搭展示",
+        "通用",
         _hook("#FAFAFA→#E8E8E8", "FASHION DROP", "秋冬新品\n极简廓形", "质感面料 · 高级剪裁", "#111111", "#111111"),
         [
             _feat("#FAFAFA→#E8E8E8", 1, "质感面料", "羊毛混纺 · 亲肤保暖", "#111111", "#111111"),
@@ -308,7 +417,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_tech", "3C 酷玩", "通用",
+        "vt_tech",
+        "3C 酷玩",
+        "通用",
         _hook("#0A0F1E→#1B2A4A", "TECH LAUNCH", "硬核科技\n旗舰登场", "性能拉满 · 全系顶配", "#00E5FF", "#7C4DFF"),
         [
             _feat("#0A0F1E→#1B2A4A", 1, "旗舰芯片", "新一代旗舰芯 · 能效飙升", "#00E5FF", "#7C4DFF"),
@@ -322,7 +433,9 @@ def _video_templates():
     T.append(t)
     # ══ 社媒 4：抖音信息流 / 快手直播 / YouTube 片头 / 小红书 ══
     t, _ = _build(
-        "vt_douyin_feed", "抖音信息流广告", "douyin",
+        "vt_douyin_feed",
+        "抖音信息流广告",
+        "douyin",
         _hook("#1A1A1A→#2D2D2D", "DOUYIN FEED", "全网爆款\n刷到就是赚到", "10W+ 人已下单", "#FE2C55", "#25F4EE"),
         [
             _feat("#1A1A1A→#2D2D2D", 1, "全网热销 10W+", "口碑爆棚 · 复购不断", "#25F4EE", "#FE2C55"),
@@ -335,7 +448,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_kuaishou_live", "快手直播预告", "kuaishou",
+        "vt_kuaishou_live",
+        "快手直播预告",
+        "kuaishou",
         _hook("#FF4D00→#FF9A00", "LIVE TONIGHT", "今晚 8 点\n直播见", "秒杀福利 · 红包雨", "#FF4D00", "#FFD93D"),
         [
             _feat("#FF4D00→#FF9A00", 1, "秒杀福利", "整点秒杀 · 1 元起", "#FF4D00", "#FFD93D"),
@@ -348,9 +463,19 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_youtube_intro", "YouTube 频道片头", "youtube",
-        _hook("#0F0F0F→#2D0000", "SUBSCRIBE", "欢迎来到\n我的频道", "每周更新 · 干货不断", "#FF0000", "#FF0000",
-              seconds=4.0, motion="zoom_out"),
+        "vt_youtube_intro",
+        "YouTube 频道片头",
+        "youtube",
+        _hook(
+            "#0F0F0F→#2D0000",
+            "SUBSCRIBE",
+            "欢迎来到\n我的频道",
+            "每周更新 · 干货不断",
+            "#FF0000",
+            "#FF0000",
+            seconds=4.0,
+            motion="zoom_out",
+        ),
         [_feat("#0F0F0F→#2D0000", 1, "频道亮点", "科技 + 生活双领域", "#FF0000", "#FF0000", seconds=3.0)],
         _price("#0F0F0F→#2D0000", "免费订阅", "月更 8 期", "立即订阅", "#FFFFFF", "#FF0000", "打开小铃铛", seconds=3.0),
         _outro("#0F0F0F", "MY CHANNEL", "订阅 + 点赞 + 转发", "#FF0000", "#FF0000", seconds=2.0),
@@ -359,7 +484,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_xhs_plant", "小红书种草视频", "xiaohongshu",
+        "vt_xhs_plant",
+        "小红书种草视频",
+        "xiaohongshu",
         _hook("#FFF9F2→#FFE8E8", "好物分享", "自用 30 天\n真心推荐", "无广测评 · 真实体验", "#FF2442", "#FF2442"),
         [
             _feat("#FFF9F2→#FFE8E8", 1, "自用 30 天", "每天记录 · 效果看得见", "#FF2442", "#FF2442"),
@@ -373,7 +500,9 @@ def _video_templates():
     T.append(t)
     # ══ 节日 2：双11 / 圣诞 ══
     t, _ = _build(
-        "vt_double11", "双 11 大促", "通用",
+        "vt_double11",
+        "双 11 大促",
+        "通用",
         _hook("#8B0000→#C8102E", "11.11 SALE", "双 11 狂欢\n全年最低", "全场 5 折起 · 满减叠加", "#FFD700", "#FFD700"),
         [
             _feat("#8B0000→#C8102E", 1, "全场 5 折", "大牌云集 · 一价到底", "#FFD700", "#FFD700"),
@@ -386,7 +515,9 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_xmas", "圣诞狂欢促销", "通用",
+        "vt_xmas",
+        "圣诞狂欢促销",
+        "通用",
         _hook("#0B3D2E→#041712", "MERRY XMAS", "圣诞狂欢季\n礼盒直降", "限定礼盒 · 赠精美包装", "#FFD700", "#FF4D4D"),
         [
             _feat("#0B3D2E→#041712", 1, "礼盒直降", "圣诞限定 · 送人倍有面", "#FFD700", "#FF4D4D"),
@@ -400,8 +531,17 @@ def _video_templates():
     T.append(t)
     # ══ 生活 2：健身 / 旅行 ══
     t, _ = _build(
-        "vt_fitness", "健身挑战打卡", "通用",
-        _hook("#0F1F14→#1A2E22", "30 DAY CHALLENGE", "30 天挑战\n遇见更好的自己", "每天 10 分钟 · 无需器械", "#39FF88", "#39FF88"),
+        "vt_fitness",
+        "健身挑战打卡",
+        "通用",
+        _hook(
+            "#0F1F14→#1A2E22",
+            "30 DAY CHALLENGE",
+            "30 天挑战\n遇见更好的自己",
+            "每天 10 分钟 · 无需器械",
+            "#39FF88",
+            "#39FF88",
+        ),
         [
             _feat("#0F1F14→#1A2E22", 1, "燃脂计划", "HIIT + 拉伸科学搭配", "#39FF88", "#39FF88"),
             _feat("#0F1F14→#1A2E22", 2, "无需器械", "在家就能练 · 0 门槛", "#39FF88", "#39FF88"),
@@ -413,8 +553,12 @@ def _video_templates():
     )
     T.append(t)
     t, _ = _build(
-        "vt_travel", "旅行 Vlog", "通用",
-        _hook("#1E3A8A→#0F172A", "TRAVEL VLOG", "说走就走\n去看更大的世界", "小众秘境 · 省钱攻略", "#FDE68A", "#FDE68A"),
+        "vt_travel",
+        "旅行 Vlog",
+        "通用",
+        _hook(
+            "#1E3A8A→#0F172A", "TRAVEL VLOG", "说走就走\n去看更大的世界", "小众秘境 · 省钱攻略", "#FDE68A", "#FDE68A"
+        ),
         [
             _feat("#1E3A8A→#0F172A", 1, "小众秘境", "人少景美 · 超出片", "#FDE68A", "#FDE68A"),
             _feat("#1E3A8A→#0F172A", 2, "省钱攻略", "机票酒店这样订最划算", "#FDE68A", "#FDE68A"),
@@ -439,13 +583,10 @@ def init_video_templates():
     return load_all(TEMPLATE_DIR)
 
 
-
-
-
-
 # ══════════════════════════════════════════════════════════════
 # 商业化：购买授权 + 渲染校验 + 热度
 # ══════════════════════════════════════════════════════════════
+
 
 def _get_db():
     from common.db import get_db
@@ -471,9 +612,7 @@ def _get_usage(tid: str) -> int:
     try:
         conn = _get_db()
         _ensure_tables(conn)
-        row = conn.execute(
-            "SELECT usage_count FROM video_template_usage WHERE template_id=?", (tid,)
-        ).fetchone()
+        row = conn.execute("SELECT usage_count FROM video_template_usage WHERE template_id=?", (tid,)).fetchone()
         conn.close()
         return int(row["usage_count"]) if row else 0
     except Exception:  # noqa: BLE001
@@ -526,6 +665,7 @@ def _check_render_access(user: str, template: dict) -> None:
 # 渲染引擎：镜头帧 → zoompan 运镜 → xfade 转场 → BGM 合成
 # ══════════════════════════════════════════════════════════════
 
+
 def _scene_motion_filter(motion: str, w: int, h: int, fps: int, secs: float) -> str:
     """Ken Burns 运镜（zoompan 用 on 输出帧计数，预放大 2x 防抖动）。"""
     total = max(1, int(secs * fps))
@@ -555,21 +695,32 @@ def _scene_motion_filter(motion: str, w: int, h: int, fps: int, secs: float) -> 
     return f"zoompan=z='{z}':x='{x}':y='{y}':d={total}:s={w}x{h}:fps={fps}"
 
 
-def _render_shot(frame_path: Path, out_path: Path, motion: str, w: int, h: int, fps: int,
-                 secs: float) -> bool:
+def _render_shot(frame_path: Path, out_path: Path, motion: str, w: int, h: int, fps: int, secs: float) -> bool:
     """单镜头：静态帧 + Ken Burns 运镜 → mp4（无音频，供 xfade 串联）。"""
     ffmpeg = _ffmpeg_bin()
-    vf = (
-        f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,"
-        f"crop={w * 2}:{h * 2},"
-        + _scene_motion_filter(motion, w, h, fps, secs)
+    vf = f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2}," + _scene_motion_filter(
+        motion, w, h, fps, secs
     )
     cmd = [
-        ffmpeg, "-nostdin", "-y", "-loop", "1", "-i", str(frame_path),
-        "-t", f"{secs:.2f}",
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
-        "-r", str(fps),
+        ffmpeg,
+        "-nostdin",
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        str(frame_path),
+        "-t",
+        f"{secs:.2f}",
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        str(fps),
         str(out_path),
     ]
     r = subprocess.run(cmd, capture_output=True, timeout=300)
@@ -584,14 +735,21 @@ def _make_bgm(total_secs: float, out_path: Path) -> None:
     ffmpeg = _ffmpeg_bin()
     d = f"{total_secs:.2f}"
     cmd = [
-        ffmpeg, "-nostdin", "-y",
-        "-f", "lavfi", "-i",
+        ffmpeg,
+        "-nostdin",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
         f"aevalsrc='0.09*sin(2*PI*110*t)+0.06*sin(2*PI*165*t)+0.04*sin(2*PI*220*t)':d={d}:s=44100",
-        "-f", "lavfi", "-i",
+        "-f",
+        "lavfi",
+        "-i",
         f"aevalsrc='0.16*sin(2*PI*440*t)*exp(-4*mod(t,0.4))+0.12*sin(2*PI*220*t)*exp(-3*mod(t,2))':d={d}:s=44100",
         "-filter_complex",
         f"[0][1]amix=inputs=2:normalize=0,afade=t=in:d=0.4,afade=t=out:st={max(0.5, total_secs - 1.2):.2f}:d=1.2",
-        "-c:a", "pcm_s16le",
+        "-c:a",
+        "pcm_s16le",
         str(out_path),
     ]
     try:
@@ -600,8 +758,7 @@ def _make_bgm(total_secs: float, out_path: Path) -> None:
         logger.warning(f"BGM 生成失败: {e}")
 
 
-def _xfade_concat(shot_paths: list[Path], secs_list: list[float], out_path: Path,
-                  bgm: Path | None, fps: int) -> bool:
+def _xfade_concat(shot_paths: list[Path], secs_list: list[float], out_path: Path, bgm: Path | None, fps: int) -> bool:
     """xfade 转场串联 + 混入 BGM → 最终 MP4。"""
     fade = 0.4
     n = len(shot_paths)
@@ -624,8 +781,19 @@ def _xfade_concat(shot_paths: list[Path], secs_list: list[float], out_path: Path
         cmd += ["-c:a", "aac", "-b:a", "128k"]
     else:
         cmd += ["-map", "[vout]", "-an"]
-    cmd += ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p", "-r", str(fps),
-            "-movflags", "+faststart", str(out_path)]
+    cmd += [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        str(fps),
+        "-movflags",
+        "+faststart",
+        str(out_path),
+    ]
     r = subprocess.run(cmd, capture_output=True, timeout=600)
     if r.returncode != 0 or not out_path.exists() or out_path.stat().st_size < 8192:
         logger.warning(f"转场合成失败: {r.stderr.decode(errors='replace')[-400:]}")
@@ -636,16 +804,28 @@ def _xfade_concat(shot_paths: list[Path], secs_list: list[float], out_path: Path
 def _extract_cover(video_path: Path, cover_path: Path) -> None:
     try:
         subprocess.run(
-            [_ffmpeg_bin(), "-nostdin", "-y", "-ss", "0.6", "-i", str(video_path),
-             "-frames:v", "1", "-q:v", "3", str(cover_path)],
-            capture_output=True, timeout=60,
+            [
+                _ffmpeg_bin(),
+                "-nostdin",
+                "-y",
+                "-ss",
+                "0.6",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "3",
+                str(cover_path),
+            ],
+            capture_output=True,
+            timeout=60,
         )
     except Exception as e:  # noqa: BLE001
         logger.warning(f"封面抽帧失败: {e}")
 
 
-async def render_video_template(template: dict, overrides: dict | None = None,
-                                images: list | None = None) -> dict:
+async def render_video_template(template: dict, overrides: dict | None = None, images: list | None = None) -> dict:
     """渲染视频模板：逐场景帧图 → 运镜镜头 → 转场合成 → BGM → MP4 + 封面。"""
     overrides = dict(overrides or {})
     if images:
@@ -662,7 +842,8 @@ async def render_video_template(template: dict, overrides: dict | None = None,
         frame_paths, secs_list = [], []
         for i, scene in enumerate(scenes):
             frame_tpl = {
-                "width": w, "height": h,
+                "width": w,
+                "height": h,
                 "background": scene.get("background", "#000000"),
                 "background_image": scene.get("background_image", ""),
                 "background_darken": scene.get("background_darken", 0),
@@ -698,13 +879,15 @@ async def render_video_template(template: dict, overrides: dict | None = None,
             "url": f"/api/video-templates/videos/{filename}",
             "cover": f"/api/video-templates/videos/{cover_name}",
             "duration": round(total_secs, 1),
-            "width": w, "height": h,
+            "width": w,
+            "height": h,
         }
 
 
 # ══════════════════════════════════════════════════════════════
 # API
 # ══════════════════════════════════════════════════════════════
+
 
 @router.get("/list")
 async def video_templates_list(category: str = "", q: str = "", sort: str = "hot"):
@@ -720,8 +903,9 @@ async def video_templates_list(category: str = "", q: str = "", sort: str = "hot
             "platform": t.get("platform", "通用"),
             "width": t.get("width", 1080),
             "height": t.get("height", 1920),
-            "duration": round(sum(s.get("seconds", 2.5) for s in t.get("scenes", []))
-                              - 0.4 * max(0, len(t.get("scenes", [])) - 1), 1),
+            "duration": round(
+                sum(s.get("seconds", 2.5) for s in t.get("scenes", [])) - 0.4 * max(0, len(t.get("scenes", [])) - 1), 1
+            ),
             "preview": f"/api/video-templates/preview/{t['id']}",
             "pricing": pricing,
             "pricing_label": {"free": "免费", "once": "按次", "day": "按天", "month": "按月"}.get(mode, "免费"),
@@ -732,7 +916,9 @@ async def video_templates_list(category: str = "", q: str = "", sort: str = "hot
         items.append(item)
     if q:
         ql = q.strip().lower()
-        items = [i for i in items if ql in i["name"].lower() or ql in i["category"].lower() or ql in i["platform"].lower()]
+        items = [
+            i for i in items if ql in i["name"].lower() or ql in i["category"].lower() or ql in i["platform"].lower()
+        ]
     if category and category != "全部":
         items = [i for i in items if i["category"] == category]
     if sort == "new":
@@ -751,23 +937,30 @@ async def video_templates_list(category: str = "", q: str = "", sort: str = "hot
 @router.get("/{tid}")
 async def video_template_detail(tid: str):
     """模板详情（渲染参数变量说明）。"""
-    t = load_one(TEMPLATE_DIR, tid, '视频模板不存在')
+    t = load_one(TEMPLATE_DIR, tid, "视频模板不存在")
     keys = []
     for scene in t.get("scenes", []):
         for layer in scene.get("layers", []):
             if layer.get("key"):
                 keys.append({"key": layer["key"], "type": layer["type"], "text": layer.get("text", "")})
-    return {"template": {k: t[k] for k in ("id", "name", "category", "platform", "width", "height",
-                                           "fps", "desc", "pricing") if k in t}, "vars": keys}
+    return {
+        "template": {
+            k: t[k]
+            for k in ("id", "name", "category", "platform", "width", "height", "fps", "desc", "pricing")
+            if k in t
+        },
+        "vars": keys,
+    }
 
 
 @router.get("/preview/{tid}")
 async def video_template_preview(tid: str):
     """模板封面：首场景帧渲染（PNG，公开 CORS 供市场卡片展示）。"""
-    t = load_one(TEMPLATE_DIR, tid, '视频模板不存在')
+    t = load_one(TEMPLATE_DIR, tid, "视频模板不存在")
     scene = t["scenes"][0]
     frame_tpl = {
-        "width": t["width"], "height": t["height"],
+        "width": t["width"],
+        "height": t["height"],
         "background": scene.get("background", "#000000"),
         "layers": scene.get("layers", []),
     }
@@ -778,13 +971,19 @@ async def video_template_preview(tid: str):
 
     buf = io.BytesIO()
     imgs[0].save(buf, format="PNG")
-    return Response(content=buf.getvalue(), media_type="image/png",
-                    headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"})
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.post("/purchase")
-async def purchase_video_template(template_id: str = Form(...), access_type: str = Form("once"),
-                                  current_user: dict = __import__("common.auth", fromlist=["require_auth"]).require_auth()):
+async def purchase_video_template(
+    template_id: str = Form(...),
+    access_type: str = Form("once"),
+    current_user: dict = __import__("common.auth", fromlist=["require_auth"]).require_auth(),
+):
     """购买视频模板（积分）：once 永久 / day / month 订阅。"""
     from common.auth import require_auth  # noqa: F401 — 签名已用
 
@@ -821,10 +1020,12 @@ async def purchase_video_template(template_id: str = Form(...), access_type: str
 
 
 @router.post("/render")
-async def render_video_template_api(template_id: str = Form(...),
-                                    overrides: str = Form("{}"),
-                                    images: str = Form("[]"),
-                                    current_user: dict = __import__("common.auth", fromlist=["require_auth"]).require_auth()):
+async def render_video_template_api(
+    template_id: str = Form(...),
+    overrides: str = Form("{}"),
+    images: str = Form("[]"),
+    current_user: dict = __import__("common.auth", fromlist=["require_auth"]).require_auth(),
+):
     """渲染视频模板（同步，耗时 30-90s）：overrides=JSON 文本变量，images=JSON 图片槽。"""
     from common.auth import require_auth  # noqa: F401
 

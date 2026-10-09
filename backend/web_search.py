@@ -20,8 +20,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from common.auth import require_auth
-from common.helpers import _notify_progress
 from common.db import get_db_context
+from common.helpers import _notify_progress
 from common.llm import call_llm_async, log_usage
 from task_queue import create_task, register_handler
 
@@ -87,7 +87,9 @@ class WebSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500, description="搜索关键词")
     num_results: int = Field(5, ge=1, le=10, description="返回结果数量")
     time_range: Literal["", "24h", "7d", "30d"] = Field("", description="时间筛选：近24小时/7天/30天，空=不限")
-    domain_filter: str = Field("", max_length=500, description="来源域白名单（逗号分隔，如 wikipedia.org,github.com），空=不过滤")
+    domain_filter: str = Field(
+        "", max_length=500, description="来源域白名单（逗号分隔，如 wikipedia.org,github.com），空=不过滤"
+    )
 
 
 # ── 数据库初始化 ──────────────────────────────────────────
@@ -263,12 +265,25 @@ _DATE_REL_EN = re.compile(r"(\d{1,2})\s+(hour|hours|day|days|week|weeks|month|mo
 _DATE_REL_CN = re.compile(r"(\d{1,2})\s*(小时|天|周|个月)\s*前")
 _DATE_YEAR = re.compile(r"(20\d{2})")
 _REL_UNITS = {
-    "hour": "hours", "hours": "hours", "小时": "hours",
-    "day": "days", "days": "days", "天": "days",
-    "week": "weeks", "weeks": "weeks", "周": "weeks",
-    "month": "months", "months": "months", "个月": "months",
+    "hour": "hours",
+    "hours": "hours",
+    "小时": "hours",
+    "day": "days",
+    "days": "days",
+    "天": "days",
+    "week": "weeks",
+    "weeks": "weeks",
+    "周": "weeks",
+    "month": "months",
+    "months": "months",
+    "个月": "months",
 }
-_REL_DELTAS = {"hours": timedelta(hours=1), "days": timedelta(days=1), "weeks": timedelta(weeks=1), "months": timedelta(days=30)}
+_REL_DELTAS = {
+    "hours": timedelta(hours=1),
+    "days": timedelta(days=1),
+    "weeks": timedelta(weeks=1),
+    "months": timedelta(days=30),
+}
 
 
 def _extract_date(text: str, now: datetime | None = None) -> datetime | None:
@@ -401,7 +416,9 @@ async def _web_search_worker(payload: dict, progress: Callable | None = None) ->
     _report(45, "AI 整合摘要中")
     time_constraint = TIME_RANGE_LABELS.get(time_range, "")
     if time_constraint:
-        time_constraint = f"仅优先采用{time_constraint}内的信息；对超过时效的内容明确标注「时效性提醒」，不要作为主要结论依据。"
+        time_constraint = (
+            f"仅优先采用{time_constraint}内的信息；对超过时效的内容明确标注「时效性提醒」，不要作为主要结论依据。"
+        )
     else:
         time_constraint = "无特殊时效要求，正常标注各信息时间。"
     system_prompt = SEARCH_SUMMARY_SYSTEM.replace("{search_results}", search_context).replace(

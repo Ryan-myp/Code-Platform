@@ -15,20 +15,33 @@
 
 from fastapi import FastAPI
 
+# ── 管理后台（v9.1）──────────────────────────────────────────
+from admin_api import router as admin_api_router  # noqa: E402
 from ai_video_api import router as ai_video_router
+
+# ── 新增商业化模块（v20）────────────────────────────────────────
+from api_billing import router as api_billing_router  # noqa: E402
 from apikey_api import router as apikey_api_router
 from batch_api import router as batch_api_router
-from common.backup import router as backup_router
 from chat_engine import router as chat_engine_router
 from collab_engine import router as collab_engine_router
+from common.backup import router as backup_router
 from competitor_monitor import router as competitor_monitor_router
 from content_strategy import router as content_strategy_router
+from conversion_analytics import router as analytics_router  # noqa: E402
+
+# ── AI 数据分析沙箱（v9.0）───────────────────────────────────
+from data_analyzer import router as data_analyzer_router  # noqa: E402
 from data_forecast import router as data_forecast_router
 from dh_gateway import router as dh_gateway_router
 from digital_human import router as digital_human_router
 from doc_qa import router as doc_qa_router
 from drafts import router as drafts_router
 from drama_templates import router as drama_templates_router
+from enterprise_api import router as enterprise_router  # noqa: E402
+
+# ── 扩展 API（v9.0 Phase 2-4 + Office）──────────────────────
+from extended_api import router as extended_api_router  # noqa: E402
 from extensions_agents import router as extensions_agents_router
 from favorites_api import router as favorites_api_router
 from feedback_api import router as feedback_router
@@ -46,6 +59,10 @@ from music_scene_templates import router as music_scene_templates_router
 from notify_api import router as notify_api_router
 from oauth_api import router as oauth_router
 from openai_gateway import router as openai_gateway_router
+from optimizer_integration import init_optimizer_system
+
+# ── 企业级优化器（v18）────────────────────────────────────────
+from optimizer_integration import router as optimizer_router  # noqa: E402
 from pdf_doc_templates import router as pdf_doc_templates_router
 from pdf_tools import router as pdf_tools_router
 from platform_api import router as platform_api_router
@@ -65,6 +82,9 @@ from task_queue import router as task_queue_router
 from team_api import router as team_router
 from template_store import router as template_store_router
 from templates_market import router as templates_market_router
+
+# ── 效率工具箱（v9.0）────────────────────────────────────────
+from tool_hub import router as tool_hub_router  # noqa: E402
 from video_analyzer import router as video_analyzer_router
 from video_factory import router as video_factory_router
 from video_templates import router as video_templates_router
@@ -72,26 +92,6 @@ from voice_chat import router as voice_chat_router
 from voice_factory import router as voice_factory_router
 from voice_templates import router as voice_templates_router
 from web_search import router as web_search_router
-
-# ── 新增商业化模块（v20）────────────────────────────────────────
-from api_billing import router as api_billing_router, ensure_api_keys_tables  # noqa: E402
-from conversion_analytics import router as analytics_router, ensure_analytics_tables  # noqa: E402
-from enterprise_api import router as enterprise_router, ensure_enterprise_tables  # noqa: E402
-
-# ── 企业级优化器（v18）────────────────────────────────────────
-from optimizer_integration import router as optimizer_router, init_optimizer_system  # noqa: E402
-
-# ── 管理后台（v9.1）──────────────────────────────────────────
-from admin_api import router as admin_api_router  # noqa: E402
-
-# ── 扩展 API（v9.0 Phase 2-4 + Office）──────────────────────
-from extended_api import router as extended_api_router  # noqa: E402
-
-# ── 效率工具箱（v9.0）────────────────────────────────────────
-from tool_hub import router as tool_hub_router  # noqa: E402
-
-# ── AI 数据分析沙箱（v9.0）───────────────────────────────────
-from data_analyzer import router as data_analyzer_router  # noqa: E402
 
 
 def register_routers(app: FastAPI) -> None:

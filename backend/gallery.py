@@ -35,6 +35,8 @@ SOURCE_LABEL = {
     "digital_human": "数字人",
     "workflow": "工作流",
 }
+
+
 # Agent 产物的 author 形如 agent-1 / agent-2，统一展示为“AI Agent”
 def _source_label(author: str) -> str:
     if not author:
@@ -42,6 +44,7 @@ def _source_label(author: str) -> str:
     if author.startswith("agent"):
         return "AI Agent"
     return SOURCE_LABEL.get(author, author)
+
 
 # 作品类型 → 展示元信息
 TYPE_META = {
@@ -68,7 +71,7 @@ def _media_file_exists(media_url: str) -> bool:
         ("/api/voice-factory/", "voice_factory"),
     ):
         if media_url.startswith(prefix):
-            return os.path.exists(os.path.join(base, sub, media_url[len(prefix):]))
+            return os.path.exists(os.path.join(base, sub, media_url[len(prefix) :]))
     return True
 
 

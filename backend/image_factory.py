@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
+from common.helpers import (
+    _notify_progress,
+)
 
 
 def _render_template_simple(template_data: dict, output_path: str) -> str:
     """简化版模板渲染。"""
     return output_path
 
+
 def _prepare_template_params(request_data: dict) -> dict:
     """简化版准备模板参数。"""
-    return {
-        "template_id": request_data.get("template_id", ""),
-        "output_path": request_data.get("output_path", "")
-    }
+    return {"template_id": request_data.get("template_id", ""), "output_path": request_data.get("output_path", "")}
 
 
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from collections.abc import Callable
 from datetime import datetime
+
 """图片工厂模块 - 完整版本
 
 功能：
@@ -35,7 +30,6 @@ from datetime import datetime
 7. 图片管理（下载、预览、删除）
 """
 
-import asyncio
 import base64
 import io
 import json
@@ -44,8 +38,6 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import Callable
-from datetime import datetime
 from io import BytesIO
 
 import numpy as np
@@ -56,8 +48,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from common.artifacts import derive_title, save_artifact
 from common.auth import require_auth
-from common.config import load_config, resolve_api_key, resolve_api_base
-from common.llm import api_error_detail, _safe_exc_msg
+from common.config import load_config, resolve_api_base, resolve_api_key
+from common.llm import api_error_detail
 from content_safety import check_text, quality_check_image, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, platform_spec_text, publish_registry
 from task_queue import create_task, register_handler
@@ -68,7 +60,6 @@ router = APIRouter(prefix="/api/image-factory", tags=["图片工厂"])
 
 # 配置：走 common.config 单一来源（运行时可被 config 表覆盖）
 load_config()
-from common.config import AGNES_API_BASE, AGNES_API_KEY  # noqa: E402
 
 IMAGE_DIR = os.path.join(os.path.dirname(__file__), "image_factory")
 TEMPLATE_DIR = os.path.join(IMAGE_DIR, "templates")
@@ -87,14 +78,38 @@ THUMB_SIZE = 256  # 历史缩略图长边像素
 
 # 平台发布规格预设（商业化发布包：按平台规格输出成品）
 PLATFORM_PRESETS = [
-    {"id": "xiaohongshu", "name": "小红书封面", "w": 1242, "h": 1660, "ratio": "3:4",
-     "desc": "图文笔记封面（3:4 竖版），兼容抖音图文/微信公众号推文"},
-    {"id": "douyin", "name": "抖音/快手头图", "w": 1080, "h": 1920, "ratio": "9:16",
-     "desc": "短视频平台头图/视频封面（9:16 竖版）"},
-    {"id": "taobao", "name": "淘宝/电商主图", "w": 800, "h": 800, "ratio": "1:1",
-     "desc": "电商主图 800×800（满足淘宝/拼多多/京东主图要求）"},
-    {"id": "wechat", "name": "公众号头图", "w": 900, "h": 383, "ratio": "2.35:1",
-     "desc": "微信公众号头图 900×383（适配 2.35:1 展示）"},
+    {
+        "id": "xiaohongshu",
+        "name": "小红书封面",
+        "w": 1242,
+        "h": 1660,
+        "ratio": "3:4",
+        "desc": "图文笔记封面（3:4 竖版），兼容抖音图文/微信公众号推文",
+    },
+    {
+        "id": "douyin",
+        "name": "抖音/快手头图",
+        "w": 1080,
+        "h": 1920,
+        "ratio": "9:16",
+        "desc": "短视频平台头图/视频封面（9:16 竖版）",
+    },
+    {
+        "id": "taobao",
+        "name": "淘宝/电商主图",
+        "w": 800,
+        "h": 800,
+        "ratio": "1:1",
+        "desc": "电商主图 800×800（满足淘宝/拼多多/京东主图要求）",
+    },
+    {
+        "id": "wechat",
+        "name": "公众号头图",
+        "w": 900,
+        "h": 383,
+        "ratio": "2.35:1",
+        "desc": "微信公众号头图 900×383（适配 2.35:1 展示）",
+    },
 ]
 
 # 各平台发布规格说明（随发布包附带的规格说明.md）
@@ -195,15 +210,67 @@ def save_image(img: Image.Image, fmt: str = "PNG", keep_alpha: bool = False) -> 
 _ASSET_PINGFANG = "/System/Library/AssetsV2/com_apple_MobileAsset_Font7/3419f2a427639ad8c8e139149a287865a90fa17e.asset/AssetData/PingFang.ttc"
 
 FONT_FAMILIES = [
-    ("pingfang", [(_ASSET_PINGFANG, 1), ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
-    ("helvetica", [("/System/Library/Fonts/Helvetica.ttc", 1), ("/Library/Fonts/Arial.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0)], False, None),
-    ("hiragino", [("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1)], True, 2),
-    ("heiti", [("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0)], True, None),
-    ("songti", [("/System/Library/Fonts/STSongti-SC-Regular.otf", 0), ("/System/Library/Fonts/Songti.ttc", 0), ("C:/Windows/Fonts/simsun.ttc", 0)], True, None),
+    (
+        "pingfang",
+        [
+            (_ASSET_PINGFANG, 1),
+            ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+            ("/System/Library/Fonts/STHeiti Medium.ttc", 1),
+            ("C:/Windows/Fonts/msyh.ttc", 0),
+        ],
+        True,
+        None,
+    ),
+    (
+        "helvetica",
+        [
+            ("/System/Library/Fonts/Helvetica.ttc", 1),
+            ("/Library/Fonts/Arial.ttf", 0),
+            ("C:/Windows/Fonts/arial.ttf", 0),
+        ],
+        False,
+        None,
+    ),
+    (
+        "hiragino",
+        [("/System/Library/Fonts/Hiragino Sans GB.ttc", 0), ("/System/Library/Fonts/STHeiti Medium.ttc", 1)],
+        True,
+        2,
+    ),
+    (
+        "heiti",
+        [("/System/Library/Fonts/STHeiti Medium.ttc", 1), ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0)],
+        True,
+        None,
+    ),
+    (
+        "songti",
+        [
+            ("/System/Library/Fonts/STSongti-SC-Regular.otf", 0),
+            ("/System/Library/Fonts/Songti.ttc", 0),
+            ("C:/Windows/Fonts/simsun.ttc", 0),
+        ],
+        True,
+        None,
+    ),
     ("arial", [("/Library/Fonts/Arial.ttf", 0), ("C:/Windows/Fonts/arial.ttf", 0)], False, None),
     ("times", [("/Library/Fonts/Times New Roman.ttf", 1), ("C:/Windows/Fonts/times.ttf", 0)], False, None),
-    ("noto", [("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0), ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0), ("C:/Windows/Fonts/msyh.ttc", 0)], True, None),
-    ("wqy", [("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0), ("/usr/share/fonts/wqy-microhei/wqy-microhei.ttc", 0)], True, None),
+    (
+        "noto",
+        [
+            ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+            ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
+            ("C:/Windows/Fonts/msyh.ttc", 0),
+        ],
+        True,
+        None,
+    ),
+    (
+        "wqy",
+        [("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0), ("/usr/share/fonts/wqy-microhei/wqy-microhei.ttc", 0)],
+        True,
+        None,
+    ),
 ]
 
 # 最后兜底：常见中文字体（mac/win/linux），保证中文文本永远可用
@@ -232,9 +299,6 @@ def _has_cjk(text: str) -> bool:
     )
 
 
-
-
-
 def _resolve_font_path(fam: str, prefer_cjk: bool) -> tuple:
     """三级兜底解析字体路径：指定family → 可用字体池 → 常见目录。返回 (path, face_idx)。"""
     entry = next((e for e in FONT_FAMILIES if e[0] == fam), None)
@@ -244,11 +308,11 @@ def _resolve_font_path(fam: str, prefer_cjk: bool) -> tuple:
                 return fp, ii
     if prefer_cjk:
         pool = [e for e in FONT_FAMILIES if e[2]]
-        for name, paths, _, _ in pool:
+        for _name, paths, _, _ in pool:
             for fp, ii in paths:
                 if os.path.exists(fp):
                     return fp, ii
-    for name, paths, _, _ in FONT_FAMILIES:
+    for _name, paths, _, _ in FONT_FAMILIES:
         for fp, ii in paths:
             if os.path.exists(fp):
                 return fp, ii
@@ -266,8 +330,10 @@ def _font_face_index(path: str, bold: bool, italic: bool) -> int:
                 return e[3]
     return 1 if italic else 0
 
-def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool = False,
-             text: str = "") -> ImageFont.FreeTypeFont:
+
+def get_font(
+    size: int = 24, family: str = "", bold: bool = False, italic: bool = False, text: str = ""
+) -> ImageFont.FreeTypeFont:
     """获取字体：按 family 选择，多平台兜底；文本含中文时强制使用支持中文的字体（避免【】方块）。
 
     bold 优先使用 family 的真实粗体 face（如 Hiragino W6），无真实粗体时由调用方用描边模拟；
@@ -290,8 +356,7 @@ def get_font(size: int = 24, family: str = "", bold: bool = False, italic: bool 
 
 # ── v20：AI 提示词润色（免费辅助能力；LLM 失败静默回退原 prompt，不阻塞主链路）──
 _DEFAULT_NEGATIVE_PROMPT = (
-    "low quality, blurry, watermark, text, deformed, extra limbs, bad anatomy, "
-    "cropped, jpeg artifacts"
+    "low quality, blurry, watermark, text, deformed, extra limbs, bad anatomy, cropped, jpeg artifacts"
 )
 
 
@@ -314,7 +379,7 @@ async def enhance_prompt(prompt: str = Form(...), current_user: dict = require_a
     enhanced = original
     try:
         out = await call_llm_async(system, f"【原始描述】\n{original}", max_tokens=500, temperature=0.7)
-        out = (out or "").strip().strip('\"\'`')
+        out = (out or "").strip().strip("\"'`")
         if len(out) >= 4:
             enhanced = out
     except Exception:
@@ -540,7 +605,8 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
     def _report(pct: float, stage: str) -> None:
         _notify_progress(progress, pct, stage)
 
-    from common.config import require_model, resolve_feature_model
+    from common.config import resolve_feature_model
+
     prompt = payload.get("prompt") or ""
     size = payload.get("size") or DEFAULT_IMAGE_SIZE
     _uid = payload.get("user_id") or ""
@@ -572,9 +638,7 @@ async def _image_t2i_worker(payload: dict, progress: Callable | None = None) -> 
             "n": n,
         }
         # 默认合并专业负面提示词（过滤低质/畸形/水印），用户自定义词追加
-        combined_negative = ", ".join(
-            p for p in [_DEFAULT_NEGATIVE_PROMPT, negative] if p
-        )
+        combined_negative = ", ".join(p for p in [_DEFAULT_NEGATIVE_PROMPT, negative] if p)
         if combined_negative:
             api_payload["negative_prompt"] = combined_negative
         try:
@@ -665,10 +729,19 @@ async def text_to_image(
 
 # ── 图生图 API ────────────────────────────────────────────────
 PRESERVE_OPTIONS = {
-    "person": ("IDENTITY LOCK: keep the EXACT same person - same face, facial features, hairstyle, hair color, skin tone, body shape. Do NOT change, replace, or age the person. ", "person, face, identity"),
+    "person": (
+        "IDENTITY LOCK: keep the EXACT same person - same face, facial features, hairstyle, hair color, skin tone, body shape. Do NOT change, replace, or age the person. ",
+        "person, face, identity",
+    ),
     "pose": ("Keep the person's exact pose, body position and camera angle. ", "pose, position, angle"),
-    "background": ("Keep the background and environment EXACTLY the same - do not change the scene, setting, or surroundings. ", "background, scene, environment"),
-    "composition": ("Keep the same composition, framing, lighting, color palette and overall structure. ", "composition, framing, lighting, colors"),
+    "background": (
+        "Keep the background and environment EXACTLY the same - do not change the scene, setting, or surroundings. ",
+        "background, scene, environment",
+    ),
+    "composition": (
+        "Keep the same composition, framing, lighting, color palette and overall structure. ",
+        "composition, framing, lighting, colors",
+    ),
 }
 
 
@@ -719,7 +792,11 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
     negative = payload.get("negative") or ""
     # 保留内容：person/pose/background/composition（可多选），空=自由发挥
     raw_preserve = payload.get("preserve") or ""
-    preserve = [p.strip() for p in raw_preserve.split(",") if p.strip()] if isinstance(raw_preserve, str) else (raw_preserve or [])
+    preserve = (
+        [p.strip() for p in raw_preserve.split(",") if p.strip()]
+        if isinstance(raw_preserve, str)
+        else (raw_preserve or [])
+    )
     image_content = _read_file_field(payload, "image")
     if not image_content:
         raise HTTPException(400, "请上传参考图片")
@@ -770,7 +847,10 @@ async def _image_i2i_worker(payload: dict, progress: Callable | None = None) -> 
                 raise HTTPException(500, "生成失败，请稍后重试")
             filename = save_image(result_img)
             art_id = _save_artifact(
-                filename, project_id, api_prompt, {"size": size, "model": model, "strength": api_strength, "preserve": ",".join(preserve)}
+                filename,
+                project_id,
+                api_prompt,
+                {"size": size, "model": model, "strength": api_strength, "preserve": ",".join(preserve)},
             )
             _report(100, "生成完成")
             return {
@@ -798,7 +878,9 @@ async def image_to_image(
     project_id: str = Form(""),
     negative: str = Form("", description="负面提示词（不想要的元素）"),
     keep_person: bool = Form(True, description="人物保持：自动锁定人物身份不变（默认开）"),
-    preserve: str = Form("", description="保留内容：person/pose/background/composition 逗号分隔（可多选，空=自由发挥）"),
+    preserve: str = Form(
+        "", description="保留内容：person/pose/background/composition 逗号分隔（可多选，空=自由发挥）"
+    ),
     face_ref: UploadFile | None = File(None, description="人脸参考图（可选，额外身份锁定）"),
     sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
     current_user: dict = require_auth(),
@@ -812,7 +894,17 @@ async def image_to_image(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"prompt": prompt, "size": size, "strength": strength, "model": model, "project_id": project_id, "negative": negative, "keep_person": keep_person, "preserve": preserve, "user_id": uid}
+    payload = {
+        "prompt": prompt,
+        "size": size,
+        "strength": strength,
+        "model": model,
+        "project_id": project_id,
+        "negative": negative,
+        "keep_person": keep_person,
+        "preserve": preserve,
+        "user_id": uid,
+    }
     face_content = await face_ref.read() if face_ref else b""
     if face_content:
         payload["face_ref"] = base64.b64encode(face_content).decode()
@@ -1131,8 +1223,10 @@ async def list_templates():
             template["preview"] = f"/api/image-factory/template-preview/{tid}"
             template["render_count"] = usage_map.get(tid, 0)
             templates.append(template)
+
     def _sort_key(t):
         return (int(t.get("render_count", 0) or 0), t.get("created_at", "") or "")
+
     templates.sort(key=_sort_key, reverse=True)
     return templates
 
@@ -1232,8 +1326,17 @@ def _rounded_mask(w: int, h: int, radius: int) -> Image.Image:
     return mask
 
 
-def _draw_text_run(td: ImageDraw.ImageDraw, x: int, y: int, s: str, font, fill: str,  # noqa: PLR0913
-                   letter_spacing: float = 0, stroke_width: int = 0, stroke_fill: str = "") -> None:
+def _draw_text_run(
+    td: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    s: str,
+    font,
+    fill: str,  # noqa: PLR0913
+    letter_spacing: float = 0,
+    stroke_width: int = 0,
+    stroke_fill: str = "",
+) -> None:
     """绘制文字（支持字间距；描边模式下逐字绘制保证字间留白不被描边填充）。"""
     if letter_spacing and letter_spacing > 0:
         cx = x
@@ -1249,26 +1352,26 @@ def _draw_text_run(td: ImageDraw.ImageDraw, x: int, y: int, s: str, font, fill: 
         td.text((x, y), s, font=font, fill=fill)
 
 
-
 # ═══════════════════════════════════════════════════════════════
 # 模板渲染辅助函数（已提取，降低主函数复杂度）
 # ═══════════════════════════════════════════════════════════════
+
 
 def _parse_template_config(template: dict, overrides: dict) -> dict:
     """解析模板配置，提取尺寸、背景、槽位等参数。"""
     width = int(overrides.get("width", template.get("width", 1080)))
     height = int(overrides.get("height", template.get("height", 1920)))
-    
+
     raw_images = overrides.get("images") or []
     slot_map = raw_images if isinstance(raw_images, dict) else {}
     batch_urls = [] if isinstance(raw_images, dict) else list(raw_images)
-    
+
     main_slot_key = ""
     for layer in template.get("layers", []):
         if layer.get("type") == "image" and (layer.get("slot") or not layer.get("url")):
             main_slot_key = layer.get("key") or layer.get("slot") or ""
             break
-    
+
     return {
         "width": width,
         "height": height,
@@ -1311,8 +1414,12 @@ async def _make_template_bg(template: dict, overrides: dict, width: int, height:
         return make_gradient(width, height, top_hex.strip(), bottom_hex.strip())
     return Image.new("RGB", (width, height), bg_color)
 
-async def render_template_image(template: dict, overrides: dict | None = None,  # noqa: C901, PLR0912
-                                progress: Callable | None = None) -> list[Image.Image]:
+
+async def render_template_image(
+    template: dict,
+    overrides: dict | None = None,  # noqa: C901, PLR0912
+    progress: Callable | None = None,
+) -> list[Image.Image]:
     """按模板渲染出 PIL 图像列表（不保存，供渲染任务/封面缩略图复用）。
 
     overrides.images 支持两种形态：
@@ -1363,6 +1470,7 @@ async def render_template_image(template: dict, overrides: dict | None = None,  
     _report(100, "模板渲染完成")
     return result
 
+
 def _render_rect_layer(canvas, draw, layer, overrides) -> None:
     """渲染 rect 图层。"""
     # 圆角矩形底（卡片/横幅/按钮底）：支持渐变填充/描边边框/旋转
@@ -1396,7 +1504,7 @@ def _render_rect_layer(canvas, draw, layer, overrides) -> None:
         canvas.paste(overlay, (int(x + w / 2 - nw / 2), int(y + h / 2 - nh / 2)), overlay)
     else:
         canvas.paste(overlay, (x, y), overlay)
-    draw = ImageDraw.Draw(canvas)
+    ImageDraw.Draw(canvas)
 
 
 def _render_circle_layer(canvas, draw, layer, overrides) -> None:
@@ -1432,7 +1540,7 @@ def _render_circle_layer(canvas, draw, layer, overrides) -> None:
     if rotation:
         overlay = overlay.rotate(-rotation, expand=True, resample=Image.BICUBIC)
     canvas.paste(overlay, (cx - overlay.width // 2, cy - overlay.height // 2), overlay)
-    draw = ImageDraw.Draw(canvas)
+    ImageDraw.Draw(canvas)
 
 
 def _render_line_layer(canvas, draw, layer, overrides) -> None:
@@ -1460,7 +1568,6 @@ def _render_line_layer(canvas, draw, layer, overrides) -> None:
     else:
         draw.line([x1, y1, x2, y2], fill=color, width=lw)
     draw = ImageDraw.Draw(canvas)
-
 
 
 def _text_layout(text: str, font_size: int, line_height: float, max_width: int, draw, font) -> tuple:
@@ -1500,7 +1607,21 @@ def _shadow_params(shadow: str) -> tuple:
     return sx, sy, shadow_blur
 
 
-def _text_shadow_layer(txt_img, text_lines: list, font, letter_spacing: float, stroke_total: int, shadow_color: str, sx: int, sy: int, shadow_blur: int, line_h: int, block_w: int, pad: int, align: str) -> Image.Image:
+def _text_shadow_layer(
+    txt_img,
+    text_lines: list,
+    font,
+    letter_spacing: float,
+    stroke_total: int,
+    shadow_color: str,
+    sx: int,
+    sy: int,
+    shadow_blur: int,
+    line_h: int,
+    block_w: int,
+    pad: int,
+    align: str,
+) -> Image.Image:
     """绘制软阴影层并合成到底层。"""
     sh_img = Image.new("RGBA", txt_img.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(sh_img)
@@ -1510,7 +1631,9 @@ def _text_shadow_layer(txt_img, text_lines: list, font, letter_spacing: float, s
             lx = pad + (block_w - int(sd.textlength(ln, font=font))) // 2
         elif align == "right":
             lx = pad + block_w - int(sd.textlength(ln, font=font))
-        _draw_text_run(sd, lx + sx, pad + i * line_h + sy, ln, font, shadow_color, letter_spacing, stroke_total, shadow_color)
+        _draw_text_run(
+            sd, lx + sx, pad + i * line_h + sy, ln, font, shadow_color, letter_spacing, stroke_total, shadow_color
+        )
     if shadow_blur > 0:
         sh_img = sh_img.filter(ImageFilter.GaussianBlur(shadow_blur))
     return Image.alpha_composite(txt_img, sh_img)
@@ -1523,6 +1646,7 @@ def _text_gradient_overlay(txt_img, grad_fill: str) -> Image.Image:
     top_hex, bottom_hex = (grad_fill.split("→") + ["#FFFFFF"])[:2]
     grad = make_gradient(txt_img.width, txt_img.height, top_hex.strip(), bottom_hex.strip()).convert("RGBA")
     return Image.composite(grad, txt_img, txt_img.split()[3])
+
 
 async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key) -> None:
     """渲染 text 图层。"""
@@ -1572,12 +1696,28 @@ async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map
 
     # 阴影层
     if shadow:
-        txt_img = _text_shadow_layer(txt_img, text_lines, font, letter_spacing, stroke_total, shadow_color, sx, sy, shadow_blur, line_h, block_w, pad, align)
+        txt_img = _text_shadow_layer(
+            txt_img,
+            text_lines,
+            font,
+            letter_spacing,
+            stroke_total,
+            shadow_color,
+            sx,
+            sy,
+            shadow_blur,
+            line_h,
+            block_w,
+            pad,
+            align,
+        )
         td = ImageDraw.Draw(txt_img)
     # 正字层
     for i, ln in enumerate(text_lines):
         lx, ly = _line_pos(i, ln)
-        _draw_text_run(td, lx, ly, ln, font, font_color, letter_spacing, stroke_total, stroke_color if stroke_w else font_color)
+        _draw_text_run(
+            td, lx, ly, ln, font, font_color, letter_spacing, stroke_total, stroke_color if stroke_w else font_color
+        )
     # 渐变覆盖
     if grad_fill:
         txt_img = _text_gradient_overlay(txt_img, grad_fill)
@@ -1587,6 +1727,7 @@ async def _render_text_layer(canvas, draw, layer, overrides, batch_url, slot_map
         canvas.paste(txt_img, (int(x + block_w / 2 - nw / 2), int(y + block_h / 2 - nh / 2)), txt_img)
     else:
         canvas.paste(txt_img, (x - pad, y - pad), txt_img)
+
 
 async def _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key) -> None:
     """渲染 image 图层：cover 裁剪/圆角/边框/透明度/旋转。"""
@@ -1617,7 +1758,9 @@ async def _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_ma
         bd = ImageDraw.Draw(layer_img, "RGBA")
         bd.rounded_rectangle(
             [border_w // 2, border_w // 2, w - 1 - border_w // 2, h - 1 - border_w // 2],
-            radius=max(0, radius - border_w // 2), outline=border_color, width=border_w,
+            radius=max(0, radius - border_w // 2),
+            outline=border_color,
+            width=border_w,
         )
     if rotation:
         layer_img = layer_img.rotate(-rotation, expand=True, resample=Image.BICUBIC)
@@ -1627,10 +1770,9 @@ async def _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_ma
         canvas.paste(layer_img, (x, y), layer_img)
 
 
-
-
-
-async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: str, slot_map: dict, main_slot_key: str) -> None:
+async def _render_layer(
+    canvas, draw, layer: dict, overrides: dict, batch_url: str, slot_map: dict, main_slot_key: str
+) -> None:
     """按图层类型渲染到画布（rect/circle/line/text/image）。"""
     layer_type = layer.get("type")
     if layer_type == "rect":
@@ -1645,7 +1787,6 @@ async def _render_layer(canvas, draw, layer: dict, overrides: dict, batch_url: s
         await _render_image_layer(canvas, draw, layer, overrides, batch_url, slot_map, main_slot_key)
     else:
         draw = ImageDraw.Draw(canvas)
-
 
 
 async def _image_template_worker(payload: dict, progress: Callable | None = None) -> dict:
@@ -1823,9 +1964,7 @@ def _u2net_cutout(img: Image.Image) -> Image.Image | None:
             logger.warning("U2Net 模型不存在，跳过抠图")
             return None
         if not hasattr(_u2net_cutout, "_session"):
-            _u2net_cutout._session = _ort.InferenceSession(
-                str(_model), providers=["CPUExecutionProvider"]
-            )
+            _u2net_cutout._session = _ort.InferenceSession(str(_model), providers=["CPUExecutionProvider"])
         _sess = _u2net_cutout._session
         img = img.convert("RGB")
         w, h = img.size
@@ -1997,7 +2136,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
     background = payload.get("background") or "beach"
     project_id = payload.get("project_id") or ""
     keep_identity = bool(payload.get("keep_identity", True))
-    strength = float(payload.get("strength") or 0.45)
+    float(payload.get("strength") or 0.45)
 
     try:
         _report(10, "正在识别衣物特征…")
@@ -2091,7 +2230,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
 
         # 将图像转换为 Data URI Base64
         person_data_uri = f"data:image/png;base64,{base64.b64encode(person_content).decode('utf-8')}"
-        clothing_data_uri = f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
+        f"data:image/png;base64,{base64.b64encode(clothing_content).decode('utf-8')}"
 
         # 强化提示词：保持人物特征不变，只更换衣服
         style_prompt = style_prompts.get(style, style_prompts["casual"])
@@ -2101,7 +2240,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
         # 左 = 衣物图（400x560 平铺参考），右 = 人物上半身（600x560 保留脸+身份）
         # 关键：只取人物上半身 → 模型聚焦人脸，不会把衣服图当人物生成（避免多人物）
         try:
-            from PIL import Image as _PILImage, ImageDraw as _PILDraw
+            from PIL import Image as _PILImage
 
             _person_img = _PILImage.open(BytesIO(person_content)).convert("RGB")
             _cloth_img = _PILImage.open(BytesIO(clothing_content)).convert("RGB")
@@ -2126,6 +2265,7 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             _cbuf = BytesIO()
             _canvas.save(_cbuf, format="PNG")
             combo_data_uri = f"data:image/png;base64,{base64.b64encode(_cbuf.getvalue()).decode('utf-8')}"
+
             # 提取衣服主色（智能：跳过低饱和背景像素，取饱和像素众数）
             def _is_neutral(_c):
                 _r, _g, _b = _c
@@ -2153,18 +2293,24 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             secondary_color_text = ""
 
         identity_lock_text = (
-            "LEFT image = flat lay of the garment (clothing only, NO person, NO mannequin - just the fabric). "
-            "RIGHT image = photo of the person (upper body). Remember their face and identity. "
-            "IDENTITY LOCK - Preserve EXACTLY this same person - the face, facial features, "
-            "hairstyle, skin tone, body shape and posture. The face MUST be clearly visible, "
-            "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
-            "headless person. Do NOT generate a different person. "
-            "Generate ONE photo of the person wearing the garment. "
-            "OUTPUT MUST CONTAIN EXACTLY ONE PERSON. Do NOT include: the garment flat-lay image, "
-            "any mannequin, any second person, the person's old clothes, or any floating garment."
-            + (" Keep the person's ORIGINAL background/scene from the RIGHT image exactly - do NOT change it to a studio or any other backdrop." if bg_none else "")
-        ) if keep_identity else (
-            "This is the reference person. Keep the overall appearance and face similar."
+            (
+                "LEFT image = flat lay of the garment (clothing only, NO person, NO mannequin - just the fabric). "
+                "RIGHT image = photo of the person (upper body). Remember their face and identity. "
+                "IDENTITY LOCK - Preserve EXACTLY this same person - the face, facial features, "
+                "hairstyle, skin tone, body shape and posture. The face MUST be clearly visible, "
+                "full face with both eyes. Do NOT crop the head, do NOT generate a faceless or "
+                "headless person. Do NOT generate a different person. "
+                "Generate ONE photo of the person wearing the garment. "
+                "OUTPUT MUST CONTAIN EXACTLY ONE PERSON. Do NOT include: the garment flat-lay image, "
+                "any mannequin, any second person, the person's old clothes, or any floating garment."
+                + (
+                    " Keep the person's ORIGINAL background/scene from the RIGHT image exactly - do NOT change it to a studio or any other backdrop."
+                    if bg_none
+                    else ""
+                )
+            )
+            if keep_identity
+            else ("This is the reference person. Keep the overall appearance and face similar.")
         )
         messages_content = [
             {
@@ -2210,7 +2356,11 @@ async def _image_tryon_worker(payload: dict, progress: Callable | None = None) -
             + color_extra
             + f" Exact garment analysis: {clothing_description}. "
             f"Style context: {style_prompt}. "
-            + ("Keep the person's ORIGINAL background exactly as shown in the RIGHT image - do not change the scene." if bg_none else f"New background: {bg_prompt}. ")
+            + (
+                "Keep the person's ORIGINAL background exactly as shown in the RIGHT image - do not change the scene."
+                if bg_none
+                else f"New background: {bg_prompt}. "
+            )
             + "Photorealistic, high resolution, the person looks natural wearing the garment. "
         )
 
@@ -2305,7 +2455,14 @@ async def virtual_try_on(
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
     uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     role = current_user.get("role", "") if isinstance(current_user, dict) else ""
-    payload = {"description": description, "style": style, "background": background, "project_id": project_id, "keep_identity": keep_identity, "user_id": uid}
+    payload = {
+        "description": description,
+        "style": style,
+        "background": background,
+        "project_id": project_id,
+        "keep_identity": keep_identity,
+        "user_id": uid,
+    }
     if sync:
         payload["person_image"] = base64.b64encode(person_content).decode()
         payload["clothing_image"] = base64.b64encode(clothing_content).decode()
@@ -2329,8 +2486,7 @@ def _turntable_prompt(base_prompt: str = "") -> str:
         "spinning 360 degrees in place, turning from front to side to back to side, "
         "showing their outfit from every angle. The camera stays fixed. "
         "The person's face and identity remain exactly the same. "
-        "Smooth slow rotation, photorealistic, full body visible. "
-        + (base_prompt + ". " if base_prompt else "")
+        "Smooth slow rotation, photorealistic, full body visible. " + (base_prompt + ". " if base_prompt else "")
     )
 
 
@@ -2357,7 +2513,9 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
     from common.config import VIDEO_MODEL, require_model, resolve_feature_model
 
     _turntable_uid = payload.get("user_id") or ""
-    _turntable_vid_model = require_model(payload.get("model") or resolve_feature_model(_turntable_uid, "video", VIDEO_MODEL), "视频")
+    _turntable_vid_model = require_model(
+        payload.get("model") or resolve_feature_model(_turntable_uid, "video", VIDEO_MODEL), "视频"
+    )
     body = {
         "model": _turntable_vid_model,
         "prompt": prompt,
@@ -2419,7 +2577,9 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
                     with open(os.path.join(vdir, filename), "wb") as f:
                         f.write(vresp.content)
                     art_id = _save_artifact(
-                        filename, project_id, prompt,
+                        filename,
+                        project_id,
+                        prompt,
                         {"feature": "turntable", "duration": duration, "format": "video"},
                     )
                     _report(100, "完成")
@@ -2440,7 +2600,7 @@ async def _image_turntable_worker(payload: dict, progress: Callable | None = Non
             except Exception as e:  # noqa: BLE001
                 consecutive_err += 1
                 if consecutive_err >= 3:
-                    raise HTTPException(500, f"转盘状态查询失败：{e}")
+                    raise HTTPException(500, f"转盘状态查询失败：{e}") from e
                 logger.warning(f"转盘轮询瞬时异常（{consecutive_err}/3）: {e}")
         raise HTTPException(500, "转盘生成超时（>30 分钟），请稍后重试")
     except HTTPException:
@@ -2563,8 +2723,14 @@ async def replace_background(
 # ── 预置电商模板 ──────────────────────────────────────────────
 # 已下架模板（质量不达标/废弃）：启动时清理磁盘残留并跳过内置恢复
 _RETIRED_TEMPLATES = {
-    "tmplt_baidu_ad", "tmplt_insta_post", "tmplt_weibo_ad", "tmplt_douyin",
-    "tmplt_jd_main", "tmplt_taobao_main", "tmplt_pinduoduo", "tmplt_facebook_ad",
+    "tmplt_baidu_ad",
+    "tmplt_insta_post",
+    "tmplt_weibo_ad",
+    "tmplt_douyin",
+    "tmplt_jd_main",
+    "tmplt_taobao_main",
+    "tmplt_pinduoduo",
+    "tmplt_facebook_ad",
     "img_1786461663469",
 }
 
@@ -3207,7 +3373,9 @@ def _ip_copy_entries(root: str, pack_title: str, picked: list, platform: str, w:
     }
 
 
-def _ip_qc_report(picked: list, img_checks: list, upscale: bool, w: int, h: int, pack_title: str, preset: dict) -> str | None:
+def _ip_qc_report(
+    picked: list, img_checks: list, upscale: bool, w: int, h: int, pack_title: str, preset: dict
+) -> str | None:
     """图片质量自检报告（失败返回 None）。"""
     try:
         avg = int(sum(q.get("score", 0) for q in img_checks) / max(len(img_checks), 1))

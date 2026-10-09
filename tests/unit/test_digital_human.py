@@ -691,8 +691,9 @@ class TestRenderRealism:
 
         tmp = tempfile.mkdtemp()
         audio = os.path.join(tmp, "t.wav")
+        from common.ffmpeg_bin import FFMPEG_BIN
         sp.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-ar", "22050", audio],
+            [FFMPEG_BIN, "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2", "-ar", "22050", audio],
             capture_output=True,
             check=True,
         )

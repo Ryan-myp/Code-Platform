@@ -160,12 +160,12 @@ def test_knowledge_base_crud(test_db_path, auth_headers):
         "top_k": 3,
     }
     response = client.post("/api/knowledge-bases", json=kb_payload, headers=auth_headers)
-    assert response.status_code == 200
+    assert response.status_code == 200, f"KB create 失败: {response.status_code} {response.text[:500]}"
     kb_id = response.json()["id"]
 
     # 列表
     response = client.get("/api/knowledge-bases", headers=auth_headers)
-    assert response.status_code == 200
+    assert response.status_code == 200, f"KB list 失败: {response.status_code} {response.text[:300]}"
     kbs = response.json()
     assert any(kb["id"] == kb_id for kb in kbs)
 
@@ -662,7 +662,9 @@ def test_team_workflow_and_conversation(test_db_path, auth_headers):
     # 2. 列出 Team
     list_resp = client.get("/api/teams", headers=auth_headers)
     assert list_resp.status_code == 200
-    assert any(t["id"] == team_id for t in list_resp.json())
+    teams_data = list_resp.json()
+    teams = teams_data.get("teams", teams_data) if isinstance(teams_data, dict) else teams_data
+    assert any(t["id"] == team_id for t in teams)
 
     # 3. 获取插件列表
     plugins_resp = client.get("/api/plugins")

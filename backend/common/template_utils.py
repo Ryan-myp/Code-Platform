@@ -3,6 +3,7 @@
 5 个模板文件此前各自复制了 _load_all / _load_one / _get_usage / record_usage，
 仅表名与 404 消息不同，现收敛为参数化公共函数。
 """
+
 from __future__ import annotations
 
 import json
@@ -44,9 +45,7 @@ def get_usage(tid: str, table: str) -> int:
         from common.db import get_db
 
         conn = get_db()
-        row = conn.execute(
-            f"SELECT usage_count FROM {table} WHERE template_id=?", (tid,)
-        ).fetchone()
+        row = conn.execute(f"SELECT usage_count FROM {table} WHERE template_id=?", (tid,)).fetchone()
         conn.close()
         return int(row["usage_count"]) if row else 0
     except Exception:  # noqa: BLE001
@@ -60,8 +59,7 @@ def record_usage(tid: str, table: str) -> None:
 
         conn = get_db()
         conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {table} "
-            "(template_id TEXT PRIMARY KEY, usage_count INTEGER DEFAULT 0)"
+            f"CREATE TABLE IF NOT EXISTS {table} (template_id TEXT PRIMARY KEY, usage_count INTEGER DEFAULT 0)"
         )
         conn.execute(
             f"INSERT INTO {table}(template_id, usage_count) VALUES(?,1) "

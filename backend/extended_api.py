@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
-from common.helpers import _aggregate_compute_results, _execute_common_step, _execute_compute_step, _execute_single_step, _execute_step, _finalize_common_operation, _finalize_results, _finalize_step_results, _initialize_compute_context, _prepare_common_context, _prepare_context, _prepare_step_context, _notify_progress
+from common.helpers import (
+    _notify_progress,
+)
 
 
 def _run_test_gate_simple(test_case: dict, config: dict) -> dict:
     """简化版测试门控检查。"""
-    return {
-        "passed": True,
-        "test_case": test_case.get("name", ""),
-        "score": test_case.get("score", 0)
-    }
+    return {"passed": True, "test_case": test_case.get("name", ""), "score": test_case.get("score", 0)}
+
 
 def _prepare_test_config(request_data: dict) -> dict:
     """简化版准备测试配置。"""
-    return {
-        "test_cases": request_data.get("test_cases", []),
-        "threshold": request_data.get("threshold", 0.8)
-    }
+    return {"test_cases": request_data.get("test_cases", []), "threshold": request_data.get("threshold", 0.8)}
 
 
-
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic, Iterator, Sequence, Mapping, Iterable, Awaitable, Coroutine, Type
-from dataclasses import dataclass, field
-from enum import Enum, auto
-from datetime import datetime
 import asyncio
-from typing import Any, Optional, Union, List, Dict, Tuple, Callable, Set, TypeVar, Generic
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from collections.abc import Callable
 from datetime import datetime
+
 """Platform v9.0 Extended API - 研发增强/内容创作/运营分析/办公效率"""
 
 import glob
@@ -42,8 +32,6 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Callable
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -51,7 +39,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db, get_db_context
-from common.llm import call_llm, call_llm_async, parse_llm_json, _safe_exc_msg
+from common.llm import call_llm, call_llm_async, parse_llm_json
 from prd_engine import stream_llm_response
 from task_queue import create_task, register_handler
 
@@ -346,7 +334,6 @@ def _is_infra_error(msg: str) -> bool:
     return any(m in low for m in _INFRA_ERROR_MARKERS)
 
 
-
 def _ensure_dep_redis(cfg: dict, container_name: str, net: str, append, step_run) -> tuple:
     """确保 Redis 依赖容器运行（幂等复用）。返回 (env_flags, ok, err)。"""
     env_flags: list = []
@@ -358,8 +345,18 @@ def _ensure_dep_redis(cfg: dict, container_name: str, net: str, append, step_run
         step_run(["podman", "rm", "-f", dep], timeout=30)
         append(f"  - 依赖: 启动 Redis 容器 {dep} …")
         ok, out = step_run(
-            ["podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "redis",
-             "docker.io/library/redis:7-alpine"],
+            [
+                "podman",
+                "run",
+                "-d",
+                "--name",
+                dep,
+                "--network",
+                net,
+                "--network-alias",
+                "redis",
+                "docker.io/library/redis:7-alpine",
+            ],
             timeout=300,
         )
         if not ok:
@@ -389,8 +386,22 @@ def _ensure_dep_mysql(cfg: dict, container_name: str, net: str, append, step_run
         step_run(["podman", "rm", "-f", dep], timeout=30)
         append(f"  - 依赖: 启动 MySQL 容器 {dep} …（首次拉取镜像较慢）")
         ok, out = step_run(
-            ["podman", "run", "-d", "--name", dep, "--network", net, "--network-alias", "mysql",
-             "-e", f"MYSQL_ROOT_PASSWORD={pw}", "-e", f"MYSQL_DATABASE={db}", img],
+            [
+                "podman",
+                "run",
+                "-d",
+                "--name",
+                dep,
+                "--network",
+                net,
+                "--network-alias",
+                "mysql",
+                "-e",
+                f"MYSQL_ROOT_PASSWORD={pw}",
+                "-e",
+                f"MYSQL_DATABASE={db}",
+                img,
+            ],
             timeout=600,
         )
         if not ok:
@@ -399,7 +410,9 @@ def _ensure_dep_mysql(cfg: dict, container_name: str, net: str, append, step_run
         ready = False
         for _ in range(60):
             time.sleep(2)
-            ok2, _ = step_run(["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10)
+            ok2, _ = step_run(
+                ["podman", "exec", dep, "mysqladmin", "ping", "-uroot", f"-p{pw}", "--silent"], timeout=10
+            )
             if ok2:
                 ready = True
                 break
@@ -407,6 +420,7 @@ def _ensure_dep_mysql(cfg: dict, container_name: str, net: str, append, step_run
             return [], False, "MySQL 依赖容器初始化超时"
     env_flags += ["-e", f"DATABASE_URL=mysql+aiomysql://root:{pw}@mysql:3306/{db}?charset=utf8mb4"]
     return env_flags, True, ""
+
 
 def _prepare_dependencies(cfg, container_name, append, step_run) -> tuple:  # noqa: C901
     """准备自定义网络 + 依赖容器（Redis/MySQL），已存在且健康则复用（幂等）。
@@ -853,7 +867,6 @@ def _fix_system(lang: str, kind: str) -> str:
     return TEST_FIX_SYSTEM
 
 
-
 def _load_test_cases(cfg: dict) -> str:
     """加载需求测试用例（无则空串）。"""
     if not cfg.get("requirement_id"):
@@ -868,7 +881,7 @@ def _load_test_cases(cfg: dict) -> str:
 
 def _build_test_prompt(lang: str, entry: str, code: str, test_cases: str) -> str:
     """构建测试文件生成提示词（超长代码截断）。"""
-    sys_prompt = _TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry)
+    _TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry)
     prompt = f"【需求测试用例】\n{test_cases or '（无，请基于代码接口自拟核心用例）'}\n\n【{entry}】\n{code}"
     if len(prompt) > 17000:
         prompt = prompt[:11000] + "\n# ……（代码过长已截断）……\n" + prompt[-6000:]
@@ -881,7 +894,7 @@ def _rewrite_test_file(lang: str, test_file: str, fixed: str, err_v: str, append
         flines = fixed.splitlines()
         em = re.search(r"L(\d+)|:(\d+):", err_v)
         err_line = int(em.group(1) or em.group(2) or 1) if em else 1
-        ctx_lines = flines[max(0, err_line - 22): err_line + 18]
+        ctx_lines = flines[max(0, err_line - 22) : err_line + 18]
         ctx = "\n".join(f"{max(0, err_line - 22) + i + 1}| {line}" for i, line in enumerate(ctx_lines))
         brief = fixed[:4000] + f"\n……（共 {len(flines)} 行，中间省略）……\n" + fixed[-2000:]
         fix2 = call_llm(
@@ -928,7 +941,12 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
     test_cases = _load_test_cases(cfg)
     prompt = _build_test_prompt(lang, entry, code, test_cases)
     try:
-        out = call_llm(_TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry), prompt, max_tokens=6000, timeout=180)
+        out = call_llm(
+            _TEST_PROMPTS.get(lang, _TEST_PROMPTS["python"]).replace("<entry>", entry),
+            prompt,
+            max_tokens=6000,
+            timeout=180,
+        )
     except Exception as e:
         append(f"  - ⚠ LLM 生成测试文件失败: {e}（可在系统配置-模型列表中设置模型 API Key）")
         return False
@@ -947,6 +965,7 @@ def _ensure_test_file(project_dir, cfg, append) -> bool:  # noqa: C901
         f.write(fixed)
     append(f"  - 测试文件已生成 {test_file}（{len(fixed)} 字节）")
     return True
+
 
 def _record_test_run(requirement_id, pipeline_id, status, summary, log_text, cases=None) -> None:
     """记录一次自动化测试执行结果（需求维度，AI 工作台可见）。记录失败不阻塞主流程。
@@ -1135,7 +1154,7 @@ def _parse_test_info(project_dir: str, names: list) -> dict:
         hints: list = []
         m = re.search(rf"def {re.escape(name)}\s*\(", text)
         if m:
-            seg = text[m.start():]
+            seg = text[m.start() :]
             nxt = re.search(r"\n(?:async def |def |class )", seg[1:])
             seg = seg[: nxt.start() + 1] if nxt else seg[:2000]
             seg = seg.strip()
@@ -1195,7 +1214,7 @@ def _match_route_functions(tree, code: str, test_info: dict) -> tuple:
 
     funcs: dict = {}
     order: list = []
-    for name, info in (test_info or {}).items():
+    for _name, info in (test_info or {}).items():
         hit = _match_one(info.get("hints") or [])
         if not hit:
             continue
@@ -1227,6 +1246,7 @@ def _extract_failed_functions(project_dir: str, out: str) -> list:  # noqa: C901
     funcs, order = _match_route_functions(tree, code, test_info)
     return [(n, funcs[n]["start"], funcs[n]["end"], funcs[n]["segs"]) for n in order]
 
+
 def _replace_function(target_path: str, new_code: str, start_line: int, end_line: int) -> None:
     """用修复后的函数源码替换文件指定行区间，并按原函数缩进适配。"""
     with open(target_path, encoding="utf-8") as f:
@@ -1247,18 +1267,19 @@ def _replace_function(target_path: str, new_code: str, start_line: int, end_line
         f.write("".join(lines))
 
 
-
 def _setup_test_environment(test_id: str) -> dict:
     """准备测试环境。"""
     import tempfile
+
     tmp_dir = tempfile.mkdtemp(prefix=f"test_{test_id}_")
     return {"tmp_dir": tmp_dir, "test_id": test_id}
+
 
 def _run_core_tests(test_config: dict) -> dict:
     """运行核心测试用例。"""
     results = {"passed": 0, "failed": 0, "errors": []}
     tests = test_config.get("tests", [])
-    for test in tests:
+    for _test in tests:
         try:
             # 执行测试
             results["passed"] += 1
@@ -1266,14 +1287,6 @@ def _run_core_tests(test_config: dict) -> dict:
             results["failed"] += 1
             results["errors"].append(str(e))
     return results
-
-def _validate_results(test_results: dict, output_path: str) -> bool:
-    """验证测试结果。"""
-    if test_results["failed"] > 0:
-        return False
-    import os
-    return os.path.exists(output_path)
-
 
 
 def _prepare_test_context(pid, run_id, cfg):
@@ -1285,24 +1298,19 @@ def _prepare_test_context(pid, run_id, cfg):
         "slug": cfg.get("slug", ""),
         "project_dir": cfg.get("project_dir", ""),
         "lang": cfg.get("language") or "python",
-        "status": "initialized"
+        "status": "initialized",
     }
+
 
 def _execute_test_step(test_context, step_name, step_data):
     """执行测试步骤。"""
-    return {
-        "step": step_name,
-        "data": step_data,
-        "status": "completed"
-    }
+    return {"step": step_name, "data": step_data, "status": "completed"}
+
 
 def _finalize_test_results(results):
     """汇总测试结果。"""
-    return {
-        "total_steps": len(results),
-        "results": results,
-        "status": "completed"
-    }
+    return {"total_steps": len(results), "results": results, "status": "completed"}
+
 
 def _pick_fix_target(out: str, test_file: str, entry: str) -> str:
     """智能选择修复目标：测试文件问题 vs 实现缺陷。"""
@@ -1346,9 +1354,7 @@ def _fix_functions_batch(target_path: str, funcs: list, entry: str, diag: str, a
         if deco_lines:
             ctx_extra += "\n\n【路由装饰器（response_model 约束，可修改）】\n" + "\n".join(deco_lines)
         if test_segs:
-            ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + "\n---\n".join(
-                s[:600] for s in test_segs[:3]
-            )
+            ctx_extra += "\n\n【失败测试用例（必须满足其断言）】\n" + "\n---\n".join(s[:600] for s in test_segs[:3])
         try:
             fix = call_llm(
                 FUNCTION_FIX_SYSTEM,
@@ -1383,7 +1389,9 @@ def _fix_functions_batch(target_path: str, funcs: list, entry: str, diag: str, a
     return fixed_count
 
 
-def _apply_llm_patch(lang: str, target: str, content: str, diag: str, target_path: str, backup_path: str, append, project_dir: str) -> bool:
+def _apply_llm_patch(
+    lang: str, target: str, content: str, diag: str, target_path: str, backup_path: str, append, project_dir: str
+) -> bool:
     """unified diff 补丁修复（含一次 LLM 重试）。成功返回 True。"""
     import ast
     import shutil
@@ -1456,10 +1464,10 @@ def _apply_llm_patch(lang: str, target: str, content: str, diag: str, target_pat
     return False
 
 
-
-def _apply_full_rewrite(lang: str, target: str, test_file: str, content: str, diag: str, target_path: str, backup_path: str, append) -> str:
+def _apply_full_rewrite(
+    lang: str, target: str, test_file: str, content: str, diag: str, target_path: str, backup_path: str, append
+) -> str:
     """全量重写策略（仅小文件）：返回修复后代码，无效返回空串。"""
-    import shutil
 
     if len(content) > 20000:
         append("  - ⚠ 文件超过 20KB，跳过全量重写（避免 LLM 输出截断破坏文件）")
@@ -1487,7 +1495,17 @@ def _apply_full_rewrite(lang: str, target: str, test_file: str, content: str, di
     return fixed
 
 
-def _verify_test_run(append, test_file: str, image_tag: str, project_dir: str, lang: str, test_cmd: list, net: str, env_flags: list, step_run) -> tuple:
+def _verify_test_run(
+    append,
+    test_file: str,
+    image_tag: str,
+    project_dir: str,
+    lang: str,
+    test_cmd: list,
+    net: str,
+    env_flags: list,
+    step_run,
+) -> tuple:
     """构建测试镜像并执行测试。返回 (ok, out)。"""
     append(f"  - 构建测试镜像（含测试运行环境 + {test_file}）…")
     ok, out = step_run(["podman", "build", "-f", "Dockerfile.test", "-t", image_tag, project_dir], timeout=900)
@@ -1541,6 +1559,7 @@ def _run_test_fix_round(out: str, lang: str, entry: str, test_file: str, project
     append(f"  - 修复代码已落盘 {target}（{len(fixed)} 字节），重新构建并复跑测试…")
     return "rewritten"
 
+
 def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     """自动化测试门禁：按技术栈生成测试文件 → 构建测试镜像 → 容器内执行 → 失败 AI 修复循环（≤3 轮）→ 通过后放行部署。
 
@@ -1570,9 +1589,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
     # 3. 初始验证 + 失败修复循环（最多 5 轮 AI 修复）
     last_out = ""
     for round_no in range(6):
-        ok, out = _verify_test_run(
-            append, test_file, image_tag, project_dir, lang, test_cmd, net, env_flags, step_run
-        )
+        ok, out = _verify_test_run(append, test_file, image_tag, project_dir, lang, test_cmd, net, env_flags, step_run)
         last_out = out
         cases = _attach_case_meta(_parse_pytest_cases(out), project_dir) if lang == "python" else []
         if ok:
@@ -1596,9 +1613,7 @@ def _run_test_gate(pid, run_id, cfg, append, step_run) -> tuple:  # noqa: C901
         if round_no >= 3:
             break
         append(f"  - ⚠ 测试未通过（第 {round_no + 1} 次验证），AI 诊断修复中…")
-        action = _run_test_fix_round(
-            out, lang, entry, test_file, project_dir, append
-        )
+        action = _run_test_fix_round(out, lang, entry, test_file, project_dir, append)
         if action == "continue":
             continue
         if action == "skip":
@@ -1982,7 +1997,6 @@ def _auto_run_worker(  # noqa: C901
     username: str,
 ) -> None:
     """后台执行全自动流水线：一句话需求 → 6 阶段产物 → 自动部署。"""
-    import asyncio
 
     from prd_engine import CODE_SYSTEM, PRD_SYSTEM, REVIEW_SYSTEM, TD_SYSTEM, TEST_SYSTEM, save_pipeline_output
 
@@ -2891,15 +2905,11 @@ async def delete_copywriting(task_id: str, current_user: dict = require_auth()):
         conn.close()
 
 
-def _build_translation_prompt(
-    source_lang: str, target_lang: str, glossary_items: list | None = None
-) -> str:
+def _build_translation_prompt(source_lang: str, target_lang: str, glossary_items: list | None = None) -> str:
     """翻译 System Prompt；glossary_items 非空时附加强制术语表规则（v15）。"""
     glossary_block = ""
     if glossary_items:
-        lines = "\n".join(
-            f"- {g['source_term']} → {g['target_term']}" for g in glossary_items[:50]
-        )
+        lines = "\n".join(f"- {g['source_term']} → {g['target_term']}" for g in glossary_items[:50])
         glossary_block = f"""
 
 ## 强制术语表（最高优先级规则）
@@ -3088,10 +3098,10 @@ class TranslationExportRequest(BaseModel):
 
 def _align_paragraphs(source: str, translation: str) -> list:
     """段落级对齐：行数一致逐行对照，否则整块对照。"""
-    src_lines = [l for l in (source or "").splitlines() if l.strip()]
-    tgt_lines = [l for l in (translation or "").splitlines() if l.strip()]
+    src_lines = [line for line in (source or "").splitlines() if line.strip()]
+    tgt_lines = [line for line in (translation or "").splitlines() if line.strip()]
     if len(src_lines) == len(tgt_lines) and len(src_lines) > 0:
-        return [{"source": s, "translation": t} for s, t in zip(src_lines, tgt_lines)]
+        return [{"source": s, "translation": t} for s, t in zip(src_lines, tgt_lines, strict=False)]
     return [{"source": source or "", "translation": translation or ""}]
 
 
@@ -3282,9 +3292,6 @@ _AB_RUN_USER = """实验名称：{name}
 }}"""
 
 
-
-
-
 def _normalize_ab_scores(parsed: dict) -> list:
     """规范化 AB 五维评分：钳制 0-100、补缺失维度、保留额外维度。"""
     scores_map: dict = {}
@@ -3332,6 +3339,7 @@ def _ab_winner_reason(scores: list, winner: str, total_a: int, total_b: int, rea
         )
     return f"方案 {winner} 五维评分更高，判定胜出。"
 
+
 def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     """AB 实验结果结构化兜底（纯函数，可单测）。
 
@@ -3378,14 +3386,19 @@ def normalize_ab_result(parsed: dict, objective: str = "") -> dict:
     }
 
 
-
-
 def _ab_md_sections(test: dict, result: dict) -> list:
     """A/B 报告各段落行（背景/方案/评分/结论/分析）。"""
     lines = []
     if test.get("description"):
         lines += ["## 实验背景", "", test["description"], ""]
-    lines += ["## 方案对比", "", f"**方案 A**：{test.get('variant_a') or '-'}", "", f"**方案 B**：{test.get('variant_b') or '-'}", ""]
+    lines += [
+        "## 方案对比",
+        "",
+        f"**方案 A**：{test.get('variant_a') or '-'}",
+        "",
+        f"**方案 B**：{test.get('variant_b') or '-'}",
+        "",
+    ]
     if result.get("generated_a") or result.get("generated_b"):
         lines.append("## AI 扩写终稿")
         if result.get("generated_a"):
@@ -3415,6 +3428,7 @@ def _ab_md_analysis(result: dict) -> list:
         lines += [f"- {n}" for n in analysis["next_steps"]]
         lines.append("")
     return lines
+
 
 def build_ab_report_md(test: dict, result: dict) -> str:
     """A/B 实验报告 → Markdown（纯函数，可单测；用于报告导出）。"""
@@ -3694,10 +3708,10 @@ def _build_ppt_system_prompt(template_id: str = "business") -> str:
     tpl = PPT_TEMPLATES.get(template_id) or PPT_TEMPLATES["business"]
     return f"""你是资深PPT策划与演示设计专家，服务于500强企业高管汇报场景。
 
-## 模板：{tpl['name']}（{tpl['desc']}）
+## 模板：{tpl["name"]}（{tpl["desc"]}）
 
 ### 结构设计原则
-{tpl['principles']}
+{tpl["principles"]}
 
 ## 段落级结构化要求
 每页 content 使用段落级结构（level 分层 + emphasis 强调），便于渲染为层级清晰的版面：
@@ -3763,10 +3777,8 @@ def _parse_ppt_outline(result: str) -> dict:
     return data
 
 
-
 def _add_pptx_slide(slide_layout, title: str, content: list) -> None:
     """添加幻灯片内容。"""
-    from pptx.util import Inches
     title_box = slide_layout.shapes.title
     content_box = slide_layout.shapes.placeholders[1]
     if title_box:
@@ -3774,53 +3786,42 @@ def _add_pptx_slide(slide_layout, title: str, content: list) -> None:
     if content_box:
         content_box.text = "\n".join(content)
 
+
 def _format_pptx_content(outline: dict) -> list:
     """格式化PPTX内容。"""
     sections = []
     for section in outline.get("sections", []):
-        sections.append({
-            "title": section.get("title", ""),
-            "content": section.get("content", [])
-        })
+        sections.append({"title": section.get("title", ""), "content": section.get("content", [])})
     return sections
 
 
 def _prepare_pptx_context(presentation_data):
     """准备PPT构建上下文。"""
-    return {
-        "data": presentation_data,
-        "slides": [],
-        "status": "prepared"
-    }
+    return {"data": presentation_data, "slides": [], "status": "prepared"}
+
 
 def _build_single_slide(slide_index, slide_data):
     """构建单个幻灯片。"""
-    return {
-        "index": slide_index,
-        "data": slide_data,
-        "status": "built"
-    }
+    return {"index": slide_index, "data": slide_data, "status": "built"}
+
 
 def _finalize_pptx_result(slides):
     """汇总PPT构建结果。"""
-    return {
-        "total_slides": len(slides),
-        "slides": slides,
-        "status": "completed"
-    }
+    return {"total_slides": len(slides), "slides": slides, "status": "completed"}
 
 
 def _build_pptx_simple_v2(slides_data: list, output_path: str) -> str:
     """简化版PPT构建。"""
     try:
         from pptx import Presentation
+
         prs = Presentation()
-        
+
         for slide_data in slides_data:
             prs.slides.add_slide(prs.slide_layouts[6])
             title = slide_data.get("title", "Slide")
             prs.slides[-1].shapes.title.text = title
-        
+
         prs.save(output_path)
         return output_path
     except Exception as e:
@@ -3837,9 +3838,17 @@ def _pptx_cover(slide, title_text: str, subtitle: str, meta: dict, rect, text, c
     text(slide, 1.2, 2.6, 10.9, 1.2, title_text, 40, colors["WHITE"], bold=True, align=PP_ALIGN.CENTER)
     if subtitle:
         text(slide, 1.2, 3.9, 10.9, 0.6, subtitle, 20, colors["GRAY"], align=PP_ALIGN.CENTER, first=False)
-    text(slide, 1.2, 6.8, 10.9, 0.4,
-         f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
-         12, colors["GRAY"], align=PP_ALIGN.CENTER)
+    text(
+        slide,
+        1.2,
+        6.8,
+        10.9,
+        0.4,
+        f"预计时长 {meta.get('estimated_duration', '-')} 分钟  |  视觉主题：{meta.get('visual_theme', '-')}",
+        12,
+        colors["GRAY"],
+        align=PP_ALIGN.CENTER,
+    )
 
 
 def _pptx_thanks(slide, title_text: str, subtitle: str, rect, text, colors) -> None:
@@ -3871,7 +3880,9 @@ def _pptx_case(slide, title_text: str, content: list, chart_suggestion: str, rec
         text(slide, 0.8, 6.4, 11.7, 0.5, f"📊 可视化建议：{chart_suggestion}", 13, colors["GRAY"])
 
 
-def _pptx_data(slide, title_text: str, subtitle: str, content: list, chart_suggestion: str, rect, text, bullets, colors) -> None:
+def _pptx_data(
+    slide, title_text: str, subtitle: str, content: list, chart_suggestion: str, rect, text, bullets, colors
+) -> None:
     """数据版式渲染。"""
     rect(slide, 0, 0, 13.333, 7.5, colors["WHITE"])
     rect(slide, 0, 0, 13.333, 0.18, colors["ACCENT"])
@@ -3884,7 +3895,9 @@ def _pptx_data(slide, title_text: str, subtitle: str, content: list, chart_sugge
         text(slide, 1.05, 6.3, 11.2, 0.45, f"📊 数据可视化：{chart_suggestion}", 14, colors["ACCENT"], bold=True)
 
 
-def _pptx_content(slide, title_text: str, subtitle: str, content: list, chart_suggestion: str, rect, text, bullets, colors) -> None:
+def _pptx_content(
+    slide, title_text: str, subtitle: str, content: list, chart_suggestion: str, rect, text, bullets, colors
+) -> None:
     """内容版式渲染（默认）。"""
     rect(slide, 0, 0, 13.333, 7.5, colors["WHITE"])
     rect(slide, 0, 0, 0.25, 7.5, colors["ACCENT"])
@@ -3997,7 +4010,6 @@ def _pptx_make_renderers(tpl: dict):
     return {"rect": rect, "text": text, "bullets": bullets, "notes": notes}, renderers, page_footer
 
 
-
 def _build_pptx_file(title: str, outline: dict, template: str = "business") -> str:
     """大纲 dict → 16:9 PPTX 文件（封面/目录/内容/数据/案例/总结/致谢 + 演讲备注），返回保存路径。"""
     from pptx import Presentation
@@ -4009,7 +4021,7 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
-    rect, text, notes = helpers["rect"], helpers["text"], helpers["notes"]
+    _rect, _text, notes = helpers["rect"], helpers["text"], helpers["notes"]
 
     slides = outline.get("slides") or []
     meta = outline.get("meta") or {}
@@ -4040,6 +4052,7 @@ def _build_pptx_file(title: str, outline: dict, template: str = "business") -> s
     path = os.path.join(PPTX_DIR, f"ppt_{uuid.uuid4().hex[:12]}.pptx")
     prs.save(path)
     return path
+
 
 async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     """PPT worker：LLM 大纲 → 解析 → 生成 PPTX 文件 → 记录入库（带用户归属）。"""
@@ -4164,7 +4177,7 @@ def _detect_outliers(text: str, max_cols: int = 20) -> dict:
     """
     import re
 
-    lines = [l.rstrip() for l in (text or "").strip().splitlines() if l.strip()]
+    lines = [line.rstrip() for line in (text or "").strip().splitlines() if line.strip()]
     if len(lines) < 3:
         return {"success": False, "message": "数据至少需要 3 行（1 行表头 + 2 行数据）"}
     first = lines[0]
@@ -4175,7 +4188,7 @@ def _detect_outliers(text: str, max_cols: int = 20) -> dict:
     else:
         split = lambda s: re.split(r"\s{2,}", s.strip())  # noqa: E731
     headers = [h.strip() for h in split(first)]
-    rows = [split(l) for l in lines[1:]]
+    rows = [split(line) for line in lines[1:]]
     ncols = min(len(headers), max_cols)
     columns = []
     for ci in range(ncols):
@@ -4331,21 +4344,20 @@ def _setup_test_environment(project_dir: str, cfg: dict) -> bool:
         # 检查测试文件
         test_files = []
         for root, dirs, files in os.walk(project_dir):
-            dirs[:] = [d for d in dirs if d not in ('.venv', 'venv', '__pycache__', 'node_modules')]
+            dirs[:] = [d for d in dirs if d not in (".venv", "venv", "__pycache__", "node_modules")]
             for f in files:
-                if f.endswith('_test.py') or f.startswith('test_') or f.endswith('.test.js'):
+                if f.endswith("_test.py") or f.startswith("test_") or f.endswith(".test.js"):
                     test_files.append(os.path.join(root, f))
-        
+
         if not test_files:
             logger.warning("未找到测试文件")
             return False
-        
+
         # 安装依赖
-        req_file = os.path.join(project_dir, 'requirements.txt')
+        req_file = os.path.join(project_dir, "requirements.txt")
         if os.path.exists(req_file):
-            subprocess.run(['pip', 'install', '-r', req_file], 
-                         cwd=project_dir, capture_output=True, timeout=120)
-        
+            subprocess.run(["pip", "install", "-r", req_file], cwd=project_dir, capture_output=True, timeout=120)
+
         return True
     except Exception as e:
         logger.error(f"准备测试环境失败: {e}")
@@ -4355,11 +4367,7 @@ def _setup_test_environment(project_dir: str, cfg: dict) -> bool:
 def _run_core_tests(project_dir: str, test_cmd: list, timeout: int = 300) -> tuple:
     """运行核心测试。"""
     try:
-        result = subprocess.run(test_cmd, 
-                               cwd=project_dir,
-                               capture_output=True,
-                               text=True,
-                               timeout=timeout)
+        result = subprocess.run(test_cmd, cwd=project_dir, capture_output=True, text=True, timeout=timeout)
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "测试超时"
@@ -4369,34 +4377,29 @@ def _run_core_tests(project_dir: str, test_cmd: list, timeout: int = 300) -> tup
 
 def _validate_results(returncode: int, stdout: str, stderr: str) -> dict:
     """验证测试结果。"""
-    results = {
-        'passed': 0,
-        'failed': 0,
-        'error': 0,
-        'skipped': 0,
-        'summary': ''
-    }
-    
+    results = {"passed": 0, "failed": 0, "error": 0, "skipped": 0, "summary": ""}
+
     # 解析 pytest 输出
     import re
-    passed_match = re.search(r'(\d+) passed', stdout)
-    failed_match = re.search(r'(\d+) failed', stdout)
-    error_match = re.search(r'(\d+) error', stdout)
-    skipped_match = re.search(r'(\d+) skipped', stdout)
-    
+
+    passed_match = re.search(r"(\d+) passed", stdout)
+    failed_match = re.search(r"(\d+) failed", stdout)
+    error_match = re.search(r"(\d+) error", stdout)
+    skipped_match = re.search(r"(\d+) skipped", stdout)
+
     if passed_match:
-        results['passed'] = int(passed_match.group(1))
+        results["passed"] = int(passed_match.group(1))
     if failed_match:
-        results['failed'] = int(failed_match.group(1))
+        results["failed"] = int(failed_match.group(1))
     if error_match:
-        results['error'] = int(error_match.group(1))
+        results["error"] = int(error_match.group(1))
     if skipped_match:
-        results['skipped'] = int(skipped_match.group(1))
-    
+        results["skipped"] = int(skipped_match.group(1))
+
     # 生成摘要
-    if results['failed'] == 0 and results['error'] == 0:
-        results['summary'] = '✅ 所有测试通过'
+    if results["failed"] == 0 and results["error"] == 0:
+        results["summary"] = "✅ 所有测试通过"
     else:
-        results['summary'] = f'❌ {results["failed"]} 个失败, {results["error"]} 个错误'
-    
+        results["summary"] = f"❌ {results['failed']} 个失败, {results['error']} 个错误"
+
     return results

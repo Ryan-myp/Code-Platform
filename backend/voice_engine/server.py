@@ -9,6 +9,7 @@
 
 推理在后台线程串行执行（MPS 并发不稳定），接口为 async 避免阻塞事件循环。
 """
+
 import asyncio
 import io
 import logging
@@ -27,14 +28,10 @@ from patch_audio import patch_audio
 
 patch_audio()
 
-MODEL_DIR = os.environ.get(
-    "COSYVOICE_MODEL_DIR", "/Users/yanping.ma/ai-models/CosyVoice2-0.5B"
-)
+MODEL_DIR = os.environ.get("COSYVOICE_MODEL_DIR", "/Users/yanping.ma/ai-models/CosyVoice2-0.5B")
 SAMPLE_RATE = 22050
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("voice_engine")
 
 app = FastAPI(title="Voice Engine (CosyVoice2)", version="0.1.0")
@@ -123,9 +120,7 @@ async def tts_sft(text: str = Form(...), spk_id: str = Form("中文女"), speed:
         for out in _consume(cosyvoice.inference_sft(text, spk_id, speed=speed)):
             chunks.append(out["tts_speech"])
         wav = torch.cat(chunks, dim=1)
-        logger.info(
-            "sft %.1fs -> %.1fs audio (spk=%s)", time.time() - t0, wav.shape[1] / SAMPLE_RATE, spk_id
-        )
+        logger.info("sft %.1fs -> %.1fs audio (spk=%s)", time.time() - t0, wav.shape[1] / SAMPLE_RATE, spk_id)
         return _wav_bytes(wav)
 
     return Response(content=await asyncio.to_thread(work), media_type="audio/wav")
@@ -148,14 +143,10 @@ async def tts_zero_shot(
     def work():
         t0 = time.time()
         chunks = []
-        for out in _consume(
-            cosyvoice.inference_zero_shot(text, prompt_text, prompt, speed=speed)
-        ):
+        for out in _consume(cosyvoice.inference_zero_shot(text, prompt_text, prompt, speed=speed)):
             chunks.append(out["tts_speech"])
         wav = torch.cat(chunks, dim=1)
-        logger.info(
-            "zero_shot %.1fs -> %.1fs audio", time.time() - t0, wav.shape[1] / SAMPLE_RATE
-        )
+        logger.info("zero_shot %.1fs -> %.1fs audio", time.time() - t0, wav.shape[1] / SAMPLE_RATE)
         return _wav_bytes(wav)
 
     return Response(content=await asyncio.to_thread(work), media_type="audio/wav")
@@ -179,14 +170,10 @@ async def sing(
     def work():
         t0 = time.time()
         chunks = []
-        for out in _consume(
-            cosyvoice.inference_instruct2(lyrics, instruct, prompt, speed=speed)
-        ):
+        for out in _consume(cosyvoice.inference_instruct2(lyrics, instruct, prompt, speed=speed)):
             chunks.append(out["tts_speech"])
         wav = torch.cat(chunks, dim=1)
-        logger.info(
-            "sing %.1fs -> %.1fs audio", time.time() - t0, wav.shape[1] / SAMPLE_RATE
-        )
+        logger.info("sing %.1fs -> %.1fs audio", time.time() - t0, wav.shape[1] / SAMPLE_RATE)
         return _wav_bytes(wav)
 
     return Response(content=await asyncio.to_thread(work), media_type="audio/wav")

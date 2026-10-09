@@ -52,7 +52,11 @@ select = [
 ignore = [
     "E501",  # line length handled by formatter
     "B008",  # Depends() and File() in default args is standard FastAPI pattern
+    "E402",  # 模块级 import 位于配置/守卫代码之后（项目惯用模式：先读 env/配置再导入）
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
