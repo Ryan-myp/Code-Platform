@@ -93,7 +93,7 @@ class TestRunSandboxPython:
 
 class TestSandboxInfoEndpoint:
     def test_info_fields(self, setup_test_db):
-        from main import sandbox_info
+        from sandbox_api import sandbox_info
 
         info = sandbox_info(current_user=USER)
         assert "pandas" in info["allowed_imports"]

@@ -9,9 +9,16 @@ from datetime import datetime
 
 from plugin_registry import PluginInterface, registry
 
-# biz-delivery scripts path
-BIZ_DIR = "/Users/yanping.ma/biz-delivery/scripts"
-if BIZ_DIR not in sys.path:
+# biz-delivery scripts path：优先读 env，其次同级仓 scripts/，最后才回退到历史硬编码路径
+_DEFAULT_BIZ_DIR = "/Users/yanping.ma/biz-delivery/scripts"
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_CANDIDATES = [
+    os.environ.get("BIZ_DELIVERY_DIR", ""),
+    os.path.join(_REPO_ROOT, "scripts"),
+    _DEFAULT_BIZ_DIR,
+]
+BIZ_DIR = next((d for d in _CANDIDATES if d and os.path.isdir(d)), _DEFAULT_BIZ_DIR)
+if BIZ_DIR not in sys.path and os.path.isdir(BIZ_DIR):
     sys.path.insert(0, BIZ_DIR)
 
 

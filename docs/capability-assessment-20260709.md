@@ -110,7 +110,7 @@
 
 ## 八、修复执行记录（同日完成）
 
-> 状态：**P0/P1 全量修复完毕**，P2 中低危项已清理，高危项（main.py 拆分）留待独立迭代。
+> 状态：**P0/P1/P2 全量修复完毕**（含 main.py 拆分、Python 统一、文档归档、engines 路径可配置化）。
 
 ### 已修复
 
@@ -125,19 +125,21 @@
 | P1-4 | Ruff 1487 错误（CI 红） | 安全自动修复 996 + 手工 B904×16/E741×14/F811/E722/UP031 + E402 忽略（项目惯用）+ C901 阈值 20 + 2 处 noqa | ruff check 0 错误 · format 全绿 |
 | P2-1 | .bak 文件 3 个 | 删除 | — |
 | P2-8 | README 品牌不符 | your-org/smart-rd-platform → Ryan-myp/Code-Platform | — |
+| P2-9 | **main.py 3822 行 god module** | 拆为 5 个路由模块：kb_api(642)/mcp_api(353)/sandbox_api(538)/commercial_api(715)/agent_api(699)，main.py 降至 967 行；`_safe_error`/分享埋点/工作流频控状态随迁；保留 main 旧 import 路径兼容 | 路由契约 666 不变 · 全量 1155 测试全绿 |
+| P2-10 | Python 版本分裂（本地 3.12 / CI 3.13） | 两个 workflow 统一为 3.12（与已验证本地 .venv 对齐） | CI 配置一致 |
+| P2-11 | 12 份历史迭代文档堆积 docs/ | 归档到 docs/history/（+ 归档说明 README） | docs/ 只留 4 份现行文档 |
+| P2-12 | engines 硬编码 /Users/yanping.ma 路径 | BIZ_DIR 支持 env(BIZ_DELIVERY_DIR) → 仓内 scripts/ → 默认值，isdir 校验 | py_compile 通过 |
 
 ### 仍存（P2 建议项，未动）
-- `main.py` 3,700+ 行拆分（风险高，建议独立迭代）
-- Python 版本统一（本地 3.12 / CI 3.13）
-- 文档归档（docs/CHANGELOG 47KB + 根目录 OPTIMIZATION_*）
-- `engines/__init__.py` 硬编码 /Users/yanping.ma/biz-delivery/scripts（有 fallback，跨机失效但不影响运行）
+- 无——P2 全部项已完成（main.py 拆分 / Python 统一 / 文档归档 / engines 路径 / .bak 清理 / README 品牌）
 - 注：`engines/` 并非空壳，是 plugin_registry 的业务引擎适配层（4 个 Biz 插件）
 
 ### 终态质量闸
 - 后端 pytest：**1155/1155** · 前端 vitest：**121/121**
 - `ruff check backend/`：0 错误 · `ruff format --check`：全绿
-- quality_gates.py 契约/undefined/密钥 3 道闸：PASS
-- 修复后预计评分：**78–82 / 100（B+）**
+- quality_gates.py 契约/undefined/密钥 3 道闸：PASS（路由 666 条，前端 0 断链）
+- 主模块行数：main.py 3822→**967**（拆 5 个路由模块）
+- 修复后预计评分：**84–88 / 100（B+→A-）**
 
 ---
 *本报告基于 2026-07-09 13:20 前后的本地实测数据；修复记录更新于同日 18:00。*

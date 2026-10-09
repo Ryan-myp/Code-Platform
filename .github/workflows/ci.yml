@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.12"  # 与本地 .venv (3.12) 对齐，保证 CI==本地；requires-python>=3.10
   NODE_VERSION: "20"
 
 jobs:
