@@ -1,0 +1,4 @@
+[submodule "content-platform"]
+	path = content-platform
+	url = git@github.com:Ryan-myp/content-platform.git
+	branch = main

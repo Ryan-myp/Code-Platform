@@ -89,6 +89,11 @@ backend/game_covers/
 backend/image_factory/img_*.png
 backend/uploads/qr/
 backend/pdf_factory/
+backend/.optimizer_reports/
+backend/platform.db
+backend/xiaotuan.db
+platform.db
+xiaotuan.db
 
 # ─── v16 运行时产物与模型权重（禁止入库）────────────────
 backend/drama_factory/cache/
