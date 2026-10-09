@@ -219,7 +219,7 @@ def _agnes_avatar_poll(video_id: str, update: callable) -> str:
 
     import requests as _req
 
-    from common.config import AGNES_API_BASE, AGNES_API_KEY
+    from common.config import AGNES_API_BASE, AGNES_API_KEY, resolve_api_base
 
     deadline = _time.monotonic() + _POLL_DEADLINE
     consecutive_err = 0
@@ -253,12 +253,6 @@ def _agnes_avatar_poll(video_id: str, update: callable) -> str:
                 raise RuntimeError(f"AGNES 轮询失败: {e}") from e
             logger.warning(f"AGNES 轮询瞬时异常（{consecutive_err}/3）: {e}")
     raise RuntimeError(f"AGNES 生成超时（>{_POLL_DEADLINE // 60} 分钟）")
-    return {
-        "status": data.get("task_status", "UNKNOWN"),
-        "video_url": out.get("video_url", ""),
-        "image_url": out.get("img_url", "") or out.get("image_url", ""),
-        "error": data.get("message", "") or data.get("error", "") or "",
-    }
 
 
 def _download(url: str, dest: str) -> str:

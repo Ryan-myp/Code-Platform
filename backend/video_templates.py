@@ -789,7 +789,7 @@ async def purchase_video_template(template_id: str = Form(...), access_type: str
     from common.auth import require_auth  # noqa: F401 — 签名已用
 
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    t = _load_one(template_id)
+    t = load_one(TEMPLATE_DIR, template_id)
     pricing = t.get("pricing") or {}
     if pricing.get("mode", "free") == "free":
         return {"ok": True, "message": "免费模板无需购买", "mode": "free"}
@@ -829,7 +829,7 @@ async def render_video_template_api(template_id: str = Form(...),
     from common.auth import require_auth  # noqa: F401
 
     user = current_user.get("username", "") if isinstance(current_user, dict) else ""
-    t = _load_one(template_id)
+    t = load_one(TEMPLATE_DIR, template_id)
     _check_render_access(user, t)
     try:
         ov = json.loads(overrides or "{}")

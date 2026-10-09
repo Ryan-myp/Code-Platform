@@ -215,8 +215,38 @@ class UserRelayRequest(BaseModel):
     # 注意：供应商 base 由平台写死（防用户指向其他服务商绕开计费），用户只能选供应商填 key
 
 
+_relay_cols_ensured = False
+
+
+def _ensure_user_relay_columns() -> None:
+    """幂等补列：users.relay_keys / relay_api_base（旧库未建列时补齐，避免 UPDATE 报 no such column）。"""
+    global _relay_cols_ensured
+    if _relay_cols_ensured:
+        return
+    from common.db import get_db
+
+    conn = get_db()
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+        for _c, _d in (
+            ("relay_keys", "TEXT DEFAULT ''"),
+            ("relay_api_base", "TEXT DEFAULT ''"),
+            ("relay_provider", "TEXT DEFAULT 'aixinghuo'"),
+        ):
+            if _c not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {_c} {_d}")
+        conn.commit()
+        _relay_cols_ensured = True
+    except Exception as e:
+        logger.debug(f"relay columns ensure skipped: {e}")
+        _relay_cols_ensured = True
+    finally:
+        conn.close()
+
+
 def _load_user_relay_keys(uid: str) -> dict:
     """读取用户各供应商 key 映射 {provider: api_key}。"""
+    _ensure_user_relay_columns()
     from common.db import get_db
 
     if not uid:

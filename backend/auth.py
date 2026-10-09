@@ -482,33 +482,6 @@ def change_password(user_id: str, old_password: str, new_password: str) -> None:
 def consume_quota(user_id: str) -> dict:
     """额度（本地免费版：不设次数限制，用户有中转站 token 即可随意使用，计费在中转站）。"""
     return {"allowed": True, "remaining": 9999, "charged": False}
-    membership = _effective_membership(row)
-    daily_quota = row.get("daily_quota") or MEMBERSHIP_QUOTA.get(membership, 30)
-    # 会员无限制
-    if membership == "vip":
-        return {"allowed": True, "remaining": 9999, "charged": False}
-    bonus = row.get("bonus_quota") or 0
-    available = daily_quota + bonus
-    used = 0 if row.get("last_quota_date") != today else (row.get("used_today") or 0)
-    if used >= available:
-        return {"allowed": False, "remaining": 0, "daily_quota": daily_quota, "charged": False}
-    from common.db import get_db
-
-    conn = get_db()
-    try:
-        conn.execute(
-            "UPDATE users SET used_today=?, last_quota_date=?, total_usage=total_usage+1 WHERE id=?",
-            (used + 1, today, user_id),
-        )
-        conn.commit()
-        return {
-            "allowed": True,
-            "remaining": max(0, available - used - 1),
-            "daily_quota": daily_quota,
-            "charged": True,
-        }
-    finally:
-        conn.close()
 
 
 def _refund_eligible(row: Any) -> bool:

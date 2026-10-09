@@ -1063,7 +1063,7 @@ async def preview_html(proj_id: str, current_user: dict = require_auth()):
     # 保存预览文件
     import hashlib
     html_filename = f"preview_{hashlib.md5(proj_id.encode()).hexdigest()[:8]}.html"
-    preview_dir = VIDEO_DIR.parent / "previews" if hasattr(VIDEO_DIR, 'parent') else Path(__file__).parent / "previews"
+    preview_dir = Path(__file__).parent / "previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
     preview_path = preview_dir / html_filename
     preview_path.write_text(html_content, encoding="utf-8")

@@ -41,7 +41,7 @@ from common.artifacts import save_artifact
 from common.auth import require_auth
 from common.config import AGNES_API_BASE, AGNES_API_KEY, load_config, resolve_api_key, resolve_api_base
 from common.db import get_db
-from common.llm import call_llm_async
+from common.llm import call_llm_async, api_error_detail
 from pydantic import BaseModel, Field
 from task_queue import create_task, register_handler
 
@@ -2106,7 +2106,7 @@ async def _drama_render_one(
                             return _t2v_full, audio_path, dh_off
                     except Exception:
                         pass
-                return _t2v_ready[0] if _t2v_ready else _t2v_clip, audio_path, dh_off
+                return _t2v_ready[0] if _t2v_ready else _t2v_c, audio_path, dh_off
         if shot:
             scene_chars = [c for c in (sc.get("chars") or []) if c in char_map]
             _sc = [c for c in scene_chars if char_map[c].get("anchor")]

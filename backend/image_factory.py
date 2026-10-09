@@ -2493,7 +2493,7 @@ async def replace_background(
 ):
     """背景替换 - rembg 语义分割人物 + 新背景合成（场景渐变 / 纯色 / AI 生成）。"""
     # 函数内取最新配置：config 表运行中修改后无需重启即时生效
-    from common.config import IMAGE_MODEL
+    from common.config import IMAGE_MODEL, require_model, resolve_feature_model
 
     _uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
     try:

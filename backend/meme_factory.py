@@ -623,7 +623,7 @@ async def _meme_render_bg(params: dict, _report) -> tuple:
         )
         if params["character"]:
             scene += f"，角色设定（全套必须完全一致）：{params['character']}；所有画面中的角色形象、服装、画风保持一致"
-        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}", payload.get("user_id") or "")
+        img = await asyncio.to_thread(_ai_bg, f"{full_prompt}。{scene}", params.get("user_id") or "")
         overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
         if params["top_text"]:

@@ -1086,6 +1086,129 @@ def _attach_case_meta(cases: list, project_dir: str) -> list:
     return cases
 
 
+def _parse_failed_test_names(out: str) -> list:
+    """从 pytest 输出解析失败的测试函数名（去重、保序）。
+
+    匹配两种常见格式：
+    - 摘要行：FAILED tests/test_api.py::test_create_user
+    - 详情标题：_______________ test_create_user __________________
+    """
+    import re
+
+    text = out or ""
+    names: list = []
+    seen: set = set()
+    for m in re.finditer(r"FAILED\s+\S+::(\w+)", text):
+        if m.group(1) not in seen:
+            seen.add(m.group(1))
+            names.append(m.group(1))
+    for m in re.finditer(r"_{3,}\s*(test_\w+)\s*_{3,}", text):
+        if m.group(1) not in seen:
+            seen.add(m.group(1))
+            names.append(m.group(1))
+    return names
+
+
+def _parse_test_info(project_dir: str, names: list) -> dict:
+    """读取项目测试文件，提取每个失败测试的源码段 + HTTP 路由提示。
+
+    返回 {test_name: {"segs": [代码段], "hints": [HTTP 路径]}}。找不到则对应 key 空。
+    """
+    import glob
+    import os as _os
+    import re
+
+    candidates = set()
+    for pat in ("tests/**/*.py", "**/test_*.py", "test_*.py", "tests/test_*.py"):
+        candidates.update(glob.glob(_os.path.join(project_dir, pat), recursive=True))
+    text = ""
+    for tf in sorted(candidates):
+        try:
+            with open(tf, encoding="utf-8") as f:
+                text += f.read() + "\n"
+        except Exception:
+            continue
+
+    info: dict = {}
+    for name in names:
+        segs: list = []
+        hints: list = []
+        m = re.search(rf"def {re.escape(name)}\s*\(", text)
+        if m:
+            seg = text[m.start():]
+            nxt = re.search(r"\n(?:async def |def |class )", seg[1:])
+            seg = seg[: nxt.start() + 1] if nxt else seg[:2000]
+            seg = seg.strip()
+            if seg:
+                segs.append(seg)
+            hints = [h for h in re.findall(r"(/[\w./-]+)", seg) if h.startswith("/")][:4]
+        info[name] = {"segs": segs, "hints": [h for h in hints if h.startswith("/")][:4]}
+    return info
+
+
+def _match_route_functions(tree, code: str, test_info: dict) -> tuple:
+    """把失败测试映射到 main.py 路由函数（按 HTTP 路径前缀匹配）。
+
+    返回 (funcs, order)：funcs[name] = {"start", "end", "segs"}（1-indexed 行号），order 为 name 顺序。
+    无法匹配的测试会被跳过（不崩，宁可少修不误导 LLM）。
+    """
+    import re
+
+    lines = code.splitlines()
+
+    def _range_paths(node) -> list:
+        a = node.lineno
+        b = min(node.end_lineno or node.lineno, len(lines))
+        found: list = []
+        for li in range(max(1, a - 3), b + 1):  # 上探 3 行覆盖装饰器
+            if li - 1 < len(lines):
+                found.extend(re.findall(r"(/[\w./-]+)", lines[li - 1]))
+        return found
+
+    route_fns: dict = {}
+    import ast as _ast
+
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            routes = [p for p in _range_paths(node) if p]
+            if routes:
+                route_fns[node.name] = {
+                    "start": node.lineno,
+                    "end": node.end_lineno or node.lineno,
+                    "routes": routes,
+                }
+
+    def _match_one(hints: list):
+        for h in hints:
+            target = h.rstrip("/")
+            best = None
+            for rname, meta in route_fns.items():
+                for r in meta["routes"]:
+                    rr = r.rstrip("/")
+                    # 精确或前缀匹配（忽略 :param 占位段）
+                    if rr == target or target.startswith(rr + "/") or rr.startswith(target + "/"):
+                        best = rname
+                        break
+                if best:
+                    break
+        return best
+
+    funcs: dict = {}
+    order: list = []
+    for name, info in (test_info or {}).items():
+        hit = _match_one(info.get("hints") or [])
+        if not hit:
+            continue
+        meta = route_fns[hit]
+        if hit not in funcs:
+            funcs[hit] = {"start": meta["start"], "end": meta["end"], "segs": []}
+            order.append(hit)
+        for s in info.get("segs") or []:
+            if s not in funcs[hit]["segs"]:
+                funcs[hit]["segs"].append(s)
+    return funcs, order
+
+
 def _extract_failed_functions(project_dir: str, out: str) -> list:  # noqa: C901
     """提取全部失败测试对应的 main.py 函数（支持多函数批量修复）。"""
     import ast

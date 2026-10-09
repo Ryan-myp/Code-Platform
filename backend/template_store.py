@@ -531,6 +531,8 @@ def _zip_batch_results(results: list, rows: list, batch_name: str, task_id: str)
     """批量结果 zip 打包 + 生成清单。"""
     import zipfile
 
+    from image_factory import IMAGE_DIR
+
     zip_name = f"batch_{task_id}_{int(datetime.now().timestamp())}.zip"
     zip_path = os.path.join(BATCH_DIR, zip_name)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

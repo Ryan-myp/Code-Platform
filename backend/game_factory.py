@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from common.auth import require_auth
 from common.db import get_db
 from common.helpers import _notify_progress
-from common.llm import call_llm_async, log_usage, _safe_exc_msg
+from common.llm import call_llm, call_llm_async, log_usage, _safe_exc_msg
 from content_safety import check_text, quality_report
 from publish_kit import build_publish_zip, license_text, pack_dir_name, publish_registry
 from task_queue import create_task, register_handler
