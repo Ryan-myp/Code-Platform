@@ -22,7 +22,6 @@ import {
   ListTodo,
   Download,
   Layers,
-  ArrowRight,
   RefreshCw,
   ShieldCheck,
   Rocket,
@@ -36,10 +35,8 @@ import {
   Building2,
   Braces,
   ChevronDown,
-  ScrollText,
-  FileCode,
+  ChevronRight,
 } from 'lucide-react'
-import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
 import { fetchSSE } from '../lib/sse'
 import { useToast } from '../lib/toast'
@@ -1011,7 +1008,6 @@ export default function AIWorkspacePage() {
   const s = state[tab]
   const update = (patch) => setState((prev) => ({ ...prev, [tab]: { ...prev[tab], ...patch } }))
   const tabInfo = TABS[tab]
-  const c = COLOR_MAP[tabInfo.color]
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1097,10 +1093,33 @@ export default function AIWorkspacePage() {
     }
   }
 
+  // 取某阶段「最新一条已完成」的助手产物（无关联需求时跨阶段承接用）
+  const lastArtifact = (key) => {
+    const msgs = state[key].messages
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i]
+      if (m.role === 'assistant' && !m.streaming && !m.error && m.content.trim()) return m.content
+    }
+    return ''
+  }
+
   const handleTabChange = (key) => {
     setTab(key)
     const req = requirements.find((r) => r.id === selectedReqId)
     prefillFromRequirement(key, req)
+    // 对话式承接：无关联需求时，目标阶段输入缓冲区为空则继承上一阶段刚生成的产物
+    const carry = (target, field, source) => {
+      if (state[target][field] || !state[source].messages.length) return
+      const art = lastArtifact(source)
+      if (art) setState((prev) => ({ ...prev, [target]: { ...prev[target], [field]: art } }))
+    }
+    if (key === 'review' || key === 'td') carry(key, 'prdText', 'prd')
+    if (key === 'test') {
+      carry(key, 'prdText', 'prd')
+      carry(key, 'techDesign', 'td')
+    }
+    if (key === 'code') carry(key, 'techDesign', 'td')
+    if (key === 'review_code') carry(key, 'codeText', 'code')
   }
 
   const handleSelectRequirement = (reqId) => {
@@ -1150,184 +1169,6 @@ export default function AIWorkspacePage() {
     }))
   }
 
-  const handleGenerate = async () => {
-    if (s.loading) return
-    update({ loading: true })
-    try {
-      if (tab === 'prd') {
-        if (!s.userInput.trim()) {
-          toast.error('请输入需求描述')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/prd/generate', { prd_text: stripImages(s.userInput) })
-        addMessage('user', s.userInput)
-        addMessage('assistant', result)
-        update({ userInput: '' })
-        await saveToRequirement('prd', result)
-      } else if (tab === 'review') {
-        if (!s.prdText.trim()) {
-          toast.error('请输入 PRD 内容')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/prd/review', {
-          prd_text: stripImages(s.prdText),
-          repo_path: s.repoPath,
-          domain: s.reviewDomain || 'general',
-          structured_output: true,
-        })
-        addMessage('user', s.prdText)
-        addMessage('assistant', result)
-        await saveToRequirement('review', result)
-      } else if (tab === 'td') {
-        if (!s.prdText.trim()) {
-          toast.error('请输入 PRD 内容')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/prd/technical-design', {
-          prd_text: stripImages(s.prdText),
-          repo_path: s.repoPath,
-        })
-        addMessage('user', s.prdText)
-        addMessage('assistant', result)
-        await saveToRequirement('td', result)
-      } else if (tab === 'test') {
-        if (!s.prdText.trim()) {
-          toast.error('请输入 PRD 内容')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/prd/test-cases', {
-          prd_text: stripImages(s.prdText),
-          tech_design: stripImages(s.techDesign),
-        })
-        addMessage('user', s.prdText + (s.techDesign ? '\n\n技术方案: ' + s.techDesign : ''))
-        addMessage('assistant', result)
-        await saveToRequirement('test', result)
-      } else if (tab === 'code') {
-        if (!s.techDesign.trim()) {
-          toast.error('请输入技术方案')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/prd/generate-code', {
-          task_type: 'code',
-          tech_design: stripImages(s.techDesign),
-          language: s.language,
-        })
-        addMessage('user', `语言: ${s.language}\n技术方案: ${s.techDesign}`)
-        addMessage('assistant', result)
-        await saveToRequirement('code', result)
-      } else if (tab === 'review_code') {
-        if (!s.codeText.trim()) {
-          toast.error('请输入要审查的代码')
-          update({ loading: false })
-          return
-        }
-        const result = await callApi('/api/code/review', {
-          language: s.language,
-          code: stripImages(s.codeText),
-        })
-        addMessage('user', `语言: ${s.language}\n代码:\n${s.codeText}`)
-        addMessage('assistant', result)
-        update({ codeText: '' })
-        // 审查结果留存到需求，可回到代码生成或下次直接查看
-        await saveToRequirement('code_review', result)
-      }
-    } catch (e) {
-      toast.error(`生成失败：${e.message}`)
-    } finally {
-      update({ loading: false })
-    }
-  }
-
-  // v12.0 流式发送核心：按 tab 组装请求 → SSE 打字机增量渲染，可中断、失败保留部分内容
-  const runChatStream = (chatTab, text, historyText) => {
-    let url, body
-    if (chatTab === 'prd') {
-      url = '/api/prd/generate'
-      body = { prd_text: historyText }
-    } else if (chatTab === 'review') {
-      url = '/api/prd/review'
-      body = { prd_text: historyText, repo_path: state[chatTab].repoPath }
-    } else if (chatTab === 'td') {
-      url = '/api/prd/technical-design'
-      body = { prd_text: historyText, repo_path: state[chatTab].repoPath }
-    } else if (chatTab === 'test') {
-      url = '/api/prd/test-cases'
-      body = { prd_text: historyText, tech_design: state[chatTab].techDesign }
-    } else if (chatTab === 'review_code') {
-      url = '/api/code/review'
-      body = { language: state[chatTab].language, code: historyText }
-    } else {
-      url = '/api/prd/code-chat'
-      body = { message: historyText, language: state[chatTab].language }
-    }
-    body.stream = true
-
-    // 占位 assistant 气泡：流式增量写入该消息
-    setState((prev) => ({
-      ...prev,
-      [chatTab]: {
-        ...prev[chatTab],
-        messages: [
-          ...prev[chatTab].messages,
-          { role: 'assistant', content: '', timestamp: new Date().toISOString(), streaming: true },
-        ],
-      },
-    }))
-
-    // 更新最后一条流式消息（防并发覆盖：函数式更新）
-    const patchStream = (updater) => {
-      setState((prev) => {
-        const cur = prev[chatTab]
-        const msgs = [...cur.messages]
-        const last = msgs[msgs.length - 1]
-        if (!last || !last.streaming) return prev
-        msgs[msgs.length - 1] = { ...last, ...updater(last) }
-        return { ...prev, [chatTab]: { ...cur, messages: msgs } }
-      })
-    }
-
-    abortRef.current = fetchSSE(url, {
-      body,
-      onEvent: (event, data) => {
-        if (event === 'delta') {
-          patchStream((last) => ({ content: last.content + data.text }))
-        } else if (event === 'done') {
-          patchStream((last) => ({ content: data.full || last.content, streaming: false }))
-        } else if (event === 'error') {
-          patchStream((last) => ({
-            streaming: false,
-            error: true,
-            content: last.content || `> ⚠️ 处理失败：${data.detail || '未知错误'}`,
-          }))
-        }
-      },
-      onError: (err) => {
-        // 已有部分内容则保留并追加提示，否则整条展示错误
-        patchStream((last) => ({
-          streaming: false,
-          error: true,
-          content: last.content
-            ? `${last.content}\n\n> ⚠️ ${err.message}`
-            : `> ⚠️ 处理失败：${err.message}`,
-        }))
-      },
-      onClose: () => {
-        abortRef.current = null
-        setState((prev) => {
-          const cur = prev[chatTab]
-          if (!cur) return prev
-          return { ...prev, [chatTab]: { ...cur, loading: false } }
-        })
-      },
-    })
-  }
-
-  // 聊天发送（回车触发）— v12.0 流式：打字机增量 + 可中断 + 失败可重试
   const handleChatSend = () => {
     const text = (s.chatInput || '').trim()
     if (!text || s.loading) return
@@ -1376,14 +1217,6 @@ export default function AIWorkspacePage() {
       userMsg.content
     setState((prev) => ({ ...prev, [tab]: { ...prev[tab], messages: baseMsgs, loading: true } }))
     runChatStream(tab, userMsg.content, historyText)
-  }
-
-  const goNext = () => {
-    const next = TABS[tab]?.next
-    if (!next) return
-    setTab(next)
-    const req = requirements.find((r) => r.id === selectedReqId)
-    prefillFromRequirement(next, req)
   }
 
   // 从对话中提取待审查的代码（输入框优先，否则取最近一次用户提交的代码）
@@ -1520,16 +1353,14 @@ export default function AIWorkspacePage() {
     }
   }
 
-  const canGenerate =
-    tab === 'prd'
-      ? s.userInput.trim()
-      : tab === 'code'
-        ? s.techDesign.trim()
-        : tab === 'review_code'
-          ? s.codeText.trim()
-          : s.prdText.trim()
-  const generateBtnText = getGenerateBtnText()
-  const chatPlaceholder = getChatPlaceholder()
+  const chatPlaceholder =
+    s.messages.length === 0
+      ? tab === 'prd'
+        ? '描述你要做的功能…（如：新增素材分享功能，支持分享给其他广告主）'
+        : tab === 'code'
+          ? '粘贴技术方案并追加编码要求（如：含单测、注意错误处理）…'
+          : '粘贴上一阶段产物内容，或下达处理指令…'
+      : getChatPlaceholder()
 
   return (
     <div className="space-y-5">
@@ -1571,89 +1402,58 @@ export default function AIWorkspacePage() {
         </div>
       </div>
 
-      {/* 流水线状态条：6 阶段可视化，点击任意阶段跳转（关联需求时显示） */}
-      {selectedReq && (
-        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium flex-shrink-0">
-            <GitBranch className="w-3.5 h-3.5" /> 流水线进度
+      {/* 流水线步骤条：6 阶段可回溯导航（常驻），状态点跟随关联需求；「全部产物」收编到这里 */}
+      <div className="bg-white rounded-xl border border-gray-200 px-3 py-2.5">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 font-medium flex-shrink-0 mr-1">
+            <GitBranch className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">流水线</span>
           </div>
-          <div className="relative flex-1">
-            <div className="flex items-center gap-1 overflow-x-auto">
-              {PIPELINE_STAGES.map((stage, idx) => {
-                const st = stageStatus(stage.key)
-                const active = tab === stage.key
-                return (
-                  <React.Fragment key={stage.key}>
-                    {idx > 0 && (
-                      <div
-                        className={`flex-1 h-0.5 rounded min-w-[8px] ${st === 'idle' ? 'bg-gray-200' : 'bg-emerald-400'}`}
-                      />
-                    )}
-                    <button
-                      onClick={() => handleTabChange(stage.key)}
-                      title={
-                        st === 'stale'
-                          ? '上游已变更，此阶段产物建议重新生成'
-                          : st === 'done'
-                            ? '已有产物，可查看或重新生成'
-                            : '尚未生成'
-                      }
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${active ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'hover:bg-gray-50 text-gray-600'}`}
-                    >
-                      <span
-                        className={`w-2 h-2 rounded-full ${st === 'stale' ? 'bg-amber-500' : st === 'done' ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                      />
-                      {stage.label}
-                      {st === 'stale' && (
-                        <span className="text-[10px] text-amber-600 font-semibold">需更新</span>
-                      )}
-                    </button>
-                  </React.Fragment>
-                )
-              })}
-            </div>
-            {/* 右缘渐隐：提示还有更多阶段可滚动查看 */}
-            <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-white to-transparent" />
-          </div>
-          <button
-            onClick={openArtifacts}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-medium transition-colors border border-indigo-100 flex-shrink-0"
-            title="查看该需求已保存的全部产物与测试记录"
-          >
-            <FolderGit2 className="w-3.5 h-3.5" /> 查看全部产物
-            {ARTIFACT_FIELDS.filter((s) => selectedReq[s.field]).length > 0 && (
+          {PIPELINE.map((key, idx) => {
+            const t = TABS[key]
+            const TColor = COLOR_MAP[t.color]
+            const st = stageStatus(key)
+            const active = tab === key
+            return (
+              <React.Fragment key={key}>
+                {idx > 0 && <ChevronRight className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />}
+                <button
+                  onClick={() => handleTabChange(key)}
+                  title={
+                    st === 'stale'
+                      ? '上游已变更，此阶段产物建议重新生成'
+                      : st === 'done'
+                        ? '已有产物，可在对话中追问或重新生成'
+                        : '尚未生成'
+                  }
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap border ${active ? TColor.active + ' bg-white shadow-sm' : 'border-transparent text-gray-500 hover:bg-gray-50'}`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${st === 'stale' ? 'bg-amber-500' : st === 'done' ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                  />
+                  <t.icon className={`w-3.5 h-3.5 ${active ? '' : 'text-gray-400'}`} />
+                  {t.label}
+                  {st === 'stale' && (
+                    <span className="text-[10px] text-amber-600 font-semibold">需更新</span>
+                  )}
+                </button>
+              </React.Fragment>
+            )
+          })}
+          <div className="flex-1" />
+          {selectedReq && (
+            <button
+              onClick={openArtifacts}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-medium transition-colors border border-indigo-100 flex-shrink-0"
+              title="查看该需求已保存的全部产物与测试记录"
+            >
+              <FolderGit2 className="w-3.5 h-3.5" /> 全部产物
               <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-semibold">
                 {ARTIFACT_FIELDS.filter((s) => selectedReq[s.field]).length}
               </span>
-            )}
-          </button>
+            </button>
+          )}
         </div>
-      )}
-
-      {/* Tabs */}
-      <div className="relative bg-white">
-        <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
-          {PIPELINE.map((key) => {
-            const t = TABS[key]
-            const TColor = COLOR_MAP[t.color]
-            return (
-              <button
-                key={key}
-                onClick={() => handleTabChange(key)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${tab === key ? TColor.active : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-              >
-                <t.icon className="w-4 h-4" /> {t.label}
-                {stageStatus(key) === 'stale' && (
-                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold">
-                    需更新
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-        {/* 右缘渐隐：提示还有更多 Tab 可滚动查看 */}
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white to-transparent" />
       </div>
 
       {/* 需求加载失败提示 */}
@@ -1680,93 +1480,23 @@ export default function AIWorkspacePage() {
         onRefreshTests={fetchTestRuns}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
-        {/* 左：输入面板 */}
-        <div className="lg:col-span-1 bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
-          <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-                <tabInfo.icon className={`w-4 h-4 ${c.icon}`} /> {tabInfo.label}
-              </h2>
-              <span className="text-xs text-gray-400 hidden sm:inline">左侧输入，点击生成</span>
-            </div>
-            {/* 需求选择器 */}
-            <div className="flex items-center gap-2">
-              <ListTodo className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-              <span className="text-xs text-gray-400 flex-shrink-0">关联需求</span>
-              {reqLoading ? (
-                <span className="text-xs text-gray-400">加载需求…</span>
-              ) : reqError ? (
-                <span className="text-xs text-red-500">需求加载失败</span>
-              ) : (
-                <div className="relative flex-1">
-                  <select
-                    value={selectedReqId || ''}
-                    onChange={(e) => handleSelectRequirement(e.target.value)}
-                    className="w-full pl-2 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 outline-none"
-                  >
-                    <option value="">-- 选择关联需求（可选） --</option>
-                    {requirements.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        [{getStatusMeta(r.status).text}] {r.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            {selectedReq && (
-              <div className="p-2 bg-indigo-50 rounded-lg border border-indigo-100 text-xs text-indigo-700">
-                已关联: <strong>{selectedReq.name}</strong>（状态:{' '}
-                {getStatusMeta(selectedReq.status).text}）
+      {/* 对话主面板（Codex/Cursor 式：所有研发操作都在对话框内完成，无独立表单） */}
+      <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-14rem)] min-h-[480px]">
+          <div className="px-5 py-3.5 border-b border-gray-200 bg-gray-50/60 flex items-center justify-between">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-sm flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  AI 对话
+                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[11px] font-medium border border-indigo-100">{tabInfo.label}</span>
+                  {s.messages.length > 0 && (
+                    <span className="text-[11px] text-gray-400 font-normal">{s.messages.length} 条</span>
+                  )}
+                </h2>
+                <p className="text-[11px] text-gray-400 truncate">所有研发操作都在对话框内完成 · 可回溯 · 可追问 · 产物自动沉淀</p>
               </div>
-            )}
-            {renderLeftPanel()}
-            <div className="flex gap-2">
-              <button
-                onClick={handleGenerate}
-                disabled={s.loading || !canGenerate}
-                className={`flex-1 bg-gradient-to-r ${c.from} ${c.to} text-white py-3 px-4 rounded-xl shadow-md hover:shadow-lg disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center gap-2 text-sm`}
-              >
-                {s.loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> 生成中…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" /> {generateBtnText}
-                  </>
-                )}
-              </button>
-              {tabInfo.next && s.messages.length > 0 && (
-                <button
-                  onClick={goNext}
-                  className="px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium transition-all flex items-center gap-1.5 text-sm whitespace-nowrap"
-                >
-                  {tabInfo.nextLabel} <ArrowRight className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-gray-400 flex items-center gap-1.5">
-              <Sparkles className="w-3 h-3 text-gray-300" />
-              生成结果出现在右侧对话区，可继续追问{selectedReqId ? ' · 自动保存到关联需求' : ''}
-            </p>
-          </div>
-        </div>
-
-        {/* 右：对话面板 */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 overflow-hidden flex flex-col h-[60vh] lg:h-[calc(100vh-13rem)] min-h-[400px]">
-          <div className="px-5 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Bot className="w-4 h-4 text-purple-600" />
-              <h2 className="text-base font-semibold text-gray-900">AI 对话</h2>
-              {s.messages.length > 0 && (
-                <span className="text-xs text-gray-400 ml-1">{s.messages.length} 条</span>
-              )}
             </div>
             {s.messages.length > 0 && (
               <div className="flex items-center gap-2">
@@ -1815,7 +1545,7 @@ export default function AIWorkspacePage() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-700">暂无对话记录</p>
-                  <p className="text-xs text-gray-400 mt-1">在左侧输入内容后点击「{generateBtnText}」开始对话</p>
+                  <p className="text-xs text-gray-400 mt-1">在下方输入指令开始对话：描述需求 / 粘贴上游产物 / 提出修改意见</p>
                 </div>
                 <div className="flex flex-wrap justify-center gap-2 max-w-md" aria-label="快捷提问">
                   {getChatSuggestions().map((sg) => (
@@ -2028,222 +1758,123 @@ export default function AIWorkspacePage() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="border-t border-gray-100 bg-white p-3">
-            <div className="flex items-end gap-2 rounded-xl border border-gray-200 bg-gray-50/60 p-1.5 pl-3 transition-all focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-500/10">
-              <textarea
-                value={s.chatInput}
-                onChange={(e) => update({ chatInput: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleChatSend()
-                  }
-                }}
-                placeholder={chatPlaceholder}
-                className="flex-1 p-2 bg-transparent resize-none text-sm outline-none placeholder:text-gray-400"
-                rows={2}
-              />
-              {s.loading && abortRef.current ? (
-                <Button variant="danger" icon={Square} onClick={handleStop} className="self-end">
-                  <span className="hidden sm:inline">停止</span>
-                </Button>
-              ) : (
-                <Button
-                  variant="gradient"
-                  icon={Send}
-                  loading={s.loading}
-                  disabled={!s.chatInput.trim()}
-                  onClick={handleChatSend}
-                  className="self-end"
-                >
-                  <span className="hidden sm:inline">发送</span>
-                </Button>
-              )}
+          <div className="border-t border-gray-200 bg-white p-3">
+            <div className="rounded-xl border border-gray-200 bg-gray-50/60 transition-all focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-500/10">
+              {/* 上下文行：关联需求 / 仓库 / 语言 / 领域 —— 所有上下文收敛到对话里 */}
+              <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
+                <div className="relative">
+                  <ListTodo className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={selectedReqId || ''}
+                    onChange={(e) => handleSelectRequirement(e.target.value)}
+                    className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer focus:border-indigo-400 outline-none text-gray-600 max-w-[240px]"
+                  >
+                    <option value="">{selectedReq ? `已关联：${selectedReq.name}` : '不关联需求'}</option>
+                    {requirements.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        [{getStatusMeta(r.status).text}] {r.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                {reqLoading && <span className="text-[11px] text-gray-400">加载需求…</span>}
+                {reqError && <span className="text-[11px] text-red-500">需求列表加载失败</span>}
+                <div className="relative">
+                  <FolderGit2 className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={s.repoPath}
+                    onChange={(e) => update({ repoPath: e.target.value })}
+                    placeholder="仓库路径（可选）"
+                    className="w-44 pl-7 pr-2 py-1.5 text-xs font-mono border border-gray-200 rounded-lg bg-white focus:border-indigo-400 outline-none text-gray-600"
+                  />
+                </div>
+                {(tab === 'code' || tab === 'review_code') && (
+                  <div className="relative">
+                    <Braces className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <select
+                      value={s.language}
+                      onChange={(e) => update({ language: e.target.value })}
+                      className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer focus:border-indigo-400 outline-none text-gray-600"
+                    >
+                      <option value="go">Go</option>
+                      <option value="python">Python</option>
+                      <option value="java">Java</option>
+                      <option value="typescript">TypeScript</option>
+                    </select>
+                    <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                )}
+                {tab === 'review' && (
+                  <div className="relative">
+                    <Building2 className="w-3.5 h-3.5 text-gray-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <select
+                      value={s.reviewDomain || 'general'}
+                      onChange={(e) => update({ reviewDomain: e.target.value })}
+                      className="pl-7 pr-6 py-1.5 text-xs border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer focus:border-indigo-400 outline-none text-gray-600"
+                      title="业务领域（可选，注入专项审查）"
+                    >
+                      <option value="general">通用审查</option>
+                      <option value="e-commerce">电商</option>
+                      <option value="social">社交</option>
+                      <option value="tools">工具类</option>
+                      <option value="adtech">广告技术</option>
+                      <option value="fin-tech">金融科技</option>
+                    </select>
+                    <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                )}
+                {selectedReqId && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-[11px] text-indigo-700">
+                    产物自动保存到需求
+                    <button
+                      onClick={() => handleSelectRequirement('')}
+                      title="取消关联"
+                      className="hover:text-indigo-900"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
+              {/* 输入行 */}
+              <div className="flex items-end gap-2 px-2.5 py-2">
+                <textarea
+                  value={s.chatInput}
+                  onChange={(e) => update({ chatInput: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleChatSend()
+                    }
+                  }}
+                  placeholder={chatPlaceholder}
+                  className="flex-1 p-1.5 bg-transparent resize-none text-sm outline-none placeholder:text-gray-400"
+                  rows={2}
+                />
+                {s.loading && abortRef.current ? (
+                  <Button variant="danger" icon={Square} onClick={handleStop} className="self-end">
+                    <span className="hidden sm:inline">停止</span>
+                  </Button>
+                ) : (
+                  <Button
+                    variant="gradient"
+                    icon={Send}
+                    loading={s.loading}
+                    disabled={!s.chatInput.trim()}
+                    onClick={handleChatSend}
+                    className="self-end"
+                  >
+                    <span className="hidden sm:inline">发送</span>
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
     </div>
   )
-
-  function renderLeftPanel() {
-    // 统一的 composer 字段样式：小标签（带图标）+ 内嵌图标输入框 + 柔和焦点环
-    const labelCls = 'flex items-center gap-1.5 text-xs font-medium text-gray-500 mb-1.5'
-    const inputCls = `w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white outline-none transition-all focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10`
-    const inputMono = `${inputCls} font-mono text-[13px]`
-    const selectCls = `${inputCls} bg-white appearance-none pr-8 cursor-pointer`
-    const RepoPathField = () => (
-      <div>
-        <label className={labelCls}>
-          <FolderGit2 className="w-3.5 h-3.5 text-gray-400" /> 仓库路径（可选）
-        </label>
-        <div className="relative">
-          <FolderGit2 className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            className={inputMono}
-            value={s.repoPath}
-            onChange={(e) => update({ repoPath: e.target.value })}
-            placeholder="/path/to/repo"
-          />
-        </div>
-      </div>
-    )
-    const LanguageField = () => (
-      <div>
-        <label className={labelCls}>
-          <Braces className="w-3.5 h-3.5 text-gray-400" /> 编程语言
-        </label>
-        <div className="relative">
-          <Braces className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <select className={selectCls} value={s.language} onChange={(e) => update({ language: e.target.value })}>
-            <option value="go">Go</option>
-            <option value="python">Python</option>
-            <option value="java">Java</option>
-            <option value="typescript">TypeScript</option>
-          </select>
-          <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-      </div>
-    )
-
-    if (tab === 'prd') {
-      return (
-        <>
-          <RichTextEditor
-            value={s.userInput}
-            onChange={(v) => update({ userInput: v })}
-            placeholder={
-              '请输入需求描述…\n\n例如：\n1. 新增素材分享功能\n2. 支持将创意素材分享给其他广告账户\n3. 分享时需要校验素材状态'
-            }
-            minHeight={180}
-          />
-          <RepoPathField />
-        </>
-      )
-    }
-    if (tab === 'review') {
-      return (
-        <>
-          <RichTextEditor
-            value={s.prdText}
-            onChange={(v) => update({ prdText: v })}
-            placeholder="请输入 PRD 内容…"
-            minHeight={200}
-          />
-          <RepoPathField />
-          <div>
-            <label className={labelCls}>
-              <Building2 className="w-3.5 h-3.5 text-gray-400" /> 业务领域（可选，注入专项审查）
-            </label>
-            <div className="relative">
-              <Building2 className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <select
-                className={`${selectCls}`}
-                value={s.reviewDomain || 'general'}
-                onChange={(e) => update({ reviewDomain: e.target.value })}
-              >
-                <option value="general">通用（默认）</option>
-                <option value="e-commerce">电商</option>
-                <option value="social">社交</option>
-                <option value="tools">工具类</option>
-                <option value="adtech">广告技术</option>
-                <option value="fin-tech">金融科技</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-            <p className="text-xs text-gray-400 mt-1.5">选择后审查将注入该领域的专项检查点（竞价/合规/风控等）</p>
-          </div>
-        </>
-      )
-    }
-    if (tab === 'td') {
-      return (
-        <>
-          <RichTextEditor
-            value={s.prdText}
-            onChange={(v) => update({ prdText: v })}
-            placeholder="请输入 PRD 内容…"
-            minHeight={180}
-          />
-          <RepoPathField />
-        </>
-      )
-    }
-    if (tab === 'test') {
-      return (
-        <>
-          <div>
-            <label className={labelCls}>
-              <ScrollText className="w-3.5 h-3.5 text-gray-400" /> PRD 内容
-            </label>
-            <RichTextEditor
-              value={s.prdText}
-              onChange={(v) => update({ prdText: v })}
-              placeholder="请输入 PRD 内容…"
-              minHeight={150}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>
-              <FileCode className="w-3.5 h-3.5 text-gray-400" /> 技术方案（可选）
-            </label>
-            <RichTextEditor
-              value={s.techDesign}
-              onChange={(v) => update({ techDesign: v })}
-              placeholder="粘贴技术方案内容，增强测试覆盖度…"
-              minHeight={100}
-            />
-          </div>
-        </>
-      )
-    }
-    if (tab === 'code') {
-      return (
-        <>
-          <div>
-            <label className={labelCls}>
-              <FileCode className="w-3.5 h-3.5 text-gray-400" /> 技术方案
-            </label>
-            <RichTextEditor
-              value={s.techDesign}
-              onChange={(v) => update({ techDesign: v })}
-              placeholder="粘贴或输入技术方案内容…"
-              minHeight={180}
-            />
-          </div>
-          <LanguageField />
-          <p className="text-xs text-gray-400">生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行</p>
-        </>
-      )
-    }
-    // review_code：代码审查
-    return (
-      <>
-        <div>
-          <label className={labelCls}>
-            <Code2 className="w-3.5 h-3.5 text-gray-400" /> 待审查代码
-          </label>
-          <RichTextEditor
-            value={s.codeText}
-            onChange={(v) => update({ codeText: v })}
-            placeholder="粘贴要审查的代码…"
-            minHeight={200}
-          />
-        </div>
-        <LanguageField />
-      </>
-    )
-  }
-
-  function getGenerateBtnText() {
-    if (tab === 'prd') return '生成 PRD'
-    if (tab === 'review') return '开始审查'
-    if (tab === 'td') return '生成技术方案'
-    if (tab === 'test') return '生成测试用例'
-    if (tab === 'review_code') return '开始审查'
-    return '生成代码'
-  }
 
   function getChatPlaceholder() {
     if (tab === 'prd') return '对 PRD 提出修改意见，例如：增加用户权限管理章节…'
