@@ -767,9 +767,13 @@ def _miniapp_ensure_appjson(files: dict, req) -> dict:
     return {"app.json": json.dumps(app_json, ensure_ascii=False, indent=2), **files}
 
 
-async def _miniapp_quality_gate(user_prompt: str, req, _report) -> tuple:
-    """生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单修复）。"""
-    result = None
+async def _miniapp_quality_gate(user_prompt: str, req, _report, initial_result: str | None = None) -> tuple:
+    """生成链路质量门禁：最多 3 轮（解析失败→精简重试；QC 未过→附问题清单修复）。
+
+    initial_result：worker 已生成的首轮完整结果，作为初值传入避免重复调用 LLM（历史 bug：
+    门内 result=None 重新起，导致首轮被当作“未生成”强制走精简重试，浪费 1 次 LLM + 降级质量）。
+    """
+    result = initial_result
     files = None
     qc = None
     for attempt in range(3):
@@ -808,9 +812,11 @@ async def _miniapp_quality_gate(user_prompt: str, req, _report) -> tuple:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, "操作失败，请稍后重试") from e
+            logger.warning("miniapp gate unexpected error: %s", e)
+            raise HTTPException(500, f"操作失败，请稍后重试（{type(e).__name__}: {e}）") from e
     if not files or qc is None or not qc["ok"]:
-        raise HTTPException(502, "操作失败，请稍后重试")
+        failed = "；".join(f"{c['item']}: {c['detail']}" for c in (qc or {}).get("checks", []) if not c.get("ok"))
+        raise HTTPException(502, f"小程序生成未通过质量门禁（已自动修复 3 轮）：{failed or 'AI 输出无法解析'}", )
     return files, qc, result
 
 
@@ -875,7 +881,7 @@ async def _miniapp_generate_worker(payload: dict, progress: Callable | None = No
     except Exception as e:
         raise HTTPException(500, "操作失败，请稍后重试") from e
 
-    files, qc, result = await _miniapp_quality_gate(user_prompt, req, _report)
+    files, qc, result = await _miniapp_quality_gate(user_prompt, req, _report, result)
 
     proj_id = f"mp_{uuid.uuid4().hex[:12]}"
     _save_miniapp_project(proj_id, req, files, qc)

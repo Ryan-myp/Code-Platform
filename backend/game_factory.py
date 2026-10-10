@@ -426,23 +426,25 @@ class GenerateRequest(BaseModel):
 
 
 def _extract_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象（容忍 ```json 包裹与前后噪音）。"""
-    text = (text or "").strip()
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if m:
-        text = m.group(1).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("LLM 输出中未找到 JSON 对象")
-    raw = text[start : end + 1]
+    """从 LLM 输出中提取 JSON 对象（多级容错：parse_llm_json 优先，截断修复兜底）。"""
+    from common.llm import parse_llm_json
+
+    raw_text = (text or "").strip()
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
+        return parse_llm_json(raw_text)
+    except Exception:
         # 截断修复：输出接近 token 上限被截断时，从出错位置回退到引号边界再补全闭合
-        fixed = _repair_truncated_json(raw, e.pos)
-        if fixed is not None:
-            return fixed
-        raise
+        start, end = raw_text.find("{"), raw_text.rfind("}")
+        if start == -1 or end <= start:
+            raise ValueError("LLM 输出中未找到 JSON 对象") from None
+        raw = raw_text[start : end + 1]
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            fixed = _repair_truncated_json(raw, e.pos)
+            if fixed is not None:
+                return fixed
+            raise
 
 
 def _repair_truncated_json(raw: str, err_pos: int) -> dict | None:
@@ -672,6 +674,34 @@ def ensure_game_tables() -> None:
 async def list_templates(current_user: dict = require_auth()):
     """游戏模板列表（前端模板选择器数据源）。"""
     return TEMPLATES
+
+
+@router.post("/generate")
+async def generate_game(
+    req: GenerateRequest,
+    sync: bool = Query(False, description="true=同步执行（兼容旧客户端/脚本）；默认异步任务"),
+    current_user: dict = require_auth(),
+):
+    """选模板 + 需求 → AI 生成双版本小游戏（默认异步任务，立即返回 task_id）。
+
+    重构回归补齐：提交端点曾丢失导致前端 404（工厂验收发现）。
+    """
+    if req.template != "custom":
+        tpl = next((t for t in TEMPLATES if t["id"] == req.template), None)
+        if not tpl:
+            raise HTTPException(404, "游戏模板不存在")
+    user = current_user.get("username", "") if isinstance(current_user, dict) else ""
+    uid = current_user.get("user_id", "") if isinstance(current_user, dict) else ""
+    role = current_user.get("role", "") if isinstance(current_user, dict) else ""
+    if sync:
+        return await _game_generate_worker(req.model_dump())
+    task = create_task("game_generate", req.model_dump(), username=user, user_id=uid, role=role)
+    return {
+        "ok": True,
+        "task_id": task["id"],
+        "status": task["status"],
+        "message": "游戏生成任务已提交，后台执行中，可在任务中心查看进度",
+    }
 
 
 @router.post("/{proj_id}/cover")

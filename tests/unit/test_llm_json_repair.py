@@ -61,3 +61,32 @@ async def test_json_async_repair():
 
     with patch.object(llm_mod, "call_llm_async", new=AsyncMock(side_effect=fake_call_llm_async)):
         assert await llm_mod.call_llm_json_async("sys", "user") == {"ok": 1}
+
+
+# ── parse_llm_json 截断修复（LLM 输出被 token 上限截断 → 抢救已完成片段）──────────────
+def test_parse_llm_json_repair_truncated_object():
+    """对象被截断（尾部未闭合）→ 补全闭合符，返回已完成部分。"""
+    truncated = '{"meta": {"a": 1}, "slides": [{"t": 1}, {"t": 2}'
+    out = llm_mod.parse_llm_json(truncated)
+    assert out["slides"] == [{"t": 1}, {"t": 2}]
+
+
+def test_parse_llm_json_repair_truncated_string():
+    """截断在字符串中间 → 补全引号 + 闭合，仍解析成功。"""
+    truncated = '{"name": "hello wo'
+    out = llm_mod.parse_llm_json(truncated)
+    assert out == {"name": "hello wo"}
+
+
+def test_parse_llm_json_repair_trailing_comma():
+    """截断在逗号后（尾逗号）→ 去悬空逗号 + 闭合。"""
+    truncated = '{"a": 1, "b": 2,'
+    out = llm_mod.parse_llm_json(truncated)
+    assert out == {"a": 1, "b": 2}
+
+
+def test_parse_llm_json_repair_array_truncated():
+    """顶层数组被截断 → 补全闭合。"""
+    truncated = '[1, 2, 3'
+    out = llm_mod.parse_llm_json(truncated)
+    assert out == [1, 2, 3]

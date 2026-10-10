@@ -158,3 +158,35 @@ class TestQcCheck:
         qc = _qc_check(files)
         assert qc["ok"] is False
         assert any(c["item"] == "app.json 可解析" and not c["ok"] for c in qc["checks"])
+
+
+class TestQualityGateInitialResult:
+    """回归：worker 已生成的 initial_result 必须作为初值传入，不再重复调用 LLM（历史 bug 丢弃结果）。"""
+
+    def test_gate_uses_initial_result_no_extra_llm(self):
+        import asyncio
+        import json
+        import types
+        from unittest.mock import AsyncMock
+
+        import miniapp
+
+        files = _perfect_files()
+        initial = json.dumps(files, ensure_ascii=False)
+        req = types.SimpleNamespace(name="T", template="custom", requirement="x")
+        calls = []
+
+        async def fake_llm(*a, **k):
+            calls.append(a)
+            return "不应被调用"
+
+        miniapp.call_llm_async = fake_llm
+        try:
+            out_files, qc, _res = asyncio.run(
+                miniapp._miniapp_quality_gate("prompt", req, lambda p, s: None, initial)
+            )
+        finally:
+            pass
+        assert qc["ok"] is True
+        assert "app.json" in out_files
+        assert len(calls) == 0, "已提供 initial_result，不应再调用 LLM"

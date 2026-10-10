@@ -441,6 +441,13 @@ async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature:
 JSON_REPAIR_SUFFIX = "\n\n【输出格式要求】必须只输出一个合法的 JSON，不要包含 ``` 围栏、解释、注释或任何多余文字。"
 
 
+def _is_empty_llm_result(data: object, expect: str) -> bool:
+    """空结果检测：{} / [] 这类退化输出（常见于 LLM 输出被截断后抢救出空骨架）视为需重试。"""
+    if expect == "array":
+        return isinstance(data, list) and len(data) == 0
+    return isinstance(data, dict) and len(data) == 0
+
+
 def call_llm_json(
     system_prompt: str,
     user_prompt: str,
@@ -464,6 +471,8 @@ def call_llm_json(
         data = parse_llm_json(first)
         if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
             raise ValueError(f"LLM 返回的不是 {expect}")
+        if _is_empty_llm_result(data, expect):
+            raise ValueError("LLM 返回内容为空（{}/[]），疑似截断退化，需重新生成")
         return data
     except ValueError as e:
         repaired_prompt = (
@@ -512,6 +521,8 @@ async def call_llm_json_async(
         data = parse_llm_json(first)
         if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
             raise ValueError(f"LLM 返回的不是 {expect}")
+        if _is_empty_llm_result(data, expect):
+            raise ValueError("LLM 返回内容为空（{}/[]），疑似截断退化，需重新生成")
         return data
     except ValueError as e:
         if not allow_parse_retry:
@@ -671,8 +682,70 @@ def parse_llm_json(raw: str) -> dict:
             except Exception:
                 continue
 
+    # 6. 截断修复：输出被 token 上限截断时（尾部未闭合），补全缺失闭合符，抢救已完成的部分
+    for opener in ("{", "["):
+        idx = text.find(opener)
+        if idx != -1:
+            repaired = _repair_truncated_json(text[idx:])
+            if repaired is not None:
+                return repaired
+
     snippet = text[:120].replace("\n", " ")
     raise ValueError(f"LLM 返回无法解析为 JSON（内容开头：{snippet}…）")
+
+
+def _closing_suffix(s: str) -> str:
+    """返回补全一段（可能被截断的）JSON 字符串所需的闭合符（未闭合字符串先补，再按栈逆序闭合）。"""
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in ("}", "]"):
+            if stack:
+                stack.pop()
+    suffix = '"' if in_str else ""
+    while stack:
+        suffix += stack.pop()
+    return suffix
+
+
+def _repair_truncated_json(text: str):
+    """JSON 被截断（尾部 unterminated）时，逐步回退截断点 + 补全缺失闭合符，抢救已完成的 JSON 片段。
+
+    返回解析成功的对象；无法修复返回 None（不抛异常，保持 parse_llm_json 的容错语义）。
+    """
+    import re as _re
+
+    t = (text or "").strip()
+    if not t:
+        return None
+    for cut in range(0, min(400, len(t)) + 1):
+        seg = t if cut == 0 else t[: len(t) - cut].rstrip()
+        if not seg:
+            continue
+        # 两种基底：原样 / 去尾部悬空逗号（截断在逗号后时直接闭合会产生尾逗号报错）
+        variants = [seg, _re.sub(r",\s*$", "", seg)]
+        for base in dict.fromkeys(variants):
+            cand = base + _closing_suffix(base)
+            try:
+                return json.loads(cand)
+            except Exception:
+                continue
+    return None
 
 
 def _strip_json_comments(s: str) -> str:

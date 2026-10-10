@@ -4066,7 +4066,8 @@ async def _ppt_worker(payload: dict, progress: Callable | None = None) -> dict:
     if payload.get("outline"):
         prompt += f"\n大纲：{payload['outline']}"
     _report(30, "AI 生成大纲中")
-    result = await call_llm_async(_build_ppt_system_prompt(template), prompt)
+    # PPT 富内容（10-14 页）远超默认 4000 tokens，显式提上限避免 JSON 截断→解析退化 0 页
+    result = await call_llm_async(_build_ppt_system_prompt(template), prompt, max_tokens=16000)
     _report(55, "解析大纲结构")
     outline_data = _parse_ppt_outline(result)
     _report(70, "排版 PPTX 文件")
