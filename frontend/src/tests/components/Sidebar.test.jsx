@@ -35,8 +35,9 @@ describe('Sidebar', () => {
         onLogout={() => {}}
       />
     )
-    expect(screen.getAllByText(/研发管理/i).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/系统配置/i).length).toBeGreaterThan(0)
+    // 新 IA：5 层精简分组（工作台/创作工坊/AI与工具/协作与管理/会员与帮助）
+    expect(screen.getAllByText(/创作工坊/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/协作与管理/i).length).toBeGreaterThan(0)
   })
 
   it('expands menu group to show items', () => {
@@ -48,7 +49,7 @@ describe('Sidebar', () => {
         onLogout={() => {}}
       />
     )
-    fireEvent.click(screen.getAllByText(/系统配置/i)[0])
-    expect(screen.getAllByText(/插件市场/i).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByText(/创作工坊/i)[0])
+    expect(screen.getAllByText(/图片工厂/i).length).toBeGreaterThan(0)
   })
 })

@@ -18,6 +18,6 @@ describe('App', () => {
   it('shows navigation menu items', async () => {
     render(<App />)
     // 懒加载路由就绪前整棵子树处于 Suspense fallback，需等待 chunk 加载后 Sidebar 才出现
-    expect(await screen.findByText(/研发管理/i)).toBeInTheDocument()
+    expect(await screen.findByText(/创作工坊/i)).toBeInTheDocument()
   })
 })

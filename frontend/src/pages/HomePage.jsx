@@ -703,6 +703,9 @@ export default function HomePage() {
   const [drafts, setDrafts] = useState([])
   const [showcase, setShowcase] = useState([]) // 真实用户成果案例墙
   const [factoryWorks, setFactoryWorks] = useState([]) // 最新创作墙（图片/视频工厂真实作品）
+  const [heroPrompt, setHeroPrompt] = useState('') // hero 主焦点命令输入
+  const [heroSubmitting, setHeroSubmitting] = useState(false)
+  const [capExpanded, setCapExpanded] = useState({}) // 能力地图渐进披露：每组默认前 3 个
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [capKw, setCapKw] = useState('')
@@ -758,6 +761,32 @@ export default function HomePage() {
       toast.error('加载数据失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // hero 主焦点：一句话 → 创建需求 → 跳转 AI 工作台旗舰路径
+  const submitHero = async () => {
+    const text = heroPrompt.trim()
+    if (!text) {
+      navigate('/workspace')
+      return
+    }
+    setHeroSubmitting(true)
+    try {
+      const shortName = text.length > 24 ? text.slice(0, 24) + '…' : text
+      const res = await api.post('/api/requirements', {
+        name: shortName,
+        description: text,
+        status: 'draft',
+        priority: 'P1',
+      })
+      const id = res.data?.id
+      navigate(id ? `/workspace?requirement_id=${id}&tab=prd` : '/workspace')
+    } catch (e) {
+      toast.error(e.message || '创建需求失败，已跳转工作台')
+      navigate('/workspace')
+    } finally {
+      setHeroSubmitting(false)
     }
   }
 
@@ -963,28 +992,31 @@ export default function HomePage() {
               {dateStr} · 欢迎回来，这里汇聚了你的一切工作
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button
-              icon={Rocket}
-              onClick={() => navigate('/workspace')}
-              className="!bg-white !text-brand-700 hover:!bg-gray-50 shadow-lg"
-            >
-              打开 AI 工作台
-            </Button>
-            <Button
-              icon={Zap}
-              onClick={() => navigate('/tasks')}
-              className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25"
-            >
-              任务中心
-            </Button>
-            <Button
-              icon={Settings}
-              onClick={openWidgetConfig}
-              className="!bg-white/15 !text-white border border-white/40 hover:!bg-white/25"
-            >
-              首页配置
-            </Button>
+          <div className="flex-1 w-full max-w-xl">
+            {/* 主焦点：一句话全自动命令输入（旗舰 C 位，回车即开跑） */}
+            <div className="flex items-center gap-2 bg-white rounded-xl p-1.5 shadow-lg ring-1 ring-white/30">
+              <Rocket className="w-4 h-4 text-brand-500 flex-shrink-0 ml-2" />
+              <input
+                value={heroPrompt}
+                onChange={(e) => setHeroPrompt(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitHero()}
+                placeholder="描述你想做什么，回车一句话自动研发… 如：做一个带登录的待办 App"
+                className="flex-1 min-w-0 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none"
+              />
+              <button
+                onClick={submitHero}
+                disabled={heroSubmitting}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gradient-to-r from-brand-600 to-indigo-600 text-white text-sm font-medium hover:opacity-90 disabled:opacity-60 transition-all flex-shrink-0"
+              >
+                {heroSubmitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                {heroSubmitting ? '创建中' : '开跑'}
+              </button>
+            </div>
+            <div className="flex items-center gap-3 mt-2 pl-1 text-xs text-white/70">
+              <button onClick={() => navigate('/workspace')} className="hover:text-white transition-colors">进 AI 工作台</button>
+              <button onClick={() => navigate('/tasks')} className="hover:text-white transition-colors">任务中心</button>
+              <button onClick={openWidgetConfig} className="hover:text-white transition-colors">首页配置</button>
+            </div>
           </div>
         </div>
         {/* 能力数据条：让新用户 3 秒感知平台规模 */}
@@ -1053,7 +1085,7 @@ export default function HomePage() {
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-          {FEATURE_FACTORIES.map((f) => (
+          {FEATURE_FACTORIES.slice(0, 6).map((f) => (
             <button
               key={f.label}
               onClick={() => navigate(f.path)}
@@ -1088,6 +1120,15 @@ export default function HomePage() {
               </span>
             </button>
           ))}
+        </div>
+        <div className="mt-3 flex items-center justify-center">
+          <button
+            onClick={() => navigate('/templates')}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-700 transition-colors"
+          >
+            全部工厂与模板（{FEATURE_FACTORIES.length} 项）
+            <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
@@ -1244,41 +1285,43 @@ export default function HomePage() {
             )}
           </div>
         ) : (
-          /* 全部分组展示 */
+          /* 全部分组展示（渐进披露：每组默认前 3 项，点击展开，避免首屏 60+ chip 墙面） */
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {SCENE_GROUPS.map((g) => (
-              <div
-                key={g.key}
-                className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 hover:border-brand-200 hover:shadow-sm transition-all"
-              >
-                <div className="flex items-center gap-2 mb-3">
-                  <span
-                    className={`w-7 h-7 rounded-lg bg-gradient-to-br ${g.color} flex items-center justify-center`}
-                  >
-                    <g.icon className="w-3.5 h-3.5 text-white" />
-                  </span>
-                  <div>
-                    <div className="text-sm font-semibold text-gray-900">{g.label}</div>
-                    <div className="text-[10px] text-gray-400">{g.desc}</div>
+            {SCENE_GROUPS.map((g) => {
+              const expanded = !!capExpanded[g.key]
+              const shown = expanded ? g.items : g.items.slice(0, 3)
+              return (
+                <div
+                  key={g.key}
+                  className="rounded-xl border border-gray-100 bg-gray-50/60 p-4 hover:border-brand-200 hover:shadow-sm transition-all"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <span
+                      className={`w-7 h-7 rounded-lg bg-gradient-to-br ${g.color} flex items-center justify-center`}
+                    >
+                      <g.icon className="w-3.5 h-3.5 text-white" />
+                    </span>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">{g.label}</div>
+                      <div className="text-[10px] text-gray-400">{g.desc}</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {shown.map((it) => (
+                      <CapChip key={it.label} item={it} onNavigate={navigate} />
+                    ))}
+                    {g.items.length > 3 && (
+                      <button
+                        onClick={() => setCapExpanded((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs text-gray-400 border border-dashed border-gray-300 hover:border-brand-300 hover:text-brand-600 transition-colors"
+                      >
+                        {expanded ? '收起' : `+${g.items.length - 3} 项`}
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {g.items.map((it, idx) => (
-                    <React.Fragment key={it.label}>
-                      {it.group && (idx === 0 || g.items[idx - 1].group !== it.group) && (
-                        <div className="w-full flex items-center gap-2 mt-1 mb-0.5 first:mt-0">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                            {it.group}
-                          </span>
-                          <span className="flex-1 h-px bg-gray-200/70" />
-                        </div>
-                      )}
-                      <CapChip item={it} onNavigate={navigate} />
-                    </React.Fragment>
-                  ))}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
