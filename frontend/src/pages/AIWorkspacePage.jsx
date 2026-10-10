@@ -34,6 +34,10 @@ import {
   Undo2,
   SkipForward,
   Building2,
+  Braces,
+  ChevronDown,
+  ScrollText,
+  FileCode,
 } from 'lucide-react'
 import RichTextEditor from '../components/RichTextEditor'
 import { api } from '../lib/api'
@@ -477,19 +481,19 @@ function AutoRunModal({ open, onClose }) {
               onChange={(e) => setDesc(e.target.value)}
               rows={4}
               placeholder="例如：做一个待办事项管理网页应用，支持添加、编辑、删除和标记完成，数据保存在本地文件"
-              className="w-full p-3 text-sm border border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none resize-none"
+              className="w-full p-3 text-sm border border-gray-200 rounded-xl focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all"
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="应用名（可选，默认取描述）"
-                className="px-3 py-2 text-sm border border-gray-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none"
+                className="px-3 py-2 text-sm border border-gray-200 rounded-xl focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
               />
               <select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                className="px-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none"
+                className="px-3 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all"
               >
                 <option value="python">Python</option>
                 <option value="go">Go</option>
@@ -1535,23 +1539,36 @@ export default function AIWorkspacePage() {
         icon={Sparkles}
       />
 
-      {/* 一句话全自动入口：小白用户只需说出功能，AI 全流程自动实现 */}
-      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 rounded-2xl p-5 text-white shadow-lg flex flex-col sm:flex-row sm:items-center gap-4">
-        <div className="flex-1">
-          <h3 className="text-lg font-bold flex items-center gap-2">
-            <Rocket className="w-5 h-5" /> 一句话全自动
-          </h3>
-          <p className="text-sm text-white/80 mt-1">
-            说出你想要的功能，AI 自动完成 PRD → 审查 → 技术方案 → 测试用例 → 代码 → 审查 → 部署
-            全流程，全程可视化跟踪
-          </p>
+      {/* 一句话全自动入口：深色渐变卡片 + 7 阶段流水线可视化 */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-purple-950 p-5 sm:p-6 text-white shadow-lg">
+        <div className="pointer-events-none absolute -top-16 -right-16 w-64 h-64 rounded-full bg-purple-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 left-1/3 w-56 h-56 rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="w-8 h-8 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center">
+                <Rocket className="w-4 h-4" />
+              </span>
+              <h3 className="text-base font-bold">一句话全自动</h3>
+              <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[11px] text-white/70">7 阶段流水线</span>
+            </div>
+            <p className="text-sm text-white/60 mt-1.5">说出你想要的功能，AI 自动执行全部研发步骤，节点可跟踪、可回溯、可人工介入</p>
+            <div className="flex items-center gap-1 mt-3 text-[11px] text-white/50 overflow-x-auto" aria-label="全自动流水线阶段">
+              {['PRD', '审查', '技术方案', '测试用例', '代码', '代码审查', '部署'].map((st, i) => (
+                <React.Fragment key={st}>
+                  {i > 0 && <span className="text-white/25">→</span>}
+                  <span className="px-1.5 py-0.5 rounded bg-white/5 whitespace-nowrap">{st}</span>
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={() => setAutoRunOpen(true)}
+            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-indigo-700 rounded-xl font-semibold text-sm hover:bg-indigo-50 transition-all shadow-md hover:shadow-lg flex-shrink-0 self-start sm:self-center"
+          >
+            <Sparkles className="w-4 h-4" /> 开始全自动实现
+          </button>
         </div>
-        <button
-          onClick={() => setAutoRunOpen(true)}
-          className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white text-indigo-700 rounded-xl font-semibold text-sm hover:bg-indigo-50 transition-all shadow-md hover:shadow-lg flex-shrink-0"
-        >
-          <Sparkles className="w-4 h-4" /> 开始全自动实现
-        </button>
       </div>
 
       {/* 流水线状态条：6 阶段可视化，点击任意阶段跳转（关联需求时显示） */}
@@ -1675,24 +1692,28 @@ export default function AIWorkspacePage() {
             </div>
             {/* 需求选择器 */}
             <div className="flex items-center gap-2">
-              <ListTodo className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <ListTodo className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              <span className="text-xs text-gray-400 flex-shrink-0">关联需求</span>
               {reqLoading ? (
                 <span className="text-xs text-gray-400">加载需求…</span>
               ) : reqError ? (
                 <span className="text-xs text-red-500">需求加载失败</span>
               ) : (
-                <select
-                  value={selectedReqId || ''}
-                  onChange={(e) => handleSelectRequirement(e.target.value)}
-                  className="flex-1 p-1.5 text-xs border border-gray-200 rounded-md bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/10 outline-none"
-                >
-                  <option value="">-- 选择关联需求（可选） --</option>
-                  {requirements.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      [{getStatusMeta(r.status).text}] {r.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative flex-1">
+                  <select
+                    value={selectedReqId || ''}
+                    onChange={(e) => handleSelectRequirement(e.target.value)}
+                    className="w-full pl-2 pr-7 py-1.5 text-xs border border-gray-200 rounded-lg bg-white appearance-none cursor-pointer focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10 outline-none"
+                  >
+                    <option value="">-- 选择关联需求（可选） --</option>
+                    {requirements.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        [{getStatusMeta(r.status).text}] {r.name}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
               )}
             </div>
           </div>
@@ -1709,7 +1730,7 @@ export default function AIWorkspacePage() {
               <button
                 onClick={handleGenerate}
                 disabled={s.loading || !canGenerate}
-                className={`flex-1 bg-gradient-to-r ${c.from} ${c.to} text-white py-2.5 px-4 rounded-xl hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center gap-2 text-sm`}
+                className={`flex-1 bg-gradient-to-r ${c.from} ${c.to} text-white py-3 px-4 rounded-xl shadow-md hover:shadow-lg disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed font-medium transition-all flex items-center justify-center gap-2 text-sm`}
               >
                 {s.loading ? (
                   <>
@@ -1730,14 +1751,10 @@ export default function AIWorkspacePage() {
                 </button>
               )}
             </div>
-            <div className={`p-3 ${c.light} rounded-xl border ${c.border}`}>
-              <p className={`text-xs font-medium ${c.text} mb-1`}>💡 使用提示</p>
-              <ul className={`text-xs ${c.text} space-y-0.5`}>
-                <li>• 在左侧输入内容，点击「{generateBtnText}」</li>
-                <li>• 结果出现在右侧对话区，可继续追问</li>
-                {selectedReqId && <li>• 生成结果将自动保存到关联需求</li>}
-              </ul>
-            </div>
+            <p className="text-xs text-gray-400 flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-gray-300" />
+              生成结果出现在右侧对话区，可继续追问{selectedReqId ? ' · 自动保存到关联需求' : ''}
+            </p>
           </div>
         </div>
 
@@ -1792,12 +1809,26 @@ export default function AIWorkspacePage() {
 
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             {s.messages.length === 0 ? (
-              <Empty
-                icon={MessageSquare}
-                title="暂无对话记录"
-                description={`在左侧输入内容后点击「${generateBtnText}」开始对话`}
-                className="h-full justify-center"
-              />
+              <div className="h-full flex flex-col items-center justify-center text-center gap-5 py-10 px-4">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100/60 flex items-center justify-center">
+                  <MessageSquare className="w-6 h-6 text-indigo-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">暂无对话记录</p>
+                  <p className="text-xs text-gray-400 mt-1">在左侧输入内容后点击「{generateBtnText}」开始对话</p>
+                </div>
+                <div className="flex flex-wrap justify-center gap-2 max-w-md" aria-label="快捷提问">
+                  {getChatSuggestions().map((sg) => (
+                    <button
+                      key={sg}
+                      onClick={() => update({ chatInput: sg })}
+                      className="px-3 py-1.5 rounded-full bg-white border border-gray-200 text-xs text-gray-500 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/50 transition-colors"
+                    >
+                      {sg}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ) : (
               s.messages.map((msg, idx) => (
                 <div
@@ -1997,8 +2028,8 @@ export default function AIWorkspacePage() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="border-t border-gray-200 bg-gray-50 p-3">
-            <div className="flex items-end gap-2">
+          <div className="border-t border-gray-100 bg-white p-3">
+            <div className="flex items-end gap-2 rounded-xl border border-gray-200 bg-gray-50/60 p-1.5 pl-3 transition-all focus-within:border-indigo-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-indigo-500/10">
               <textarea
                 value={s.chatInput}
                 onChange={(e) => update({ chatInput: e.target.value })}
@@ -2009,7 +2040,7 @@ export default function AIWorkspacePage() {
                   }
                 }}
                 placeholder={chatPlaceholder}
-                className="flex-1 p-2.5 border border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 resize-none text-sm bg-white outline-none"
+                className="flex-1 p-2 bg-transparent resize-none text-sm outline-none placeholder:text-gray-400"
                 rows={2}
               />
               {s.loading && abortRef.current ? (
@@ -2036,6 +2067,46 @@ export default function AIWorkspacePage() {
   )
 
   function renderLeftPanel() {
+    // 统一的 composer 字段样式：小标签（带图标）+ 内嵌图标输入框 + 柔和焦点环
+    const labelCls = 'flex items-center gap-1.5 text-xs font-medium text-gray-500 mb-1.5'
+    const inputCls = `w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg text-sm bg-white outline-none transition-all focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10`
+    const inputMono = `${inputCls} font-mono text-[13px]`
+    const selectCls = `${inputCls} bg-white appearance-none pr-8 cursor-pointer`
+    const RepoPathField = () => (
+      <div>
+        <label className={labelCls}>
+          <FolderGit2 className="w-3.5 h-3.5 text-gray-400" /> 仓库路径（可选）
+        </label>
+        <div className="relative">
+          <FolderGit2 className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            className={inputMono}
+            value={s.repoPath}
+            onChange={(e) => update({ repoPath: e.target.value })}
+            placeholder="/path/to/repo"
+          />
+        </div>
+      </div>
+    )
+    const LanguageField = () => (
+      <div>
+        <label className={labelCls}>
+          <Braces className="w-3.5 h-3.5 text-gray-400" /> 编程语言
+        </label>
+        <div className="relative">
+          <Braces className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <select className={selectCls} value={s.language} onChange={(e) => update({ language: e.target.value })}>
+            <option value="go">Go</option>
+            <option value="python">Python</option>
+            <option value="java">Java</option>
+            <option value="typescript">TypeScript</option>
+          </select>
+          <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+      </div>
+    )
+
     if (tab === 'prd') {
       return (
         <>
@@ -2047,19 +2118,7 @@ export default function AIWorkspacePage() {
             }
             minHeight={180}
           />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <FolderGit2 className="w-4 h-4 inline mr-1" />
-              仓库路径（可选）
-            </label>
-            <input
-              type="text"
-              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
-              value={s.repoPath}
-              onChange={(e) => update({ repoPath: e.target.value })}
-              placeholder="/path/to/repo"
-            />
-          </div>
+          <RepoPathField />
         </>
       )
     }
@@ -2072,34 +2131,28 @@ export default function AIWorkspacePage() {
             placeholder="请输入 PRD 内容…"
             minHeight={200}
           />
+          <RepoPathField />
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">仓库路径（可选）</label>
-            <input
-              type="text"
-              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
-              value={s.repoPath}
-              onChange={(e) => update({ repoPath: e.target.value })}
-              placeholder="/path/to/repo"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <Building2 className="w-4 h-4 inline mr-1" />
-              业务领域（可选，注入专项审查）
+            <label className={labelCls}>
+              <Building2 className="w-3.5 h-3.5 text-gray-400" /> 业务领域（可选，注入专项审查）
             </label>
-            <select
-              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm outline-none`}
-              value={s.reviewDomain || 'general'}
-              onChange={(e) => update({ reviewDomain: e.target.value })}
-            >
-              <option value="general">通用（默认）</option>
-              <option value="e-commerce">电商</option>
-              <option value="social">社交</option>
-              <option value="tools">工具类</option>
-              <option value="adtech">广告技术</option>
-              <option value="fin-tech">金融科技</option>
-            </select>
-            <p className="text-xs text-gray-400 mt-1">选择后审查将注入该领域的专项检查点（竞价/合规/风控等）</p>
+            <div className="relative">
+              <Building2 className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                className={`${selectCls}`}
+                value={s.reviewDomain || 'general'}
+                onChange={(e) => update({ reviewDomain: e.target.value })}
+              >
+                <option value="general">通用（默认）</option>
+                <option value="e-commerce">电商</option>
+                <option value="social">社交</option>
+                <option value="tools">工具类</option>
+                <option value="adtech">广告技术</option>
+                <option value="fin-tech">金融科技</option>
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">选择后审查将注入该领域的专项检查点（竞价/合规/风控等）</p>
           </div>
         </>
       )
@@ -2113,30 +2166,28 @@ export default function AIWorkspacePage() {
             placeholder="请输入 PRD 内容…"
             minHeight={180}
           />
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">仓库路径（可选）</label>
-            <input
-              type="text"
-              className={`w-full p-2.5 border border-gray-300 rounded-lg ${c.ring} text-sm font-mono outline-none`}
-              value={s.repoPath}
-              onChange={(e) => update({ repoPath: e.target.value })}
-              placeholder="/path/to/repo"
-            />
-          </div>
+          <RepoPathField />
         </>
       )
     }
     if (tab === 'test') {
       return (
         <>
-          <RichTextEditor
-            value={s.prdText}
-            onChange={(v) => update({ prdText: v })}
-            placeholder="请输入 PRD 内容…"
-            minHeight={150}
-          />
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">技术方案（可选）</label>
+            <label className={labelCls}>
+              <ScrollText className="w-3.5 h-3.5 text-gray-400" /> PRD 内容
+            </label>
+            <RichTextEditor
+              value={s.prdText}
+              onChange={(v) => update({ prdText: v })}
+              placeholder="请输入 PRD 内容…"
+              minHeight={150}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>
+              <FileCode className="w-3.5 h-3.5 text-gray-400" /> 技术方案（可选）
+            </label>
             <RichTextEditor
               value={s.techDesign}
               onChange={(v) => update({ techDesign: v })}
@@ -2150,53 +2201,37 @@ export default function AIWorkspacePage() {
     if (tab === 'code') {
       return (
         <>
-          <RichTextEditor
-            value={s.techDesign}
-            onChange={(v) => update({ techDesign: v })}
-            placeholder="粘贴或输入技术方案内容…"
-            minHeight={180}
-          />
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
-            <select
-              className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`}
-              value={s.language}
-              onChange={(e) => update({ language: e.target.value })}
-            >
-              <option value="go">Go</option>
-              <option value="python">Python</option>
-              <option value="java">Java</option>
-              <option value="typescript">TypeScript</option>
-            </select>
-            <p className="text-xs text-gray-400 mt-1.5">
-              生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行
-            </p>
+            <label className={labelCls}>
+              <FileCode className="w-3.5 h-3.5 text-gray-400" /> 技术方案
+            </label>
+            <RichTextEditor
+              value={s.techDesign}
+              onChange={(v) => update({ techDesign: v })}
+              placeholder="粘贴或输入技术方案内容…"
+              minHeight={180}
+            />
           </div>
+          <LanguageField />
+          <p className="text-xs text-gray-400">生成代码后，Python 服务可点击对话区「一键部署到沙箱」立即运行</p>
         </>
       )
     }
     // review_code：代码审查
     return (
       <>
-        <RichTextEditor
-          value={s.codeText}
-          onChange={(v) => update({ codeText: v })}
-          placeholder="粘贴要审查的代码…"
-          minHeight={200}
-        />
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">编程语言</label>
-          <select
-            className={`w-full p-2.5 border border-gray-200 rounded-lg ${c.ring} outline-none`}
-            value={s.language}
-            onChange={(e) => update({ language: e.target.value })}
-          >
-            <option value="go">Go</option>
-            <option value="python">Python</option>
-            <option value="java">Java</option>
-            <option value="typescript">TypeScript</option>
-          </select>
+          <label className={labelCls}>
+            <Code2 className="w-3.5 h-3.5 text-gray-400" /> 待审查代码
+          </label>
+          <RichTextEditor
+            value={s.codeText}
+            onChange={(v) => update({ codeText: v })}
+            placeholder="粘贴要审查的代码…"
+            minHeight={200}
+          />
         </div>
+        <LanguageField />
       </>
     )
   }
@@ -2217,5 +2252,15 @@ export default function AIWorkspacePage() {
     if (tab === 'test') return '对测试用例提出修改意见，例如：补充边界条件…'
     if (tab === 'review_code') return '对审查结果提出意见或追问…'
     return '对生成的代码提出修改意见，例如：增加错误处理…'
+  }
+
+  // 空态快捷提问（按 Tab 场景定制，点击填入输入框）
+  function getChatSuggestions() {
+    if (tab === 'prd') return ['补充验收标准章节', '细化用户角色与权限', '增加非功能需求（性能/安全）']
+    if (tab === 'review') return ['针对高风险项给出整改建议', '对比方案优劣并推荐', '总结关键问题清单']
+    if (tab === 'td') return ['补充数据表结构设计', '增加接口定义与字段说明', '评估性能与容量']
+    if (tab === 'test') return ['补充边界条件用例', '增加异常与回滚场景', '输出用例覆盖度分析']
+    if (tab === 'review_code') return ['逐条给出修复代码', '检查安全与资源泄漏', '生成修复优先级清单']
+    return ['补充错误处理与日志', '为关键函数补充单元测试', '优化性能与可读性']
   }
 }

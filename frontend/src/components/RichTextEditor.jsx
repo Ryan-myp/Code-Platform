@@ -65,19 +65,21 @@ export default function RichTextEditor({
       type="button"
       onClick={onClick}
       title={title}
-      className={`p-1.5 rounded transition-colors ${
+      className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${
         active
-          ? 'bg-purple-100 text-purple-700'
-          : 'text-gray-500 hover:text-gray-800 hover:bg-gray-200'
+          ? 'bg-indigo-50 text-indigo-600'
+          : 'text-gray-500 hover:text-gray-900 hover:bg-white hover:shadow-sm'
       }`}
     >
       {children}
     </button>
   )
 
+  const Divider = () => <span className="w-px h-4 bg-gray-200 mx-0.5 self-center" />
+
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden focus-within:border-purple-500 focus-within:ring-2 focus-within:ring-purple-500/10 transition-all">
-      <div className="flex flex-wrap gap-0 p-2 bg-gray-50 border-b border-gray-200">
+    <div className="rounded-xl border border-gray-200 overflow-hidden bg-white focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-500/10 transition-all">
+      <div className="flex items-center gap-0.5 px-2 py-1.5 bg-gray-50/80 border-b border-gray-100" role="toolbar" aria-label="格式化工具栏">
         <ToolbarButton
           onClick={() => toggleHeading(2)}
           title="标题 H2"
@@ -92,19 +94,11 @@ export default function RichTextEditor({
         >
           <Heading3 className="w-4 h-4" />
         </ToolbarButton>
-        <span className="w-px h-6 bg-gray-300 mx-1 self-center" />
-        <ToolbarButton
-          onClick={toggleBold}
-          title="加粗 (Ctrl+B)"
-          active={isActive(() => editor.isActive('bold'))}
-        >
+        <Divider />
+        <ToolbarButton onClick={toggleBold} title="加粗 (Ctrl+B)" active={isActive(() => editor.isActive('bold'))}>
           <Bold className="w-4 h-4" />
         </ToolbarButton>
-        <ToolbarButton
-          onClick={toggleItalic}
-          title="斜体 (Ctrl+I)"
-          active={isActive(() => editor.isActive('italic'))}
-        >
+        <ToolbarButton onClick={toggleItalic} title="斜体 (Ctrl+I)" active={isActive(() => editor.isActive('italic'))}>
           <Italic className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
@@ -114,22 +108,6 @@ export default function RichTextEditor({
         >
           <UnderlineIcon className="w-4 h-4" />
         </ToolbarButton>
-        <span className="w-px h-6 bg-gray-300 mx-1 self-center" />
-        <ToolbarButton
-          onClick={toggleCodeBlock}
-          title="代码块"
-          active={isActive(() => editor.isActive('codeBlock'))}
-        >
-          <Code className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={toggleInlineCode}
-          title="行内代码"
-          active={isActive(() => editor.isActive('code'))}
-        >
-          <Type className="w-4 h-4" />
-        </ToolbarButton>
-        <span className="w-px h-6 bg-gray-300 mx-1 self-center" />
         <ToolbarButton
           onClick={toggleBulletList}
           title="无序列表"
@@ -144,8 +122,19 @@ export default function RichTextEditor({
         >
           <ListOrdered className="w-4 h-4" />
         </ToolbarButton>
+        <Divider />
+        <ToolbarButton
+          onClick={toggleCodeBlock}
+          title="代码块"
+          active={isActive(() => editor.isActive('codeBlock'))}
+        >
+          <Code className="w-4 h-4" />
+        </ToolbarButton>
+        <ToolbarButton onClick={toggleInlineCode} title="行内代码" active={isActive(() => editor.isActive('code'))}>
+          <Type className="w-4 h-4" />
+        </ToolbarButton>
       </div>
-      <EditorContent editor={editor} style={{ minHeight }} className="p-3 bg-white" />
+      <EditorContent editor={editor} style={{ minHeight }} className="p-4 bg-white" />
     </div>
   )
 }

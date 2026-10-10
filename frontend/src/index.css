@@ -765,3 +765,51 @@ html.theme-transition * {
     display: none !important;
   }
 }
+
+/* ===== tiptap 富文本编辑器 ===== */
+/* placeholder（tiptap Placeholder 扩展需要用户侧 CSS） */
+.tiptap {
+  outline: none;
+}
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: #9ca3af;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.tiptap ul,
+.tiptap ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+.tiptap ul { list-style: disc; }
+.tiptap ol { list-style: decimal; }
+.tiptap li {
+  margin: 0.15em 0;
+}
+.tiptap li::marker {
+  color: #9ca3af;
+}
+.tiptap code {
+  background: #f3f4f6;
+  color: #7c3aed;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.tiptap pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.8em 1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  margin: 0.7em 0;
+}
+.tiptap pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
