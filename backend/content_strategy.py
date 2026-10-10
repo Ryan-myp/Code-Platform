@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from common.auth import require_auth
 from common.db import get_db
-from common.llm import call_llm, log_usage
+from common.llm import log_usage
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +208,11 @@ def topic_suggest(req: TopicSuggestRequest, current_user: dict = require_auth())
     )
 
     try:
-        raw = call_llm(TOPIC_SYSTEM, user_prompt, max_tokens=2000, temperature=0.8, timeout=90)
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-        suggestions = json.loads(raw)
+        from common.llm import call_llm_json
+
+        suggestions = call_llm_json(
+            TOPIC_SYSTEM, user_prompt, expect="array", max_tokens=2000, temperature=0.5, timeout=90
+        )
         if not isinstance(suggestions, list):
             raise ValueError("LLM 返回的不是数组")
     except Exception:

@@ -908,9 +908,13 @@ async def _run_tool_worker(payload: dict, progress: Callable | None = None) -> d
 
     _report(35, "构建提示词")
     # 注入真实当前日期：模板中的 [当前日期] 若不注入，LLM 会幻觉日期（实测出现 2024 年）
+    # 注入当前用户身份：周栘/PRD 等工具的「汇报人/作者」栏不再输出 [待补充]（实测短板）
+    uname = (payload.get("username") or "").strip()
+    identity = f"当前用户：{uname}。落款/汇报人/作者等字段请直接使用该用户名，不要输出 [待补充] 占位。\n" if uname else ""
     system_prompt = (
         "你是一个专业的AI助手，请根据用户的要求生成高质量内容。输出格式要清晰、结构化的Markdown。\n"
-        f"今天是 {datetime.now().strftime('%Y年%m月%d日')}（星期{'一二三四五六日'[datetime.now().weekday()]}）。"
+        f"今天是 {datetime.now().strftime('%Y年%m月%d日')}（星期{'一二三四五六日'[datetime.now().weekday()]}）。\n"
+        f"{identity}"
     )
     _report(50, "AI 生成中")
     result = await call_llm_async(system_prompt, prompt, model=payload.get("model") or None)

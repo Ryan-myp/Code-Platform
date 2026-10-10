@@ -242,15 +242,10 @@ class GenerateRequest(BaseModel):
 
 
 def _extract_json(text: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象（容忍 ```json 包裹与前后噪音）。"""
-    text = (text or "").strip()
-    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if m:
-        text = m.group(1).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("LLM 输出中未找到 JSON 对象")
-    return json.loads(text[start : end + 1])
+    """从 LLM 输出中提取 JSON 对象（容忍 ```json 包裹与前后噪音，多级修复见 parse_llm_json）。"""
+    from common.llm import parse_llm_json
+
+    return parse_llm_json(text)
 
 
 # ─── QC 质量门禁（对齐 game_factory 商用交付标准）──────────────────

@@ -438,9 +438,104 @@ async def _stream_one(cfg: dict, msgs: list[dict], max_tokens: int, temperature:
             raise
 
 
-# ══════════════════════════════════════════════════════════════
+JSON_REPAIR_SUFFIX = "\n\n【输出格式要求】必须只输出一个合法的 JSON，不要包含 ``` 围栏、解释、注释或任何多余文字。"
+
+
+def call_llm_json(
+    system_prompt: str,
+    user_prompt: str,
+    expect: str = "object",
+    max_tokens: int = 4000,
+    temperature: float = 0.3,
+    timeout: int = 300,
+    model: str | None = None,
+) -> dict | list:
+    """同步版 LLM → JSON（自动修复重试一次），语义同 call_llm_json_async。"""
+    suffix = JSON_REPAIR_SUFFIX
+    first = call_llm(
+        system_prompt + suffix,
+        user_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        timeout=timeout,
+        model=model,
+    )
+    try:
+        data = parse_llm_json(first)
+        if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
+            raise ValueError(f"LLM 返回的不是 {expect}")
+        return data
+    except ValueError as e:
+        repaired_prompt = (
+            f"{user_prompt}\n\n【修复指令】你上一次的输出无法解析：{str(e)[:200]}。请重新回答，只输出 JSON 本体。"
+        )
+        second = call_llm(
+            system_prompt,
+            repaired_prompt,
+            max_tokens=max_tokens,
+            temperature=min(temperature, 0.2),
+            timeout=timeout,
+            model=model,
+        )
+        data = parse_llm_json(second)
+        if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
+            raise ValueError(f"LLM 修复后仍不是 {expect}") from None
+        return data
+
+
+async def call_llm_json_async(
+    system_prompt: str,
+    user_prompt: str,
+    expect: str = "object",
+    max_tokens: int = 4000,
+    temperature: float = 0.3,
+    timeout: int = 300,
+    model: str | None = None,
+    allow_parse_retry: bool = True,
+) -> dict | list:
+    """LLM → JSON 生成（自动修复重试）：一次解析失败则携错误反馈重试一次。
+
+    - expect: "object" | "array"（校验顶层类型，不对则同样触发修复重试）
+    - 提示词自动追加 JSON 严格输出要求；解析走 parse_llm_json 多级容错
+    - 仍失败 → 抛 ValueError（调用方自行降级，不静默吞错）
+    """
+    suffix = JSON_REPAIR_SUFFIX if allow_parse_retry else ""
+    first = await call_llm_async(
+        system_prompt + suffix,
+        user_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        timeout=timeout,
+        model=model,
+    )
+    try:
+        data = parse_llm_json(first)
+        if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
+            raise ValueError(f"LLM 返回的不是 {expect}")
+        return data
+    except ValueError as e:
+        if not allow_parse_retry:
+            raise
+        repaired_prompt = (
+            f"{user_prompt}\n\n【修复指令】你上一次的输出无法解析：{str(e)[:200]}。请重新回答，只输出 JSON 本体。"
+        )
+        second = await call_llm_async(
+            system_prompt,
+            repaired_prompt,
+            max_tokens=max_tokens,
+            temperature=min(temperature, 0.2),
+            timeout=timeout,
+            model=model,
+        )
+        data = parse_llm_json(second)
+        if (expect == "array" and not isinstance(data, list)) or (expect == "object" and not isinstance(data, dict)):
+            raise ValueError(f"LLM 修复后仍不是 {expect}") from None
+        return data
+
+
+# ══════════════════════════════════════════════════════════════════
 # 对话历史组装
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
 
 
 def build_conversation_messages(
