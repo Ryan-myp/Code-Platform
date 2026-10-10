@@ -334,13 +334,7 @@ async def test_knowledge_base(kb_id: str, current_user: dict = require_auth()): 
     return {"ok": False, "error": f"不支持的类型：{kb_type}"}
 
 
-@router.get("/api/knowledge-bases/{kb_id}/search")
-async def _search_kb_internal(params: dict) -> dict:
-    """内部搜索函数。"""
-    return {}
-
-
-async def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
+def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
     """解析搜索请求参数。"""
     return {"kb_id": kb_id, "query": q.strip()[:500], "limit": min(limit, 20), "offset": 0}
 
@@ -467,6 +461,7 @@ def _kb_search_file(d: dict, q: str, limit: int) -> dict:
     return {"ok": True, "hits": hits, "count": len(hits)}
 
 
+@router.get("/api/knowledge-bases/{kb_id}/search")
 def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
     """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
     q = (q or "").strip()

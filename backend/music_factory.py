@@ -2163,25 +2163,43 @@ async def get_lyrics_file(filename: str):
     return {"filename": filename, "content": content}
 
 
-def _generate_melody(style: str, key: str = "C", duration: int = 16) -> list:
-    """生成旋律。"""
-    # 简化的旋律生成逻辑
-    notes = ["C", "D", "E", "F", "G", "A", "B"]
-    melody = []
+def _generate_melody(style: str, phrases: list, seed: int, voice: str) -> list[dict]:
+    """按乐句对齐谱主旋律：输出 [{start, midi, dur}] 序列（_vocalize_phrase 消费）。
 
-    for i in range(duration):
-        # 根据风格选择音符
-        if style == "major":
-            idx = i % 7
-        elif style == "minor":
-            idx = (i + 2) % 7
-        else:
-            idx = i % 7
+    风格决定调性与和弦进行（_STYLE_CFG），五声音阶限定可用音域，
+    句首/句尾音靠 _note_start/_note_end 收束，句中音 _note_middle 平滑游走；
+    女声整体高一个八度，seed 保证同歌词同风格可复现。
+    """
+    import random
 
-        note = f"{notes[idx]}4"
-        melody.append({"note": note, "duration": 0.5})
-
-    return melody
+    rng = random.Random(seed)
+    cfg = _STYLE_CFG.get(style, _STYLE_CFG["pop"])
+    chords = cfg["chords"]
+    penta = (0, 2, 4, 7, 9)
+    shift = 12 if voice != "male" else 0
+    lo, hi = 55 + shift, 71 + shift
+    out: list[dict] = []
+    prev: int | None = None
+    for i, ph in enumerate(phrases):
+        chord = chords[i % len(chords)]
+        croot = chord[0]
+        usable = _melody_pool(chord, croot, penta, lo, hi)
+        start_note = _note_start(usable, prev, croot, rng)
+        end_note = _note_end(usable, start_note, croot, rng)
+        n_slots = max(1, min(4, int(ph.get("n") or 4) // 2))
+        slot_dur = (ph.get("dur") or 2.0) / n_slots
+        for k in range(n_slots):
+            if k == 0:
+                note = start_note
+            elif k == n_slots - 1:
+                note = end_note
+            else:
+                note = _note_middle(usable, prev, croot, rng)
+            out.append(
+                {"start": round(float(ph["start"]) + k * slot_dur, 3), "midi": int(note), "dur": round(slot_dur, 3)}
+            )
+            prev = note
+    return out
 
 
 def _arrange_chords(key: str, progression: str = "I-V-vi-IV") -> list:
