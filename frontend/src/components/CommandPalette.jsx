@@ -83,7 +83,7 @@ const COMMANDS = [
     description: '说出功能 → PRD→审查→方案→代码→部署 全自动',
     icon: Rocket,
     path: '/workspace',
-    category: '工作台',
+      category: '智能研发',
     highlight: true,
   },
   {
@@ -92,7 +92,7 @@ const COMMANDS = [
     description: '需求 → 审查 → 设计 → 测试 → 代码 → 部署',
     icon: Zap,
     path: '/workspace',
-    category: '工作台',
+      category: '智能研发',
   },
   {
     id: 'nav-projects',
@@ -326,7 +326,7 @@ const COMMANDS = [
     description: 'AI 生成双版本小游戏',
     icon: Gamepad2,
     path: '/games',
-    category: '应用与社区',
+      category: '创作工坊',
   },
   {
     id: 'nav-miniapp',
@@ -342,7 +342,7 @@ const COMMANDS = [
     description: '文字转语音，场景预设',
     icon: Volume2,
     path: '/voice-dubbing',
-    category: '应用与社区',
+      category: '创作工坊',
   },
   {
     id: 'nav-publish',
@@ -474,7 +474,7 @@ const COMMANDS = [
     description: '历史用量与账单记录',
     icon: History,
     path: '/records',
-    category: '效率工具',
+      category: '工作台',
   },
 
   // 系统

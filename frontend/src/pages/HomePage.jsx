@@ -95,6 +95,12 @@ const SCENE_GROUPS = [
     icon: Home,
     color: 'from-blue-500 to-indigo-600',
     items: [
+      { label: '收藏中心', desc: '收藏的内容与作品', path: '/favorites', icon: Star, keywords: '收藏,星标,作品' },
+
+      { label: '成果仓库', desc: '所有成果集中存储', path: '/artifacts', icon: FileText },
+
+      { label: '项目空间', desc: '项目全生命周期', path: '/projects', icon: FolderKanban },
+
       { label: '任务中心', desc: 'AI 生成任务实时进度', path: '/tasks', icon: CheckCircle2, keywords: '任务,进度,生成', },
       { label: '记录中心', desc: '全部使用记录', path: '/records', icon: HistoryIcon, keywords: '记录,历史', },
       { label: '通知中心', desc: '消息与提醒', path: '/notifications', icon: Bell, keywords: '通知,消息', },
@@ -112,8 +118,6 @@ const SCENE_GROUPS = [
       { label: '一句话全自动', desc: '说出功能 → 自动研发部署', path: '/workspace', icon: Sparkles, hot: true, keywords: '自动,生成,开发,部署', },
       { label: 'AI 工作台', desc: 'PRD→审查→方案→代码', path: '/workspace', icon: Bot, keywords: '工作台,研发,代码', },
       { label: '需求看板', desc: '需求与任务管理', path: '/board', icon: ListTodo },
-      { label: '项目空间', desc: '项目全生命周期', path: '/projects', icon: FolderKanban },
-      { label: '成果仓库', desc: '所有成果集中存储', path: '/artifacts', icon: FileText },
       { label: '沙箱运行', desc: '安全运行 AI 生成应用', path: '/sandbox', icon: Play },
       { label: 'CI/CD 流水线', desc: '构建·部署·自动修复', path: '/pipelines', icon: GitBranch },
     ],
@@ -136,14 +140,17 @@ const SCENE_GROUPS = [
       { label: '模型配置', desc: '多供应商模型路由', path: '/config', icon: Settings, keywords: '模型,配置,API', },
     ],
   }
-  ,
-{
+  ,{
     key: 'create',
     label: '内容创作',
     desc: 'AI 生成图·视频·文案',
     icon: Wand2,
     color: 'from-accent-500 to-blue-600',
     items: [
+      { label: '配音工坊', desc: '文字转语音，短视频配音', path: '/voice-dubbing', icon: Volume2, keywords: '配音,语音,tts,音频', },
+
+      { label: '小游戏工坊', desc: 'AI 生成网页 + 微信小游戏', path: '/games', icon: Gamepad2, keywords: '游戏,微信,娱乐', },
+
       {
         label: '图片工厂',
         desc: '文生图·图生图',
@@ -203,6 +210,10 @@ const SCENE_GROUPS = [
     icon: Wrench,
     color: 'from-teal-500 to-cyan-600',
     items: [
+      { label: '竞品监控', desc: '竞品动态与流量追踪', path: '/monitor', icon: TrendingUp, keywords: '竞品,监控,对手,流量' },
+
+      { label: '内容策略', desc: '选题·排期·爆款公式', path: '/strategy', icon: Target, keywords: '策略,选题,内容,运营' },
+
       { label: 'AI数字人', desc: '虚拟形象·口播视频', path: '/digital-human', icon: UserCircle, keywords: '数字人,虚拟,直播,口播', },
       { label: '语音对话', desc: '实时语音AI助手', path: '/voice-chat', icon: Mic2, keywords: '语音,对话,聊天,说话', },
       { label: '视频理解', desc: 'AI分析视频内容', path: '/video-analyzer', icon: Monitor, keywords: '视频,分析,理解,字幕', },
@@ -221,8 +232,7 @@ const SCENE_GROUPS = [
       { label: '用量分析', desc: '个人AI使用统计', path: '/usage-analytics', icon: Activity, keywords: '用量,统计,分析,Token', },
     ],
   }
-  ,
-{
+  ,{
     key: 'apps',
     label: '应用与社区',
     desc: 'AI生成应用·发布·变现',
@@ -230,25 +240,11 @@ const SCENE_GROUPS = [
     color: 'from-rose-500 to-pink-600',
     items: [
       {
-        label: '小游戏工坊',
-        desc: 'AI 生成网页 + 微信小游戏',
-        path: '/games',
-        icon: Gamepad2,
-        keywords: '游戏,微信,娱乐',
-      },
-      {
         label: '小程序工坊',
         desc: 'AI 生成微信小程序',
         path: '/miniapp',
         icon: Smartphone,
         keywords: '微信,程序,应用',
-      },
-      {
-        label: '配音工坊',
-        desc: '文字转语音，短视频配音',
-        path: '/voice-dubbing',
-        icon: Volume2,
-        keywords: '配音,语音,tts,音频',
       },
       {
         label: '发布中心',
@@ -530,7 +526,7 @@ export default function HomePage() {
   const [factoryWorks, setFactoryWorks] = useState([]) // 最新创作墙（图片/视频工厂真实作品）
   const [heroPrompt, setHeroPrompt] = useState('') // hero 主焦点命令输入
   const [heroSubmitting, setHeroSubmitting] = useState(false)
-  const [capExpanded, setCapExpanded] = useState({}) // 能力地图渐进披露：每组默认前 3 个
+  // capExpanded removed：能力地图已全量展示，无需渐进披露
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [capKw, setCapKw] = useState('')
@@ -1110,11 +1106,10 @@ export default function HomePage() {
             )}
           </div>
         ) : (
-          /* 全部分组展示（渐进披露：每组默认前 3 项，点击展开，避免首屏 60+ chip 墙面） */
+          /* 全部分组全量展示（统一 7 组语义，长尾不再隐藏） */
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {SCENE_GROUPS.map((g) => {
-              const expanded = !!capExpanded[g.key]
-              const shown = expanded ? g.items : g.items.slice(0, 3)
+              const shown = g.items
               return (
                 <div
                   key={g.key}
@@ -1135,14 +1130,6 @@ export default function HomePage() {
                     {shown.map((it) => (
                       <CapChip key={it.label} item={it} onNavigate={navigate} />
                     ))}
-                    {g.items.length > 3 && (
-                      <button
-                        onClick={() => setCapExpanded((prev) => ({ ...prev, [g.key]: !prev[g.key] }))}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs text-gray-400 border border-dashed border-gray-300 hover:border-brand-300 hover:text-brand-600 transition-colors"
-                      >
-                        {expanded ? '收起' : `+${g.items.length - 3} 项`}
-                      </button>
-                    )}
                   </div>
                 </div>
               )

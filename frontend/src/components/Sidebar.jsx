@@ -75,6 +75,13 @@ import {
   ArrowRightLeft,
   Rocket,
   Box,
+  LayoutDashboard,
+  LayoutTemplate,
+  LineChart,
+  Mic,
+  Network,
+  TerminalSquare,
+  User,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -97,9 +104,8 @@ const ICONS = {
   Rocket, Box, FolderKanban,
 }
 
-// 默认导航（通用版兜底）— 统一语义分类（与 ⌘K 面板、首页能力地图同一套心智）：
-// 工作台(总览) / 智能研发(编程) / Agent 与知识(智能体资产) / 创作工坊(内容) / 效率工具(办公数据) / 应用与社区(应用变现) / 会员与帮助(账号)
-// 每组只露高频项，长尾走「更多功能 ⌘K」
+// 默认导航（通用版兜底）— 统一语义 7 组，全量条目放出（与 ⌘K 面板 / 首页能力地图同一套心智）
+// 组内按使用频率排序：高频在前，旗舰入口带 ★主打；⌘K 保留为搜索加速器而非隐藏入口
 const DEFAULT_NAV_ITEMS = [
   {
     key: 'home',
@@ -110,9 +116,11 @@ const DEFAULT_NAV_ITEMS = [
       { path: '/home', label: '首页', icon: Home },
       { path: '/projects', label: '项目空间', icon: FolderKanban },
       { path: '/artifacts', label: '成果仓库', icon: Box },
+      { path: '/chat', label: '智能协作', icon: MessageSquare, pageId: 'chat' },
       { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
       { path: '/records', label: '记录中心', icon: HistoryIcon },
       { path: '/notifications', label: '通知中心', icon: Bell },
+      { path: '/favorites', label: '收藏中心', icon: Star },
     ],
   },
   {
@@ -120,7 +128,6 @@ const DEFAULT_NAV_ITEMS = [
     label: '智能研发',
     icon: Rocket,
     color: 'from-indigo-500 to-violet-600',
-    more: true, // 长尾(代码生成/代码审查独立页、任务对话、自进化中心)走「更多」
     items: [
       { path: '/workspace', label: 'AI 工作台', icon: Sparkles, flagship: true },
       { path: '/board', label: '需求看板', icon: ListTodo },
@@ -133,7 +140,6 @@ const DEFAULT_NAV_ITEMS = [
     label: 'Agent 与知识',
     icon: Bot,
     color: 'from-violet-500 to-purple-600',
-    more: true, // 长尾(Team 管理、自进化中心)走「更多」
     items: [
       { path: '/agents', label: 'Agent 智能体', icon: Bot, flagship: true, pageId: 'agents' },
       { path: '/knowledge-bases', label: '知识库', icon: Database },
@@ -141,6 +147,8 @@ const DEFAULT_NAV_ITEMS = [
       { path: '/workflows', label: '工作流编排', icon: Layers, pageId: 'workflows' },
       { path: '/mcp-servers', label: 'MCP Servers', icon: Server },
       { path: '/config', label: '模型配置', icon: Settings },
+      { path: '/teams', label: 'Team 管理', icon: Users },
+      { path: '/evolution', label: '自进化中心', icon: Brain },
     ],
   },
   {
@@ -148,14 +156,16 @@ const DEFAULT_NAV_ITEMS = [
     label: '创作工坊',
     icon: Wand2,
     color: 'from-pink-500 to-rose-600',
-    more: true, // 长尾(短剧/音乐/翻译/配音)走「更多」
     items: [
-      { path: '/image-factory', label: '图片工厂', icon: ImageIcon, pageId: 'image-factory' },
+      { path: '/image-factory', label: '图片工厂', icon: ImageIcon, flagship: true, pageId: 'image-factory' },
       { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
       { path: '/copywriting', label: '文案工厂', icon: PenTool, pageId: 'copywriting' },
       { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
       { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games' },
       { path: '/meme', label: '表情包工坊', icon: Sticker, pageId: 'meme' },
+      { path: '/music-factory', label: '音乐工坊', icon: Music },
+      { path: '/voice-dubbing', label: '配音工坊', icon: Volume2 },
+      { path: '/translation', label: '翻译中心', icon: Languages },
     ],
   },
   {
@@ -163,13 +173,26 @@ const DEFAULT_NAV_ITEMS = [
     label: '效率工具',
     icon: Wrench,
     color: 'from-teal-500 to-cyan-600',
-    more: true, // 长尾(数字人/语音/视频理解/导图/预测/联网/代码解释器/PDF/批量/看板/AB/策略/竞品…)走「更多」
     items: [
       { path: '/tool-hub', label: '全部工具', icon: Wrench, flagship: true },
       { path: '/data-analyzer', label: '数据分析', icon: BarChart3, pageId: 'data-analyzer' },
       { path: '/doc-qa', label: '文档问答', icon: Search, pageId: 'doc-qa' },
       { path: '/excel', label: 'Excel 助手', icon: Table2, pageId: 'excel' },
+      { path: '/pdf-tools', label: 'PDF 工具集', icon: FileSearch },
+      { path: '/batch-process', label: '批量处理', icon: Files },
       { path: '/stock', label: '股票分析', icon: Landmark, pageId: 'stock' },
+      { path: '/dashboard', label: '数据看板', icon: LayoutDashboard },
+      { path: '/ab-testing', label: 'AB 测试', icon: FlaskConical },
+      { path: '/usage-analytics', label: '用量分析', icon: Activity },
+      { path: '/strategy', label: '内容策略', icon: Target },
+      { path: '/monitor', label: '竞品监控', icon: TrendingUp },
+      { path: '/digital-human', label: 'AI 数字人', icon: Monitor, pageId: 'digital-human' },
+      { path: '/voice-chat', label: '语音对话', icon: Mic },
+      { path: '/video-analyzer', label: '视频理解', icon: Clapperboard },
+      { path: '/mindmap', label: '思维导图', icon: Network },
+      { path: '/forecast', label: '数据预测', icon: LineChart },
+      { path: '/web-search', label: '联网搜索', icon: Globe },
+      { path: '/code-interpreter', label: '代码解释器', icon: TerminalSquare },
     ],
   },
   {
@@ -177,13 +200,12 @@ const DEFAULT_NAV_ITEMS = [
     label: '应用与社区',
     icon: Store,
     color: 'from-emerald-500 to-green-600',
-    more: true,
     items: [
       { path: '/miniapp', label: '小程序工坊', icon: Smartphone },
       { path: '/publish', label: '发布中心', icon: Send },
-      { path: '/growth', label: '增长工坊', icon: TrendingUp },
+      { path: '/growth', label: '增长工坊', icon: Rocket },
       { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd },
-      { path: '/templates', label: '模板市场', icon: Store },
+      { path: '/templates', label: '模板市场', icon: LayoutTemplate },
     ],
   },
   {
@@ -191,10 +213,13 @@ const DEFAULT_NAV_ITEMS = [
     label: '会员与帮助',
     icon: Crown,
     color: 'from-amber-500 to-orange-600',
-    more: true, // 长尾(API 开放平台/定时任务/插件市场)走「更多」
     items: [
       { path: '/membership', label: '会员中心', icon: Crown },
+      { path: '/profile', label: '个人资料', icon: User },
       { path: '/help', label: '使用帮助', icon: HelpCircle },
+      { path: '/api-platform', label: 'API 开放平台', icon: Key },
+      { path: '/scheduler', label: '定时任务', icon: Clock },
+      { path: '/plugins', label: '插件市场', icon: Puzzle },
     ],
   },
 ]
@@ -347,18 +372,6 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, portal, onL
                     </React.Fragment>
                   )
                 })}
-                {/* 长尾「更多」：收敛到全局 ⌘K 命令面板 / 首页能力地图 */}
-                {menu.more && (
-                  <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('open-command-palette'))}
-                    className="mt-0.5 ml-3 flex items-center gap-1.5 pl-3 py-1.5 text-xs text-ink-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors border-l border-ink-200/60"
-                    title="还有更多功能，按 ⌘K 搜索全部"
-                  >
-                    <Search className="w-3 h-3" />
-                    更多功能
-                    <kbd className="px-1 py-0.5 text-[9px] bg-ink-50 border border-ink-200 rounded font-mono">⌘K</kbd>
-                  </button>
-                )}
               </div>
             )}
           </div>
