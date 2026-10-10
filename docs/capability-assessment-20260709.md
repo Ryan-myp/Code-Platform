@@ -218,3 +218,29 @@
 4. （商业化挂起项）支付宝/微信 Pay、`/v1` 网关重开
 
 **C-1 端到端补验**：`/api/strategy/topic-suggest` 真实调用返回 3 条结构化选题（title_direction/angle/audience 完整），`call_llm_json` 首个生产消费方验证通过。
+
+## 十三、工厂族能力打磨（除视频/音乐）— 真实 LLM 验收 + 缺陷修复
+（2026-07-09）
+
+范围：小游戏 / 小程序 / PPT / 图片 / 表情包 / 配音 / PDF 合同审查。新增
+`scripts/factory_acceptance.py`：严格串行（一次一个 LLM 调用）、逐项生成 +
+产物 magic-bytes 校验（PNG/ZIP-PPTX/MP3）。
+
+| 缺陷 | 修复 | 验证 |
+|---|---|---|
+| **P0** `POST /api/games/generate` 端点在重构中丢失（前端 404） | 重新补齐（模板校验 + 异步任务 + 同步降级） | 验收：4 文件、QC 过、双版本 |
+| **P0** PPT 生成 0 页（LLM 富内容输出被默认 4000 token 截断→JSON 破损→解析退化） | `max_tokens=16000` + `parse_llm_json` 截断修复兜底 | 验收：13–15 页 + 合法 PPTX |
+| 平台级 `parse_llm_json` 不抗截断（尾部 unterminated 即失败） | 栈式补全未闭合引号/数组/对象 + 尾逗号处理；空结果({}/[])触发修复重试 | 单测 4 条 + 真实截断数据抢救出 13 页 |
+| **P1** 小程序质量门禁丢弃 worker 已生成结果（门内 `result=None` 重启→首轮强制精简重试，浪费 1 次 LLM + 降级） | `initial_result` 作为初值传入 | 单测：提供初值时 0 次多余 LLM 调用；验收 17 文件 + QC 过 |
+| 门禁 502/500 吞细节（"操作失败请稍后重试"） | 携带 QC 失败项 / 异常类型+消息 | — |
+
+**验收结果：7/7 PASS**（小游戏、小程序、PPT、图片文生图、表情包、配音、PDF合同审查），
+产物全部通过 magic-bytes 校验（PNG/PPTX/MP3）。
+
+### 工厂族 QC 覆盖现状（后续打磨方向）
+- 有 QC 门禁：image、meme、game、miniapp、pdf_tools
+- **无 QC 门禁**：voice_factory（纯 edge-tts，产物 mp3，可加"时长>0/字节>0"轻门禁）、
+  PPT（可加"slides≥5 + 标题非空"轻门禁）
+- 数字人/短剧：依赖 ffmpeg，用户判定"较难"，暂缓（路线图保持）
+
+全量后端回归 **1184/1184** 全绿；Ruff 0。
