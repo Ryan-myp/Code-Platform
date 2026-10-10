@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from pydantic import BaseModel
 
 from common.auth import (
     create_order,
@@ -437,6 +438,70 @@ async def create_order_api(req: OrderCreateRequest, current_user: dict = require
 async def my_orders(current_user: dict = require_auth()):
     """我的订单列表（倒序）。"""
     return get_my_orders(current_user.get("user_id"))
+
+
+class OrderCreateRequest(BaseModel):
+    plan: str
+    coupon_code: str = ""
+    stripe_session_id: str = ""
+    amount: float | None = None
+
+
+class WebhookPayload(BaseModel):
+    provider: str = "mock"
+    order_id: str = ""
+    ref: str = ""
+    amount: float | None = None
+
+
+@router.post("/api/orders/webhook")
+async def orders_webhook(req: WebhookPayload, request: Request) -> dict:
+    """支付回调（幂等自动履约）：验签 → mark_order_paid。
+
+    - mock 沙箱：X-Platform-Sign = HMAC-SHA256(order_id, secret)
+    - 其他渠道：按渠道协议验签（Alipay 未接商户凭据时 501）
+    """
+    from common import payment as pay_mod
+    from common.payment import NotIntegrated
+
+    try:
+        provider = pay_mod.get_provider(req.provider)
+        provider.verify_webhook(req.model_dump(), request.headers.get("X-Platform-Sign", ""))
+        order = pay_mod.mark_order_paid(req.order_id, req.provider, req.ref, req.amount)
+        return {"ok": True, "order_id": order["id"], "status": order["status"]}
+    except NotIntegrated as e:
+        return {"ok": False, "not_integrated": e.provider, "note": e.note}
+
+
+@router.post("/api/orders/{order_id}/checkout/{provider}")
+async def order_checkout(order_id: str, provider: str, current_user: dict = require_auth()):
+    """生成支付指令（mock 返回沙箱说明；alipay 等未接入渠道 501）。"""
+    from common import payment as pay_mod
+    from common.db import get_db as _gdb
+    from common.payment import NotIntegrated
+
+    conn = _gdb()
+    try:
+        row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row or row["user_id"] != current_user.get("user_id"):
+        raise HTTPException(404, "订单不存在")
+    if row["status"] not in ("pending",):
+        raise HTTPException(400, f"订单状态 {row['status']} 不可发起支付")
+    p = pay_mod.get_provider(provider)
+    try:
+        return p.checkout(dict(row))
+    except NotIntegrated as e:
+        raise HTTPException(501, str(e)) from e
+
+
+@router.get("/api/billing/summary")
+async def billing_summary(current_user: dict = require_auth()):
+    """用户计量中心：今日 / 近30日 LLM 用量与成本预估。"""
+    from common.billing import user_billing_summary
+
+    return user_billing_summary(current_user.get("user_id"))
 
 
 @router.post("/api/orders/{order_id}/voucher")

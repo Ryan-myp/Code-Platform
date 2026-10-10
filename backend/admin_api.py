@@ -51,6 +51,15 @@ class ShareTestMarkRequest(BaseModel):
     is_test: bool = True
 
 
+@router.get("/metrics")
+async def admin_metrics(current_user: dict = require_auth()):
+    """运维指标：7 日延迟分位 / 错误率 / 功能分布 / 任务积压 / DB 体积。"""
+    _check_admin(current_user)
+    from common.billing import ops_metrics
+
+    return ops_metrics()
+
+
 @router.get("/stats")
 async def admin_stats(current_user: dict = require_auth()):
     """总体统计：用户 / 调用 / 工具 / 分享。"""

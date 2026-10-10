@@ -899,6 +899,75 @@ def k_frontend(client: httpx.Client, _t0: float) -> None:
 # ══════════════════════════════════════════════════════════
 # 执行 + 报告
 # ══════════════════════════════════════════════════════════
+def k_commerce(client: httpx.Client, _t0: float) -> None:
+    """K 商业闭环：创建订单 → mock webhook 自动履约 → 计量中心（纯 SQLite，不耗 LLM 配额）。"""
+    import hashlib
+    import hmac
+
+    h = {"Authorization": f"Bearer {CTX['token']}"}
+    r = client.post("/api/orders", json={"plan": "pro"}, headers=h, timeout=15)
+    if r.status_code != 200 or not r.json().get("id"):
+        record("K 商业", "创建会员订单", "FAIL", http=r.status_code, error=r.text[:120], elapsed=time.time() - _t0)
+        return
+    oid = r.json()["id"]
+    record("K 商业", "创建会员订单", "PASS", http=200, evidence=oid, elapsed=time.time() - _t0)
+
+    # mock 沙箱验签（HMAC-SHA256(order_id, 开发密钥)）
+    sign = hmac.new(b"platform-dev-secret", oid.encode(), hashlib.sha256).hexdigest()
+    r = client.post(
+        "/api/orders/webhook",
+        json={"provider": "mock", "order_id": oid, "ref": "e2e_probe", "amount": 19.9},
+        headers={**h, "X-Platform-Sign": sign},
+        timeout=15,
+    )
+    if r.status_code == 200 and r.json().get("status") == "approved":
+        # 重放幂等
+        r2 = client.post(
+            "/api/orders/webhook",
+            json={"provider": "mock", "order_id": oid, "ref": "e2e_probe", "amount": 19.9},
+            headers={**h, "X-Platform-Sign": sign},
+            timeout=15,
+        )
+        idem = r2.status_code == 200 and r2.json().get("status") == "approved"
+        record(
+            "K 商业",
+            "mock 支付 webhook 自动履约 + 幂等重放",
+            "PASS" if idem else "FAIL",
+            http=r.status_code,
+            evidence=f"{oid} → approved" + ("（重放幂等）" if idem else ""),
+            elapsed=time.time() - _t0,
+        )
+    else:
+        record(
+            "K 商业",
+            "mock 支付 webhook 自动履约",
+            "FAIL",
+            http=r.status_code,
+            error=r.text[:120],
+            elapsed=time.time() - _t0,
+        )
+
+    r = client.get("/api/billing/summary", headers=h, timeout=15)
+    if r.status_code == 200 and {"today", "d30"} <= set(r.json()):
+        record(
+            "K 商业",
+            "用户计量中心（今日/30日聚合）",
+            "PASS",
+            http=200,
+            evidence=str(r.json())[:80],
+            elapsed=time.time() - _t0,
+        )
+    else:
+        record(
+            "K 商业",
+            "用户计量中心（今日/30日聚合）",
+            "FAIL",
+            http=r.status_code,
+            error=r.text[:120],
+            elapsed=time.time() - _t0,
+        )
+
+
 def main() -> None:
     t_start = time.time()
     print(f"══ E2E 能力探针 → {BASE} ══")
@@ -936,6 +1005,7 @@ def main() -> None:
             ("J 重工厂", j_games),
             ("J 重工厂", j_miniapp_gen),
             ("K 前端", k_frontend),
+            ("K 商业", k_commerce),
         ]
         for domain, fn in probes:
             probe(domain, fn.__name__, fn, client)
