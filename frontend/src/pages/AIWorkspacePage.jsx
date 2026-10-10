@@ -1103,6 +1103,35 @@ export default function AIWorkspacePage() {
     return ''
   }
 
+  // 将该阶段的「当前产物」注入聊天区作为可追问上下文；已有对话或无产物则跳过
+  const seedStageArtifact = (key) => {
+    const req = requirements.find((r) => r.id === selectedReqId)
+    const art = ARTIFACT_FIELDS.find((a) => a.key === key)
+    const fromReq = art && req ? req[art.field] || '' : ''
+    const fromChat = lastArtifact(key)
+    const content = (fromReq || fromChat).trim()
+    if (!content) return
+    setState((prev) => {
+      const cur = prev[key]
+      if (cur.messages.length) return prev
+      return {
+        ...prev,
+        [key]: {
+          ...cur,
+          messages: [
+            {
+              role: 'assistant',
+              content,
+              isArtifact: true,
+              artifactSource: fromReq ? `需求「${req.name}」已保存产物` : '本会话生成',
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        },
+      }
+    })
+  }
+
   const handleTabChange = (key) => {
     setTab(key)
     const req = requirements.find((r) => r.id === selectedReqId)
@@ -1120,12 +1149,15 @@ export default function AIWorkspacePage() {
     }
     if (key === 'code') carry(key, 'techDesign', 'td')
     if (key === 'review_code') carry(key, 'codeText', 'code')
+    // 当前产物注入聊天区：切到节点即看到它的产物，直接追问修改
+    seedStageArtifact(key)
   }
 
   const handleSelectRequirement = (reqId) => {
     setSelectedReqId(reqId)
     const req = requirements.find((r) => r.id === reqId)
     prefillFromRequirement(tab, req)
+    seedStageArtifact(tab)
   }
 
   const saveToRequirement = async (stage, content) => {
@@ -1565,6 +1597,38 @@ export default function AIWorkspacePage() {
                   key={idx}
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
+                  {msg.isArtifact ? (
+                    <div className="w-full sm:w-auto sm:max-w-[88%] rounded-xl border border-indigo-200 bg-white overflow-hidden shadow-sm">
+                      <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
+                        <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+                          <tabInfo.icon className="w-3.5 h-3.5 text-white" />
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-indigo-700 flex items-center gap-1.5">
+                            当前产物
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-500 text-[10px] font-medium">{tabInfo.label}</span>
+                          </div>
+                          <div className="text-[11px] text-indigo-400 truncate mt-0.5">{msg.artifactSource || '本会话生成'}</div>
+                        </div>
+                        <button
+                          onClick={() => handleCopy(msg.content)}
+                          title="复制产物"
+                          className="p-1 text-indigo-400 hover:text-indigo-600 rounded flex-shrink-0"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="px-3.5 py-3">
+                        <div className="max-h-96 overflow-auto text-sm leading-relaxed text-gray-800">
+                          <MarkdownRenderer content={msg.content} />
+                        </div>
+                      </div>
+                      <div className="px-3.5 py-2 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-400 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 flex-shrink-0 text-indigo-400" />
+                        在下方输入修改意见即可更新此产物，新版会自动保存
+                      </div>
+                    </div>
+                  ) : (
                   <div
                     className={`flex items-start gap-2 max-w-[88%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
                   >
@@ -1746,6 +1810,7 @@ export default function AIWorkspacePage() {
                         )}
                     </div>
                   </div>
+                  )}
                 </div>
               ))
             )}
