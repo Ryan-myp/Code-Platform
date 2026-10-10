@@ -142,4 +142,38 @@
 - 修复后预计评分：**84–88 / 100（B+→A-）**
 
 ---
-*本报告基于 2026-07-09 13:20 前后的本地实测数据；修复记录更新于同日 18:00。*
+
+## 九、E2E 能力实测（2026-10-10，commit ca38815）
+
+> 新增 `scripts/e2e_capability_probe.py`：启动隔离实例（`DB_PATH=/tmp/capability_probe.db`，端口 8009），
+> 对 11 个功能域 37 项探针打**真实请求**，生成物（PNG/MP3/PPTX）做 magic bytes 校验，不只看 200。
+> 支持 `--no-llm` 限流降级模式（LLM 探针标 SKIP）。
+
+### 实测结果：**36 PASS / 0 FAIL / 1 SKIP（147s）**
+
+| 域 | 实测证据（摘要） |
+|---|---|
+| A 鉴权 | 注册/登录/JWT/配额全通 |
+| B LLM | Agnes 真实对话 + SSE 流式（108 帧）；/v1 中转站网关设计性关闭（唯一 SKIP） |
+| C 编排 | 工作流 DAG（input→agent→output）executor 真实执行；Agent 运行；65 工具清单 + 同步执行 |
+| D 知识库 | 上传→建库→**检索命中**（此前检索端点是空壳，已修复） |
+| E 任务队列 | 翻译任务 create→worker→success 全链路 |
+| F 工厂 | 表情包本地渲染 PNG；**文生图真实出图 1MB PNG**（Agnes agnes-image-2.5-flash，需修 negative_prompt 字段 + 配 IMAGE_MODEL） |
+| G 音频 | edge-tts 配音 MP3；**音乐合成 15s MP3**（_generate_melody 死存根已重构） |
+| H 文档 | PPT LLM 生成 65KB PPTX（字节校验）；Excel；脑图 |
+| I 平台 | 沙箱探测；MCP 服务器；分享外链公开访问；团队 + 仪表盘 |
+| J 重工厂 | 数字人模板/短剧配置（Pexels 已配）/游戏模板市场/**小程序 LLM 全项目生成 success** |
+| K 前端 | Vite dev server + 代理 /api 透传 |
+
+### E2E 发现并修复的 3 个真实缺陷
+1. **音乐工厂 500**：`_generate_melody` 是 3 参死存根，调用方传 4 参 → 重构建 4 参短语对齐旋律引擎（五声音阶+和声进行）
+2. **KB 检索空壳**：`GET /search` 挂错在 `_search_kb_internal` 存根 → 接真实 `search_knowledge_base`（双路检索 + hits 证据）
+3. **文生图 400**：Agnes 图像队列不支持 `negative_prompt` 字段（HTTP 400 明确拒绝）→ 去除该字段，用户自定义负面词折进 prompt；`.env` 增加 `IMAGE_MODEL=agnes-image-2.5-flash` 平台默认图模开箱可用
+
+另：quality_gates.py main() 缩进再次损坏（logger 未定义）→ 修复，3/3 门禁恢复可运行。
+
+### 回归基线
+后端 **1155/1155** · 前端 **121/121** · ruff check 0 · format 全绿 · quality_gates 3/3 PASS
+
+---
+*本报告基于 2026-07-09 13:20 前后的本地实测数据；修复记录更新于同日 18:00；E2E 能力实测追加于 2026-10-10。*
