@@ -15,10 +15,13 @@
 退出码：0=全部通过，1=有闸未过。CI 直接以退出码决定 build 成败。
 """
 
+import logging
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE = Path(__file__).resolve().parent.parent  # 仓库根
 BACKEND = BASE / "backend"
@@ -147,10 +150,10 @@ def main() -> None:
     all_ok = True
     for gate in to_run:
         ok, msg = gate()
-        print(("✅ " if ok else "❌ ") + msg)
+        logger.info(("✅ " if ok else "❌ ") + msg)
         if not ok:
             all_ok = False
-    print("\n══ 门禁结论：" + ("全部通过 ✅" if all_ok else "存在未过闸项 ❌") + " ══")
+    logger.info("\n══ 门禁结论：" + ("全部通过 ✅" if all_ok else "存在未过闸项 ❌") + " ══")
     sys.exit(0 if all_ok else 1)
 
 

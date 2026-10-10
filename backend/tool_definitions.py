@@ -2730,13 +2730,13 @@ TOOL_DEFINITIONS = {
 
 ### 成功响应
 ```json
-{
+{{
   "code": 200,
   "message": "success",
-  "data": {
+  "data": {{
     // 响应数据
-  }
-        }
+  }}
+}}
 ```
 
 ### 错误码说明
