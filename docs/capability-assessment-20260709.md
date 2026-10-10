@@ -177,3 +177,21 @@
 
 ---
 *本报告基于 2026-07-09 13:20 前后的本地实测数据；修复记录更新于同日 18:00；E2E 能力实测追加于 2026-10-10。*
+
+## 十、商业化 P0 落地（2026-10-10 追加）
+
+> 目标：从「功能可用」→「商业闭环可用」。TD 见 `docs/commercialization.md`。
+
+| 交付 | 说明 |
+|---|---|
+| 支付抽象层 `common/payment.py` | PaymentProvider 协议；Mock 沙箱（HMAC 验签，E2E 专用）+ Alipay 契约骨架（未接凭据显式 501，**不做假实现**）；RSA2 接入 Runbook |
+| 幂等履约状态机 | `mark_order_paid`：pending→paid→approved；金额不符停留 paid 转人工；rejected 终态 409；自动履约与 `review_order` 同一套开通 SQL |
+| 端点 | `POST /api/orders/webhook`、`POST /api/orders/{id}/checkout/{provider}` |
+| 计量中心 `common/billing.py` | `GET /api/billing/summary`（用户今日/30日 调用/成功率/字符/成本预估）、`GET /api/admin/metrics`（7日 p50/p95/错误率/功能分布/积压/DB 体积） |
+| 数据迁移 | orders 表幂增 payment_provider/payment_ref/paid_at（顺带修 PRAGMA r[0]→r[1] 列名 bug） |
+
+**验收**：单测 8/8（全链路/幂等重放/坏签 401/金额不符人工/rejected 409/501/计量/运维指标）；
+全量回归 **1163/1163**（基线 +8）；E2E 实机：`order → mock webhook → 自动开通 pro（30天, quota 200）`
+全链路通过；探针新增 **K 商业** 域（3 探针，纯 SQLite 不耗 LLM 配额）。
+
+**下一期 P1**：支付宝/微信商户凭据接入（Runbook 就绪）、前端支付指令+账单页、`/v1` 网关开放（billing 闭环后 `gateway_open=1`）。
