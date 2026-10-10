@@ -378,7 +378,7 @@ def _build_kb_context_simple(context_docs: list) -> str:
 
 
 def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
-    """知识库 db 类型检索：LIKE 匹配文本列。"""
+    """知识库 db 类型检索：多词候选集 + 词频打分排序。"""
     db_conn, cursor, err = _kb_connect(cfg)
     if err:
         raise HTTPException(400, "操作失败")
@@ -394,19 +394,39 @@ def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
         text_cols = [c for c in cols if c and c.lower() not in ("id", "created_at", "updated_at")]
         if not text_cols:
             text_cols = cols
-        place = "%s" if engine == "mysql" else "?"
-        cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols)
-        cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT {place}', [f"%{q}%"] * len(text_cols) + [limit])
+        tokens, phrases = _kb_tokenize(q)
+        place = "?" if engine in ("sqlite",) else "%s"
+        # 候选集：任一 token/短语 LIKE 命中（上限 500 行防全表扫描事故）
+        terms = [t for t in tokens if not any(p == t or t in p for p in phrases)] + phrases
+        if not terms:
+            terms = [q]
+        cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols for _ in terms)
+        params = [f"%{t}%" for c in text_cols for t in terms]
+        cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT 500', params)
         rows = cursor.fetchall()
-        hits = []
+        scored: list[tuple[float, dict]] = []
         for r in rows:
             item = {}
             for i, c in enumerate(cols):
                 if i < len(r):
                     v = r[i]
                     item[c] = str(v)[:300] if v is not None else ""
-            hits.append(item)
+            blob = " ".join(item.values()).lower()
+            s = 0.0
+            for t in tokens:
+                if t in phrases:
+                    continue
+                s += blob.count(t)
+            for p_ in phrases:
+                if p_ in blob:
+                    s += len(p_) * 2
+            item["score"] = round(s, 2)
+            scored.append((s, item))
+        scored.sort(key=lambda x: -x[0])
+        hits = [h for _, h in scored[:limit]]
         return {"ok": True, "hits": hits, "count": len(hits), "table": table}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, "服务异常，请稍后重试") from e
     finally:
@@ -428,8 +448,52 @@ def _kb_table_columns(cursor, engine: str, table: str) -> list:
     return [r[0] for r in cursor.fetchall()]
 
 
+def _kb_tokenize(q: str) -> tuple[list[str], list[str]]:
+    """多词拆分：ASCII 词 + CJK 连续串（整串加权）+ CJK 二元组。
+
+    返回 (tokens, phrase_tokens)：phrase_tokens 整串出现时获得加分。
+    """
+    import re
+
+    s = (q or "").strip().lower()
+    tokens: list[str] = re.findall(r"[a-z0-9]+", s)
+    phrases: list[str] = []
+    for run in re.findall(r"[\u4e00-\u9fff]+", s):
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            phrases.append(run)
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    tokens.extend(re.findall(r"[a-z0-9]+", s))  # 去重后在下方处理
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in tokens:
+        if t and t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    if not uniq and s:
+        uniq = [s]
+    return uniq, phrases
+
+
+def _kb_line_score(line: str, tokens: list[str], phrases: list[str]) -> float:
+    """单行相关度：词频 × 词权重；整串短语命中双倍加分。"""
+    lf = line.lower()
+    score = 0.0
+    for t in tokens:
+        if t in phrases:
+            continue  # 短语单独计，避免与二元组重复
+        n = lf.count(t)
+        if n:
+            score += n
+    for p in phrases:
+        if p in lf:
+            score += len(p) * 2  # phrase boost
+    return score
+
+
 def _kb_search_file(d: dict, q: str, limit: int) -> dict:
-    """知识库 file 类型检索：扫描目录内文本文件。"""
+    """知识库 file 类型检索：目录扫描 + 多词打分排序 + 上下文行。"""
     p = (d.get("path") or "").strip()
     if not p or not os.path.exists(p):
         raise HTTPException(400, "文件路径不存在")
@@ -439,25 +503,33 @@ def _kb_search_file(d: dict, q: str, limit: int) -> dict:
             for fn in fns:
                 if fn.lower().endswith((".txt", ".md", ".csv", ".log")):
                     files.append(os.path.join(root, fn))
-    hits = []
+    tokens, phrases = _kb_tokenize(q)
+    scored: list[tuple[float, dict]] = []
     for fp in files:
         try:
             with open(fp, encoding="utf-8", errors="ignore") as f:
                 content = f.read(200000)
         except OSError:
             continue
-        matched = [ln.strip() for ln in content.splitlines() if q.lower() in ln.lower()]
-        if matched:
-            hits.append(
-                {
-                    "file": os.path.basename(fp),
-                    "path": fp,
-                    "matches": matched[:5],
-                    "match_count": len(matched),
-                }
-            )
-        if len(hits) >= limit:
-            break
+        lines = content.splitlines()
+        line_scores = [(_kb_line_score(ln, tokens, phrases), i) for i, ln in enumerate(lines)]
+        matched = [(s, i, lines[i].strip()) for s, i in line_scores if s > 0]
+        if not matched:
+            continue
+        matched.sort(key=lambda x: (-x[0], x[1]))
+        top5 = matched[:5]
+        # 文件分：top 行分之和 + 早期命中微加分（同一文件内靠前的内容更可能是主旨）
+        f_score = sum(s for s, _, _ in top5) + (1.0 if top5[0][1] < 5 else 0.0)
+        hits_item = {
+            "file": os.path.basename(fp),
+            "path": fp,
+            "matches": [m[2] for m in top5],
+            "match_count": len(matched),
+            "score": round(f_score, 2),
+        }
+        scored.append((f_score, hits_item))
+    scored.sort(key=lambda x: -x[0])
+    hits = [h for _, h in scored[:limit]]
     return {"ok": True, "hits": hits, "count": len(hits)}
 
 

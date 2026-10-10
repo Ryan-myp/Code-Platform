@@ -361,6 +361,19 @@ def d_kb(client: httpx.Client, _t0: float) -> None:
         evidence=(json.dumps(body, ensure_ascii=False)[:100] if hits else f"无命中/空壳返回: {str(body)[:80]}"),
         elapsed=time.time() - _t0,
     )
+    # 能力升级验证：多词非相邻查询 + 相关度打分排序（KB 检索质量 P0）
+    r2 = client.get(f"/api/knowledge-bases/{kb_id}/search", params={"q": "智能 检索", "limit": 5}, headers=h)
+    b2 = r2.json() if r2.status_code == 200 else {}
+    h2 = b2.get("hits") or []
+    scored = bool(h2) and all(x.get("score", 0) > 0 for x in h2)
+    record(
+        "D 知识库",
+        "多词检索+相关度排序",
+        "PASS" if scored else "FAIL",
+        http=r2.status_code,
+        evidence=f"hits={len(h2)} top_score={h2[0].get('score') if h2 else None}",
+        elapsed=time.time() - _t0,
+    )
 
 
 # ══════════════════════════════════════════════════════════
