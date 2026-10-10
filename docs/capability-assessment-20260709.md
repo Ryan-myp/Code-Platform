@@ -216,3 +216,5 @@
 2. **QC 报告泛化**：音乐已有 `_music_qc_report`；为视频/PPT/音频产物统一 QC 结构（可交付物带质检报告=商用标准）
 3. 工具冒烟常态化：`scripts/tool_llm_qa.py` 可并入 E2E 探针 L-tools 域（当前 LLM 串行 5 项 ~1.5min）
 4. （商业化挂起项）支付宝/微信 Pay、`/v1` 网关重开
+
+**C-1 端到端补验**：`/api/strategy/topic-suggest` 真实调用返回 3 条结构化选题（title_direction/angle/audience 完整），`call_llm_json` 首个生产消费方验证通过。
