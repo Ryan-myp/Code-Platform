@@ -35,9 +35,11 @@ describe('Sidebar', () => {
         onLogout={() => {}}
       />
     )
-    // 新 IA：5 层精简分组（工作台/创作工坊/AI与工具/协作与管理/会员与帮助）
+    // 新 IA：统一语义 7 组（工作台/智能研发/Agent 与知识/创作工坊/效率工具/应用与社区/会员与帮助）
     expect(screen.getAllByText(/创作工坊/i).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/协作与管理/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/智能研发/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Agent 与知识/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/效率工具/i).length).toBeGreaterThan(0)
   })
 
   it('expands menu group to show items', () => {

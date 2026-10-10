@@ -73,6 +73,8 @@ import {
   Star,
   Lightbulb,
   ArrowRightLeft,
+  Rocket,
+  Box,
 } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConfirmDialog } from './ui'
@@ -92,10 +94,12 @@ const ICONS = {
   Moon, Sun, UserCircle, GalleryVerticalEnd, Store, Clapperboard, Globe,
   Key, Clock, Volume2, Monitor, Landmark, Target, FileSearch, Files, Activity,
   BookOpen, Terminal, Radar, Star, Lightbulb, ArrowRightLeft,
+  Rocket, Box, FolderKanban,
 }
 
-// 默认导航（通用版兜底）— 5 层精简 IA：高频入口直达，长尾收敛到「更多→⌘K 命令面板 / 首页能力地图」
-// 设计原则：单一主焦点(AI 工作台) + 渐进披露，消除 67 项平铺导致的「看不出重点」
+// 默认导航（通用版兜底）— 统一语义分类（与 ⌘K 面板、首页能力地图同一套心智）：
+// 工作台(总览) / 智能研发(编程) / Agent 与知识(智能体资产) / 创作工坊(内容) / 效率工具(办公数据) / 应用与社区(应用变现) / 会员与帮助(账号)
+// 每组只露高频项，长尾走「更多功能 ⌘K」
 const DEFAULT_NAV_ITEMS = [
   {
     key: 'home',
@@ -104,33 +108,62 @@ const DEFAULT_NAV_ITEMS = [
     color: 'from-blue-500 to-indigo-600',
     items: [
       { path: '/home', label: '首页', icon: Home },
-      { path: '/workspace', label: 'AI 工作台', icon: Sparkles, flagship: true },
+      { path: '/projects', label: '项目空间', icon: FolderKanban },
+      { path: '/artifacts', label: '成果仓库', icon: Box },
       { path: '/tasks', label: '任务中心', icon: CheckCircle2 },
       { path: '/records', label: '记录中心', icon: HistoryIcon },
       { path: '/notifications', label: '通知中心', icon: Bell },
     ],
   },
   {
+    key: 'rd',
+    label: '智能研发',
+    icon: Rocket,
+    color: 'from-indigo-500 to-violet-600',
+    more: true, // 长尾(代码生成/代码审查独立页、任务对话、自进化中心)走「更多」
+    items: [
+      { path: '/workspace', label: 'AI 工作台', icon: Sparkles, flagship: true },
+      { path: '/board', label: '需求看板', icon: ListTodo },
+      { path: '/sandbox', label: '沙箱运行', icon: Terminal },
+      { path: '/pipelines', label: 'CI/CD 流水线', icon: GitBranch },
+    ],
+  },
+  {
+    key: 'agent',
+    label: 'Agent 与知识',
+    icon: Bot,
+    color: 'from-violet-500 to-purple-600',
+    more: true, // 长尾(Team 管理、自进化中心)走「更多」
+    items: [
+      { path: '/agents', label: 'Agent 智能体', icon: Bot, flagship: true, pageId: 'agents' },
+      { path: '/knowledge-bases', label: '知识库', icon: Database },
+      { path: '/skills', label: 'Skills', icon: Puzzle },
+      { path: '/workflows', label: '工作流编排', icon: Layers, pageId: 'workflows' },
+      { path: '/mcp-servers', label: 'MCP Servers', icon: Server },
+      { path: '/config', label: '模型配置', icon: Settings },
+    ],
+  },
+  {
     key: 'create',
     label: '创作工坊',
     icon: Wand2,
-    color: 'from-accent-500 to-blue-600',
-    more: true, // 组内已精简，长尾(短剧/音乐/翻译/配音/发布/SEO/竞品/增长/作品/模板)走「更多」
+    color: 'from-pink-500 to-rose-600',
+    more: true, // 长尾(短剧/音乐/翻译/配音)走「更多」
     items: [
       { path: '/image-factory', label: '图片工厂', icon: ImageIcon, pageId: 'image-factory' },
-      { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
       { path: '/ppt-factory', label: 'PPT 工厂', icon: Presentation, pageId: 'ppt-factory' },
       { path: '/copywriting', label: '文案工厂', icon: PenTool, pageId: 'copywriting' },
+      { path: '/video-factory', label: '视频工厂', icon: Film, pageId: 'video-factory' },
       { path: '/games', label: '小游戏工坊', icon: Gamepad2, pageId: 'games' },
       { path: '/meme', label: '表情包工坊', icon: Sticker, pageId: 'meme' },
     ],
   },
   {
     key: 'tools',
-    label: 'AI 与工具',
-    icon: Brain,
+    label: '效率工具',
+    icon: Wrench,
     color: 'from-teal-500 to-cyan-600',
-    more: true, // 长尾(数字人/语音/视频理解/导图/预测/联网/代码解释器/PDF/批量/看板/AB…)走「更多」
+    more: true, // 长尾(数字人/语音/视频理解/导图/预测/联网/代码解释器/PDF/批量/看板/AB/策略/竞品…)走「更多」
     items: [
       { path: '/tool-hub', label: '全部工具', icon: Wrench, flagship: true },
       { path: '/data-analyzer', label: '数据分析', icon: BarChart3, pageId: 'data-analyzer' },
@@ -140,17 +173,17 @@ const DEFAULT_NAV_ITEMS = [
     ],
   },
   {
-    key: 'manage',
-    label: '协作与管理',
-    icon: Settings,
-    color: 'from-violet-500 to-purple-600',
-    more: true, // 长尾(Team/Skills/MCP/API开放/定时任务/插件/审计…)走「更多」
+    key: 'apps',
+    label: '应用与社区',
+    icon: Store,
+    color: 'from-emerald-500 to-green-600',
+    more: true,
     items: [
-      { path: '/chat', label: '智能协作', icon: MessageSquare, pageId: 'chat' },
-      { path: '/knowledge-bases', label: '知识库', icon: Database },
-      { path: '/agents', label: 'Agent 智能体', icon: Bot, pageId: 'agents' },
-      { path: '/workflows', label: '工作流编排', icon: Layers, pageId: 'workflows' },
-      { path: '/config', label: '模型配置', icon: Settings },
+      { path: '/miniapp', label: '小程序工坊', icon: Smartphone },
+      { path: '/publish', label: '发布中心', icon: Send },
+      { path: '/growth', label: '增长工坊', icon: TrendingUp },
+      { path: '/gallery', label: '作品广场', icon: GalleryVerticalEnd },
+      { path: '/templates', label: '模板市场', icon: Store },
     ],
   },
   {
@@ -158,6 +191,7 @@ const DEFAULT_NAV_ITEMS = [
     label: '会员与帮助',
     icon: Crown,
     color: 'from-amber-500 to-orange-600',
+    more: true, // 长尾(API 开放平台/定时任务/插件市场)走「更多」
     items: [
       { path: '/membership', label: '会员中心', icon: Crown },
       { path: '/help', label: '使用帮助', icon: HelpCircle },
@@ -191,12 +225,12 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen, user, portal, onL
         })),
       }))
     }
-    // 无自定义导航时追加管理员入口（仅挂到「协作与管理」组，避免在每组重复出现）
+    // 无自定义导航时追加管理员入口（仅挂到「会员与帮助」组，避免在每组重复出现）
     const isAdmin = user?.role === 'admin'
     return DEFAULT_NAV_ITEMS.map((m) => ({
       ...m,
       items: m.items.concat(
-        isAdmin && m.key === 'manage' ? [
+        isAdmin && m.key === 'member' ? [
           { path: '/admin', label: '管理后台', icon: Shield },
           { path: '/audit-log', label: '审计日志', icon: Activity },
         ] : []

@@ -75,7 +75,7 @@ const COMMANDS = [
     description: '返回工作台首页',
     icon: Home,
     path: '/home',
-    category: '导航',
+    category: '工作台',
   },
   {
     id: 'nav-auto-run',
@@ -83,7 +83,7 @@ const COMMANDS = [
     description: '说出功能 → PRD→审查→方案→代码→部署 全自动',
     icon: Rocket,
     path: '/workspace',
-    category: '导航',
+    category: '工作台',
     highlight: true,
   },
   {
@@ -92,7 +92,7 @@ const COMMANDS = [
     description: '需求 → 审查 → 设计 → 测试 → 代码 → 部署',
     icon: Zap,
     path: '/workspace',
-    category: '导航',
+    category: '工作台',
   },
   {
     id: 'nav-projects',
@@ -100,7 +100,7 @@ const COMMANDS = [
     description: '查看所有项目',
     icon: FolderKanban,
     path: '/projects',
-    category: '导航',
+    category: '工作台',
   },
   {
     id: 'nav-artifacts',
@@ -108,7 +108,7 @@ const COMMANDS = [
     description: '查看所有成果',
     icon: FileText,
     path: '/artifacts',
-    category: '导航',
+    category: '工作台',
   },
 
   // 智能体
@@ -118,7 +118,7 @@ const COMMANDS = [
     description: '管理智能体',
     icon: Bot,
     path: '/agents',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
   {
     id: 'nav-teams',
@@ -126,7 +126,7 @@ const COMMANDS = [
     description: '管理团队',
     icon: Users,
     path: '/teams',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
   {
     id: 'nav-workflows',
@@ -134,7 +134,7 @@ const COMMANDS = [
     description: '管理工作流',
     icon: Layers,
     path: '/workflows',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
   {
     id: 'nav-knowledge',
@@ -142,7 +142,7 @@ const COMMANDS = [
     description: '管理知识库',
     icon: Database,
     path: '/knowledge-bases',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
   {
     id: 'nav-skills',
@@ -150,7 +150,7 @@ const COMMANDS = [
     description: '管理技能',
     icon: BookOpen,
     path: '/skills',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
   {
     id: 'nav-mcp',
@@ -158,7 +158,7 @@ const COMMANDS = [
     description: '管理 MCP 服务',
     icon: Server,
     path: '/mcp-servers',
-    category: '智能体',
+    category: 'Agent 与知识',
   },
 
   // 研发工具
@@ -168,7 +168,7 @@ const COMMANDS = [
     description: '查看沙箱容器与日志',
     icon: Play,
     path: '/sandbox',
-    category: '研发工具',
+    category: '智能研发',
   },
   {
     id: 'nav-pipelines',
@@ -176,7 +176,7 @@ const COMMANDS = [
     description: '部署状态与 AI 修复',
     icon: GitBranch,
     path: '/pipelines',
-    category: '研发工具',
+    category: '智能研发',
   },
   {
     id: 'nav-codegen',
@@ -184,7 +184,7 @@ const COMMANDS = [
     description: 'AI 工作台 · 生成代码',
     icon: Code2,
     path: '/workspace?tab=code',
-    category: '研发工具',
+    category: '智能研发',
   },
   {
     id: 'nav-codereview',
@@ -192,7 +192,7 @@ const COMMANDS = [
     description: 'AI 工作台 · 审查代码',
     icon: Shield,
     path: '/workspace?tab=review_code',
-    category: '研发工具',
+    category: '智能研发',
   },
 
   // 内容创作
@@ -202,7 +202,7 @@ const COMMANDS = [
     description: 'AI 图片生成',
     icon: Image,
     path: '/image-factory',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-video',
@@ -210,7 +210,7 @@ const COMMANDS = [
     description: 'AI 视频生成',
     icon: Film,
     path: '/video-factory',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-music',
@@ -218,7 +218,7 @@ const COMMANDS = [
     description: 'AI 音乐生成',
     icon: Music,
     path: '/music-factory',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-copywriting',
@@ -226,7 +226,7 @@ const COMMANDS = [
     description: 'AI 文案生成',
     icon: PenTool,
     path: '/copywriting',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-translation',
@@ -234,7 +234,7 @@ const COMMANDS = [
     description: 'AI 多语言翻译',
     icon: Languages,
     path: '/translation',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-ppt',
@@ -242,7 +242,7 @@ const COMMANDS = [
     description: 'AI PPT 大纲生成',
     icon: Presentation,
     path: '/ppt-factory',
-    category: '内容创作',
+    category: '创作工坊',
   },
   {
     id: 'nav-meme',
@@ -250,7 +250,7 @@ const COMMANDS = [
     description: '文字一键生成表情包',
     icon: Sticker,
     path: '/meme',
-    category: '内容创作',
+    category: '创作工坊',
   },
 
   // AI 工坊
@@ -260,7 +260,7 @@ const COMMANDS = [
     description: '文案→配音→口播视频，虚拟形象',
     icon: UserCircle,
     path: '/digital-human',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-voice-chat',
@@ -268,7 +268,7 @@ const COMMANDS = [
     description: '浏览器语音识别 + AI智能回复',
     icon: Mic2,
     path: '/voice-chat',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-video-analyzer',
@@ -276,7 +276,7 @@ const COMMANDS = [
     description: '上传视频，AI分析内容、字幕、场景',
     icon: Monitor,
     path: '/video-analyzer',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-mindmap',
@@ -284,7 +284,7 @@ const COMMANDS = [
     description: '输入主题 → AI生成结构化导图',
     icon: Share2,
     path: '/mindmap',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-forecast',
@@ -292,7 +292,7 @@ const COMMANDS = [
     description: '上传CSV → AI趋势分析 + 预测',
     icon: TrendingUp,
     path: '/forecast',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-doc-qa',
@@ -300,7 +300,7 @@ const COMMANDS = [
     description: '上传文档，AI理解后自由提问',
     icon: Search,
     path: '/doc-qa',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-web-search',
@@ -308,7 +308,7 @@ const COMMANDS = [
     description: 'AI联网搜索 + 智能摘要 + 来源引用',
     icon: Globe,
     path: '/web-search',
-    category: 'AI工坊',
+    category: '效率工具',
   },
   {
     id: 'nav-code-interpreter',
@@ -316,7 +316,7 @@ const COMMANDS = [
     description: 'Python在线运行，数据分析/可视化',
     icon: Terminal,
     path: '/code-interpreter',
-    category: 'AI工坊',
+    category: '效率工具',
   },
 
   // 应用与社区
@@ -384,7 +384,7 @@ const COMMANDS = [
     description: 'AI 效率工具集合',
     icon: Wrench,
     path: '/tool-hub',
-    category: '办公',
+    category: '效率工具',
   },
   {
     id: 'nav-excel',
@@ -392,7 +392,7 @@ const COMMANDS = [
     description: 'AI 数据分析',
     icon: Table2,
     path: '/excel',
-    category: '办公',
+    category: '效率工具',
   },
   {
     id: 'nav-stock',
@@ -400,7 +400,7 @@ const COMMANDS = [
     description: 'AI 行情研判',
     icon: Landmark,
     path: '/stock',
-    category: '办公',
+    category: '效率工具',
   },
   {
     id: 'nav-pdf-tools',
@@ -408,7 +408,7 @@ const COMMANDS = [
     description: 'PDF合并拆分 + 合同审查 + 简历优化',
     icon: FileSearch,
     path: '/pdf-tools',
-    category: '办公',
+    category: '效率工具',
   },
   {
     id: 'nav-batch-process',
@@ -416,7 +416,7 @@ const COMMANDS = [
     description: '多文件批量翻译、摘要、关键词',
     icon: Files,
     path: '/batch-process',
-    category: '办公',
+    category: '效率工具',
   },
   {
     id: 'nav-data-analyzer',
@@ -424,7 +424,7 @@ const COMMANDS = [
     description: '上传数据智能分析洞察',
     icon: BarChart3,
     path: '/data-analyzer',
-    category: '办公',
+    category: '效率工具',
   },
 
   // 运营分析
@@ -434,7 +434,7 @@ const COMMANDS = [
     description: '平台数据概览',
     icon: BarChart3,
     path: '/dashboard',
-    category: '运营',
+    category: '效率工具',
   },
   {
     id: 'nav-abtest',
@@ -442,7 +442,7 @@ const COMMANDS = [
     description: '实验管理',
     icon: FlaskConical,
     path: '/ab-testing',
-    category: '运营',
+    category: '效率工具',
   },
   {
     id: 'nav-usage-analytics',
@@ -450,7 +450,7 @@ const COMMANDS = [
     description: '个人AI使用统计与趋势',
     icon: Activity,
     path: '/usage-analytics',
-    category: '运营',
+    category: '效率工具',
   },
   {
     id: 'nav-strategy',
@@ -458,7 +458,7 @@ const COMMANDS = [
     description: 'AI 内容营销策略规划',
     icon: Target,
     path: '/strategy',
-    category: '运营',
+    category: '效率工具',
   },
   {
     id: 'nav-monitor',
@@ -466,7 +466,7 @@ const COMMANDS = [
     description: '竞品动态持续追踪',
     icon: Radar,
     path: '/monitor',
-    category: '运营',
+    category: '效率工具',
   },
   {
     id: 'nav-records',
@@ -474,7 +474,7 @@ const COMMANDS = [
     description: '历史用量与账单记录',
     icon: History,
     path: '/records',
-    category: '运营',
+    category: '效率工具',
   },
 
   // 系统
@@ -484,7 +484,7 @@ const COMMANDS = [
     description: '配置 AI 模型',
     icon: Settings,
     path: '/config',
-    category: '系统',
+      category: 'Agent 与知识',
   },
   {
     id: 'nav-api-platform',
@@ -492,7 +492,7 @@ const COMMANDS = [
     description: '创建API Key接入平台能力',
     icon: Key,
     path: '/api-platform',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-scheduler',
@@ -500,7 +500,7 @@ const COMMANDS = [
     description: '定时报告/同步/提醒自动化',
     icon: Clock,
     path: '/scheduler',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-plugins',
@@ -508,7 +508,7 @@ const COMMANDS = [
     description: '浏览插件',
     icon: Puzzle,
     path: '/plugins',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-help',
@@ -516,7 +516,7 @@ const COMMANDS = [
     description: '使用指南与常见问题',
     icon: HelpCircle,
     path: '/help',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-profile',
@@ -524,7 +524,7 @@ const COMMANDS = [
     description: '账号信息与偏好设置',
     icon: User,
     path: '/profile',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-membership',
@@ -532,7 +532,7 @@ const COMMANDS = [
     description: '升级会员解锁更多额度',
     icon: Crown,
     path: '/membership',
-    category: '系统',
+    category: '会员与帮助',
   },
   {
     id: 'nav-favorites',
@@ -540,7 +540,7 @@ const COMMANDS = [
     description: '收藏的模板与内容',
     icon: Heart,
     path: '/favorites',
-    category: '系统',
+    category: '会员与帮助',
   },
 
   // 其他
@@ -550,7 +550,7 @@ const COMMANDS = [
     description: '查看需求看板',
     icon: ListTodo,
     path: '/board',
-    category: '其他',
+      category: '智能研发',
   },
   {
     id: 'nav-chat',
@@ -558,7 +558,7 @@ const COMMANDS = [
     description: '智能协作',
     icon: MessageSquare,
     path: '/chat',
-    category: '其他',
+    category: '工作台',
   },
   {
     id: 'nav-evolution',
@@ -566,7 +566,7 @@ const COMMANDS = [
     description: '平台自进化',
     icon: Brain,
     path: '/evolution',
-    category: '其他',
+      category: 'Agent 与知识',
   },
   {
     id: 'nav-tasks',
@@ -574,7 +574,7 @@ const COMMANDS = [
     description: '管理所有任务',
     icon: CheckCircle2,
     path: '/tasks',
-    category: '其他',
+    category: '工作台',
   },
   {
     id: 'nav-notifications',
@@ -582,7 +582,7 @@ const COMMANDS = [
     description: '查看所有通知',
     icon: Bell,
     path: '/notifications',
-    category: '其他',
+    category: '工作台',
   },
 ]
 
