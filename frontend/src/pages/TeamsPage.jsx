@@ -756,7 +756,7 @@ export default function TeamsPage() {
         api.get('/api/teams'),
         api.get('/api/agents'),
       ])
-      setTeams(Array.isArray(teamsRes.data) ? teamsRes.data : [])
+      setTeams(Array.isArray(teamsRes.data) ? teamsRes.data : (teamsRes.data?.teams || []))
       setAgents(Array.isArray(agentsRes.data) ? agentsRes.data : [])
     } catch (e) {
       setError(e)

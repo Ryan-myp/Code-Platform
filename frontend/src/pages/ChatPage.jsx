@@ -86,9 +86,10 @@ export default function ChatPage() {
         api.get('/api/teams').catch(() => ({ data: [] })),
         api.get('/api/workflows').catch(() => ({ data: [] })),
       ])
-      setAgents(agentsRes.data || [])
-      setTeams(teamsRes.data || [])
-      setWorkflows(workflowsRes.data || [])
+      setAgents(Array.isArray(agentsRes.data) ? agentsRes.data : [])
+      // /api/teams 返回 { teams, total } 包装结构，兼容两种形态
+      setTeams(Array.isArray(teamsRes.data) ? teamsRes.data : (teamsRes.data?.teams || []))
+      setWorkflows(Array.isArray(workflowsRes.data) ? workflowsRes.data : [])
     } finally {
       setTargetsLoading(false)
     }

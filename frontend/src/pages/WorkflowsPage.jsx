@@ -239,9 +239,9 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
               {successRate}
             </span>
           )}
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 whitespace-nowrap tabular-nums">
             <Clock className="w-4 h-4" />
-            {formatRelativeTime(workflow.created_at)}
+            {formatDate(workflow.created_at)}
           </span>
           <span className="flex items-center gap-1">
             <Folder className="w-4 h-4" />
@@ -322,14 +322,14 @@ function WorkflowCard({ workflow, onView, onEdit, onDelete, viewMode }) {
       {workflow.last_run && (
         <p className="text-xs text-gray-400 mb-3 flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          最后执行：{formatRelativeTime(workflow.last_run)}
+          最后执行：{formatDate(workflow.last_run)}
         </p>
       )}
 
       <div className="flex items-center justify-between pt-4 border-t border-gray-100">
         <span className="text-xs text-gray-500 flex items-center gap-1">
           <Calendar className="w-3.5 h-3.5" />
-          {formatRelativeTime(workflow.created_at)}
+          {formatDate(workflow.created_at)}
         </span>
         <div
           className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity"

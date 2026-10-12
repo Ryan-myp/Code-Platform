@@ -24,12 +24,19 @@
 | S4 | 表格/列表页无统一 Toolbar（筛选+搜索+批量操作各写各的） | ~12 页 |
 | S5 | 数据区未用 `tabular-nums`（数字列跳动） | 数字密集页 |
 
-## 二、分批方案
+## 三、执行结果（2026-07-10 全量走查完成）
 
-- **Batch A 设计语言标准化**（全局）：ui 原语补强（StatCard/SectionTitle/Toolbar/统一 Empty）→ 修 V1–V5 → 24 页 PageHeader 归一 → 空态全量补 CTA
-- **Batch B 研发系**：board 卡片规范（V2）/ sandbox / pipelines / evolution / agent-execute
-- **Batch C 工坊系**：image-factory（V1）/ ppt / video / game / meme / music / short-drama / translation / dubbing —— 统一「左侧参数 + 右侧结果」骨架
-- **Batch D 工具数据系**：stock（V4）/ data-analyzer / doc-qa / excel / forecast / dashboard / ab-testing / usage / strategy / monitor / pdf / batch / web-search / code-interpreter / mindmap / digital-human / voice
-- **Batch E 社区会员系**：publish / gallery / membership / tasks / records / notifications / favorites（V3）/ projects / api-platform / scheduler / plugins / admin / audit / search
+| 批次 | 提交 | 修复 |
+|------|------|------|
+| Batch A 设计语言 | `187f943` | V1 tab 断词 / V2 看板卡片 / V3 空态 CTA / V5 头部归一 PageHeader（stock·tasks·membership·records·favorites·notifications） |
+| Batch B+C 研发/工坊 | `f9fedcf` | 沙箱状态 ready 裸露 / 停止启动按钮降权 / 流水线断词 / 进化中心任务类型中文化 / 小游戏·小程序按钮竖排 |
+| Batch D+E 工具数据/社区会员 | `0455d33` | **P0: 仪表盘布局事故（旧版 JSX 块插入新卡片循环中间）/ 数字人页 Sliders 未导入崩溃** / PDF done 裸露 / 用量模块英文 key / 发布 chip 断词 / 作品广场缩略图 4:3 |
+| 收尾 | `13fbe3d` | 数字人卡片头 nowrap 防护 / 作品广场视频 4:3 |
+| P0 功能批 | 本次 | **/chat teams.filter 崩溃（/api/teams 返回包装结构 {teams,total}）/ TeamsPage 同款解包 / 工作流卡片日期统一绝对格式 / Skills chip nowrap** |
 
-每批交付：截图 QA → 构建 + 121 测试全绿 → 提交。
+已达标未动（截图验证）：tool-hub / stock(布局) / agents / knowledge / ppt / video / meme / music / copy / translate / excel / pdf(布局) / batch / doc-qa / forecast / ab / usage(数值) / web-search / digital(布局) / voice / mind-map / strategy / monitor / api-platform / scheduler / templates / gallery(卡片) / publish(布局) / projects / help / seo。
+
+### 系统性沉淀
+- `/tmp/check_missing.py`：扫描 79 页「用了但未导入/定义」大写标识符（lucide 漏导），已发现并修复 DigitalHuman(Sliders/ChevronDown)；建议纳入 CI pre-commit。
+- 已知遗留（低优先）：token 漂移 gray-*→ink-*（73 页，无视觉差）；仪表盘快捷搜索/快捷入口旧卡片被删后未在新版补回（新版只有统计卡+趋势图，功能已由 ⌘K + 首页承接）。
+

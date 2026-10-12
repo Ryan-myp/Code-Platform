@@ -165,7 +165,7 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
             <span
-              className={`px-1.5 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}
+              className={`px-1.5 py-0.5 rounded whitespace-nowrap text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}
             >
               {catMeta.label}
             </span>
@@ -236,7 +236,7 @@ function SkillCard({ skill, onView, onEdit, onDelete, viewMode }) {
             <h3 className="font-semibold text-gray-900 truncate">{skill.name}</h3>
             <div className="flex items-center gap-2 mt-0.5">
               <span
-                className={`px-1.5 py-0.5 rounded text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}
+                className={`px-1.5 py-0.5 rounded whitespace-nowrap text-xs font-medium ${catMeta.value === 'coding' ? 'bg-blue-50 text-blue-600' : catMeta.value === 'writing' ? 'bg-emerald-50 text-emerald-600' : catMeta.value === 'analysis' ? 'bg-amber-50 text-amber-600' : catMeta.value === 'testing' ? 'bg-violet-50 text-violet-600' : 'bg-gray-100 text-gray-600'}`}
               >
                 {catMeta.label}
               </span>
