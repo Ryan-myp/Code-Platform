@@ -539,8 +539,10 @@ export default function ChatPage() {
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-bold text-gray-900 flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-purple-600" />
-            对话列表
+            <span className="flex items-center gap-2 whitespace-nowrap">
+              <MessageSquare className="w-4 h-4 text-purple-600" />
+              对话列表
+            </span>
           </h2>
           <Button
             size="sm"
