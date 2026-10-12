@@ -412,14 +412,7 @@ def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
                     v = r[i]
                     item[c] = str(v)[:300] if v is not None else ""
             blob = " ".join(item.values()).lower()
-            s = 0.0
-            for t in tokens:
-                if t in phrases:
-                    continue
-                s += blob.count(t)
-            for p_ in phrases:
-                if p_ in blob:
-                    s += len(p_) * 2
+            s = _kb_line_score(blob, tokens, phrases)
             item["score"] = round(s, 2)
             scored.append((s, item))
         scored.sort(key=lambda x: -x[0])
@@ -477,18 +470,23 @@ def _kb_tokenize(q: str) -> tuple[list[str], list[str]]:
 
 
 def _kb_line_score(line: str, tokens: list[str], phrases: list[str]) -> float:
-    """单行相关度：词频 × 词权重；整串短语命中双倍加分。"""
+    """单行相关度（v2：去重命中数主导 + 短语强加权）。
+
+    旧版按全词频累加，CJK 一元组（如「策略」）在无关行泛滥，弱相关与强相关打平；
+    新版：每个不同 token 命中仅计 1.0，同 token 重复递减 0.25/次（有上限），
+    整串短语命中记 3.0（强信号：「内容工厂」整词 > 「内容」「工厂」拆开）。
+    """
     lf = line.lower()
     score = 0.0
     for t in tokens:
         if t in phrases:
-            continue  # 短语单独计，避免与二元组重复
+            continue  # 短语单独计，避免与一元组重复
         n = lf.count(t)
         if n:
-            score += n
+            score += 1.0 + 0.25 * min(n - 1, 4)
     for p in phrases:
         if p in lf:
-            score += len(p) * 2  # phrase boost
+            score += 3.0
     return score
 
 

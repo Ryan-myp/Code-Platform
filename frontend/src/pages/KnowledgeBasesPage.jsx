@@ -851,15 +851,28 @@ function KBSearchModal({ kb, onClose }) {
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
               <p className="text-xs text-gray-500">
                 共 {hits.count} 条结果{hits.table ? `（表：${hits.table}）` : ''}
+                <span className="text-gray-400">，按相关度排序</span>
               </p>
               {hits.hits.map((hit, idx) =>
                 hit.file ? (
                   <div key={idx} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
-                    <p className="text-xs font-medium text-gray-700 mb-1.5">
-                      <FileText className="w-3.5 h-3.5 inline mr-1 text-gray-400" />
-                      <span className="font-mono">{hit.file}</span>
-                      <span className="text-gray-400 ml-1">（{hit.match_count} 处匹配）</span>
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-medium text-gray-700 mb-1.5 flex-1 min-w-0">
+                        <FileText className="w-3.5 h-3.5 inline mr-1 text-gray-400" />
+                        <span className="font-mono">{hit.file}</span>
+                        <span className="text-gray-400 ml-1">（{hit.match_count} 处匹配）</span>
+                      </p>
+                      {hit.score != null && (
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap tabular-nums ${
+                            idx === 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                          }`}
+                          title="相关度得分（越高越相关）"
+                        >
+                          相关度 {hit.score}
+                        </span>
+                      )}
+                    </div>
                     {hit.matches.map((m, mi) => (
                       <p
                         key={mi}
@@ -871,7 +884,14 @@ function KBSearchModal({ kb, onClose }) {
                   </div>
                 ) : (
                   <div key={idx} className="p-3 rounded-xl border border-gray-200 bg-gray-50">
-                    {Object.entries(hit).map(([k, v]) => (
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap tabular-nums bg-emerald-100 text-emerald-700" title="相关度得分（越高越相关）">
+                        相关度 {hit.score != null ? hit.score : '-'}
+                      </span>
+                    </div>
+                    {Object.entries(hit)
+                      .filter(([k]) => k !== 'score')
+                      .map(([k, v]) => (
                       <p
                         key={k}
                         className="text-xs text-gray-600 leading-relaxed flex gap-2 py-0.5"

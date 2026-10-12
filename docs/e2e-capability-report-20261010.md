@@ -42,3 +42,23 @@
 | J 重工厂 | 小程序生成完成 | ✅ PASS | - | 70.59s | status=success {'id': 'mp_753f27bcca5c', 'name': 'probe_mini', 'template':  |
 | K 前端 | Vite dev server | ✅ PASS | 200 | 0.02s | <!DOCTYPE html> <html lang="zh-CN">   <head>     <script typ |
 | K 前端 | 前端→后端代理 /api | ✅ PASS | 200 | 0.06s | {"status":"ok","timestamp":"2026-10-10T10:06:11.110884","ver |
+
+## 十七、Agent 与知识库能力打磨（v17.0 打磨轮）
+
+### 17.1 修复的核心问题
+
+| 问题 | 修复 | 验证 |
+|---|---|---|
+| **Agent 绑定资源从未进入执行链路**（run_agent 只用 instructions，KB/技能/工具形同装饰） | 新增 `backend/agent_runtime.py`：RAG 检索绑定知识库 + 技能内容注入 + 工具说明注入 system prompt；run_agent / run_agent_stream 接入 ≤2 轮工具循环（`[TOOL:名\|参数]` 指令协议，LLM 请求→真实执行→结果回喂） | `tests/unit/test_agent_runtime.py`（10 条） |
+| **知识库检索相关性弱**（单字 CJK 二元组主导得分，无关行与相关行同分） | `kb_api._kb_line_score` v2：去重命中主导（1.0 基线 + 重复 0.25 封顶）+ 短语整段命中 ×3 加成；文件/DB 双分支统一排序 | `test_kb_search_quality` 5/5 |
+| **种子 Agent 绑定不存在的工具**（web_search / file_system / terminal） | 改为真实存在且可执行的工具（code_interpreter + compute 实算工具） | 种子 13/13 列完整 |
+| **Sandbox 工具只回显不执行** | `code_interpreter` → `common/sandbox_check.run_sandbox_python`（受限子进程 + rlimit，无 Docker 也可跑）；compute 工具走 tool_hub worker | 单测真实执行 `6*7=42` |
+
+### 17.2 行为规则
+- 工具白名单：只有 `compute` 类工具 + `code_interpreter` 可真实执行；其他工具在 system prompt 中标注「不可直接执行」，LLM 会诚实告知而非假装
+- 降级策略：绑定资源损坏/缺失不阻断 Agent（空列表/跳过），仅 404 阻断
+- 过程透明化：SSE 新增 `tool` 事件；run 返回 `tools_used` + `used`（知识库/技能/工具/MCP 引用数）；Agent 执行页头像旁显示绑定能力徽章
+- 知识库检索弹窗：结果标注「相关度得分」，第 1 名高亮
+
+### 17.3 验收
+- 后端 **1194/1194**（基线 1184 + 新增 10）；前端 **121/121**；Ruff（backend）0 errors；build ✓

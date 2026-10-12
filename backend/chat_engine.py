@@ -33,6 +33,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+import agent_runtime
 from common.config import load_config
 from common.db import get_db
 from common.llm import build_conversation_messages, call_llm, call_llm_async, log_usage, stream_llm_async
@@ -181,6 +182,7 @@ def _conversation_system_prompt(conv_id: str) -> str:
 
 
 def get_agent_system_prompt(agent_id: str) -> str:
+    """仅基础指令（兼容旧调用方）；执行链路用 agent_runtime 组装完整上下文。"""
     conn = get_db()
     row = conn.execute("SELECT * FROM agents WHERE id=? AND active=1", (agent_id,)).fetchone()
     conn.close()
@@ -188,6 +190,26 @@ def get_agent_system_prompt(agent_id: str) -> str:
         raise HTTPException(404, "Agent 不存在")
     instructions = row["instructions"] or "你是一个智能助手"
     return instructions
+
+
+def _assembled_agent_system(agent_id: str, message: str) -> tuple[str, dict]:
+    """组装完整 Agent 上下文（基础指令 + 知识库 RAG + 技能 + 工具协议）。
+
+    Agent 不存在时透传 404；资源组装失败时降级为基础指令，不阻断执行。返回 (system, bundle)。
+    """
+    try:
+        bundle = agent_runtime.load_agent_bundle(agent_id, message)
+        return agent_runtime.build_agent_system(bundle), bundle
+    except HTTPException:
+        raise
+    except Exception:
+        logger.warning(f"agent context assembly failed for {agent_id}, fallback to base instructions")
+        try:
+            return get_agent_system_prompt(agent_id), {}
+        except HTTPException:
+            raise
+        except Exception:
+            return "你是一个智能助手", {}
 
 
 def _record_execution(agent_id: str, user_id: str, message: str, status: str, elapsed: float, error: str = "") -> None:
@@ -228,16 +250,18 @@ def agent_executions(agent_id: str = "", user_id: str = "", limit: int = 20):
 
 
 @router.post("/api/agents/{agent_id}/run")
-def run_agent(agent_id: str, req: dict):
-    """运行 Agent - 调用 LLM（v12.0：携带 conversation_id 时使用多轮上下文）"""
+async def run_agent(agent_id: str, req: dict):  # noqa: C901
+    """运行 Agent - 调用 LLM（v12.0：携带 conversation_id 时使用多轮上下文；v17.0：绑定知识库 RAG + 技能 + 工具调用循环）"""
     message = (req.get("message") or "").strip()
     if not message:
         raise HTTPException(400, "消息不能为空")
 
     start = time.time()
-    system = get_agent_system_prompt(agent_id)
+    system, bundle = _assembled_agent_system(agent_id, message)
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
+    user_id = req.get("user_id", "")
+    runnable = bundle.get("runnable_tools") or set()
     try:
         if conv_id:
             result = call_llm(
@@ -255,11 +279,44 @@ def run_agent(agent_id: str, req: dict):
             )
         else:
             result = call_llm(system, message, max_tokens=2000)
+
+        # 工具调用循环（最多 2 轮）：解析指令 → 真实执行 → 结果回喂 → 最终答案
+        tools_used: list[str] = []
+        if runnable:
+            base_msgs = (
+                build_conversation_messages(conversation_id=conv_id, system_prompt="")
+                if conv_id
+                else build_conversation_messages(session_id=session_id, system_prompt="")
+                if session_id
+                else []
+            )
+            for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
+                directives = agent_runtime.parse_tool_directives(result, runnable)
+                if not directives:
+                    break
+                tools_used.extend(name for name, _ in directives)
+                exec_results = []
+                for name, arg in directives:
+                    exec_results.append(f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}")
+                result = call_llm(
+                    "",
+                    "",
+                    max_tokens=2000,
+                    messages=(
+                        base_msgs
+                        + [
+                            {"role": "user", "content": message},
+                            {"role": "assistant", "content": result},
+                            {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。"},
+                        ]
+                    ),
+                )
+            result = agent_runtime.strip_tool_directives(result)
     except HTTPException as e:
-        _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e.detail))
+        _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e.detail))
         raise
     except Exception as e:
-        _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e))
+        _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e))
         raise
 
     # 记录消息到最新会话（若有）
@@ -285,15 +342,27 @@ def run_agent(agent_id: str, req: dict):
             pass
 
     log_usage("agent_run", len(message), len(result), time.time() - start)
-    _record_execution(agent_id, req.get("user_id", ""), message, "done", time.time() - start)
-    return {"result": result, "agent_id": agent_id, "elapsed": round(time.time() - start, 2)}
+    _record_execution(agent_id, user_id, message, "done", time.time() - start)
+    return {
+        "result": result,
+        "agent_id": agent_id,
+        "elapsed": round(time.time() - start, 2),
+        # v17.0：上下文使用透明化（前端可展示「引用了知识库 X / 调用了工具 Y」）
+        "tools_used": tools_used,
+        "used": {
+            "kb": len(agent_runtime._parse_list((bundle or {}).get("knowledge_base_ids"))),
+            "skills": 1 if (bundle or {}).get("skills_context") else 0,
+            "tools": tools_used,
+        },
+    }
 
 
 @router.post("/api/agents/{agent_id}/run/stream")
 async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
-    """运行 Agent（SSE 流式）— 打字机增量输出，携带 conversation_id/session_id 时自动落库并支持多轮上下文。
+    """运行 Agent（SSE 流式）— v17.0：绑定知识库 RAG + 技能 + 工具调用循环。
 
-    事件流：``delta``（增量文本）→ ``done``（完整结果）或 ``error``（失败详情）。
+    事件流：``tool``（工具调用，0-2 个）→ ``delta``（增量文本）→ ``done``（完整结果）或 ``error``。
+    中间轮（可能含工具指令）非流式；最终答案分块流式输出（打字机兼容）。
     """
     message = (req.get("message") or "").strip()
     if not message:
@@ -301,20 +370,75 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
 
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
-    system = get_agent_system_prompt(agent_id)
+    user_id = req.get("user_id", "")
+    system, bundle = _assembled_agent_system(agent_id, message)
+    runnable = bundle.get("runnable_tools") or set()
     start = time.time()
 
     async def gen():
         try:
-            full = ""
+            # 首答（非流式：可能是「工具调用指令」中间轮，不能直接流给用户）
             if conv_id:
-                messages = build_conversation_messages(conversation_id=conv_id, system_prompt=system)
+                result = await call_llm_async(
+                    "",
+                    "",
+                    max_tokens=2000,
+                    messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system),
+                )
             elif session_id:
-                messages = build_conversation_messages(session_id=session_id, system_prompt=system)
+                result = await call_llm_async(
+                    "",
+                    "",
+                    max_tokens=2000,
+                    messages=build_conversation_messages(session_id=session_id, system_prompt=system),
+                )
             else:
-                messages = [{"role": "system", "content": system}, {"role": "user", "content": message}]
-            async for delta, full in stream_llm_async(messages=messages, max_tokens=2000):  # noqa: B007 — full 为累计文本，循环结束后用于落库与 done 事件
-                yield _sse_event("delta", {"text": delta})
+                result = await call_llm_async(system, message, max_tokens=2000)
+
+            # 工具调用循环：解析指令 → 真实执行 → SSE tool 事件 → 结果回喂
+            tools_used: list[str] = []
+            if runnable:
+                base_msgs = (
+                    build_conversation_messages(conversation_id=conv_id, system_prompt="")
+                    if conv_id
+                    else build_conversation_messages(session_id=session_id, system_prompt="")
+                    if session_id
+                    else []
+                )
+                for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
+                    directives = agent_runtime.parse_tool_directives(result, runnable)
+                    if not directives:
+                        break
+                    exec_results = []
+                    for name, arg in directives:
+                        tools_used.append(name)
+                        yield _sse_event("tool", {"tool": name, "input": arg[:200]})
+                        exec_results.append(
+                            f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}"
+                        )
+                    result = await call_llm_async(
+                        "",
+                        "",
+                        max_tokens=2000,
+                        messages=(
+                            base_msgs
+                            + [
+                                {"role": "user", "content": message},
+                                {"role": "assistant", "content": result},
+                                {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。"},
+                            ]
+                        ),
+                    )
+            final_answer = agent_runtime.strip_tool_directives(result)
+
+            # 最终答案分块流式输出（打字机兼容；无工具循环时同样路径，行为一致）
+            full = ""
+            chunk = 24
+            for i in range(0, len(final_answer), chunk):
+                part = final_answer[i : i + chunk]
+                full += part
+                yield _sse_event("delta", {"text": part})
+
             # 落库 assistant 回复（若有会话）
             if conv_id or session_id:
                 try:
@@ -339,13 +463,13 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 except Exception:
                     pass
             log_usage("agent_run_stream", len(message), len(full), time.time() - start)
-            _record_execution(agent_id, req.get("user_id", ""), message, "done", time.time() - start)
-            yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2)})
+            _record_execution(agent_id, user_id, message, "done", time.time() - start)
+            yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
         except HTTPException as e:
-            _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e.detail))
+            _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e.detail))
             yield _sse_event("error", {"detail": e.detail})
         except Exception as e:
-            _record_execution(agent_id, req.get("user_id", ""), message, "error", time.time() - start, str(e)[:300])
+            _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e)[:300])
             logger.exception("agent stream failed")
             yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
 

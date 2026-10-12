@@ -38,6 +38,25 @@ function safeParseArray(val) {
   return []
 }
 
+// v17.0：Agent 绑定能力徽章（知识库/技能/工具真实接入执行链路，此处可见其装配）
+function AgentBindingBadges({ agent }) {
+  const items = []
+  if (agent.kb_count > 0) items.push({ label: `${agent.kb_count} 知识库`, cls: 'bg-emerald-50 text-emerald-700' })
+  if (agent.skill_count > 0) items.push({ label: `${agent.skill_count} 技能`, cls: 'bg-sky-50 text-sky-700' })
+  if (agent.tool_count > 0) items.push({ label: `${agent.tool_count} 工具`, cls: 'bg-violet-50 text-violet-700' })
+  if (agent.mcp_count > 0) items.push({ label: `${agent.mcp_count} MCP`, cls: 'bg-amber-50 text-amber-700' })
+  if (!items.length) return null
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-1.5">
+      {items.map((b) => (
+        <span key={b.label} className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${b.cls}`}>
+          {b.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export default function AgentExecutePage() {
   // 路由 /agents/:id 通过 useParams 获取，兼容旧 agentId 命名
   const { id } = useParams()
@@ -181,6 +200,11 @@ export default function AgentExecutePage() {
       onEvent: (event, data) => {
         if (event === 'delta') {
           patchStream((last) => ({ content: last.content + data.text }))
+        } else if (event === 'tool') {
+          // v17.0：Agent 真实调用工具（沙箱代码执行 / 实算工具）→ 过程透明化
+          patchStream((last) => ({
+            content: `${last.content}\n> \u2696\ufe0f 正在调用工具 \`${data.tool}\`…\n`,
+          }))
         } else if (event === 'done') {
           patchStream((last) => ({ content: data.full || last.content, streaming: false }))
         } else if (event === 'error') {
@@ -364,7 +388,10 @@ export default function AgentExecutePage() {
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white flex-shrink-0">
               <Bot className="w-5 h-5" />
             </div>
-            <h2 className="font-semibold text-gray-900 truncate">{agent.name}</h2>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-gray-900 truncate">{agent.name}</h2>
+              <AgentBindingBadges agent={agent} />
+            </div>
           </div>
           {agent.description && (
             <p className="text-xs text-gray-500 line-clamp-2">{agent.description}</p>

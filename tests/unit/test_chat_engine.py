@@ -115,16 +115,18 @@ def test_add_conversation_message_empty(test_db_path):
 
 
 def test_run_agent(test_db_path):
-    """运行 Agent（mock LLM 返回）"""
+    """运行 Agent（mock LLM 返回；v17.0 run_agent 改 async，工具循环无指令时首轮即终答）"""
     from chat_engine import run_agent
 
     _seed_agent("agent_run_1", instructions="你是助手")
     with patch("chat_engine.call_llm", return_value="LLM 模拟回复"):
-        result = run_agent("agent_run_1", {"message": "你好"})
+        result = run(run_agent("agent_run_1", {"message": "你好"}))
 
     assert result["result"] == "LLM 模拟回复"
     assert result["agent_id"] == "agent_run_1"
     assert "elapsed" in result
+    assert result["tools_used"] == []
+    assert "used" in result  # v17.0 上下文使用透明化
 
 
 def test_run_agent_no_message(test_db_path):
@@ -133,7 +135,7 @@ def test_run_agent_no_message(test_db_path):
 
     _seed_agent("agent_run_2")
     with pytest.raises(HTTPException) as exc:
-        run_agent("agent_run_2", {"message": ""})
+        run(run_agent("agent_run_2", {"message": ""}))
     assert exc.value.status_code == 400
 
 
@@ -142,7 +144,7 @@ def test_run_agent_not_found(test_db_path):
     from chat_engine import run_agent
 
     with pytest.raises(Exception) as exc_info:
-        run_agent("nonexistent_agent", {"message": "你好"})
+        run(run_agent("nonexistent_agent", {"message": "你好"}))
     assert "404" in str(exc_info.value) or "不存在" in str(exc_info.value)
 
 
