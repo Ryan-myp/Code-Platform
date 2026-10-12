@@ -25,6 +25,8 @@ import {
   X,
   Loader2,
   Workflow,
+  Wrench,
+  Database,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
@@ -75,6 +77,18 @@ const NODE_TYPES = {
     icon: FileText,
     color: 'orange',
     config: { stage: 'generate', prd_text: '', tech_design: '', language: 'python' },
+  },
+  tool: {
+    label: '平台工具',
+    icon: Wrench,
+    color: 'teal',
+    config: { tool_id: '', input: '' }, // tool_id：工具广场工具 id（如 code_interpreter）
+  },
+  kb: {
+    label: '知识库检索',
+    icon: Database,
+    color: 'indigo',
+    config: { kb_ids: [], query: '' },
   },
   output: { label: '输出节点', icon: FileText, color: 'pink', config: {} },
 }
@@ -1106,6 +1120,66 @@ export default function WorkflowEditorPage() {
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
                   />
                   <p className="text-xs text-gray-400 mt-1">留空默认使用工作流的输入内容</p>
+                </div>
+              </>
+            )}
+
+            {selectedNodeData.type === 'tool' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">工具 ID</label>
+                  <input
+                    type="text"
+                    value={selectedNodeData.config.tool_id || ''}
+                    onChange={(e) =>
+                      updateNodeConfig(selectedNodeData.id, 'tool_id', e.target.value)
+                    }
+                    placeholder="如 code_interpreter / meeting-notes / csv-analyzer"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">工具广场任意工具；计算类本地实算，生成类走平台引擎</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">工具输入</label>
+                  <textarea
+                    value={selectedNodeData.config.input ?? ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'input', e.target.value)}
+                    rows={3}
+                    placeholder="代码或任务描述；可引用上游结果 ${'{node_x.result}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedNodeData.type === 'kb' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">知识库 ID</label>
+                  <input
+                    type="text"
+                    value={Array.isArray(selectedNodeData.config.kb_ids) ? selectedNodeData.config.kb_ids.join(',') : (selectedNodeData.config.kb_id || '')}
+                    onChange={(e) =>
+                      updateNodeConfig(
+                        selectedNodeData.id,
+                        'kb_ids',
+                        e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                      )
+                    }
+                    placeholder="多个用逗号分隔，如 kb_xxx,kb_yyy"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">检索问题</label>
+                  <textarea
+                    value={selectedNodeData.config.query ?? ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'query', e.target.value)}
+                    rows={2}
+                    placeholder="检索 query；可引用上游结果 ${'{node_x.result}'}"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">输出 = 命中的参考知识段（v2 打分 Top3），供下游 Agent 节点引用</p>
                 </div>
               </>
             )}

@@ -427,6 +427,10 @@ class WorkflowExecutor:
             return await self.execute_prd_node(config, previous_results)
         elif node_type == "business":
             return await self.execute_business_node(config, previous_results)
+        elif node_type == "tool":
+            return await self.execute_tool_node(config, previous_results, input_data or {})
+        elif node_type == "kb":
+            return await self.execute_kb_node(config, previous_results, input_data or {})
         elif node_type == "output":
             return await self.execute_output_node(config, previous_results)
         else:
@@ -467,8 +471,12 @@ class WorkflowExecutor:
             logger.exception(f"business node {class_name} failed")
             return {"status": "error", "message": str(e)}
 
-    # ── Agent 节点：调用 LLM（用 Agent 的 instructions 作 system prompt）──
+    # ── Agent 节点：以完整 Agent bundle 执行（RAG/技能/工具循环）──
+    # 历史短板：旧版只用 agent.instructions 裸调 LLM，绑定的知识库/技能/工具全部绕开。
+    # 现统一执行范式：单 Agent / Team / Workflow 三层都经 agent_runtime 完整能力。
     async def execute_agent_node(self, config: dict, previous_results: dict, input_data: dict) -> dict:
+        import agent_runtime
+
         agent_id = config.get("agent_id", "")
         raw_message = config.get("message", "") or (input_data.get("message") if input_data else "") or ""
         message = _substitute(raw_message, previous_results)
@@ -480,18 +488,66 @@ class WorkflowExecutor:
         if agent_id:
             agent = conn.execute("SELECT * FROM agents WHERE id=? AND active=1", (agent_id,)).fetchone()
         conn.close()
-        system = agent["instructions"] if agent and agent["instructions"] else "你是一个智能助手"
 
         start = time.time()
-        result = call_llm(system, message, max_tokens=2000)
+        tools_used: list = []
+        if agent:
+            try:
+                # 完整 bundle：指令 + 知识库 RAG + 技能 + 工具清单；工具可执行时走 ≤2 轮调用循环
+                bundle = agent_runtime.load_agent_bundle(agent["id"], message)
+                system = agent_runtime.build_agent_system(bundle)
+                loop = await agent_runtime.execute_tool_loop(
+                    system, message, set(bundle.get("runnable_tools") or [])
+                )
+                result = loop["result"]
+                tools_used = loop["tools_used"]
+            except Exception as e:
+                logger.warning(f"agent node {agent_id} bundle 执行失败，降级为纯文本: {e}")
+                result = call_llm(agent["instructions"] or "你是一个智能助手", message, max_tokens=2000)
+                tools_used = []
+        else:
+            result = call_llm("你是一个智能助手", message, max_tokens=2000)
         elapsed = time.time() - start
         log_usage("wf_agent_node", len(message), len(result), elapsed)
         return {
             "status": "success",
             "agent_id": agent_id,
             "result": result,
+            "tools_used": tools_used,
             "elapsed": round(elapsed, 2),
         }
+
+    # ── Tool 节点：直接驱动平台工具广场工具（含 code_interpreter 沙箱）──
+    async def execute_tool_node(self, config: dict, previous_results: dict, input_data: dict = None) -> dict:
+        import agent_runtime
+
+        tool_id = config.get("tool_id", "")
+        raw_input = config.get("input", "") or ((input_data or {}).get("input", ""))
+        tool_input = _substitute(raw_input, previous_results)
+        if not tool_id:
+            return {"status": "error", "message": "tool 节点需要 tool_id"}
+        start = time.time()
+        out = await agent_runtime.execute_tool_async(tool_id, tool_input)
+        return {
+            "status": "success",
+            "tool_id": tool_id,
+            "result": out,
+            "elapsed": round(time.time() - start, 2),
+        }
+
+    # ── KB 节点：知识库检索（v2 打分，多 KB 并查）──
+    async def execute_kb_node(self, config: dict, previous_results: dict, input_data: dict = None) -> dict:
+        import agent_runtime
+
+        kb_ids = config.get("kb_ids") or ([config["kb_id"]] if config.get("kb_id") else [])
+        raw_query = config.get("query", "") or ((input_data or {}).get("query", ""))
+        query = _substitute(raw_query, previous_results)
+        if not kb_ids:
+            return {"status": "error", "message": "kb 节点需要 kb_ids 或 kb_id"}
+        if not query:
+            return {"status": "error", "message": "kb 检索 query 为空"}
+        context = agent_runtime._kb_rag_context(list(kb_ids), query)
+        return {"status": "success", "kb_ids": list(kb_ids), "result": context or "（未检索到相关内容）"}
 
     # ── HTTP 节点（含 SSRF 防护）────────────────────────────
     async def execute_http_node(self, config: dict, previous_results: dict) -> dict:

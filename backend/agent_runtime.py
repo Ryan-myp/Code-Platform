@@ -145,10 +145,15 @@ def _skills_context(skill_rows: list, max_chars: int = 2500) -> str:
 
 
 def _tool_descriptions(tool_ids: list) -> tuple[list[str], set[str]]:
-    """工具清单说明行 + 可真实执行的工具白名单。"""
+    """工具清单说明行 + 可真实执行的工具白名单。
+
+    可执行范围：code_interpreter（沙箱）+ compute 实算工具 + LLM 生成工具
+    （LLM 工具经工具广场执行器真实调用，每个 Agent 上限 4 个以控成本）。
+    """
     from tool_definitions import TOOL_DEFINITIONS
     lines = []
     runnable = set()
+    llm_count = 0
     for tid in tool_ids[:8]:
         name = tid
         desc = ""
@@ -156,15 +161,21 @@ def _tool_descriptions(tool_ids: list) -> tuple[list[str], set[str]]:
         if meta:
             name = meta.get("name", tid)
             desc = meta.get("description", "")
+        ttype = meta.get("type") if meta else None
         if tid == "code_interpreter":
             desc = "执行 Python 代码（沙箱子进程，10 秒 CPU 限制），适合数值计算/数据处理/验证"
             runnable.add(tid)
-        elif tid in TOOL_DEFINITIONS and TOOL_DEFINITIONS[tid].get("type") == "compute":
-            # 仅 compute 实算工具可真实执行（快、无 LLM 额度消耗）；LLM 生成类工具走工具广场页面
+        elif ttype == "compute":
+            # compute 实算工具本地直执（快、无 LLM 额度消耗）
+            runnable.add(tid)
+        elif meta and (ttype is None or ttype == "llm") and llm_count < 4:
+            # LLM 生成工具（tool_definitions 中无 type 字段的 54 个）也可在 Agent 内真实调用：
+            # 走工具广场执行器（_run_tool_worker）真实生成 + 落使用记录，每 Agent 上限 4 个控成本
+            llm_count += 1
             runnable.add(tid)
         elif tid in ("terminal", "file_system", "web_search"):
             desc = desc or "该能力暂不在 Agent 内直接执行"
-        lines.append(f"- {name}：{desc or '（工具广场工具，可在左侧工具广场使用）'}")
+        lines.append(f"- {name}：{desc or '（工具广场工具）'}")
     return lines, runnable
 
 
@@ -181,7 +192,8 @@ def build_agent_system(agent: dict, base_instructions: str | None = None) -> str
         parts.append(
             "如果任务需要用到「可用工具」中列出的 code_interpreter 或工具广场工具，"
             "请在回复末尾追加调用指令（一行一个，最多 2 个）：[TOOL:工具名|输入内容]\n"
-            "代码类输入直接写完整可运行代码；工具执行结果随后会单独提供，届时再给出最终答案。"
+            "代码类输入直接写完整可运行代码；LLM 生成类工具输入写任务描述；"
+            "工具执行结果随后会单独提供，届时再给出最终答案。"
         )
     return "\n\n".join(p for p in parts if p)
 
