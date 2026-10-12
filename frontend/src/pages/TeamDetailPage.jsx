@@ -393,6 +393,9 @@ export default function TeamDetailPage() {
                           {m.tools_used.map((t, j) => (
                             <span key={j} className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 whitespace-nowrap">🛠 {t}</span>
                           ))}
+                          {Array.isArray(m.mcp_calls) && m.mcp_calls.length > 0 && m.mcp_calls.map((c, j) => (
+                            <span key={`m${j}`} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 whitespace-nowrap">🔌 {c}</span>
+                          ))}
                         </span>
                       )}
                     </div>

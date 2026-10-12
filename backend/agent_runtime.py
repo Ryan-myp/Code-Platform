@@ -24,6 +24,10 @@ import re
 from fastapi import HTTPException
 
 from common.llm import call_llm_async
+from mcp_client import (
+    parse_mcp_directives,
+    strip_mcp_directives,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +90,25 @@ def load_agent_bundle(agent_id: str, user_message: str = "") -> dict:
     tool_lines, runnable = _tool_descriptions(_parse_list(agent.get("tools")))
     agent["tool_lines"] = tool_lines
     agent["runnable_tools"] = runnable
+
+    # ── MCP：同步读取绑定的 Server 行（工具清单由 async attach_mcp_tools 挂接）──
+    mcp_servers: list[dict] = []
+    try:
+        raw_mcp = _parse_list(agent.get("mcp_server_ids"))
+        if raw_mcp:
+            conn = get_db()
+            ph = ",".join("?" * len(raw_mcp[:2]))  # 每个 Agent 最多接入 2 个 MCP Server
+            rows = conn.execute(
+                f"SELECT * FROM mcp_servers WHERE id IN ({ph}) AND enabled=1", raw_mcp[:2]
+            ).fetchall()
+            conn.close()
+            mcp_servers = [dict(r) for r in rows]
+    except Exception as e:
+        logger.warning(f"mcp servers load failed: {e}")
+        mcp_servers = []
+    agent["mcp_servers"] = mcp_servers
+    agent["mcp_server_ids"] = [s["id"] for s in mcp_servers]
+    agent["mcp_tool_lines"] = []
     return agent
 
 
@@ -188,10 +211,15 @@ def build_agent_system(agent: dict, base_instructions: str | None = None) -> str
         parts.append(agent["skills_context"])
     if agent.get("tool_lines"):
         parts.append("## 可用工具\n" + "\n".join(agent["tool_lines"]))
-    if agent.get("runnable_tools"):
+    if agent.get("mcp_tool_lines"):
         parts.append(
-            "如果任务需要用到「可用工具」中列出的 code_interpreter 或工具广场工具，"
-            "请在回复末尾追加调用指令（一行一个，最多 2 个）：[TOOL:工具名|输入内容]\n"
+            "## MCP 工具（外部 MCP Server 提供的能力）\n" + "\n".join(agent["mcp_tool_lines"])
+            + "\n调用时在回复末尾追加（一行一个，最多 2 个）：[MCP:工具名|JSON参数]，参数直接写工具名即可。"
+        )
+    if agent.get("runnable_tools") or agent.get("mcp_tool_lines"):
+        parts.append(
+            "如果任务需要用到「可用工具」或 MCP 工具，"
+            "请在回复末尾追加调用指令（一行一个，各最多 2 个）：[TOOL:工具名|输入内容] 或 [MCP:工具名|JSON参数]\n"
             "代码类输入直接写完整可运行代码；LLM 生成类工具输入写任务描述；"
             "工具执行结果随后会单独提供，届时再给出最终答案。"
         )
@@ -211,8 +239,33 @@ def parse_tool_directives(text: str, runnable_tools: set[str]) -> list[tuple[str
 
 
 def strip_tool_directives(text: str) -> str:
-    """移除协议块，给用户干净答案。"""
-    return _TOOL_DIRECTIVE_RE.sub("", text or "").strip()
+    """移除 [TOOL:] 与 [MCP:] 协议块，给用户干净答案。"""
+    return strip_mcp_directives(_TOOL_DIRECTIVE_RE.sub("", text or "")).strip()
+
+
+async def attach_mcp_tools(bundle: dict) -> dict:
+    """在 bundle 上挂接 MCP 工具清单（async，调用真实 tools/list）。
+
+    单个 Server 不可达时跳过并保留其它；全部失败时 mcp_tool_lines 为空，
+    系统提示词自动省略 MCP 段（诚实降级）。
+    """
+    import mcp_client
+
+    servers = bundle.get("mcp_servers") or []
+    lines: list[str] = []
+    tool_map: dict[str, str] = {}
+    for srv in servers:
+        try:
+            tools = await mcp_client.mcp_list_tools(srv)
+        except Exception as e:
+            logger.warning(f"mcp list_tools failed for {srv.get('id')}: {e}")
+            tools = []
+        for t in tools[:6]:
+            lines.append(f"- [MCP] {srv.get('name')}：{t.get('name')} — {str(t.get('description') or '')[:120]}")
+            tool_map[t.get("name")] = srv["id"]
+    bundle["mcp_tool_lines"] = lines
+    bundle["mcp_tools"] = tool_map
+    return bundle
 
 
 async def execute_tool_loop(
@@ -223,19 +276,30 @@ async def execute_tool_loop(
     user_id: str = "default",
     max_tokens: int = 2000,
     llm_call=None,
+    mcp_servers: list[dict] | None = None,
+    mcp_tools: dict[str, str] | None = None,
+    mcp_executor=None,
 ) -> dict:
-    """可复用的 ≤2 轮工具调用循环（与 chat_engine.run_agent 同语义）。
+    """可复用的 ≤2 轮工具调用循环（含 MCP 指令；与 chat_engine.run_agent 同语义）。
 
-    返回 {result（已剥离 [TOOL:] 指令）, tools_used, tool_logs}。
-    供团队协作执行等场景复用；llm_call 可注入以便测试。
+    支持两类指令：[TOOL:name|input]（平台工具）与 [MCP:server_id|tool|json] / [MCP:tool|json]（外部 MCP）。
+    返回 {result（已剥离协议指令）, tools_used, mcp_calls, tool_logs}。
+    llm_call / mcp_executor 可注入以便测试。
     """
+    import mcp_client
+
     llm = llm_call if llm_call is not None else call_llm_async
+    mcp_call = mcp_executor if mcp_executor is not None else mcp_client.mcp_call_tool
+    mcp_by_id = {s.get("id"): s for s in (mcp_servers or [])}
+    mcp_ids = set(mcp_by_id)
     tools_used: list[str] = []
+    mcp_calls: list[str] = []
     tool_logs: list[str] = []
     text = await llm(system, prompt, max_tokens=max_tokens)
     for _ in range(_MAX_TOOL_ROUNDS):
         directives = parse_tool_directives(text, runnable_tools)
-        if not directives:
+        mcp_directives = parse_mcp_directives(text, mcp_ids, mcp_tools)
+        if not directives and not mcp_directives:
             break
         exec_results = []
         for name, arg in directives:
@@ -243,12 +307,23 @@ async def execute_tool_loop(
             out = await execute_tool_async(name, arg, user_id)
             exec_results.append(f"[工具 {name} 执行结果]\n{out}")
             tool_logs.append(f"{name}: {out[:300]}")
+        for sid, mtool, args in mcp_directives:
+            mcp_calls.append(f"{sid}:{mtool}")
+            srv = mcp_by_id.get(sid) or {}
+            out = await mcp_call(srv, mtool, args)
+            exec_results.append(f"[MCP {mtool} 执行结果]\n{out}")
+            tool_logs.append(f"MCP {mtool}: {out[:300]}")
         text = await llm(
             system,
-            f"{prompt}\n\n" + "\n\n".join(exec_results) + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。",
+            f"{prompt}\n\n" + "\n\n".join(exec_results) + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。",
             max_tokens=max_tokens,
         )
-    return {"result": strip_tool_directives(text), "tools_used": tools_used, "tool_logs": tool_logs}
+    return {
+        "result": strip_tool_directives(text),
+        "tools_used": tools_used,
+        "mcp_calls": mcp_calls,
+        "tool_logs": tool_logs,
+    }
 
 
 async def execute_tool_async(tool_id: str, tool_input: str, user_id: str = "default") -> str:

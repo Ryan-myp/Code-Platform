@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 import agent_runtime
+import mcp_client
 from common.config import load_config
 from common.db import get_db
 from common.llm import build_conversation_messages, call_llm, call_llm_async, log_usage, stream_llm_async
@@ -192,13 +193,14 @@ def get_agent_system_prompt(agent_id: str) -> str:
     return instructions
 
 
-def _assembled_agent_system(agent_id: str, message: str) -> tuple[str, dict]:
-    """组装完整 Agent 上下文（基础指令 + 知识库 RAG + 技能 + 工具协议）。
+async def _assembled_agent_system(agent_id: str, message: str) -> tuple[str, dict]:
+    """组装完整 Agent 上下文（基础指令 + 知识库 RAG + 技能 + 工具协议 + MCP 工具）。
 
     Agent 不存在时透传 404；资源组装失败时降级为基础指令，不阻断执行。返回 (system, bundle)。
     """
     try:
         bundle = agent_runtime.load_agent_bundle(agent_id, message)
+        await agent_runtime.attach_mcp_tools(bundle)
         return agent_runtime.build_agent_system(bundle), bundle
     except HTTPException:
         raise
@@ -257,7 +259,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
         raise HTTPException(400, "消息不能为空")
 
     start = time.time()
-    system, bundle = _assembled_agent_system(agent_id, message)
+    system, bundle = await _assembled_agent_system(agent_id, message)
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
     user_id = req.get("user_id", "")
@@ -281,8 +283,9 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
             result = call_llm(system, message, max_tokens=2000)
 
         # 工具调用循环（最多 2 轮）：解析指令 → 真实执行 → 结果回喂 → 最终答案
+        mcp_servers_by_id = {s.get("id"): s for s in (bundle.get("mcp_servers") or [])}
         tools_used: list[str] = []
-        if runnable:
+        if runnable or mcp_servers_by_id:
             base_msgs = (
                 build_conversation_messages(conversation_id=conv_id, system_prompt="")
                 if conv_id
@@ -292,12 +295,15 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
             )
             for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
                 directives = agent_runtime.parse_tool_directives(result, runnable)
-                if not directives:
+                mcp_dirs = agent_runtime.parse_mcp_directives(result, set(mcp_servers_by_id), bundle.get("mcp_tools"))
+                if not directives and not mcp_dirs:
                     break
                 tools_used.extend(name for name, _ in directives)
                 exec_results = []
                 for name, arg in directives:
                     exec_results.append(f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}")
+                for sid, mtool, margs in mcp_dirs:
+                    exec_results.append(f"[MCP {mtool} 执行结果]\n{await mcp_client.mcp_call_tool(mcp_servers_by_id[sid], mtool, margs)}")
                 result = call_llm(
                     "",
                     "",
@@ -307,7 +313,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
                         + [
                             {"role": "user", "content": message},
                             {"role": "assistant", "content": result},
-                            {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。"},
+                            {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"},
                         ]
                     ),
                 )
@@ -371,7 +377,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
     user_id = req.get("user_id", "")
-    system, bundle = _assembled_agent_system(agent_id, message)
+    system, bundle = await _assembled_agent_system(agent_id, message)
     runnable = bundle.get("runnable_tools") or set()
     start = time.time()
 
@@ -395,9 +401,10 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
             else:
                 result = await call_llm_async(system, message, max_tokens=2000)
 
-            # 工具调用循环：解析指令 → 真实执行 → SSE tool 事件 → 结果回喂
+            # 工具调用循环：解析指令 → 真实执行 → SSE tool 事件 → 结果回喂（含 MCP）
+            mcp_servers_by_id = {s.get("id"): s for s in (bundle.get("mcp_servers") or [])}
             tools_used: list[str] = []
-            if runnable:
+            if runnable or mcp_servers_by_id:
                 base_msgs = (
                     build_conversation_messages(conversation_id=conv_id, system_prompt="")
                     if conv_id
@@ -407,7 +414,8 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 )
                 for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
                     directives = agent_runtime.parse_tool_directives(result, runnable)
-                    if not directives:
+                    mcp_dirs = agent_runtime.parse_mcp_directives(result, set(mcp_servers_by_id), bundle.get("mcp_tools"))
+                    if not directives and not mcp_dirs:
                         break
                     exec_results = []
                     for name, arg in directives:
@@ -416,6 +424,9 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                         exec_results.append(
                             f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}"
                         )
+                    for sid, mtool, margs in mcp_dirs:
+                        yield _sse_event("tool", {"tool": f"MCP:{mtool}", "input": json.dumps(margs, ensure_ascii=False)[:200]})
+                        exec_results.append(f"[MCP {mtool} 执行结果]\n{await mcp_client.mcp_call_tool(mcp_servers_by_id[sid], mtool, margs)}")
                     result = await call_llm_async(
                         "",
                         "",
@@ -425,7 +436,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                             + [
                                 {"role": "user", "content": message},
                                 {"role": "assistant", "content": result},
-                                {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。"},
+                                {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"},
                             ]
                         ),
                     )
@@ -531,16 +542,25 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
         runnable: set[str] = set()
         try:
             bundle = agent_runtime.load_agent_bundle(agent["id"], prompt)
+            await agent_runtime.attach_mcp_tools(bundle)
             system = agent_runtime.build_agent_system(bundle)
             if team_instructions:
                 system += f"\n\n## 团队协作规则\n{team_instructions}"
             runnable = set(bundle.get("runnable_tools") or [])
-            loop = await agent_runtime.execute_tool_loop(system, prompt, runnable, user_id="team")
+            loop = await agent_runtime.execute_tool_loop(
+                system,
+                prompt,
+                runnable,
+                user_id="team",
+                mcp_servers=bundle.get("mcp_servers"),
+                mcp_tools=bundle.get("mcp_tools"),
+            )
             return {
                 "agent_id": agent["id"],
                 "name": agent["name"],
                 "result": loop["result"],
                 "tools_used": loop["tools_used"],
+                "mcp_calls": loop["mcp_calls"],
             }
         except HTTPException:
             pass  # Agent 行缺失 → 降级为纯文本指令

@@ -493,14 +493,19 @@ class WorkflowExecutor:
         tools_used: list = []
         if agent:
             try:
-                # 完整 bundle：指令 + 知识库 RAG + 技能 + 工具清单；工具可执行时走 ≤2 轮调用循环
+                # 完整 bundle：指令 + 知识库 RAG + 技能 + 工具清单 + MCP 工具；工具可执行时走 ≤2 轮调用循环
                 bundle = agent_runtime.load_agent_bundle(agent["id"], message)
+                await agent_runtime.attach_mcp_tools(bundle)
                 system = agent_runtime.build_agent_system(bundle)
                 loop = await agent_runtime.execute_tool_loop(
-                    system, message, set(bundle.get("runnable_tools") or [])
+                    system,
+                    message,
+                    set(bundle.get("runnable_tools") or []),
+                    mcp_servers=bundle.get("mcp_servers"),
+                    mcp_tools=bundle.get("mcp_tools"),
                 )
                 result = loop["result"]
-                tools_used = loop["tools_used"]
+                tools_used = loop["tools_used"] + [f"MCP:{c}" for c in loop.get("mcp_calls", [])]
             except Exception as e:
                 logger.warning(f"agent node {agent_id} bundle 执行失败，降级为纯文本: {e}")
                 result = call_llm(agent["instructions"] or "你是一个智能助手", message, max_tokens=2000)
