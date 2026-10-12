@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Users,
   Plus,
@@ -93,18 +94,6 @@ const MEMBER_ROLES = [
   { value: 'executor', label: '执行者', icon: Bot, color: 'bg-emerald-50 text-emerald-700' },
   { value: 'reviewer', label: '审核者', icon: Shield, color: 'bg-amber-50 text-amber-700' },
 ]
-
-// 模拟活动日志（基于团队创建时间等生成）
-function generateActivityLog(team) {
-  const activities = []
-  const base = team.created_at
-  if (!base) return activities
-  activities.push({ text: `团队「${team.name}」创建`, time: base, type: 'create' })
-  if (team.last_run) {
-    activities.push({ text: '最近一次协作执行', time: team.last_run, type: 'run' })
-  }
-  return activities
-}
 
 function TeamCard({ team, onView, onEdit, onDelete, onRun, viewMode }) {
   const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
@@ -467,272 +456,8 @@ function TeamFormModal({ open, onClose, onSubmit, editing, defaults, agents, loa
   )
 }
 
-function TeamDetailModal({ open, onClose, team, members, onEdit, onDelete }) {
-  if (!team) return null
-  const modeMeta = MODE_META[team.mode] || MODE_META.coordinate
-  const memberIds = Array.isArray(team.members)
-    ? team.members
-    : team.members
-      ? JSON.parse(team.members)
-      : []
-  const activityLog = generateActivityLog(team)
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={team.name}
-      size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            关闭
-          </Button>
-          <Button
-            icon={Edit2}
-            onClick={() => {
-              onEdit(team)
-              onClose()
-            }}
-          >
-            编辑
-          </Button>
-          <Button
-            variant="danger"
-            icon={Trash2}
-            onClick={() => {
-              onDelete(team)
-              onClose()
-            }}
-          >
-            删除
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 pb-4 border-b border-gray-100">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-lg">
-            <Users className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="font-semibold text-gray-900 truncate">{team.name}</h3>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
-                {modeMeta.label}
-              </span>
-              <span className="text-xs text-gray-500">
-                创建于 {formatRelativeTime(team.created_at)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {team.description && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">描述</p>
-            <p className="text-sm text-gray-700">{team.description}</p>
-          </div>
-        )}
-
-        <div>
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-            成员（{memberIds.length}）
-          </p>
-          <div className="space-y-1.5">
-            {memberIds.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">暂无成员</p>
-            ) : members.length > 0 ? (
-              memberIds.map((id, idx) => {
-                const agent = members.find((m) => m.id === id)
-                // 根据索引分配角色标签（第一个为协调者，后面交替分配）
-                const roleIdx = idx === 0 ? 0 : idx % 2 === 1 ? 1 : 2
-                const role = MEMBER_ROLES[roleIdx]
-                return (
-                  <div key={id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
-                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-xs font-bold">
-                      {agent?.name?.[0]?.toUpperCase() || '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-800 truncate">
-                        {agent?.name || id}
-                      </p>
-                      {agent && <p className="text-xs text-gray-400 truncate">{agent.model}</p>}
-                    </div>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${role.color}`}>
-                      {role.label}
-                    </span>
-                  </div>
-                )
-              })
-            ) : (
-              <p className="text-sm text-gray-400 italic">加载成员信息中…</p>
-            )}
-          </div>
-        </div>
-
-        {/* 团队活动日志 */}
-        {activityLog.length > 0 && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1">
-              <Activity className="w-3 h-3" /> 活动日志
-            </p>
-            <div className="space-y-2">
-              {activityLog.map((log, i) => (
-                <div key={i} className="flex items-center gap-3 text-sm">
-                  <div
-                    className={`w-2 h-2 rounded-full flex-shrink-0 ${log.type === 'create' ? 'bg-blue-500' : 'bg-emerald-500'}`}
-                  />
-                  <span className="text-gray-700 flex-1">{log.text}</span>
-                  <span className="text-xs text-gray-400 flex-shrink-0">
-                    {formatRelativeTime(log.time)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {team.instructions && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
-              Team 指令
-            </p>
-            <pre className="bg-gray-50 rounded-xl p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
-              {team.instructions}
-            </pre>
-          </div>
-        )}
-      </div>
-    </Modal>
-  )
-}
-
-// Team 运行弹窗：输入任务 → 按模式协作 → 展示成员产出与最终结果
-function TeamRunModal({ team, onClose }) {
-  const toast = useToast()
-  const [message, setMessage] = useState('')
-  const [running, setRunning] = useState(false)
-  const [result, setResult] = useState(null)
-  const [error, setError] = useState(null)
-  const modeMeta = MODE_META[team?.mode] || MODE_META.coordinate
-
-  const run = async () => {
-    if (!message.trim()) {
-      toast.error('请输入任务描述')
-      return
-    }
-    setRunning(true)
-    setResult(null)
-    setError(null)
-    try {
-      const res = await api.post(`/api/teams/${team.id}/run`, { message: message.trim() })
-      setResult(res.data)
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message || '运行失败')
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  return (
-    <Modal
-      open={!!team}
-      onClose={onClose}
-      title={`运行 Team — ${team?.name || ''}`}
-      size="lg"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            关闭
-          </Button>
-          <Button variant="success" icon={Play} onClick={run} loading={running} disabled={running}>
-            开始协作
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        {team && (
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${modeMeta.color}`}>
-              {modeMeta.label}
-            </span>
-            <span>{team.description || ''}</span>
-          </div>
-        )}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">
-            任务描述 <span className="text-red-500">*</span>
-          </label>
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={4}
-            placeholder="例如：帮我们设计一个用户积分系统的技术方案，并输出测试计划…"
-            className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all text-sm"
-          />
-          <p className="text-xs text-gray-400 mt-1">
-            任务将按团队协作模式分发给成员 Agent，最终汇总为统一答案
-          </p>
-        </div>
-
-        {error && (
-          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-600">
-            {error}
-          </div>
-        )}
-
-        {result && (
-          <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-            {/* 成员产出 */}
-            {Array.isArray(result.members) && result.members.length > 0 && (
-              <div className="space-y-3">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                  成员产出（{result.members.length}）
-                </p>
-                {result.members.map((m, i) => (
-                  <div key={i} className="rounded-xl border border-gray-200 overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-100">
-                      <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-xs font-bold">
-                        {m.name?.[0]?.toUpperCase() || '?'}
-                      </div>
-                      <span className="text-sm font-medium text-gray-700 flex-1">{m.name}</span>
-                      {m.error ? (
-                        <XCircle className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                      )}
-                    </div>
-                    <div className="p-3 text-sm text-gray-700">
-                      <MarkdownRenderer content={m.result} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 最终结果 */}
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2 bg-emerald-100/60 border-b border-emerald-200">
-                <Users className="w-4 h-4 text-emerald-600" />
-                <span className="text-sm font-medium text-emerald-800">最终结果</span>
-                {result.elapsed != null && (
-                  <span className="text-xs text-emerald-600 ml-auto">耗时 {result.elapsed}s</span>
-                )}
-              </div>
-              <div className="p-3 text-sm text-gray-800">
-                <MarkdownRenderer content={result.result} />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </Modal>
-  )
-}
-
 export default function TeamsPage() {
+  const navigate = useNavigate()
   const toast = useToast()
   const [teams, setTeams] = useState([])
   const [agents, setAgents] = useState([])
@@ -743,10 +468,10 @@ export default function TeamsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingTeam, setEditingTeam] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [viewTarget, setViewTarget] = useState(null)
-  const [runTarget, setRunTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [formDefaults, setFormDefaults] = useState(null)
+
+  // v17.x：查看详情/执行 → 跳转独立详情页（/teams/:id），替代原弹窗
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -973,10 +698,10 @@ export default function TeamsPage() {
               key={team.id}
               team={team}
               members={agents}
-              onView={setViewTarget}
+              onView={(t) => navigate(`/teams/${t.id}`)}
               onEdit={openEdit}
               onDelete={setDeleteTarget}
-              onRun={setRunTarget}
+              onRun={(t) => navigate(`/teams/${t.id}`)}
               viewMode="grid"
             />
           ))}
@@ -988,10 +713,10 @@ export default function TeamsPage() {
               key={team.id}
               team={team}
               members={agents}
-              onView={setViewTarget}
+              onView={(t) => navigate(`/teams/${t.id}`)}
               onEdit={openEdit}
               onDelete={setDeleteTarget}
-              onRun={setRunTarget}
+              onRun={(t) => navigate(`/teams/${t.id}`)}
               viewMode="list"
             />
           ))}
@@ -1012,16 +737,6 @@ export default function TeamsPage() {
         loading={saving}
       />
 
-      <TeamDetailModal
-        open={!!viewTarget}
-        onClose={() => setViewTarget(null)}
-        team={viewTarget}
-        members={agents}
-        onEdit={openEdit}
-        onDelete={setDeleteTarget}
-      />
-
-      <TeamRunModal team={runTarget} onClose={() => setRunTarget(null)} />
 
       <ConfirmDialog
         open={!!deleteTarget}

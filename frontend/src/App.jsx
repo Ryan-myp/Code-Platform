@@ -28,6 +28,7 @@ const PlatformEvolutionPage = lazy(() => import('./pages/PlatformEvolutionPage')
 const KnowledgeBasesPage = lazy(() => import('./pages/KnowledgeBasesPage'))
 const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const TeamsPage = lazy(() => import('./pages/TeamsPage'))
+const TeamDetailPage = lazy(() => import('./pages/TeamDetailPage'))
 const SandboxPage = lazy(() => import('./pages/SandboxPage'))
 const MCPServersPage = lazy(() => import('./pages/MCPServersPage'))
 const ArtifactsPage = lazy(() => import('./pages/ArtifactsPage'))
@@ -319,6 +320,7 @@ export default function App() {
                             />
                             <Route path="/agents/:id" element={<AgentExecutePage />} />
                             <Route path="/teams" element={<TeamsPage />} />
+                            <Route path="/teams/:id" element={<TeamDetailPage />} />
                             <Route
                               path="/workflows"
                               element={

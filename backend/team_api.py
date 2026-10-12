@@ -7,6 +7,7 @@ v2 升级：
 - 邀请链接自动生成
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -22,6 +23,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/teams", tags=["团队管理"])
 
 
+def _validate_agent_members(conn, agent_ids: list[str]) -> list[str] | None:
+    """校验协作 Agent 成员 ID：返回不存在的 ID 列表（全部合法时返回 None）。"""
+    if not agent_ids:
+        return None
+    placeholders = ",".join("?" for _ in agent_ids)
+    rows = conn.execute(
+        f"SELECT id FROM agents WHERE id IN ({placeholders}) AND active=1",
+        agent_ids,
+    ).fetchall()
+    valid = {r["id"] for r in rows}
+    return [a for a in agent_ids if a not in valid]
+
+
+def _normalize_members(raw) -> list[str]:
+    """teams.members 字段在库里是 JSON 字符串，对外统一输出为数组。"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
 # ── 请求模型 ──────────────────────────────────────────────────
 
 
@@ -30,11 +57,13 @@ class TeamCreateRequest(BaseModel):
     description: str = ""
     plan: str = "pro"  # pro | vip
     seats: int = 1  # 初始席位数量
+    members: list[str] = []  # 协作 Agent 成员 ID
 
 
 class TeamUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
+    members: list[str] | None = None  # 协作 Agent 成员 ID（None=不修改）
 
 
 class MemberAddRequest(BaseModel):
@@ -75,6 +104,7 @@ async def list_teams(current_user: dict = require_auth()):
         teams = [dict(r) for r in rows]
         # 附加订阅摘要
         for t in teams:
+            t["members"] = _normalize_members(t.get("members"))
             t["is_subscribed"] = bool(t.get("subscription_ends_at"))
             if t.get("subscription_ends_at"):
                 try:
@@ -99,10 +129,18 @@ async def create_team(req: TeamCreateRequest, current_user: dict = require_auth(
         if req.seats < 1 or req.seats > 100:
             raise HTTPException(400, "席位数量须在 1-100 之间")
 
+        # 验证协作 Agent 成员存在且可用（去重保序）
+        members_json = "[]"
+        if req.members:
+            missing = _validate_agent_members(conn, list(dict.fromkeys(req.members)))
+            if missing:
+                raise HTTPException(400, f"Agent 不存在或已停用: {', '.join(missing)}")
+            members_json = json.dumps(list(dict.fromkeys(req.members)))
+
         conn.execute(
             """INSERT INTO teams (id, name, description, owner_id, plan, seats,
-               subscription_plan, subscription_interval, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               subscription_plan, subscription_interval, members, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 team_id,
                 req.name,
@@ -112,6 +150,7 @@ async def create_team(req: TeamCreateRequest, current_user: dict = require_auth(
                 req.seats,
                 req.plan,
                 "month",
+                members_json,
                 datetime.now().isoformat(),
             ),
         )
@@ -145,6 +184,8 @@ async def get_team(team_id: str, current_user: dict = require_auth()):
         team = conn.execute("SELECT * FROM teams WHERE id=?", (team_id,)).fetchone()
         if not team:
             raise HTTPException(404, "团队不存在")
+        team = dict(team)
+        team["members"] = _normalize_members(team.get("members"))
 
         members = conn.execute(
             """SELECT u.id, u.username, u.nickname, u.avatar, tm.role, tm.joined_at
@@ -184,6 +225,14 @@ async def update_team(team_id: str, req: TeamUpdateRequest, current_user: dict =
         if req.description is not None:
             updates.append("description=?")
             params.append(req.description)
+        if req.members is not None:
+            # 验证协作 Agent 成员存在且可用
+            if req.members:
+                missing = _validate_agent_members(conn, list(dict.fromkeys(req.members)))
+                if missing:
+                    raise HTTPException(400, f"Agent 不存在或已停用: {', '.join(missing)}")
+            updates.append("members=?")
+            params.append(json.dumps(list(dict.fromkeys(req.members))))
 
         if updates:
             params.append(team_id)
@@ -385,11 +434,13 @@ async def get_team_dashboard(team_id: str, current_user: dict = require_auth()):
 
         usage = _get_team_usage_stats(conn, team_id)
 
-        # 成员活跃统计
+        # 成员活跃统计（v17.x 修复：原查询未按 team_id 过滤，所有团队共享同一份统计）
         members = conn.execute(
             """SELECT tm.role, COUNT(*) as cnt
                FROM team_members tm
-               GROUP BY tm.role"""
+               WHERE tm.team_id = ?
+               GROUP BY tm.role""",
+            (team_id,),
         ).fetchall()
         role_stats = {r["role"]: r["cnt"] for r in members}
 
@@ -565,6 +616,10 @@ def ensure_team_tables():
             pass
         try:
             conn.execute("ALTER TABLE teams ADD COLUMN invite_code TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE teams ADD COLUMN members TEXT DEFAULT '[]'")
         except Exception:
             pass
 

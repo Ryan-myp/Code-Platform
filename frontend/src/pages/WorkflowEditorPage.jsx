@@ -16,8 +16,6 @@ import {
   Image as ImageIcon,
   Video,
   Music,
-  CheckCircle2,
-  XCircle,
   ZoomIn,
   ZoomOut,
   RefreshCw,
@@ -25,13 +23,15 @@ import {
   Undo2,
   Redo2,
   X,
+  Loader2,
   Workflow,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
+import { connectWs } from '../lib/ws'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
-import { Modal, Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
+import { Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 
 // 节点类型定义（与后端 workflows/executor.py 支持的节点一一对应）
@@ -149,10 +149,15 @@ export default function WorkflowEditorPage() {
   const [saving, setSaving] = useState(false)
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
-  const [showRunDialog, setShowRunDialog] = useState(false)
   const [runInput, setRunInput] = useState('')
   const [deleteNodeTarget, setDeleteNodeTarget] = useState(null)
   const [agents, setAgents] = useState([])
+
+  // v17.x 内嵌执行控制台：替代原「弹窗输入 + 弹窗结果」，WS 实时节点状态
+  const [showRunConsole, setShowRunConsole] = useState(false)
+  const [runStatus, setRunStatus] = useState('idle') // idle | running | done | error
+  const [liveNodes, setLiveNodes] = useState({}) // node_id -> { status, result }
+  const [consoleCollapsed, setConsoleCollapsed] = useState(false)
 
   // 画布交互
   const [dragging, setDragging] = useState(null)
@@ -416,7 +421,7 @@ export default function WorkflowEditorPage() {
     }
   }
 
-  // 运行工作流
+  // 运行工作流（v17.x：内嵌控制台，非弹窗；执行期间 WS 实时推送节点完成事件）
   const runWorkflow = async () => {
     if (!workflow) return
     if (nodes.length === 0) {
@@ -427,18 +432,39 @@ export default function WorkflowEditorPage() {
       toast.error('请输入执行内容')
       return
     }
-    setShowRunDialog(false)
     setRunning(true)
+    setRunStatus('running')
+    setRunResult(null)
+    setLiveNodes({})
+    setConsoleCollapsed(false)
     try {
       const res = await api.post(`/api/workflows/${workflow.id}/run`, { message: runInput.trim() })
       setRunResult(res.data)
-      setRunInput('')
+      setRunStatus('done')
     } catch (e) {
+      setRunStatus('error')
       toast.error(`执行失败：${e.message}`)
     } finally {
       setRunning(false)
     }
   }
+
+  // WS 订阅稳定频道 workflow-live:{workflow_id}：执行期间实时看到节点逐个完成
+  useEffect(() => {
+    if (!workflow || !showRunConsole) return undefined
+    const unsubscribe = connectWs(`workflow-live:${workflow.id}`, {
+      onMessage: (msg) => {
+        const { event, data } = msg || {}
+        if (event === 'node_completed' && data?.node_id) {
+          setLiveNodes((prev) => ({
+            ...prev,
+            [data.node_id]: { status: data.status, result: data.result },
+          }))
+        }
+      },
+    })
+    return unsubscribe
+  }, [workflow?.id, showRunConsole])
 
   // 导出工作流
   const exportWorkflow = () => {
@@ -617,7 +643,7 @@ export default function WorkflowEditorPage() {
           >
             <span className="hidden sm:inline">保存</span>
           </Button>
-          <Button variant="success" size="sm" icon={Play} onClick={() => setShowRunDialog(true)}>
+          <Button variant="success" size="sm" icon={Play} onClick={() => setShowRunConsole(true)}>
             <span className="hidden sm:inline">执行</span>
           </Button>
         </div>
@@ -872,9 +898,141 @@ export default function WorkflowEditorPage() {
             {'{input}'} 引用输入
           </div>
         </div>
-      </div>
+        {/* 内嵌执行控制台（v17.x：替代原弹窗输入/结果，执行期间可继续编辑画布） */}
+        {showRunConsole && (
+          <div className="border-t border-gray-200 bg-white flex-shrink-0">
+            <div
+              className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 cursor-pointer select-none"
+              onClick={() => setConsoleCollapsed((c) => !c)}
+            >
+              <Play className="w-4 h-4 text-emerald-600" />
+              <span className="text-sm font-medium text-gray-800">执行控制台</span>
+              {runStatus === 'running' && (
+                <span className="flex items-center gap-1.5 text-xs text-emerald-600">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  执行中…
+                </span>
+              )}
+              {runStatus === 'done' && runResult?.run?.status && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                  {runResult.run.status}
+                  {runResult.elapsed != null && <span className="tabular-nums ml-1">{runResult.elapsed}s</span>}
+                </span>
+              )}
+              {runStatus === 'error' && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">失败</span>
+              )}
+              <span className="ml-auto text-xs text-gray-400">{consoleCollapsed ? '展开' : '收起'}</span>
+            </div>
+            {!consoleCollapsed && (
+              <div className="px-4 py-3 space-y-3 max-h-72 overflow-y-auto">
+                {/* 实时节点状态（WS workflow-live 频道） */}
+                {(runStatus === 'running' || Object.keys(liveNodes).length > 0) && nodes.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {nodes.map((n) => {
+                      const lv = liveNodes[n.id]
+                      const st = runStatus === 'done' ? (runResult?.nodes?.find((r) => r.node_id === n.id)?.status || lv?.status) : lv?.status
+                      const label = n.label || n.name || n.id
+                      const cls =
+                        st === 'success'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : st === 'error' || st === 'failed'
+                            ? 'bg-red-50 text-red-600 border-red-200'
+                            : runStatus === 'running'
+                              ? 'bg-sky-50 text-sky-600 border-sky-200'
+                              : 'bg-gray-50 text-gray-400 border-gray-200'
+                      const mark =
+                        st === 'success' ? '✓' : st === 'error' || st === 'failed' ? '✕' : runStatus === 'running' ? '…' : '·'
+                      const resultText = lv?.result && typeof lv.result === 'object' ? JSON.stringify(lv.result).slice(0, 160) : null
+                      return (
+                        <span
+                          key={n.id}
+                          title={resultText || (runResult?.nodes?.find((r) => r.node_id === n.id)?.summary || '')}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs ${cls}`}
+                        >
+                          <span className="font-medium">{label}</span>
+                          <span>{mark}</span>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
 
-      {/* 右侧节点配置面板 */}
+                {/* 执行输入 + 按钮 */}
+                <div className="flex gap-2 items-start">
+                  <textarea
+                    value={runInput}
+                    onChange={(e) => setRunInput(e.target.value)}
+                    placeholder="输入执行内容，如：帮我分析用户登录功能的需求...（Ctrl+Enter 快速执行）"
+                    rows={2}
+                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 resize-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault()
+                        runWorkflow()
+                      }
+                    }}
+                  />
+                  <div className="flex flex-col gap-1.5 flex-shrink-0">
+                    <Button variant="success" icon={Play} loading={running} onClick={runWorkflow}>
+                      执行
+                    </Button>
+                    <button
+                      onClick={() => {
+                        setShowRunConsole(false)
+                        setRunStatus('idle')
+                        setLiveNodes({})
+                      }}
+                      className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+
+                {/* 最终结果 */}
+                {runResult && (
+                  <div className="space-y-2">
+                    {runResult.nodes?.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-gray-500">节点执行情况</p>
+                        {runResult.nodes.map((n, idx) => (
+                          <div
+                            key={idx}
+                            className={`px-3 py-2 rounded-lg border text-xs ${n.status === 'error' ? 'border-red-200 bg-red-50/60 text-red-600' : 'border-gray-100 bg-gray-50 text-gray-600'}`}
+                          >
+                            <span className="font-medium text-gray-700">{n.label || n.node_id}</span>
+                            <span className="ml-2">{n.summary}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(() => {
+                      const m =
+                        typeof runResult.result === 'string'
+                          ? runResult.result.match(/\/api\/image-factory\/images\/[\w.-]+/)
+                          : null
+                      return m ? (
+                        <img src={m[0]} alt="生成的图片" className="rounded-lg border border-gray-200 w-full" />
+                      ) : null
+                    })()}
+                    <div className="border border-gray-100 rounded-lg p-3 bg-gray-50 max-h-48 overflow-y-auto">
+                      <MarkdownRenderer
+                        content={
+                          typeof runResult.result === 'string'
+                            ? runResult.result
+                            : '```json\n' + JSON.stringify(runResult.result, null, 2) + '\n```'
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+                {runStatus === 'error' && <p className="text-xs text-red-500">执行失败，请检查节点配置后重试</p>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       {selectedNodeData && (
         <aside className="w-64 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
           <div className="p-4 border-b border-gray-200 flex items-center justify-between">
@@ -1335,139 +1493,6 @@ export default function WorkflowEditorPage() {
         confirmLabel="删除"
       />
 
-      {/* 运行输入对话框 */}
-      <Modal
-        open={showRunDialog}
-        onClose={() => {
-          setShowRunDialog(false)
-          setRunInput('')
-        }}
-        title={`执行工作流：${workflow?.name || ''}`}
-        size="md"
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowRunDialog(false)
-                setRunInput('')
-              }}
-            >
-              取消
-            </Button>
-            <Button variant="success" icon={Play} loading={running} onClick={runWorkflow}>
-              执行
-            </Button>
-          </div>
-        }
-      >
-        <div className="space-y-3">
-          <label className="block text-sm font-medium text-gray-700">请输入执行内容或指令</label>
-          <textarea
-            value={runInput}
-            onChange={(e) => setRunInput(e.target.value)}
-            placeholder="例如：帮我分析用户登录功能的需求..."
-            className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 resize-none"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault()
-                runWorkflow()
-              }
-            }}
-          />
-          <p className="text-xs text-gray-400">提示：按 Ctrl+Enter 快速执行</p>
-        </div>
-      </Modal>
-
-      {/* 执行结果 */}
-      <Modal
-        open={!!runResult}
-        onClose={() => setRunResult(null)}
-        title="工作流执行结果"
-        size="lg"
-        footer={<Button onClick={() => setRunResult(null)}>关闭</Button>}
-      >
-        {runResult ? (
-          <div className="space-y-3">
-            {runResult.engine && (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="px-2 py-0.5 bg-gray-100 rounded text-gray-600">
-                  引擎: {runResult.engine}
-                </span>
-                {runResult.elapsed != null && (
-                  <span className="px-2 py-0.5 bg-gray-100 rounded text-gray-600">
-                    耗时: {runResult.elapsed}s
-                  </span>
-                )}
-                {runResult.run?.status && (
-                  <span className="px-2 py-0.5 bg-emerald-100 rounded text-emerald-700">
-                    {runResult.run.status}
-                  </span>
-                )}
-              </div>
-            )}
-            {runResult.run && (
-              <div className="p-3 bg-gray-50 rounded-lg text-xs text-gray-600 space-y-1">
-                {runResult.run.id && <div>运行 ID: {runResult.run.id}</div>}
-                {runResult.run.started_at && (
-                  <div>开始: {formatDateTime(runResult.run.started_at)}</div>
-                )}
-              </div>
-            )}
-            {runResult.nodes?.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-700">节点执行情况</p>
-                {runResult.nodes.map((n, idx) => (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-xl border ${n.status === 'error' ? 'border-red-200 bg-red-50/60' : 'border-gray-200 bg-white'}`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium text-gray-700">
-                        {n.label || n.node_id}
-                      </span>
-                      {n.status === 'error' ? (
-                        <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                      )}
-                    </div>
-                    <p
-                      className={`text-xs leading-relaxed ${n.status === 'error' ? 'text-red-600' : 'text-gray-600'}`}
-                    >
-                      {n.summary}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-            {/* 图片生成结果直接预览 */}
-            {(() => {
-              const m =
-                typeof runResult.result === 'string'
-                  ? runResult.result.match(/\/api\/image-factory\/images\/[\w.-]+/)
-                  : null
-              return m ? (
-                <img
-                  src={m[0]}
-                  alt="生成的图片"
-                  className="rounded-lg border border-gray-200 w-full"
-                />
-              ) : null
-            })()}
-            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 max-h-[50vh] overflow-y-auto">
-              <MarkdownRenderer
-                content={
-                  typeof runResult.result === 'string'
-                    ? runResult.result
-                    : '```json\n' + JSON.stringify(runResult.result, null, 2) + '\n```'
-                }
-              />
-            </div>
-          </div>
-        ) : null}
-      </Modal>
     </div>
   )
 }

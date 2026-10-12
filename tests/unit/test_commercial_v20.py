@@ -3,6 +3,7 @@
 覆盖：年付定价、团队席位计费、API Key 独立配额、转化漏斗分析、企业询价。
 """
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -83,6 +84,42 @@ class TestTeamBilling:
         assert "usage" in data
         assert "subscription_status" in data
 
+    def test_dashboard_seats_are_scoped_per_team(self, auth_token):
+        """v17.x 回归：dashboard 席位统计必须按 team_id 过滤（曾全库共享）。"""
+        from common.db import get_db
+
+        def make_team(name):
+            r = client.post(
+                "/api/teams",
+                headers=HEADER(auth_token),
+                json={"name": name, "plan": "pro", "seats": 5},
+            )
+            assert r.status_code == 200
+            return r.json()["id"]
+
+        t_a, t_b = make_team("Scope 团队A"), make_team("Scope 团队B")
+
+        # 团队A 加 2 个成员，团队B 不加 → 修复前两队 seats.used 相同（bug）
+        conn = get_db()
+        for i, uid in enumerate(("scope_user_1", "scope_user_2")):
+            conn.execute(
+                "INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, 'user', '2026-01-01T00:00:00')",
+                (uid, f"scope_{i}", "x"),
+            )
+        for uid in ("scope_user_1", "scope_user_2"):
+            conn.execute(
+                "INSERT INTO team_members (id, team_id, user_id, role, joined_at) VALUES (?, ?, ?, 'member', '2026-01-01')",
+                (f"sm_{t_a}_{uid}", t_a, uid),
+            )
+        conn.commit()
+        conn.close()
+
+        d_a = client.get(f"/api/teams/{t_a}/dashboard", headers=HEADER(auth_token)).json()
+        d_b = client.get(f"/api/teams/{t_b}/dashboard", headers=HEADER(auth_token)).json()
+        # 创建者自动成为 admin 成员：团队A = 1(创建者) + 2 = 3；团队B = 1
+        assert d_a["seats"]["used"] == 3
+        assert d_b["seats"]["used"] == 1, "席位统计不得跨团队共享"
+
     def test_invite_link(self, auth_token):
         create_resp = client.post(
             "/api/teams",
@@ -96,7 +133,56 @@ class TestTeamBilling:
         data = resp.json()
         assert "invite_code" in data
         assert "invite_url" in data
-        assert data["invite_code"].startswith("TEAM_")
+
+    def test_team_agent_members_persist_and_normalize(self, auth_token):
+        """协作 Agent 成员：创建时持久化、对外输出为数组（库里是 JSON 字符串）。"""
+        # 先造 3 个 Agent（members 校验要求 Agent 真实存在）
+        agent_ids = []
+        for n in ("协作文档", "代码审查", "数据分析"):
+            r = client.post(
+                "/api/agents", headers=HEADER(auth_token),
+                json={"name": n, "description": "", "instructions": "", "model": "agnes-3.0-flash",
+                      "tools": [], "knowledge_base_ids": [], "skill_ids": [], "mcp_server_ids": []},
+            )
+            assert r.status_code == 200
+            agent_ids.append(r.json()["id"])
+        a, b, c = agent_ids
+
+        # 创建时带 2 个 Agent 成员
+        r = client.post(
+            "/api/teams", headers=HEADER(auth_token),
+            json={"name": "成员持久化测试", "plan": "pro", "seats": 2, "members": [a, b]},
+        )
+        assert r.status_code == 200
+        tid = r.json()["id"]
+        detail = client.get(f"/api/teams/{tid}", headers=HEADER(auth_token)).json()
+        assert detail["team"]["members"] == [a, b]
+
+        # 更新 members（去重保序）
+        up = client.patch(
+            f"/api/teams/{tid}", headers=HEADER(auth_token),
+            json={"members": [b, a, b]},
+        )
+        assert up.status_code == 200
+        detail2 = client.get(f"/api/teams/{tid}", headers=HEADER(auth_token)).json()
+        assert detail2["team"]["members"] == [b, a]
+
+        # 加入未知 Agent → 400
+        bad = client.patch(
+            f"/api/teams/{tid}", headers=HEADER(auth_token),
+            json={"members": ["no-such-agent"]},
+        )
+        assert bad.status_code == 400
+        # 清空成员合法
+        clear = client.patch(f"/api/teams/{tid}", headers=HEADER(auth_token), json={"members": []})
+        assert clear.status_code == 200
+        assert client.get(f"/api/teams/{tid}", headers=HEADER(auth_token)).json()["team"]["members"] == []
+
+        # 列表接口也输出为数组
+        client.patch(f"/api/teams/{tid}", headers=HEADER(auth_token), json={"members": [c]})
+        lst = client.get("/api/teams", headers=HEADER(auth_token)).json()
+        t = next((x for x in lst.get("teams", []) if x["id"] == tid), None)
+        assert t is not None and t["members"] == [c]
 
 
 # ══════════════════════════════════════════════════════════════

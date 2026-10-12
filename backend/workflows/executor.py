@@ -294,11 +294,10 @@ class WorkflowExecutor:
         try:
             from realtime import manager
 
-            await manager.send_progress(
-                ws_channel,
-                "node_completed",
-                {"node_id": node_id, "status": status, "result": results[node_id]},
-            )
+            payload = {"node_id": node_id, "status": status, "result": results[node_id]}
+            await manager.send_progress(ws_channel, "node_completed", payload)
+            if getattr(self, "live_channel", None):
+                await manager.send_progress(self.live_channel, "node_completed", payload)
         except Exception:
             pass
         return node_id
@@ -357,6 +356,9 @@ class WorkflowExecutor:
         self.running = True
         self.current_run = run_id
         ws_channel = f"workflow:{run_id}"
+        # v17.x 稳定频道：编辑器内嵌执行控制台可预订阅 workflow-live:{workflow_id}，
+        # 在执行期间实时看到每个节点的完成事件（run 级频道需等 run_id 生成后才可订阅）
+        self.live_channel = f"workflow-live:{workflow_id}"
 
         try:
             results = {}
