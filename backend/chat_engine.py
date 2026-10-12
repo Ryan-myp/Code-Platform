@@ -518,18 +518,39 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
     start = time.time()
 
     async def _run_member(agent: dict, task: str, extra_context: str = "") -> dict:
-        """单个成员 Agent 执行：系统指令 = 团队成员指令 + 团队协作规则。"""
-        system = agent["instructions"] or "你是一个智能助手"
-        if team_instructions:
-            system = f"{system}\n\n## 团队协作规则\n{team_instructions}"
+        """单个成员 Agent 执行：完整 bundle（指令 + RAG + 技能 + 工具循环）。
+
+        成员以自身绑定的知识库/技能/工具真实参与协作；工具可执行时走 ≤2 轮调用循环。
+        Agent 行缺失时降级为纯文本指令路径，不阻断团队执行。
+        """
         prompt = f"团队任务：{task}"
         if extra_context:
             prompt += f"\n\n前序成员产出（供参考）：\n{extra_context}"
+        base = agent["instructions"] or "你是一个智能助手"
+        system = f"{base}\n\n## 团队协作规则\n{team_instructions}" if team_instructions else base
+        runnable: set[str] = set()
+        try:
+            bundle = agent_runtime.load_agent_bundle(agent["id"], prompt)
+            system = agent_runtime.build_agent_system(bundle)
+            if team_instructions:
+                system += f"\n\n## 团队协作规则\n{team_instructions}"
+            runnable = set(bundle.get("runnable_tools") or [])
+            loop = await agent_runtime.execute_tool_loop(system, prompt, runnable, user_id="team")
+            return {
+                "agent_id": agent["id"],
+                "name": agent["name"],
+                "result": loop["result"],
+                "tools_used": loop["tools_used"],
+            }
+        except HTTPException:
+            pass  # Agent 行缺失 → 降级为纯文本指令
+        except Exception as e:
+            return {"agent_id": agent["id"], "name": agent["name"], "result": f"（执行失败：{e}）", "error": str(e), "tools_used": []}
         try:
             result = await call_llm_async(system, prompt, max_tokens=2000)
-            return {"agent_id": agent["id"], "name": agent["name"], "result": result}
+            return {"agent_id": agent["id"], "name": agent["name"], "result": result, "tools_used": []}
         except Exception as e:
-            return {"agent_id": agent["id"], "name": agent["name"], "result": f"（执行失败：{e}）", "error": str(e)}
+            return {"agent_id": agent["id"], "name": agent["name"], "result": f"（执行失败：{e}）", "error": str(e), "tools_used": []}
 
     member_results = []
     coordinator_result = ""

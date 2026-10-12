@@ -23,6 +23,8 @@ import re
 
 from fastapi import HTTPException
 
+from common.llm import call_llm_async
+
 logger = logging.getLogger(__name__)
 
 _MAX_TOOL_ROUNDS = 2
@@ -199,6 +201,42 @@ def parse_tool_directives(text: str, runnable_tools: set[str]) -> list[tuple[str
 def strip_tool_directives(text: str) -> str:
     """移除协议块，给用户干净答案。"""
     return _TOOL_DIRECTIVE_RE.sub("", text or "").strip()
+
+
+async def execute_tool_loop(
+    system: str,
+    prompt: str,
+    runnable_tools: set[str],
+    *,
+    user_id: str = "default",
+    max_tokens: int = 2000,
+    llm_call=None,
+) -> dict:
+    """可复用的 ≤2 轮工具调用循环（与 chat_engine.run_agent 同语义）。
+
+    返回 {result（已剥离 [TOOL:] 指令）, tools_used, tool_logs}。
+    供团队协作执行等场景复用；llm_call 可注入以便测试。
+    """
+    llm = llm_call if llm_call is not None else call_llm_async
+    tools_used: list[str] = []
+    tool_logs: list[str] = []
+    text = await llm(system, prompt, max_tokens=max_tokens)
+    for _ in range(_MAX_TOOL_ROUNDS):
+        directives = parse_tool_directives(text, runnable_tools)
+        if not directives:
+            break
+        exec_results = []
+        for name, arg in directives:
+            tools_used.append(name)
+            out = await execute_tool_async(name, arg, user_id)
+            exec_results.append(f"[工具 {name} 执行结果]\n{out}")
+            tool_logs.append(f"{name}: {out[:300]}")
+        text = await llm(
+            system,
+            f"{prompt}\n\n" + "\n\n".join(exec_results) + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] 指令）。",
+            max_tokens=max_tokens,
+        )
+    return {"result": strip_tool_directives(text), "tools_used": tools_used, "tool_logs": tool_logs}
 
 
 async def execute_tool_async(tool_id: str, tool_input: str, user_id: str = "default") -> str:

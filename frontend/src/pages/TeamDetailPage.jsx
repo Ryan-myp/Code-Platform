@@ -386,8 +386,17 @@ export default function TeamDetailPage() {
                 </div>
                 {runResult.members?.map((m, i) => (
                   <div key={i} className="px-3 py-2 rounded-lg border border-gray-100 bg-gray-50 text-xs">
-                    <span className={`font-medium ${m.error ? 'text-red-600' : 'text-gray-700'}`}>{m.name}</span>
-                    <span className="ml-2 text-gray-600 break-all">{m.result}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`font-medium ${m.error ? 'text-red-600' : 'text-gray-700'}`}>{m.name}</span>
+                      {Array.isArray(m.tools_used) && m.tools_used.length > 0 && (
+                        <span className="inline-flex items-center gap-1 flex-wrap" title="本成员执行中真实调用的工具">
+                          {m.tools_used.map((t, j) => (
+                            <span key={j} className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 whitespace-nowrap">🛠 {t}</span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                    <span className="mt-1 block text-gray-600 break-all">{m.result}</span>
                   </div>
                 ))}
                 <div className="border border-gray-100 rounded-lg p-3 bg-gray-50 max-h-64 overflow-y-auto">
