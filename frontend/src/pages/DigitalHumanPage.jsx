@@ -1495,7 +1495,7 @@ const fmtDaysLeft = (days) => {
           {/* 数字人形象 */}
           <Card>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                 <UserCircle className="w-4 h-4 text-blue-500" /> 数字人形象
               </h3>
               <div className="flex items-center gap-1.5">
@@ -1689,7 +1689,7 @@ const fmtDaysLeft = (days) => {
           {/* 声音选择 */}
           <Card>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                 <Mic2 className="w-4 h-4 text-pink-500" /> 声音选择
               </h3>
               <button
@@ -1910,8 +1910,8 @@ const fmtDaysLeft = (days) => {
         <div className="space-y-4">
           <Card>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-violet-500" /> 口播文案
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
+                <FileText className="w-4 h-4 text-violet-500 flex-shrink-0" /> 口播文案
                 <span className="text-xs font-normal text-gray-400">（{text.length} 字）</span>
               </h3>
               <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -2306,7 +2306,7 @@ ${batchTexts
           {(currentTask || taskList.length > 0) && (
             <Card className="mt-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                   <ListChecks className="w-4 h-4 text-violet-500" /> 我的生成任务
                 </h3>
                 <span className="text-[10px] text-gray-400">
@@ -2407,7 +2407,7 @@ ${batchTexts
           {/* 预览区 */}
           <Card>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                 <Eye className="w-4 h-4 text-violet-500" /> 实时预览
                 {talking && (
                   <span className="text-[10px] text-emerald-500 font-normal animate-pulse">
@@ -2768,7 +2768,7 @@ ${batchTexts
           {portraitList.some((p) => p.exists) && (
             <Card>
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                   <Camera className="w-4 h-4 text-violet-500" /> AI写真画廊
                   <Badge color="purple">
                     {portraitList.filter((p) => p.exists).length} 张已生成
@@ -2814,7 +2814,7 @@ ${batchTexts
           {/* 历史记录 */}
           <Card>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                 <Clock className="w-4 h-4 text-gray-500" /> 历史记录（{recordTotal}）
               </h3>
               <div className="flex items-center gap-1.5">

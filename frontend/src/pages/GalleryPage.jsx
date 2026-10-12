@@ -89,7 +89,7 @@ function WorkCard({ work, onLike, onComment, onPreview }) {
             </div>
           ))}
         {work.type === 'video' && (
-          <div className="relative w-full aspect-video bg-gradient-to-br from-gray-800 to-gray-900 group/video">
+          <div className="relative w-full aspect-[4/3] bg-gradient-to-br from-gray-800 to-gray-900 group/video">
             {work.thumbnail ? (
               <img
                 src={mediaFull(work.thumbnail)}
