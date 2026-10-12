@@ -161,6 +161,55 @@ def _stdio_rpc(server: dict, method: str, params: dict, is_notification: bool = 
     return None
 
 
+async def _http_rpc(server: dict, method: str, params: dict) -> dict:
+    """HTTP/SSE 传输公共路径：initialize 握手 → 目标请求（携带 Mcp-Session-Id）。
+
+    返回解析后的最终响应（无法解析时 {}）；连接/请求异常直接上抛由调用方捕获降级。
+    """
+    import httpx
+
+    from mcp_api import _mcp_auth_headers
+
+    url = (server.get("url") or "").strip()
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        **_mcp_auth_headers(server.get("auth_type") or "none", json.loads(server.get("auth_config") or "{}")),
+    }
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "xiaotuan", "version": "1.0"},
+            },
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": method, "params": params or {}},
+    ]
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.post(url, headers=headers, json=requests[0])
+        session_id = resp.headers.get("Mcp-Session-Id", "")
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+        resp = await client.post(url, headers=headers, json=requests[1])
+    return _parse_sse_maybe(resp.text) or {}
+
+
+def _http_transport(server: dict) -> bool:
+    transport = (server.get("transport_type") or "stdio").lower()
+    return "http" in transport or "sse" in transport or transport == "streamable"
+
+
+def _extract_tools(raw: dict | None) -> list[dict]:
+    """tools/list 响应 → 合法工具列表（形状异常返回 []）。"""
+    result = (raw.get("result") or {}) if isinstance(raw, dict) else {}
+    tools = result.get("tools") if isinstance(result, dict) else None
+    return [t for t in (tools or []) if isinstance(t, dict) and t.get("name")]
+
+
 async def mcp_list_tools(server: dict) -> list[dict]:
     """真实 tools/list。失败返回 []（由调用方决定降级文案）。
 
@@ -169,8 +218,7 @@ async def mcp_list_tools(server: dict) -> list[dict]:
     """
     import asyncio
 
-    transport = (server.get("transport_type") or "stdio").lower()
-    if "http" in transport or "sse" in transport or transport == "streamable":
+    if _http_transport(server):
         url = (server.get("url") or "").strip()
         if not url:
             return []
@@ -183,51 +231,12 @@ async def mcp_list_tools(server: dict) -> list[dict]:
         hit = _TOOLS_CACHE.get(key)
         if hit and now - hit[0] < _TOOLS_CACHE_TTL:
             return hit[1]
-
-        def _extract(raw: dict) -> list[dict]:
-            result = (raw.get("result") or {}) if isinstance(raw, dict) else {}
-            tools = result.get("tools") if isinstance(result, dict) else None
-            return [t for t in (tools or []) if isinstance(t, dict) and t.get("name")]
-
-        tools: list[dict] = []
-        from mcp_api import _mcp_auth_headers
-
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream",
-            **_mcp_auth_headers(server.get("auth_type") or "none", json.loads(server.get("auth_config") or "{}")),
-        }
         try:
-            import httpx
-
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {"name": "xiaotuan", "version": "1.0"},
-                        },
-                    },
-                )
-                session_id = resp.headers.get("Mcp-Session-Id", "")
-                if session_id:
-                    headers["Mcp-Session-Id"] = session_id
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-                )
-                data = _parse_sse_maybe(resp.text) or {}
+            data = await _http_rpc(server, "tools/list", {})
         except Exception as e:
             logger.warning(f"mcp http list_tools failed: {e}")
             return []
-        tools = _extract(data)
+        tools = _extract_tools(data)
         if tools:
             if len(_TOOLS_CACHE) >= _TOOLS_CACHE_MAX:
                 _TOOLS_CACHE.clear()
@@ -235,62 +244,22 @@ async def mcp_list_tools(server: dict) -> list[dict]:
         return tools
     else:
         msg = await asyncio.to_thread(_stdio_rpc, server, "tools/list", {})
-        result = (msg or {}).get("result") or {}
-        tools = result.get("tools") if isinstance(result, dict) else None
-        return [t for t in (tools or []) if isinstance(t, dict) and t.get("name")]
+        return _extract_tools(msg or {})
 
 
 async def mcp_call_tool(server: dict, tool_name: str, arguments: dict) -> str:
     """真实 tools/call。返回结果文本；失败返回诚实降级说明，不抛异常。"""
     import asyncio
 
-    transport = (server.get("transport_type") or "stdio").lower()
     try:
-        if "http" in transport or "sse" in transport or transport == "streamable":
+        if _http_transport(server):
             url = (server.get("url") or "").strip()
             if not url:
                 return f"MCP Server「{server.get('name')}」未配置 URL，调用不可用。"
             guard = _http_target_guard(url)
             if guard:
                 return f"MCP Server「{server.get('name')}」调用不可用：{guard}"
-            from mcp_api import _mcp_auth_headers
-
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-                **_mcp_auth_headers(server.get("auth_type") or "none", json.loads(server.get("auth_config") or "{}")),
-            }
-            import httpx
-
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {},
-                            "clientInfo": {"name": "xiaotuan", "version": "1.0"},
-                        },
-                    },
-                )
-                session_id = resp.headers.get("Mcp-Session-Id", "")
-                if session_id:
-                    headers["Mcp-Session-Id"] = session_id
-                resp = await client.post(
-                    url,
-                    headers=headers,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "method": "tools/call",
-                        "params": {"name": tool_name, "arguments": arguments or {}},
-                    },
-                )
-                data = _parse_sse_maybe(resp.text) or {}
+            data = await _http_rpc(server, "tools/call", {"name": tool_name, "arguments": arguments or {}})
             return _format_mcp_result(server, tool_name, data)
         else:
             msg = await asyncio.to_thread(_stdio_rpc, server, "tools/call", {"name": tool_name, "arguments": arguments or {}})
