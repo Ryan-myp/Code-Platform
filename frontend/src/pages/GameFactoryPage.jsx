@@ -987,13 +987,14 @@ export default function GameFactoryPage() {
                           {t?.name || '自定义'} · 双版本 · {p.requirement?.slice(0, 50)}
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
+                      <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap tabular-nums">
                         {(p.updated_at || p.created_at)?.slice(0, 16).replace('T', ' ')}
                       </span>
                       <Button
                         variant="secondary"
                         size="sm"
                         icon={Play}
+                        className="flex-shrink-0 whitespace-nowrap"
                         onClick={(e) => {
                           e.stopPropagation()
                           playGame(p)
@@ -1005,6 +1006,7 @@ export default function GameFactoryPage() {
                         variant="secondary"
                         size="sm"
                         icon={Eye}
+                        className="flex-shrink-0 whitespace-nowrap"
                         onClick={(e) => {
                           e.stopPropagation()
                           openProject(p)

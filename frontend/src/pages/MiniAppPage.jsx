@@ -542,7 +542,7 @@ export default function MiniAppPage() {
                           {t?.name || p.template || '自定义'} · {p.requirement?.slice(0, 60)}
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
+                      <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap tabular-nums">
                         {p.created_at?.slice(0, 16).replace('T', ' ')}
                       </span>
                       <span onClick={(e) => e.stopPropagation()}>
@@ -557,6 +557,7 @@ export default function MiniAppPage() {
                         variant="secondary"
                         size="sm"
                         icon={Eye}
+                        className="flex-shrink-0 whitespace-nowrap"
                         onClick={(e) => {
                           e.stopPropagation()
                           openProject(p)

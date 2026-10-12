@@ -564,7 +564,7 @@ export default function PipelinesPage() {
                   </div>
                 )}
                 <div className="mt-auto flex items-center justify-between pt-4 border-t border-gray-100">
-                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                  <span className="text-xs text-gray-400 flex items-center gap-1 whitespace-nowrap">
                     <Clock className="w-3 h-3" />
                     {formatRelativeTime(p.created_at)}
                   </span>
@@ -573,7 +573,7 @@ export default function PipelinesPage() {
                       <button
                         onClick={() => handleAutoFix(p)}
                         disabled={fixingId === p.id}
-                        className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium hover:opacity-90 transition-colors flex items-center gap-1 disabled:opacity-60"
+                        className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white text-xs font-medium hover:opacity-90 transition-colors flex items-center gap-1 disabled:opacity-60 whitespace-nowrap"
                         title="AI 诊断修复：分析日志、修改代码并重新部署"
                       >
                         {fixingId === p.id ? (
@@ -587,7 +587,7 @@ export default function PipelinesPage() {
                     <button
                       onClick={() => handleRun(p)}
                       disabled={runningId === p.id}
-                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors flex items-center gap-1 disabled:opacity-60"
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors flex items-center gap-1 disabled:opacity-60 whitespace-nowrap"
                       title="运行流水线"
                     >
                       {runningId === p.id ? (

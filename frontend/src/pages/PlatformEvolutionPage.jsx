@@ -30,6 +30,29 @@ const TABS = [
   { key: 'prompts', label: 'Prompt 历史', icon: Settings },
 ]
 
+// 任务类型中文展示（未知类型回退原始 key，不裸露英文给用户）
+const TASK_TYPE_ZH = {
+  agent_run: 'Agent 执行',
+  agent_run_stream: 'Agent 执行（流式）',
+  assistant_chat: '智能助手',
+  assistant_chat_stream: '智能助手（流式）',
+  batch_process: '批量处理',
+  code_review: '代码审查',
+  code_gen: '代码生成',
+  conversation_stream: '对话（流式）',
+  competitor_analysis: '竞品分析',
+  contract_review: '合同审查',
+  data_analysis: '数据分析',
+  doc_qa: '文档问答',
+  email: '邮件撰写',
+  meeting_notes: '会议纪要',
+  prd: 'PRD 生成',
+  test_case: '测试用例',
+  tech_design: '技术方案',
+  translate: '翻译',
+  weekly_report: '周报',
+}
+
 export default function PlatformEvolutionPage() {
   const toast = useToast()
   const [stats, setStats] = useState(null)
@@ -217,10 +240,10 @@ export default function PlatformEvolutionPage() {
                     byType.map((t) => (
                       <div key={t.task_type} className="mb-4 last:mb-0">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-gray-700 capitalize">
-                            {t.task_type || '未知'}
+                          <span className="text-sm font-medium text-gray-700">
+                            {TASK_TYPE_ZH[t.task_type] || t.task_type || '未知'}
                           </span>
-                          <span className="text-sm text-gray-500">
+                          <span className="text-sm text-gray-500 whitespace-nowrap">
                             {t.c} 次 · 均 {Number(t.a || 0).toFixed(2)}s
                           </span>
                         </div>

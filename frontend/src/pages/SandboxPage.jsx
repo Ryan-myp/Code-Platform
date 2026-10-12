@@ -40,6 +40,9 @@ import {
 // 沙箱状态自定义映射
 const SANDBOX_STATUS_MAP = {
   created: { text: '已创建', cls: 'bg-blue-100 text-blue-700' },
+  running: { text: '运行中', cls: 'bg-blue-100 text-blue-700' },
+  ready: { text: '就绪', cls: 'bg-gray-100 text-gray-600' },
+  stopped: { text: '已停止', cls: 'bg-gray-100 text-gray-600' },
   exited: { text: '已退出', cls: 'bg-gray-100 text-gray-600' },
 }
 
@@ -318,7 +321,7 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, onConsole, vi
             size="sm"
             icon={Square}
             onClick={() => onStop(project)}
-            className="flex-1"
+            className="min-w-[96px]"
           >
             停止
           </Button>
@@ -328,7 +331,7 @@ function ProjectCard({ project, onStart, onStop, onDelete, onLogs, onConsole, vi
             size="sm"
             icon={Play}
             onClick={() => onStart(project)}
-            className="flex-1"
+            className="min-w-[96px]"
           >
             启动
           </Button>
