@@ -163,6 +163,7 @@ export default function PDFToolPage() {
     resume_optimize: '简历优化',
   }
   const JOB_STATUS_COLOR = { done: 'green', failed: 'red', processing: 'blue' }
+  const JOB_STATUS_TEXT = { done: '已完成', failed: '失败', processing: '处理中', pending: '排队中' }
 
   // ── Merge ──
   const uploadMerge = (e) => {
@@ -945,7 +946,9 @@ export default function PDFToolPage() {
                     {j.created_at?.replace('T', ' ').slice(0, 16)}
                   </div>
                 </div>
-                <Badge color={JOB_STATUS_COLOR[j.status] || 'gray'}>{j.status}</Badge>
+                <Badge color={JOB_STATUS_COLOR[j.status] || 'gray'}>
+                  {JOB_STATUS_TEXT[j.status] || j.status}
+                </Badge>
               </div>
             ))}
           </div>

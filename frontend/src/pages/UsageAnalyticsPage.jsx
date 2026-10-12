@@ -401,7 +401,7 @@ export default function UsageAnalyticsPage() {
           </div>
           <div>
             <div className="text-xs text-gray-500">最常用模块</div>
-            <div className="font-semibold text-gray-800">{stats?.most_used || '-'}</div>
+            <div className="font-semibold text-gray-800">{stats?.most_used ? moduleLabel(stats.most_used) : '-'}</div>
           </div>
           <div>
             <div className="text-xs text-gray-500">日均调用</div>

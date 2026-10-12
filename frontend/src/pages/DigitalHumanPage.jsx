@@ -8,6 +8,8 @@ import {
   UserCircle,
   Music2,
   Film,
+  Sliders,
+  ChevronDown,
   Eye,
   Clock,
   FileText,

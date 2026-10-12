@@ -779,7 +779,9 @@ export default function PublishingPage() {
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    <c.icon className="w-4 h-4" /> {c.label}
+                    <span className="flex items-center gap-1 whitespace-nowrap">
+                      <c.icon className="w-4 h-4" /> {c.label}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -2227,7 +2229,9 @@ export default function PublishingPage() {
                         : 'border-gray-200 text-gray-500 hover:bg-gray-50'
                     }`}
                   >
-                    <c.icon className="w-3.5 h-3.5" /> {c.label}
+                    <span className="flex items-center gap-1 whitespace-nowrap">
+                      <c.icon className="w-3.5 h-3.5" /> {c.label}
+                    </span>
                   </button>
                 ))}
               </div>

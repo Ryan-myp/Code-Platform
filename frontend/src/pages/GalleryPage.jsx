@@ -79,11 +79,11 @@ function WorkCard({ work, onLike, onComment, onPreview }) {
               src={mediaUrl}
               alt={work.prompt?.slice(0, 50) || '作品'}
               loading="lazy"
-              className="w-full max-h-80 object-cover"
+              className="w-full aspect-[4/3] object-cover"
               onError={() => setImgErr(true)}
             />
           ) : (
-            <div className="w-full h-40 flex flex-col items-center justify-center text-gray-400">
+            <div className="w-full aspect-[4/3] flex flex-col items-center justify-center bg-gray-100 text-gray-400">
               <ImageIcon className="w-8 h-8 mb-1" />
               <span className="text-xs">{work.prompt?.slice(0, 40) || '图片作品'}</span>
             </div>
