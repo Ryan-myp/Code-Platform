@@ -199,6 +199,82 @@ class TestMcpDirectives:
 
 
 # ══════════════════════════════════════════════════════════════
+# SSRF 防护 + HTTP 工具清单缓存
+# ══════════════════════════════════════════════════════════════
+
+class TestMcpHttpGuardAndCache:
+    @staticmethod
+    def _guard(url: str) -> str:
+        import mcp_client
+
+        return mcp_client._http_target_guard(url)
+
+    def test_metadata_address_blocked(self):
+        assert "元数据" in self._guard("http://169.254.169.254/latest/meta-data/")
+
+    def test_scheme_whitelist(self):
+        assert "http/https" in self._guard("ftp://example.com/x")
+        assert self._guard("http://127.0.0.1:9000") == ""  # loopback 放行（本地自托管）
+
+    def test_call_tool_blocks_metadata_url_without_connecting(self):
+        """元数据地址在发请求前就被拦截（不会真连云内网）。"""
+        import asyncio
+        import mcp_client
+
+        server = {"id": "mcp_ssrf", "name": "ssrf", "transport_type": "http",
+                  "url": "http://169.254.169.254/mcp", "auth_type": "none", "auth_config": "{}"}
+        out = asyncio.new_event_loop().run_until_complete(mcp_client.mcp_call_tool(server, "t", {}))
+        assert "元数据" in out
+
+    def test_http_list_tools_cached(self):
+        """真实本地 HTTP JSON-RPC server：第二次 list 命中缓存，不再发 tools/list 请求。"""
+        import asyncio
+        import json as _json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        import mcp_client
+
+        counters = {"tools_list": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode("utf-8")
+                if "tools/list" in body:
+                    counters["tools_list"] += 1
+                    payload = {"jsonrpc": "2.0", "id": 2, "result": {"tools": [
+                        {"name": "http_echo", "description": "d", "inputSchema": {"type": "object"}},
+                    ]}}
+                else:
+                    payload = {"jsonrpc": "2.0", "id": 1, "result": {}}
+                data = _json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        try:
+            mcp = {"id": "mcp_cache_test", "name": "cache", "transport_type": "http",
+                   "url": f"http://127.0.0.1:{httpd.server_address[1]}/mcp",
+                   "auth_type": "none", "auth_config": "{}"}
+            loop = asyncio.new_event_loop()
+            first = loop.run_until_complete(mcp_client.mcp_list_tools(mcp))
+            second = loop.run_until_complete(mcp_client.mcp_list_tools(mcp))
+            assert [x["name"] for x in first] == ["http_echo"]
+            assert second == first
+            assert counters["tools_list"] == 1, "第二次应命中缓存，不再发 tools/list"
+        finally:
+            httpd.shutdown()
+
+
+# ══════════════════════════════════════════════════════════════
 # bundle 挂接：agent 绑定 mcp_server_ids
 # ══════════════════════════════════════════════════════════════
 

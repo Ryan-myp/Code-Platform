@@ -10,15 +10,56 @@
 Agent 执行；15s 超时兜底；stdio 子进程始终清理，绝不残留。
 """
 
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import subprocess
+import time
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 15
+
+# ── tools/list 短 TTL 缓存（避免每次 Agent 组装都实时握手拉清单）──────
+_TOOLS_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_TOOLS_CACHE_TTL = 120.0
+_TOOLS_CACHE_MAX = 200
+
+
+def _http_target_guard(url: str) -> str:
+    """SSRF 防护：URL 安全检查。返回 '' 表示放行，否则返回人类可读拒绝原因。
+
+    策略：仅 http/https；拒绝解析到 链路本地（169.254.0.0/16 = 云元数据）/
+    组播/未指定地址。loopback 与私网放行（本地部署时运行自家 MCP Server 是正当场景）；
+    如需更高安全水位可扩展拒绝私有地址段。DNS 检查与建连存在 TOCTOU 窗口（DNS 重绑定），
+    httpx 已默认不跟随重定向，进一步收窄逃逸面。
+    """
+    parsed = urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return "URL 必须为 http/https"
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return f"无法解析主机 {host}"
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_link_local:
+            return "禁止访问内网/云元数据地址（169.254.0.0/16）"
+        if ip.is_multicast or ip.is_unspecified:
+            return "非法目标地址"
+    return ""
+
+
+def _tools_cache_key(server: dict) -> str:
+    """缓存键 = 配置指纹：任一关键字段变更即自动失效。"""
+    fields = {k: server.get(k) for k in ("id", "transport_type", "command", "url", "args", "env", "auth_type", "auth_config")}
+    return json.dumps(fields, sort_keys=True, ensure_ascii=False)
 
 
 def _parse_sse_maybe(text: str):
@@ -121,7 +162,11 @@ def _stdio_rpc(server: dict, method: str, params: dict, is_notification: bool = 
 
 
 async def mcp_list_tools(server: dict) -> list[dict]:
-    """真实 tools/list。失败返回 []（由调用方决定降级文案）。"""
+    """真实 tools/list。失败返回 []（由调用方决定降级文案）。
+
+    HTTP 工具清单带 120s 短 TTL 缓存（键为 server 配置指纹，配置变更自动失效）；
+    空结果不缓存，避免把临时不可达钉在缓存里。
+    """
     import asyncio
 
     transport = (server.get("transport_type") or "stdio").lower()
@@ -129,6 +174,22 @@ async def mcp_list_tools(server: dict) -> list[dict]:
         url = (server.get("url") or "").strip()
         if not url:
             return []
+        guard = _http_target_guard(url)
+        if guard:
+            logger.warning(f"mcp http url blocked for {server.get('id')}: {guard}")
+            return []
+        key = _tools_cache_key(server)
+        now = time.monotonic()
+        hit = _TOOLS_CACHE.get(key)
+        if hit and now - hit[0] < _TOOLS_CACHE_TTL:
+            return hit[1]
+
+        def _extract(raw: dict) -> list[dict]:
+            result = (raw.get("result") or {}) if isinstance(raw, dict) else {}
+            tools = result.get("tools") if isinstance(result, dict) else None
+            return [t for t in (tools or []) if isinstance(t, dict) and t.get("name")]
+
+        tools: list[dict] = []
         from mcp_api import _mcp_auth_headers
 
         headers = {
@@ -166,9 +227,12 @@ async def mcp_list_tools(server: dict) -> list[dict]:
         except Exception as e:
             logger.warning(f"mcp http list_tools failed: {e}")
             return []
-        result = (data.get("result") or {}) if isinstance(data, dict) else {}
-        tools = result.get("tools") if isinstance(result, dict) else None
-        return [t for t in (tools or []) if isinstance(t, dict) and t.get("name")]
+        tools = _extract(data)
+        if tools:
+            if len(_TOOLS_CACHE) >= _TOOLS_CACHE_MAX:
+                _TOOLS_CACHE.clear()
+            _TOOLS_CACHE[key] = (now, tools)
+        return tools
     else:
         msg = await asyncio.to_thread(_stdio_rpc, server, "tools/list", {})
         result = (msg or {}).get("result") or {}
@@ -186,6 +250,9 @@ async def mcp_call_tool(server: dict, tool_name: str, arguments: dict) -> str:
             url = (server.get("url") or "").strip()
             if not url:
                 return f"MCP Server「{server.get('name')}」未配置 URL，调用不可用。"
+            guard = _http_target_guard(url)
+            if guard:
+                return f"MCP Server「{server.get('name')}」调用不可用：{guard}"
             from mcp_api import _mcp_auth_headers
 
             headers = {
