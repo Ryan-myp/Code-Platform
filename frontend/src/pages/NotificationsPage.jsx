@@ -145,6 +145,7 @@ export default function NotificationsPage() {
     <div className="space-y-6">
       <PageHeader
         title="通知中心"
+        icon={Bell}
         description={
           unreadCount > 0
             ? `有 ${unreadCount} 条未读通知待查看`

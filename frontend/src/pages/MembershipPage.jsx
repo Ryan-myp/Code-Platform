@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { PageHeader } from '../components/ui'
 import {
   ArrowRight,
   Check,
@@ -196,22 +197,21 @@ export default function MembershipPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
       {/* 头部 */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-ink-900 flex items-center gap-2.5">
-            <Crown className="w-6 h-6 text-amber-500" />
-            会员中心
-          </h1>
-          <p className="text-sm text-ink-500 mt-1">开通会员，解锁更大额度，畅用全部 AI 工具</p>
-        </div>
-        <button
-          onClick={loadAll}
-          className="p-2 hover:bg-ink-50 rounded-lg transition-colors text-ink-400 hover:text-brand-600"
-          title="刷新"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
-      </div>
+      <PageHeader
+        title="会员中心"
+        description="开通会员，解锁更大额度，畅用全部 AI 工具"
+        icon={Crown}
+        iconColor="from-amber-500 to-orange-600"
+        actions={
+          <button
+            onClick={loadAll}
+            className="p-2 hover:bg-ink-50 rounded-lg transition-colors text-ink-400 hover:text-brand-600"
+            title="刷新"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        }
+      />
 
       {/* 当前会员状态 */}
       <div

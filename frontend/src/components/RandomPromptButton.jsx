@@ -17,7 +17,7 @@ export default function RandomPromptButton({ prompts, onPick, className = '' }) 
   }
 
   return (
-    <button onClick={handleRandom} className={`inline-flex items-center gap-1 ${className}`}>
+    <button onClick={handleRandom} className={`inline-flex items-center gap-1 whitespace-nowrap ${className}`}>
       <Wand2 className="w-3 h-3" />
       随机提示词
     </button>

@@ -43,7 +43,7 @@ export default function EnhancePromptButton({ text, onEnhance, style = 'general'
     <button
       onClick={handleEnhance}
       disabled={busy}
-      className={`inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
     >
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
       {busy ? '补充中…' : '智能补充'}

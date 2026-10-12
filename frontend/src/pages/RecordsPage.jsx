@@ -18,7 +18,7 @@ import { useToast } from '../lib/toast'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import ShareButton from '../components/ShareButton'
 import ExportButton from '../components/ExportButton'
-import { ErrorState, Pagination } from '../components/ui'
+import { ErrorState, Pagination, PageHeader } from '../components/ui'
 
 /**
  * 统一记录中心：工具使用记录 + 分享记录。
@@ -94,15 +94,12 @@ export default function RecordsPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-page-in">
       {/* 页头 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-ink-900 flex items-center gap-2">
-            <History className="w-5 h-5 text-brand-600" />
-            记录中心
-          </h1>
-          <p className="text-sm text-ink-500">你的工具使用记录与分享内容，统一管理</p>
-        </div>
-        <div className="flex items-center gap-1 p-1 bg-ink-100/70 rounded-xl">
+      <PageHeader
+        title="记录中心"
+        description="你的工具使用记录与分享内容，统一管理"
+        icon={History}
+        actions={
+          <div className="flex items-center gap-1 p-1 bg-ink-100/70 rounded-xl">
           <button
             onClick={() => setTab('tools')}
             className={`flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all ${
@@ -133,8 +130,9 @@ export default function RecordsPage() {
             分享记录
             <span className="text-xs text-ink-400">({shares.length})</span>
           </button>
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       {/* 工具记录 */}
       {tab === 'tools' && (

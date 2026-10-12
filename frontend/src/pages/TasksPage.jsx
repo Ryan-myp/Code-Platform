@@ -27,8 +27,9 @@ import {
   Presentation,
   Globe,
   TrendingUp,
+  ListChecks,
 } from 'lucide-react'
-import { Card, Button, Badge, Empty, Modal, ErrorState } from '../components/ui'
+import { Card, Button, Badge, Empty, Modal, ErrorState, PageHeader } from '../components/ui'
 import { useToast } from '../lib/toast'
 import api from '../lib/api'
 import { connectWs } from '../lib/ws'
@@ -336,17 +337,16 @@ export default function TasksPage() {
   return (
     <div className="space-y-6">
       {/* 页面标题 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">任务中心</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            AI 生成任务实时进度 · 关闭页面也不中断，完成后自动保存产物
-          </p>
-        </div>
-        <Button variant="ghost" icon={RefreshCw} onClick={refresh}>
-          刷新
-        </Button>
-      </div>
+      <PageHeader
+        title="任务中心"
+        description="AI 生成任务实时进度 · 关闭页面也不中断，完成后自动保存产物"
+        icon={ListChecks}
+        actions={
+          <Button variant="ghost" icon={RefreshCw} onClick={refresh}>
+            刷新
+          </Button>
+        }
+      />
 
       {/* 统计卡 */}
       {stats && (

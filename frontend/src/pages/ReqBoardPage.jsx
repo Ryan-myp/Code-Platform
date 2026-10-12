@@ -68,15 +68,18 @@ function PriorityBadge({ priority }) {
 function RequirementCard({ req, projects, onView, onEdit, onDelete, onPipeline }) {
   const projectName = projects.find((p) => p.id === req.project_id)?.name
 
+  const desc = (req.description || '').replace(/<[^>]+>/g, '').trim()
+  // 描述与标题同句时不重复展示
+  const showDesc = desc && !desc.startsWith(req.name || '')
+
   return (
-    <div className="p-5 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-shadow flex flex-col">
-      <div className="flex items-start justify-between mb-2 gap-2">
-        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          <PriorityBadge priority={req.priority} />
-          <Badge status={req.status || 'draft'} customMap={REQ_STATUS_MAP} />
-          <h3 className="font-medium text-gray-900 truncate">{req.name}</h3>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+    <div className="group p-5 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-shadow flex flex-col">
+      {/* 卡片头：徽章行 + hover 操作 */}
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        <PriorityBadge priority={req.priority} />
+        <Badge status={req.status || 'draft'} customMap={REQ_STATUS_MAP} />
+        {projectName && <span className="text-xs text-gray-400">· {projectName}</span>}
+        <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={() => onView(req)}
             className="p-1 text-gray-400 hover:text-indigo-600 rounded transition-colors"
@@ -101,12 +104,19 @@ function RequirementCard({ req, projects, onView, onEdit, onDelete, onPipeline }
         </div>
       </div>
 
-      <div
-        className="text-sm text-gray-500 line-clamp-2 mb-3 prose prose-sm max-w-none"
-        dangerouslySetInnerHTML={{
-          __html: sanitizeHtml(req.description) || '<span class="text-gray-400">暂无描述</span>',
-        }}
-      />
+      {/* 标题独立一行 */}
+      <h3 className="font-medium text-gray-900 text-[15px] mb-1 truncate">{req.name}</h3>
+
+      {showDesc ? (
+        <div
+          className="text-sm text-gray-500 line-clamp-2 mb-3 prose prose-sm max-w-none"
+          dangerouslySetInnerHTML={{
+            __html: sanitizeHtml(req.description),
+          }}
+        />
+      ) : (
+        !projectName && <div className="text-xs text-gray-400 mb-3">暂无描述</div>
+      )}
 
       {projectName && <div className="text-xs text-gray-400 mb-2">关联项目：{projectName}</div>}
 

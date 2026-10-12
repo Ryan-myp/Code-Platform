@@ -1951,8 +1951,8 @@ export default function ImageFactoryPage() {
               }`}
             >
               <tab.icon className="w-5 h-5" />
-              <span className="font-medium text-sm">{tab.label}</span>
-              <span className="text-xs opacity-60 hidden sm:block">{tab.desc}</span>
+              <span className="font-medium text-sm whitespace-nowrap">{tab.label}</span>
+              <span className="text-xs opacity-60 hidden sm:block whitespace-nowrap">{tab.desc}</span>
             </button>
           ))}
         </div>
@@ -1983,7 +1983,7 @@ export default function ImageFactoryPage() {
                     <button
                       onClick={handleEnhancePrompt}
                       disabled={enhancing}
-                      className="inline-flex items-center gap-1 text-violet-600 hover:text-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center gap-1 whitespace-nowrap text-violet-600 hover:text-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       title="AI 润色为专业提示词（含构图/光线/风格/负面词建议）"
                     >
                       {enhancing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}

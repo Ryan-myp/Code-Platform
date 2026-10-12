@@ -118,6 +118,8 @@ export default function FavoritesPage() {
       <PageHeader
         title="收藏中心"
         description="一键收藏常用工具 / 记录 / 模板 / 作品，随时直达"
+        icon={Star}
+        iconColor="from-amber-500 to-orange-600"
         actions={
           <Button variant="outline" icon={Star} onClick={() => fetchFavorites(false)}>
             刷新
@@ -156,6 +158,8 @@ export default function FavoritesPage() {
             icon={Star}
             title="还没有收藏"
             description="在工具、记录、模板、作品页面点击 ☆ 收藏，即可在这里快速访问"
+            actionLabel="去工具广场逛逛"
+            onAction={() => navigate('/tool-hub')}
           />
         </Card>
       ) : (

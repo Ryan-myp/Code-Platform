@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, Button, Badge, Empty } from '../components/ui'
+import { Card, Button, Badge, Empty, PageHeader } from '../components/ui'
 import Modal from '../components/ui/Modal'
 import ShareButton from '../components/ShareButton'
 import { useToast } from '../lib/toast'
@@ -13,6 +13,7 @@ import {
   TrendingDown,
   DollarSign,
   BarChart3,
+  LineChart,
   Activity,
   PieChart,
   Play,
@@ -433,12 +434,12 @@ export default function StockAnalysisPage() {
     <div className="flex-1 overflow-auto bg-gray-50 pb-16 md:pb-0">
       <div className="max-w-7xl mx-auto px-6 py-6">
         {/* 头部 */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">股票分析</h1>
-            <p className="text-sm text-gray-500 mt-1">行情分析 · 趋势预测 · 模拟交易</p>
-          </div>
-          <div className="flex items-center gap-3">
+        <PageHeader
+          title="股票分析"
+          description="行情分析 · 趋势预测 · 模拟交易"
+          icon={LineChart}
+          iconColor="from-sky-500 to-blue-600"
+          actions={
             <select
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
@@ -450,8 +451,8 @@ export default function StockAnalysisPage() {
               <option value="1y">1年</option>
               <option value="2y">2年</option>
             </select>
-          </div>
-        </div>
+          }
+        />
 
         {/* 搜索栏 */}
         <Card className="mb-6">

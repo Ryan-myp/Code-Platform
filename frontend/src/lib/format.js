@@ -71,14 +71,21 @@ const STATUS_MAP = {
   'in_review': { text: '评审中', cls: 'bg-amber-100 text-amber-700' },
   'in-review': { text: '评审中', cls: 'bg-amber-100 text-amber-700' },
   done: { text: '已完成', cls: 'bg-emerald-100 text-emerald-700' },
+  in_progress: { text: '进行中', cls: 'bg-blue-100 text-blue-700' },
   approved: { text: '已批准', cls: 'bg-emerald-100 text-emerald-700' },
   rejected: { text: '已拒绝', cls: 'bg-red-100 text-red-700' },
 }
 
-/** 获取状态展示信息 */
+/** 获取状态展示信息（下划线/中划线状态键互相兼容，如 in_progress ≡ in-progress） */
 export function getStatusMeta(status, customMap = {}) {
   const s = String(status || '').toLowerCase()
-  return customMap[status] || STATUS_MAP[s] || { text: status || '未知', cls: 'bg-gray-100 text-gray-600' }
+  const sDash = s.replace(/_/g, '-')
+  return (
+    customMap[status] ||
+    STATUS_MAP[s] ||
+    STATUS_MAP[sDash] ||
+    { text: status || '未知', cls: 'bg-gray-100 text-gray-600' }
+  )
 }
 
 /** 截断文本 */
