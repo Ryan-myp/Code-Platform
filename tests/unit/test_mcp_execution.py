@@ -6,12 +6,11 @@
 - load_agent_bundle 挂接 + 指令剥离（TOOL/MCP 双协议）
 """
 
-import json
-import os
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "backend"))
 
@@ -57,6 +56,7 @@ def _start_mcp_server(tmp_path: Path) -> str:
 class TestMcpClient:
     def test_list_tools_and_call_round_trip(self, tmp_path):
         import asyncio
+
         import mcp_client
 
         cmd = _start_mcp_server(tmp_path)
@@ -73,6 +73,7 @@ class TestMcpClient:
 
     def test_missing_command_degrades_honestly(self):
         import asyncio
+
         import mcp_client
 
         server = {"id": "mcp_x", "name": "坏配置", "transport_type": "stdio", "command": "",
@@ -158,8 +159,9 @@ class TestMcpDirectives:
 
     def test_exec_loop_with_mcp_call(self, tmp_path):
         """execute_tool_loop：LLM 发 [MCP:] 指令 → 真实调用 stdio server → 回喂。"""
-        import agent_runtime
         import asyncio
+
+        import agent_runtime
 
         cmd = _start_mcp_server(tmp_path)
         server = {"id": "mcp_test_2", "name": "测试MCP", "transport_type": "stdio", "command": cmd,
@@ -185,8 +187,9 @@ class TestMcpDirectives:
 
     def test_unbound_server_directive_ignored(self):
         """白名单外的 MCP Server 指令必须被忽略（不执行、不泄露）。"""
-        import agent_runtime
         import asyncio
+
+        import agent_runtime
 
         async def fake_llm(system, prompt, **kw):
             return "结果 [MCP:unknown_server|evil|{}]"
@@ -219,6 +222,7 @@ class TestMcpHttpGuardAndCache:
     def test_call_tool_blocks_metadata_url_without_connecting(self):
         """元数据地址在发请求前就被拦截（不会真连云内网）。"""
         import asyncio
+
         import mcp_client
 
         server = {"id": "mcp_ssrf", "name": "ssrf", "transport_type": "http",
@@ -316,3 +320,43 @@ class TestAgentMcpBundle:
         # 只挂 enabled 的
         assert bundle["mcp_server_ids"] == [mcp_id]
         assert len(bundle["mcp_servers"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_tool_http_transient_retry_once(monkeypatch):
+    """HTTP 瞬时故障（连接类）自动重试 1 次；成功后正常返回；非 transient 不重试。"""
+    import httpx
+
+    import mcp_client
+
+    server = {"id": "s-retry", "name": "retry", "transport_type": "http", "url": "http://localhost:1/x"}
+    calls = {"n": 0}
+
+    async def flaky_http_rpc(s, method, params):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("flaky")
+        return {"result": {"content": [{"type": "text", "text": "ok"}]}}
+
+    monkeypatch.setattr(mcp_client, "_http_rpc", flaky_http_rpc)
+    out = await mcp_client.mcp_call_tool(server, "t", {})
+    assert calls["n"] == 2, "瞬时故障应重试 1 次"
+    assert "ok" in out
+
+
+@pytest.mark.asyncio
+async def test_call_tool_http_no_retry_on_success(monkeypatch):
+    """正常路径 0 重试。"""
+    import mcp_client
+
+    server = {"id": "s-ok", "name": "ok", "transport_type": "http", "url": "http://localhost:1/x"}
+    calls = {"n": 0}
+
+    async def fine_http_rpc(s, method, params):
+        calls["n"] += 1
+        return {"result": {"content": [{"type": "text", "text": "fine"}]}}
+
+    monkeypatch.setattr(mcp_client, "_http_rpc", fine_http_rpc)
+    out = await mcp_client.mcp_call_tool(server, "t", {})
+    assert calls["n"] == 1
+    assert "fine" in out

@@ -248,8 +248,14 @@ async def mcp_list_tools(server: dict) -> list[dict]:
 
 
 async def mcp_call_tool(server: dict, tool_name: str, arguments: dict) -> str:
-    """真实 tools/call。返回结果文本；失败返回诚实降级说明，不抛异常。"""
+    """真实 tools/call。返回结果文本；失败返回诚实降级说明，不抛异常。
+
+    HTTP 传输瞬时故障（连接/超时类）自动重试 1 次（统一错误分类口径，低并发：
+    至多重试 1 次 + 短退避）；stdio 不重试（进程成本 + 超时已有上限）。
+    """
     import asyncio
+
+    from common import errors
 
     try:
         if _http_transport(server):
@@ -259,7 +265,11 @@ async def mcp_call_tool(server: dict, tool_name: str, arguments: dict) -> str:
             guard = _http_target_guard(url)
             if guard:
                 return f"MCP Server「{server.get('name')}」调用不可用：{guard}"
-            data = await _http_rpc(server, "tools/call", {"name": tool_name, "arguments": arguments or {}})
+            data = await errors.run_with_retry_async(
+                lambda: _http_rpc(server, "tools/call", {"name": tool_name, "arguments": arguments or {}}),
+                attempts=2,
+                on_retry=lambda a, e: logger.warning(f"mcp tools/call transient retry {a}: {e}"),
+            )
             return _format_mcp_result(server, tool_name, data)
         else:
             msg = await asyncio.to_thread(_stdio_rpc, server, "tools/call", {"name": tool_name, "arguments": arguments or {}})

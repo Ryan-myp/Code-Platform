@@ -135,3 +135,60 @@ def test_memory_prune_caps_auto_type(setup_test_db):
     n = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=? AND memory_type='auto'", (sid,)).fetchone()["c"]
     conn.close()
     assert n == 30
+
+
+def test_prune_creates_lossy_summary(setup_test_db):
+    """单次裁剪 ≥5 条 → 合并为一条 long 摘要记忆（不静默丢信息，纯规则零 LLM）。"""
+    import sessions
+
+    sid = sessions.create_session("a1", "t")
+    conn = sessions.get_db()
+    for i in range(40):
+        conn.execute(
+            "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, 'auto', ?)",
+            (f"m{i}", sid, "a1", f"旧记忆 {i}"),
+        )
+    conn.commit()
+    conn.close()
+
+    sessions.add_memory(sid, "a1", "新记忆", "short")
+
+    conn = sessions.get_db()
+    auto_n = conn.execute(
+        "SELECT COUNT(*) AS c FROM memories WHERE session_id=? AND memory_type='auto'", (sid,)
+    ).fetchone()["c"]
+    summaries = conn.execute(
+        "SELECT content FROM memories WHERE session_id=? AND memory_type='long'", (sid,)
+    ).fetchall()
+    conn.close()
+    assert auto_n == 30, "auto 裁到上限 30"
+    assert len(summaries) == 1
+    text = summaries[0]["content"]
+    assert sessions.SUMMARY_PREFIX in text
+    assert "旧记忆" in text, "被裁要点保留在摘要里"
+
+
+def test_prune_summary_upsert_not_duplicate(setup_test_db):
+    """摘要记忆重复裁剪时原地更新，不重复插入。"""
+    import sessions
+
+    sid = sessions.create_session("a1", "t")
+    conn = sessions.get_db()
+    for i in range(35):
+        conn.execute(
+            "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, 'auto', ?)",
+            (f"a{i}", sid, "a1", f"条目 {i}"),
+        )
+    conn.commit()
+    conn.close()
+
+    sessions.add_memory(sid, "a1", "触发裁剪A", "short")
+    sessions.add_memory(sid, "a1", "触发裁剪B", "short")
+
+    conn = sessions.get_db()
+    n = conn.execute(
+        "SELECT COUNT(*) AS c FROM memories WHERE session_id=? AND content LIKE ?",
+        (sid, sessions.SUMMARY_PREFIX + "%"),
+    ).fetchone()["c"]
+    conn.close()
+    assert n == 1, "摘要只应有一条（upsert 不重插）"

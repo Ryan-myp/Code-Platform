@@ -85,34 +85,66 @@ def delete_session(session_id: str) -> bool:
 # 记忆治理上限：防无界增长（auto 最弱先裁；session 总量硬上限）
 _MAX_SESSION_MEMORIES = 100
 _MAX_AUTO_MEMORIES = 30
+# 单次裁剪丢弃 ≥ 该条数时，合并为一条 lossy 摘要记忆（避免静默丢信息；纯规则零 API 成本）
+_PRUNE_SUMMARIZE_MIN = 5
+_SUMMARY_KEEP = 20  # 摘要最多保留最近多少条要点
+SUMMARY_PREFIX = "记忆摘要（自动压缩旧条目）："
 
 
-def _prune_session_memories(conn, session_id: str) -> None:
+def _prune_session_memories(conn, session_id: str, agent_id: str = "") -> None:
     """裁剪会话记忆到上限：先裁最老的 auto（最弱），再裁最老非 long，总量超限时最后才裁 long。
 
+    单次丢弃 ≥ _PRUNE_SUMMARIZE_MIN 条时，把被裁内容合并为一条 lossy 摘要
+    （long 型；已存在则原地更新，不重复插入）——不丢关键信息，且纯规则零 LLM 成本。
     调用方持有 conn 并负责 commit。"""
+    pruned: list[str] = []
     rows = conn.execute(
-        "SELECT id FROM memories WHERE session_id=? AND memory_type='auto' ORDER BY created_at ASC, id ASC",
+        "SELECT id, content FROM memories WHERE session_id=? AND memory_type='auto' ORDER BY created_at ASC, id ASC",
         (session_id,),
     ).fetchall()
     excess = len(rows) - _MAX_AUTO_MEMORIES
     if excess > 0:
-        conn.executemany("DELETE FROM memories WHERE id=?", [ (r["id"],) for r in rows[:excess] ])
+        victims = rows[:excess]
+        pruned.extend(r["content"] for r in victims)
+        conn.executemany("DELETE FROM memories WHERE id=?", [(r["id"],) for r in victims])
     total = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=?", (session_id,)).fetchone()["c"]
     over = total - _MAX_SESSION_MEMORIES
     while over > 0:
         victim = conn.execute(
-            "SELECT id FROM memories WHERE session_id=? AND memory_type!='long' ORDER BY created_at ASC LIMIT 1",
+            "SELECT id, content FROM memories WHERE session_id=? AND memory_type!='long' ORDER BY created_at ASC LIMIT 1",
             (session_id,),
         ).fetchone()
         if not victim:
             victim = conn.execute(
-                "SELECT id FROM memories WHERE session_id=? ORDER BY created_at ASC LIMIT 1", (session_id,)
+                "SELECT id, content FROM memories WHERE session_id=? ORDER BY created_at ASC LIMIT 1", (session_id,)
             ).fetchone()
         if not victim:
             break
+        pruned.append(victim["content"])
         conn.execute("DELETE FROM memories WHERE id=?", (victim["id"],))
         over -= 1
+    if len(pruned) >= _PRUNE_SUMMARIZE_MIN:
+        _upsert_memory_summary(conn, session_id, agent_id, pruned)
+
+
+def _upsert_memory_summary(conn, session_id: str, agent_id: str, pruned: list[str]) -> None:
+    """被裁条目 → 一条 lossy 摘要（最近 _SUMMARY_KEEP 条，每条截 60 字）；存在则更新不重插。"""
+    keep = [p[:60] for p in pruned[-_SUMMARY_KEEP:] if p]
+    if not keep:
+        return
+    body = "\n".join(f"- {c}" for c in keep)
+    text = f"{SUMMARY_PREFIX}（{len(pruned)} 条，列最近 {len(keep)}）\n{body}"
+    existing = conn.execute(
+        "SELECT id FROM memories WHERE session_id=? AND content LIKE ? LIMIT 1",
+        (session_id, SUMMARY_PREFIX + "%"),
+    ).fetchone()
+    if existing:
+        conn.execute("UPDATE memories SET content=? WHERE id=?", (text, existing["id"]))
+    else:
+        conn.execute(
+            "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, 'long', ?)",
+            (f"mem_sum_{int(time.time() * 1000)}", session_id, agent_id, text),
+        )
 
 
 def add_memory(session_id: str, agent_id: str, content: str, memory_type: str = "short") -> str:
@@ -129,7 +161,7 @@ def add_memory(session_id: str, agent_id: str, content: str, memory_type: str = 
         "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, ?, ?)",
         (mem_id, session_id, agent_id, memory_type, content),
     )
-    _prune_session_memories(conn, session_id)
+    _prune_session_memories(conn, session_id, agent_id)
     conn.commit()
     conn.close()
     return mem_id
@@ -196,7 +228,7 @@ async def auto_extract_memory(session_id: str, agent_id: str, user_message: str,
             )
             written += 1
         if written:
-            _prune_session_memories(conn, session_id)
+            _prune_session_memories(conn, session_id, agent_id or "")
         conn.commit()
         conn.close()
         return written

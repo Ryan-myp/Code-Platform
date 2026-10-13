@@ -25,8 +25,10 @@ from common.config import AGNES_API_KEY, MODEL_NAME, get_model_config, get_model
 
 logger = logging.getLogger(__name__)
 
-# 可重试的 HTTP 状态码：429 限流 + 5xx 服务端瞬时故障
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+from common import errors  # noqa: E402  v18 统一错误分类（LLM/MCP 同一口径）
+
+# 可重试的 HTTP 状态码：统一分类口径（common.errors，v18 P2）——含 408/429/5xx
+_RETRYABLE_STATUS = set(errors.RETRYABLE_STATUS)
 # 不可重试（请求类）状态码：直接抛出，不降级不重试
 _NON_RETRYABLE_STATUS = {400, 401, 403, 404, 422}
 # 网络/传输类异常（连接断开、超时、EOF 等），全部可重试

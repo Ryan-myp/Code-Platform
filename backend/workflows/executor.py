@@ -729,6 +729,7 @@ class WorkflowExecutor:
         """
         input_data = input_data or {}
         raw_items = config.get("items")
+        until = config.get("until")  # 可选：迭代模式 {key, value}（无 items 时启用）
         if isinstance(raw_items, str):
             raw_items = _substitute(raw_items, previous_results)
         if isinstance(raw_items, str):
@@ -743,6 +744,35 @@ class WorkflowExecutor:
         body_config = dict(config.get("body_config") or {})
         results: list[dict] = []
         errors = 0
+
+        if until and not items:
+            # 迭代模式：重复执行内层节点，直到输出 until[key]==value 或到上限
+            until_key = str(until.get("key") or "")
+            until_val = until.get("value")
+            satisfied = False
+            prev_item = None  # 首轮无中间结果，后续轮喂回上一轮输出（迭代式改进/重试）
+            for i in range(max_it):
+                prev2 = dict(previous_results)
+                prev2["loop_item"] = prev_item
+                prev2["loop_index"] = i
+                out = await self.execute_node(body_type, body_config, prev2, input_data)
+                status = out.get("status", "success") if isinstance(out, dict) else "success"
+                results.append({"index": i, "output": out, "status": status})
+                if status not in ("success", "delayed"):
+                    errors += 1
+                if isinstance(out, dict) and until_key and out.get(until_key) == until_val:
+                    satisfied = True
+                    break
+                if isinstance(out, dict):
+                    prev_item = out  # 把上一轮输出喂回内层（迭代式改进/重试）
+            return {
+                "status": "success" if satisfied else "max_reached",
+                "results": results,
+                "count": len(results),
+                "errors": errors,
+                "until_satisfied": satisfied,
+            }
+
         for i, item in enumerate(items[:max_it]):
             # 当前项注入内层上下文（body_config 内可 ${loop_item} 引用）
             prev2 = dict(previous_results)

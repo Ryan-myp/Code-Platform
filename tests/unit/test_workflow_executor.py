@@ -598,3 +598,40 @@ async def test_loop_node_unknown_body_reports_partial(setup_test_db):
     assert out["status"] == "partial"
     assert out["errors"] == 2
     assert out["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_loop_node_until_mode(setup_test_db, monkeypatch):
+    """until 迭代模式：重复执行内层直到输出 key==value，达上限则 status=max_reached。"""
+    from workflows.executor import WorkflowExecutor
+
+    ex = WorkflowExecutor()
+    seq = iter([
+        {"status": "success", "done": False, "round": 1},
+        {"status": "success", "done": True, "round": 2},
+    ])
+
+    async def fake_node(node_type, config, previous, input_data=None):
+        return next(seq)
+
+    monkeypatch.setattr(ex, "execute_node", fake_node)
+    out = await ex.execute_loop_node(
+        {"body": "code", "body_config": {}, "until": {"key": "done", "value": True}, "max_iterations": 3},
+        {},
+    )
+    assert out["until_satisfied"] is True
+    assert out["count"] == 2, "第 2 轮满足即停"
+    assert out["status"] == "success"
+
+    # 永远不满足 → max_reached
+    async def never(node_type, config, previous, input_data=None):
+        return {"status": "success", "done": False}
+
+    monkeypatch.setattr(ex, "execute_node", never)
+    out2 = await ex.execute_loop_node(
+        {"body": "code", "body_config": {}, "until": {"key": "done", "value": True}, "max_iterations": 4},
+        {},
+    )
+    assert out2["until_satisfied"] is False
+    assert out2["count"] == 4
+    assert out2["status"] == "max_reached"
