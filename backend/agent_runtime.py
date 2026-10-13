@@ -31,9 +31,10 @@ from mcp_client import (
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOOL_ROUNDS = 2
+_MAX_TOOL_ROUNDS = 8  # 工具调用轮次上限（v17→v21 放宽到 8，配合 token 预算控成本）
 _MAX_TOOL_INPUT = 4000
 _MAX_TOOL_RESULT = 3000
+_MAX_TOOL_TOKEN_BUDGET = 12000  # 累计 token 预算（估算：字符数 / 4）
 _TOOL_DIRECTIVE_RE = re.compile(r"\[TOOL:([^\]\|]+)\|([^\[\]]*)\]")
 
 # 可真实执行的语义工具映射（agent.tools 里的旧种子名）
@@ -112,8 +113,39 @@ def load_agent_bundle(agent_id: str, user_message: str = "") -> dict:
     return agent
 
 
-def _kb_rag_context(kb_ids: list, user_message: str, max_chars: int = 3500) -> str:
-    """对绑定知识库做相关度检索（v2 打分），拼「参考知识」段。失败静默降级。"""
+def _kb_rerank(q: str, previews: list[str]) -> list[int]:
+    """LLM 重排：从 N 个关键词命中的预览中选出相关性 top3 的顺序（候选 ≥ 4 才值得调）。
+
+    返回完整重排后的下标列表；失败/无需重排返回 []，调用方保持关键词原序（诚实降级）。
+    """
+    if len(previews) < 4 or not (q or "").strip():
+        return []
+    from common.llm import call_llm
+
+    items = "\n".join(f"{i}. {p}" for i, p in enumerate(previews))
+    try:
+        out = call_llm(
+            "你是搜索相关性排序器。根据用户问题对知识片段按相关性降序排列，只返回 JSON，不要其它内容。",
+            f"用户问题：{q[:200]}\n候选片段：\n{items}\n返回 JSON：{{\"top\":[下标，最多 3 个，按相关性降序]}}",
+            max_tokens=200,
+        )
+        m = re.search(r"\{.*?\}", out or "", re.S)
+        data = json.loads(m.group(0)) if m else {}
+        top = [int(i) for i in (data.get("top") or []) if isinstance(i, (int, str)) and str(i).lstrip("-").isdigit() and 0 <= int(i) < len(previews)]
+        top = top[:3]
+        seen: set[int] = set(top)
+        return top + [i for i in range(len(previews)) if i not in seen]
+    except Exception as e:
+        logger.warning(f"kb rerank failed, keep keyword order: {e}")
+        return []
+
+
+def _kb_rag_context(kb_ids: list, user_message: str, max_chars: int = 4000) -> str:
+    """对绑定知识库做相关度检索（v2 分块打分 + LLM 重排），拼「参考知识」段。失败静默降级。
+
+    - 每个 KB 取 top3 候选块，跨 KB 汇总后若候选 ≥ 4 个，用一次 LLM 调用按相关性重排
+      （不用向量基建拿到 80% 语义收益；失败保持关键词原序）
+    """
     if not kb_ids or not (user_message or "").strip():
         return ""
     import kb_api
@@ -127,7 +159,8 @@ def _kb_rag_context(kb_ids: list, user_message: str, max_chars: int = 3500) -> s
             kbs.append(dict(r))
     conn.close()
 
-    sections = []
+    # 候选：(KB名, 预览行, 详情行)；先全量收集，再统一重排取 top4
+    candidates: list[tuple[str, str, list[str]]] = []
     for kb in kbs:
         try:
             cfg = json.loads(kb.get("config") or "{}") or {}
@@ -135,25 +168,36 @@ def _kb_rag_context(kb_ids: list, user_message: str, max_chars: int = 3500) -> s
                 res = kb_api._kb_search_db(cfg, user_message, 4)
             else:
                 res = kb_api._kb_search_file(kb, user_message, 4)
-            hits = res.get("hits") or []
-            if not hits:
-                continue
-            lines = [f"### 知识库「{kb.get('name', kb['id'])}」"]
-            for h in hits[:3]:
-                if "file" in h:  # file 型：文件名 + top 匹配行
-                    for m in h.get("matches", [])[:2]:
-                        lines.append(f"- {h['file']}：{m[:200]}")
-                else:  # db 型：行内容摘要（排除打分离）
-                    summary = " | ".join(str(v)[:80] for kk, v in h.items() if v and kk not in ("score",))[:300]
-                    lines.append(f"- {summary}")
-            sections.append("\n".join(lines))
         except Exception as e:  # 单个 KB 损坏不影响其它
             logger.warning(f"kb rag failed for {kb.get('id')}: {e}")
             continue
-    if not sections:
+        for h in (res.get("hits") or [])[:3]:
+            kb_name = kb.get("name", kb.get("id", ""))
+            if "file" in h:  # file 型：块摘录（分块后不再被截成孤行）
+                matches = h.get("matches") or []
+                if not matches:
+                    continue
+                preview = f"{h['file']}：{str(matches[0])[:150]}"
+                details = [f"{h['file']}：{str(m)[:250]}" for m in matches[:2]]
+            else:  # db 型：行内容摘要（排除打分离）
+                summary = " | ".join(str(v)[:80] for kk, v in h.items() if v and kk not in ("score",))[:300]
+                if not summary:
+                    continue
+                preview = summary[:150]
+                details = [summary]
+            candidates.append((kb_name, preview, details))
+    if not candidates:
         return ""
-    text = "## 参考知识（来自你绑定的知识库，与用户问题相关；回答时优先引用）\n\n" + "\n\n".join(sections)
-    return text[:max_chars]
+
+    order = _kb_rerank(user_message, [c[1] for c in candidates])
+    picked = [candidates[i] for i in (order or range(len(candidates)))][:4]
+
+    lines = ["## 参考知识（来自你绑定的知识库，已按相关性排序；回答时优先引用）"]
+    for kb_name, preview, details in picked:
+        lines.append(f"- [{kb_name}] {preview}")
+        for d in details[1:]:
+            lines.append(f"  - {d}")
+    return "\n".join(lines)[:max_chars]
 
 
 def _skills_context(skill_rows: list, max_chars: int = 2500) -> str:
@@ -205,6 +249,8 @@ def _tool_descriptions(tool_ids: list) -> tuple[list[str], set[str]]:
 def build_agent_system(agent: dict, base_instructions: str | None = None) -> str:
     """组装 Agent 系统提示词：基础指令 + RAG + 技能 + 工具协议。"""
     parts = [base_instructions or agent.get("instructions") or "你是一个智能助手"]
+    if agent.get("memory_context"):
+        parts.append(agent["memory_context"])
     if agent.get("rag_context"):
         parts.append(agent["rag_context"])
     if agent.get("skills_context"):
@@ -241,6 +287,40 @@ def parse_tool_directives(text: str, runnable_tools: set[str]) -> list[tuple[str
 def strip_tool_directives(text: str) -> str:
     """移除 [TOOL:] 与 [MCP:] 协议块，给用户干净答案。"""
     return strip_mcp_directives(_TOOL_DIRECTIVE_RE.sub("", text or "")).strip()
+
+
+def attach_session_memory(bundle: dict, session_id: str | None = None, limit: int = 10) -> dict:
+    """把会话记忆挂进 bundle：long 型优先，各截 200 字，总预算 2000 字。
+
+    历史短板：memories 表只写不读。本函数让「用户存过的记忆」在后续对话中
+    真实被注入系统提示词；无记忆/失败时 memory_context 为空，提示词自动省略（诚实降级）。
+    """
+    agent = bundle.get("agent") or bundle
+    sid = (session_id or "").strip()
+    if not sid:
+        bundle["memory_context"] = ""
+        return bundle
+    try:
+        from sessions import get_memories
+
+        rows = get_memories(sid, agent.get("id") or None)
+    except Exception as e:
+        logger.warning(f"session memory load failed: {e}")
+        bundle["memory_context"] = ""
+        return bundle
+    long_rows = [r for r in rows if r.get("memory_type") == "long"][: int(limit * 0.6)]
+    short_rows = [r for r in rows if r.get("memory_type") != "long"][: max(limit - len(long_rows), 0)]
+    lines: list[str] = []
+    for r in long_rows + short_rows:
+        c = str(r.get("content") or "").strip()[:200]
+        if c:
+            lines.append(f"- {'[长期] ' if r in long_rows else ''}{c}")
+    if not lines:
+        bundle["memory_context"] = ""
+        return bundle
+    text = ("## 历史记忆（本会话中用户明确让你记住的内容；与当前任务相关时参考）\n" + "\n".join(lines))[:2000]
+    bundle["memory_context"] = text
+    return bundle
 
 
 async def attach_mcp_tools(bundle: dict) -> dict:
@@ -280,13 +360,28 @@ async def execute_tool_loop(
     mcp_tools: dict[str, str] | None = None,
     mcp_executor=None,
 ) -> dict:
-    """可复用的 ≤2 轮工具调用循环（含 MCP 指令；与 chat_engine.run_agent 同语义）。
+    """可复用的工具调用循环（含 MCP 指令；与 chat_engine.run_agent 同语义）。
 
     支持两类指令：[TOOL:name|input]（平台工具）与 [MCP:server_id|tool|json] / [MCP:tool|json]（外部 MCP）。
     返回 {result（已剥离协议指令）, tools_used, mcp_calls, tool_logs}。
     llm_call / mcp_executor 可注入以便测试。
+
+    轮次上限 _MAX_TOOL_ROUNDS + 累计 token 预算 _MAX_TOOL_TOKEN_BUDGET 双闸控成本。
     """
     import mcp_client
+
+    def _est_tokens(text: str) -> int:
+        """粗略 token 估算：中英混合 ~ 4 char/token，纯 CJK 约 1.5 char/token。"""
+        if not text:
+            return 0
+        # CJK 占比越高 → token/char 越大（上限约 1/1.5，下限 1/4）
+        import re as _re
+
+        cjk = len(_re.findall(r"[\u4e00-\u9fff]", text))
+        ratio = cjk / max(len(text), 1)
+        # 英文 1/4 token/char，中文 1/1.5 token/char，加权
+        token_per_char = 1 / (4 - 2.5 * ratio)  # ratio=0 → 0.25, ratio=1 → 0.67
+        return max(1, int(len(text) * token_per_char))
 
     llm = llm_call if llm_call is not None else call_llm_async
     mcp_call = mcp_executor if mcp_executor is not None else mcp_client.mcp_call_tool
@@ -295,29 +390,44 @@ async def execute_tool_loop(
     tools_used: list[str] = []
     mcp_calls: list[str] = []
     tool_logs: list[str] = []
+    token_budget = _MAX_TOOL_TOKEN_BUDGET
+    token_spent = _est_tokens(system) + _est_tokens(prompt)
+
     text = await llm(system, prompt, max_tokens=max_tokens)
-    for _ in range(_MAX_TOOL_ROUNDS):
+    token_spent += _est_tokens(text)
+    for _round_idx in range(_MAX_TOOL_ROUNDS):
         directives = parse_tool_directives(text, runnable_tools)
         mcp_directives = parse_mcp_directives(text, mcp_ids, mcp_tools)
         if not directives and not mcp_directives:
             break
         exec_results = []
+        round_tokens = 0
         for name, arg in directives:
             tools_used.append(name)
             out = await execute_tool_async(name, arg, user_id)
             exec_results.append(f"[工具 {name} 执行结果]\n{out}")
             tool_logs.append(f"{name}: {out[:300]}")
+            round_tokens += _est_tokens(out)
         for sid, mtool, args in mcp_directives:
             mcp_calls.append(f"{sid}:{mtool}")
             srv = mcp_by_id.get(sid) or {}
             out = await mcp_call(srv, mtool, args)
             exec_results.append(f"[MCP {mtool} 执行结果]\n{out}")
             tool_logs.append(f"MCP {mtool}: {out[:300]}")
-        text = await llm(
-            system,
-            f"{prompt}\n\n" + "\n\n".join(exec_results) + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。",
-            max_tokens=max_tokens,
+            round_tokens += _est_tokens(out)
+        token_spent += round_tokens
+        if token_spent > token_budget:
+            logger.info(f"agent tool loop stop: token budget {token_spent}>{token_budget}")
+            break
+        follow_up = (
+            f"{prompt}\n\n" + "\n\n".join(exec_results)
+            + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"
         )
+        text = await llm(system, follow_up, max_tokens=max_tokens)
+        token_spent += _est_tokens(text)
+        if token_spent > token_budget:
+            logger.info(f"agent tool loop stop post-call: {token_spent}>{token_budget}")
+            break
     return {
         "result": strip_tool_directives(text),
         "tools_used": tools_used,

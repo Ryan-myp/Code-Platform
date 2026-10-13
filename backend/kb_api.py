@@ -1,6 +1,7 @@
 """知识库（KB）管理 API — 从 main.py 拆出的独立路由模块。"""
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -14,6 +15,7 @@ from common.auth import require_auth
 from common.db import get_db
 from common.models import KnowledgeBaseCreateRequest, KnowledgeBaseUpdateRequest
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -174,18 +176,30 @@ async def list_knowledge_bases(current_user: dict = require_auth()):  # noqa: C9
 
 @router.post("/api/knowledge-bases")
 async def create_knowledge_base(req: KnowledgeBaseCreateRequest, current_user: dict = require_auth()):
-    """创建知识库（file / url / db；db 类型需提供 config 连接配置）"""
+    """创建知识库（file / url / db；db 类型需提供 config 连接配置；url 类型自动抓取正文入库）"""
     conn = get_db()
     kb_id = f"kb_{int(time.time() * 1000)}"
+    kb_type = req.type or req.source_type or "file"
+    kb_path = req.path or req.source_path or ""
+    kb_url = req.url or ""
+
+    # URL 型 KB：创建时即抓取正文 → 写入 sidecar，path 指向 sidecar（后续检索走 file 链路）
+    if kb_type == "url" and kb_url and not kb_path:
+        sidecar = await _kb_url_to_sidecar(kb_url, kb_id)
+        if sidecar:
+            kb_path = sidecar
+        else:
+            logger.warning(f"url kb {kb_id} fetch failed, path empty — 检索将提示不支持")
+
     conn.execute(
         """INSERT INTO knowledge_bases (id, name, type, path, url, filter, top_k, description, subtype, config, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             kb_id,
             req.name,
-            req.type or req.source_type or "file",
-            req.path or req.source_path or "",
-            req.url,
+            kb_type,
+            kb_path,
+            kb_url,
             json.dumps(req.filter),
             req.top_k,
             req.description or "",
@@ -339,10 +353,96 @@ def _parse_search_request(kb_id: str, q: str, limit: int) -> dict:
     return {"kb_id": kb_id, "query": q.strip()[:500], "limit": min(limit, 20), "offset": 0}
 
 
-def _execute_vector_search(params: dict) -> list:
-    """执行向量搜索。"""
-    # 简化的搜索逻辑
-    return []
+def _execute_vector_search(params: dict) -> list:  # noqa: C901
+    """向量重排：用 embedding 对关键词命中的文件做语义重排。
+
+    参数 ``params`` 需含：
+    - ``query``: str — 用户查询
+    - ``hits``: list[dict] — 关键词命中的文件（来自 _kb_search_file）
+
+    返回重排后的 hits 列表（不改内容，只调整顺序）。降级路径清晰：
+    - APP_ENV=='test' / 无 API key → 返回原 hits
+    - embedding 调用失败 / chromadb 不可用 → 返回原 hits
+    """
+    query = (params.get("query") or "").strip()
+    hits = params.get("hits") or []
+    if not query or len(hits) < 3:  # 候选太少不值得调
+        return hits
+
+    # ── 测试安全：APP_ENV=='test' 跳过真实 API ──
+    try:
+        import os as _os
+
+        if _os.environ.get("APP_ENV") == "test":
+            return hits
+    except Exception:
+        pass
+
+    # ── embedding 调用（OpenAI 兼容 /embeddings endpoint）──
+    emb_model, emb_key, emb_base = _kb_embedding_config()
+    if not emb_key or not emb_base:
+        return hits  # 无 key → 跳过向量
+
+    # 组装每个 hit 的文本摘要（用于 embedding）
+    hit_texts = []
+    for h in hits:
+        ms = h.get("matches") or []
+        blob = " ".join([str(h.get("file", "")), *[str(m) for m in ms[:3]]])[:500]
+        hit_texts.append(blob)
+
+    try:
+        import httpx
+
+        resp = httpx.post(
+            f"{emb_base.rstrip('/')}/embeddings",
+            headers={"Authorization": f"Bearer {emb_key}", "Content-Type": "application/json"},
+            json={"model": emb_model, "input": [query, *hit_texts]},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return hits
+        data = resp.json()
+        embs = [d["embedding"] for d in data.get("data", [])]
+        if len(embs) < 2:
+            return hits
+        q_vec = embs[0]
+        hit_vecs = embs[1:]
+    except Exception as e:
+        logger.info(f"kb embedding skip: {e}")
+        return hits
+
+    # ── cosine 相似度重排 ──
+    def _cos(a, b):
+        import math
+
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
+        na = math.sqrt(sum(x * x for x in a)) or 1e-9
+        nb = math.sqrt(sum(x * x for x in b)) or 1e-9
+        return dot / (na * nb)
+
+    scores = [_cos(q_vec, v) for v in hit_vecs]
+    pairs = list(zip(scores, hits, strict=False))
+    pairs.sort(key=lambda p: (-p[0], -p[1].get("score", 0)))
+    return [h for _, h in pairs]
+
+
+def _kb_embedding_config() -> tuple[str, str, str]:
+    """解析 embedding 调用配置 → (model, api_key, api_base)。降级返回空串。"""
+    import os
+
+    # 优先用 embedding 专属配置，否则继承全局中转站
+    model = os.environ.get("KB_EMBEDDING_MODEL") or "text-embedding-3-small"
+    key = os.environ.get("KB_EMBEDDING_KEY") or ""
+    base = os.environ.get("KB_EMBEDDING_BASE") or ""
+    if not key or not base:
+        try:
+            from common.config import AGNES_API_BASE, AGNES_API_KEY
+
+            key = key or AGNES_API_KEY
+            base = base or AGNES_API_BASE
+        except Exception:
+            pass
+    return model, key, base
 
 
 def _format_search_response(results: list, total: int) -> dict:
@@ -377,8 +477,8 @@ def _build_kb_context_simple(context_docs: list) -> str:
     return "\n".join([doc.get("content", "") for doc in context_docs[:5]])
 
 
-def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
-    """知识库 db 类型检索：多词候选集 + 词频打分排序。"""
+def _kb_search_db(cfg: dict, q: str, limit: int, offset: int = 0) -> dict:
+    """知识库 db 类型检索：多词候选集 + 词频打分排序。支持 offset 分页。"""
     db_conn, cursor, err = _kb_connect(cfg)
     if err:
         raise HTTPException(400, "操作失败")
@@ -395,13 +495,17 @@ def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
         if not text_cols:
             text_cols = cols
         tokens, phrases = _kb_tokenize(q)
-        place = "?" if engine in ("sqlite",) else "%s"
-        # 候选集：任一 token/短语 LIKE 命中（上限 500 行防全表扫描事故）
+        place = "?" if engine == "sqlite" else "%s"
+        # 候选集：任一 token/短语 LIKE 命中（外层 500 行安全上限防全表扫描事故；
+        # 内层用 offset + limit 做请求级分页，请求上限 min(limit, 50)）
+        safe_limit = min(max(limit, 1), 50)
+        safe_offset = max(offset, 0)
         terms = [t for t in tokens if not any(p == t or t in p for p in phrases)] + phrases
         if not terms:
             terms = [q]
         cond = " OR ".join(f'"{c}" LIKE {place}' for c in text_cols for _ in terms)
         params = [f"%{t}%" for c in text_cols for t in terms]
+        # 先取 top 500 候选（去全表扫），再从中 offset+limit 抽取
         cursor.execute(f'SELECT * FROM "{table}" WHERE {cond} LIMIT 500', params)
         rows = cursor.fetchall()
         scored: list[tuple[float, dict]] = []
@@ -416,8 +520,9 @@ def _kb_search_db(cfg: dict, q: str, limit: int) -> dict:
             item["score"] = round(s, 2)
             scored.append((s, item))
         scored.sort(key=lambda x: -x[0])
-        hits = [h for _, h in scored[:limit]]
-        return {"ok": True, "hits": hits, "count": len(hits), "table": table}
+        total_scored = len(scored)
+        hits = [h for _, h in scored[safe_offset : safe_offset + safe_limit]]
+        return {"ok": True, "hits": hits, "count": len(hits), "total": total_scored, "table": table}
     except HTTPException:
         raise
     except Exception as e:
@@ -490,8 +595,165 @@ def _kb_line_score(line: str, tokens: list[str], phrases: list[str]) -> float:
     return score
 
 
+def _kb_chunk_score(chunk: str, tokens: list[str], phrases: list[str]) -> float:
+    """分块相关度（替代行级打分的块感知版本）。
+
+    与 _kb_line_score 同语义（去重命中主导 + 短语强加权），但频率上限压低到 1 次：
+    块比行长得多，词频重复不相关度更高；「块内出现不同关键词越多越相关」是主信号，
+    单关键词重复 10 次的长块不应得高分。
+    """
+    cf = chunk.lower()
+    score = 0.0
+    for t in tokens:
+        if t in phrases:
+            continue
+        if t in cf:
+            score += 1.0
+    for p in phrases:
+        if p in cf:
+            score += 3.0
+    return score
+
+
+def _kb_chunk_line_hits(chunk: str, tokens: list[str], phrases: list[str]) -> int:
+    """统计块内含至少一个关键词/短语的行数（保持 match_count = 行命中数的旧语义）。"""
+
+    count = 0
+    for line in chunk.splitlines():
+        ll = line.lower()
+        if not ll.strip():
+            continue
+        hit = any((p in ll) for p in phrases) or any((t in ll and t not in phrases) for t in tokens)
+        if hit:
+            count += 1
+    return count
+
+
+_KB_CHUNK = 400  # 分块长度（字）
+_KB_OVERLAP = 100  # 相邻块重叠（防止句中断裂）
+
+_KB_TEXT_EXTS = (".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".html", ".htm")
+_KB_BINARY_EXTS = (".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt")
+_KB_SEARCH_EXTS = _KB_TEXT_EXTS + _KB_BINARY_EXTS
+
+
+async def _kb_fetch_url_body(url: str, timeout: int = 10) -> str:
+    """抓取 URL 页面正文（httpx.AsyncClient + bs4 去噪）。失败返回空串。
+
+    async 版本避免在 FastAPI 异步端点里阻塞事件循环。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; CodePlatformKB/1.0)"},
+            )
+        if resp.status_code >= 400:
+            return ""
+        html = resp.text or ""
+        if not html:
+            return ""
+        try:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(html, "lxml")
+            for tag in soup.select("script, style, nav, footer, header, aside"):
+                tag.decompose()
+            main = soup.find("article") or soup.find("main") or soup.find("body")
+            if not main:
+                main = soup
+            text = main.get_text("\n", strip=True)
+            import re as _re
+
+            text = _re.sub(r"\n{3,}", "\n\n", text)
+            return text[:50000]
+        except ImportError:
+            import re as _re
+
+            text = _re.sub(r"<[^>]+>", "\n", html)
+            text = _re.sub(r"\n{3,}", "\n\n", text)
+            return text[:50000]
+    except Exception as e:
+        logger.info(f"kb url fetch failed for {url}: {e}")
+        return ""
+
+
+async def _kb_url_to_sidecar(url: str, kb_id: str) -> str:
+    """抓 URL 正文 → 写入 uploads/kb/ 下的 sidecar .txt → 返回路径（失败返回空串）。"""
+    os.makedirs(_KB_UPLOAD_DIR, exist_ok=True)
+    text = await _kb_fetch_url_body(url)
+    if not text:
+        return ""
+    path = os.path.join(_KB_UPLOAD_DIR, f"{kb_id}_url_body.txt")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+    except OSError:
+        return ""
+
+
+def _kb_read_or_extract(fp: str) -> str:
+    """读取文件内容：纯文本直接读；二进制文档走 kb_rag.extract_text + sidecar 缓存。
+
+    sidecar 命名 ``<原文件名>.kbrag.txt``，写入源文件同目录；
+    sidecar 比源文件旧/缺失 → 重新提取并覆盖。失败返回空串（静默跳过）。
+    """
+    ext = os.path.splitext(fp)[1].lower()
+
+    # 纯文本：直接读（快速路径，不走缓存）
+    if ext in _KB_TEXT_EXTS:
+        try:
+            with open(fp, encoding="utf-8", errors="ignore") as f:
+                return f.read(300000)  # 文本也放大上限
+        except OSError:
+            return ""
+
+    # 二进制：sidecar 缓存
+    if ext in _KB_BINARY_EXTS:
+        sidecar = f"{fp}.kbrag.txt"
+        try:
+            if os.path.isfile(sidecar):
+                src_mtime = os.path.getmtime(fp)
+                side_mtime = os.path.getmtime(sidecar)
+                if side_mtime >= src_mtime:
+                    # sidecar 新鲜 → 读缓存
+                    with open(sidecar, encoding="utf-8", errors="ignore") as f:
+                        cached = f.read()
+                    if cached and not cached.startswith("["):
+                        return cached
+        except OSError:
+            pass
+        # 需重新提取
+        try:
+            import kb_rag
+
+            text = kb_rag.extract_text(fp, os.path.basename(fp))
+            if text and not text.startswith("["):
+                try:
+                    with open(sidecar, "w", encoding="utf-8") as f:
+                        f.write(text)
+                except OSError:
+                    pass  # sidecar 写失败不影响返回
+                return text
+        except Exception:
+            logger.warning(f"kb extract failed for {fp}")
+        return ""
+
+    # 未知扩展名：尝试直接读（兜底）
+    try:
+        with open(fp, encoding="utf-8", errors="ignore") as f:
+            return f.read(300000)
+    except OSError:
+        return ""
+
+
 def _kb_search_file(d: dict, q: str, limit: int) -> dict:
-    """知识库 file 类型检索：目录扫描 + 多词打分排序 + 上下文行。"""
+    """知识库 file 类型检索：目录扫描（支持 txt/md/pdf/docx/xlsx/pptx …） + 400 字重叠分块打分排序。
+
+    二进制文档（pdf/docx/xlsx/pptx）通过 kb_rag.extract_text 提取文本并 sidecar 缓存
+    （``<原文件名>.kbrag.txt``），同目录下比源文件新则复用。
+    """
     p = (d.get("path") or "").strip()
     if not p or not os.path.exists(p):
         raise HTTPException(400, "文件路径不存在")
@@ -499,45 +761,53 @@ def _kb_search_file(d: dict, q: str, limit: int) -> dict:
     if not files:
         for root, _, fns in os.walk(p):
             for fn in fns:
-                if fn.lower().endswith((".txt", ".md", ".csv", ".log")):
+                if fn.lower().endswith(_KB_SEARCH_EXTS):
                     files.append(os.path.join(root, fn))
     tokens, phrases = _kb_tokenize(q)
     scored: list[tuple[float, dict]] = []
     for fp in files:
-        try:
-            with open(fp, encoding="utf-8", errors="ignore") as f:
-                content = f.read(200000)
-        except OSError:
+        content = _kb_read_or_extract(fp)
+        if not content:
             continue
-        lines = content.splitlines()
-        line_scores = [(_kb_line_score(ln, tokens, phrases), i) for i, ln in enumerate(lines)]
-        matched = [(s, i, lines[i].strip()) for s, i in line_scores if s > 0]
+        step = _KB_CHUNK - _KB_OVERLAP
+        chunks = [
+            (i, content[i : i + _KB_CHUNK]) for i in range(0, len(content), step)
+        ]
+        matched: list[tuple[float, int, str, int]] = []  # (score, offset, chunk_text, line_hits_in_chunk)
+        for off, c in chunks:
+            s = _kb_chunk_score(c, tokens, phrases)
+            if s > 0:
+                lc = _kb_chunk_line_hits(c, tokens, phrases)
+                matched.append((s, off, c.strip(), lc))
         if not matched:
             continue
         matched.sort(key=lambda x: (-x[0], x[1]))
         top5 = matched[:5]
-        # 文件分：top 行分之和 + 早期命中微加分（同一文件内靠前的内容更可能是主旨）
-        f_score = sum(s for s, _, _ in top5) + (1.0 if top5[0][1] < 5 else 0.0)
+        # 文件分：top 块分之和 + 早期命中微加分（同一文件内靠前的内容更可能是主旨）
+        f_score = sum(s for s, _, _, _ in top5) + (1.0 if top5[0][1] < 500 else 0.0)
         hits_item = {
             "file": os.path.basename(fp),
             "path": fp,
-            "matches": [m[2] for m in top5],
-            "match_count": len(matched),
+            "matches": [m[2][:300] for m in top5],
+            "match_count": sum(m[3] for m in matched),
             "score": round(f_score, 2),
         }
         scored.append((f_score, hits_item))
     scored.sort(key=lambda x: -x[0])
-    hits = [h for _, h in scored[:limit]]
-    return {"ok": True, "hits": hits, "count": len(hits)}
+    raw_hits = [h for _, h in scored[:limit]]
+    # 向量重排增强（降级安全：测试环境/无 key/失败 → 保持关键词原序）
+    final_hits = _execute_vector_search({"query": q, "hits": raw_hits})
+    return {"ok": True, "hits": final_hits, "count": len(final_hits)}
 
 
 @router.get("/api/knowledge-bases/{kb_id}/search")
-def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user: dict = require_auth()):  # noqa: C901
-    """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本文件。"""
+def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, offset: int = 0, current_user: dict = require_auth()):  # noqa: C901
+    """在知识库中检索：db 按配置的表对文本列 LIKE 匹配；file 扫描目录内文本/二进制文件；url 若已抓正文也支持。"""
     q = (q or "").strip()
     if not q:
         raise HTTPException(400, "检索关键词不能为空")
     limit = max(1, min(limit or 5, 20))
+    offset = max(offset or 0, 0)
     conn = get_db()
     row = conn.execute("SELECT * FROM knowledge_bases WHERE id=?", (kb_id,)).fetchone()
     conn.close()
@@ -550,10 +820,25 @@ def search_knowledge_base(kb_id: str, q: str = "", limit: int = 5, current_user:
     except (ValueError, TypeError):
         cfg = {}
     if kb_type == "db":
-        return _kb_search_db(cfg, q, limit)
+        return _kb_search_db(cfg, q, limit, offset=offset)
+    # url 型：若已抓取正文（path 有 sidecar）则走 file 检索；否则回退纯关键词搜索 URL 字段
+    if kb_type == "url":
+        url_path = (d.get("path") or "").strip()
+        if url_path and os.path.exists(url_path):
+            d["path"] = url_path
+            d["type"] = "file"
+            return _kb_search_file(d, q, limit)
+        logger.warning(f"url kb {kb_id} has no fetched body, fallback keyword on url field only")
+        url_val = (d.get("url") or "").lower()
+        tokens, phrases = _kb_tokenize(q)
+        blob = url_val
+        s = _kb_line_score(blob, tokens, phrases)
+        if s > 0:
+            return {"ok": True, "hits": [{"file": "URL", "path": d.get("url", ""), "matches": [d.get("url", "")], "match_count": 1, "score": round(s, 2)}], "count": 1}
+        return {"ok": True, "hits": [], "count": 0}
     if kb_type == "file":
         return _kb_search_file(d, q, limit)
-    raise HTTPException(400, "该类型知识库暂不支持内容检索（db / file 支持）")
+    raise HTTPException(400, "该类型知识库暂不支持内容检索（db / file / url 支持）")
 
 
 # ── 知识库文档管理（上传 / 列表 / 删除）─────────────────────
@@ -614,9 +899,8 @@ async def upload_kb_document(file: UploadFile = File(...), current_user: dict = 
     }
 
 
-@router.get("/api/knowledge-bases/{kb_id}/documents")
 def _kb_docs_file(p: str) -> list:
-    """file 类型知识库文档列表（目录扫描或单文件）。"""
+    """file 类型知识库文档列表（目录扫描或单文件）— 纯 helper，不挂路由。"""
     docs = []
     if p and os.path.isdir(p):
         for fn in sorted(os.listdir(p)):
@@ -664,6 +948,7 @@ def _kb_docs_db(d: dict) -> list:
     return []
 
 
+@router.get("/api/knowledge-bases/{kb_id}/documents")
 async def list_kb_documents(kb_id: str, current_user: dict = require_auth()):  # noqa: C901
     """列出知识库文档：file 类型扫描目录/文件；db 类型返回表信息；url 返回空。"""
     conn = get_db()

@@ -87,11 +87,11 @@ class TestExecuteToolLoop:
         # 沙箱真实执行痕迹：工具日志包含执行说明
         assert any("执行" in line for line in out["tool_logs"])
 
-    def test_max_two_rounds_strips_leftover_directives(self):
+    def test_max_rounds_stops_and_strips_leftover(self):
         import agent_runtime
 
         async def fake_llm(system, prompt, **kw):
-            # 每轮都发指令 → 最多执行 2 轮后必须停止且剥离残留指令
+            # 每轮都发指令 → 最多执行 _MAX_TOOL_ROUNDS 轮后必须停止且剥离残留指令
             return "再来 [TOOL:code_interpreter|print(1)]"
 
         out = _run(
@@ -102,7 +102,7 @@ class TestExecuteToolLoop:
                 llm_call=fake_llm,
             )
         )
-        assert out["tools_used"].count("code_interpreter") <= 2
+        assert out["tools_used"].count("code_interpreter") <= agent_runtime._MAX_TOOL_ROUNDS
         assert "[TOOL:" not in out["result"]
 
 

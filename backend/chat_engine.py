@@ -193,13 +193,14 @@ def get_agent_system_prompt(agent_id: str) -> str:
     return instructions
 
 
-async def _assembled_agent_system(agent_id: str, message: str) -> tuple[str, dict]:
-    """组装完整 Agent 上下文（基础指令 + 知识库 RAG + 技能 + 工具协议 + MCP 工具）。
+async def _assembled_agent_system(agent_id: str, message: str, session_id: str | None = None) -> tuple[str, dict]:
+    """组装完整 Agent 上下文（基础指令 + 会话记忆 + 知识库 RAG + 技能 + 工具协议 + MCP 工具）。
 
     Agent 不存在时透传 404；资源组装失败时降级为基础指令，不阻断执行。返回 (system, bundle)。
     """
     try:
         bundle = agent_runtime.load_agent_bundle(agent_id, message)
+        agent_runtime.attach_session_memory(bundle, session_id)
         await agent_runtime.attach_mcp_tools(bundle)
         return agent_runtime.build_agent_system(bundle), bundle
     except HTTPException:
@@ -259,7 +260,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
         raise HTTPException(400, "消息不能为空")
 
     start = time.time()
-    system, bundle = await _assembled_agent_system(agent_id, message)
+    system, bundle = await _assembled_agent_system(agent_id, message, req.get("conversation_id") or req.get("session_id"))
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
     user_id = req.get("user_id", "")
@@ -377,7 +378,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
     conv_id = req.get("conversation_id")
     session_id = req.get("session_id")
     user_id = req.get("user_id", "")
-    system, bundle = await _assembled_agent_system(agent_id, message)
+    system, bundle = await _assembled_agent_system(agent_id, message, conv_id or session_id)
     runnable = bundle.get("runnable_tools") or set()
     start = time.time()
 
@@ -526,6 +527,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
 
     mode = (team["mode"] or "coordinate").lower()
     team_instructions = team["instructions"] or "你是一个团队协作助手"
+    team_session = req.get("conversation_id") or req.get("session_id")
     start = time.time()
 
     async def _run_member(agent: dict, task: str, extra_context: str = "") -> dict:
@@ -542,6 +544,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
         runnable: set[str] = set()
         try:
             bundle = agent_runtime.load_agent_bundle(agent["id"], prompt)
+            agent_runtime.attach_session_memory(bundle, team_session)
             await agent_runtime.attach_mcp_tools(bundle)
             system = agent_runtime.build_agent_system(bundle)
             if team_instructions:

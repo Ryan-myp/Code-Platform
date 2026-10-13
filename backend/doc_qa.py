@@ -9,7 +9,6 @@
 import json
 import logging
 import os
-import re
 from collections.abc import Callable
 from datetime import datetime
 
@@ -95,16 +94,13 @@ DOC_EXTRACT_SYSTEM = """你是文档结构化学者，擅长从文本中提炼�
 
 # ── 模型 ──────────────────────────────────────────────────
 
-
 class AskRequest(BaseModel):
     doc_id: str = Field("", description="文档ID（兼容单文档问答）")
     doc_ids: list[str] = Field(default_factory=list, description="多文档联合问答（最多5篇）")
     question: str = Field(..., min_length=1, max_length=500)
     history: list[dict] = Field(default_factory=list, description="对话历史")
 
-
 # ── 数据库初始化 ──────────────────────────────────────────
-
 
 def init_db():
     with get_db_context() as conn:
@@ -131,59 +127,36 @@ def init_db():
                 pass
         conn.commit()
 
-
 init_db()
 
-
 # ── 文本提取 ──────────────────────────────────────────────
+# v20 重构：委托 kb_rag 统一 RAG 管线，doc_qa.py 作为壳保留旧名导出（test_docqa_tools.py 依赖）
 
+def extract_text(filepath: str, filename: str) -> str:
+    """委托 kb_rag.extract_text；doc_qa 侧保留原名导出以兼容旧调用方。"""
+    import kb_rag
 
-def extract_text(filepath: str, filename: str) -> str:  # noqa: C901
-    """从文件提取文本。"""
-    ext = os.path.splitext(filename)[1].lower()
+    return kb_rag.extract_text(filepath, filename)
 
-    if ext == ".txt":
-        with open(filepath, encoding="utf-8") as f:
-            return f.read()[:MAX_DOC_CHARS]
+def _chunk_text(text: str, chunk_size: int = 500) -> list[dict]:
+    """委托 kb_rag.chunk_text。"""
+    import kb_rag
 
-    if ext == ".pdf":
-        try:
-            import PyPDF2
+    return kb_rag.chunk_text(text, chunk_size)
 
-            text = ""
-            with open(filepath, "rb") as f:
-                reader = PyPDF2.PdfReader(f)
-                for page in reader.pages[:30]:  # 最多30页
-                    t = page.extract_text()
-                    if t:
-                        text += t + "\n"
-                        if len(text) > MAX_DOC_CHARS:
-                            break
-            return text[:MAX_DOC_CHARS]
-        except ImportError:
-            return "[PDF解析库未安装，请安装PyPDF2]"
-        except Exception as e:
-            logger.warning(f"PDF extraction failed: {e}")
-            return "[PDF文本提取失败，请确认文件是否为可读PDF]"
+def _retrieve_chunks(question: str, chunks: list[dict], top_k: int = 4) -> list[dict]:
+    """委托 kb_rag.retrieve_chunks。"""
+    import kb_rag
 
-    if ext in (".docx", ".doc"):
-        try:
-            import docx
+    return kb_rag.retrieve_chunks(question, chunks, top_k)
 
-            doc = docx.Document(filepath)
-            text = "\n".join([p.text for p in doc.paragraphs])
-            return text[:MAX_DOC_CHARS]
-        except ImportError:
-            return "[Word解析库未安装，请安装python-docx]"
-        except Exception as e:
-            logger.warning(f"DOCX extraction failed: {e}")
-            return "[Word文档文本提取失败]"
+def _extract_citations(answer: str, retrieved: list[dict]) -> list[dict]:
+    """委托 kb_rag.extract_citations。"""
+    import kb_rag
 
-    return f"[不支持的文件格式：{ext}]"
-
+    return kb_rag.extract_citations(answer, retrieved)
 
 # ── API ──────────────────────────────────────────────────
-
 
 @router.post("/upload")
 async def upload_doc(
@@ -240,7 +213,6 @@ async def upload_doc(
         "message": f"文档上传成功，已提取 {len(text)} 字符，摘要生成中…",
     }
 
-
 async def _summarize_doc_async(did: str, text: str, filename: str) -> None:
     """后台生成文档摘要并回写记录（失败降级占位，不影响主流程）。"""
     summary = {"title": filename, "type": "文档", "summary": "自动摘要生成失败", "key_points": []}
@@ -267,80 +239,7 @@ async def _summarize_doc_async(did: str, text: str, filename: str) -> None:
     except Exception as e:
         logger.warning(f"doc summary persist failed: {e}")
 
-
-# ── 检索与引用溯源（v15）：切块 / 2-gram 检索 / 引用标记提取 ──
-
-
-def _chunk_text(text: str, chunk_size: int = 500) -> list[dict]:
-    """按段落切块（尽量以完整段落为边界），返回 [{id, text}]。"""
-    chunks: list[dict] = []
-    buf = ""
-    for para in re.split(r"\n+", text or ""):
-        para = para.strip()
-        if not para:
-            continue
-        if len(para) > chunk_size:
-            # 超长段落（单段超过上限）：先落盘已有 buf，再按固定大小拆段
-            if buf.strip():
-                chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
-                buf = ""
-            for i in range(0, len(para), chunk_size):
-                chunks.append({"id": f"c{len(chunks) + 1}", "text": para[i : i + chunk_size]})
-            continue
-        if len(buf) + len(para) > chunk_size and buf:
-            chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
-            buf = ""
-        buf += para + "\n"
-    if buf.strip():
-        chunks.append({"id": f"c{len(chunks) + 1}", "text": buf.strip()})
-    return chunks
-
-
-def _retrieve_chunks(question: str, chunks: list[dict], top_k: int = 4) -> list[dict]:
-    """2-gram 重叠检索：问题与片段字符级 2-gram 集合的 Jaccard 相似度打分。
-
-    无重叠命中时回退返回前 top_k 块（保证 LLM 有上下文可用）。
-    """
-
-    def _sig(text: str) -> set:
-        t = re.sub(r"\s+", "", str(text or "")).lower()
-        return {t[i : i + 2] for i in range(max(0, len(t) - 1))}
-
-    qsig = _sig(question)
-    if not qsig or not chunks:
-        return chunks[:top_k]
-    scored = []
-    for c in chunks:
-        csig = _sig(c["text"])
-        score = len(qsig & csig) / max(len(qsig), 1)
-        scored.append((score, c))
-    scored.sort(key=lambda x: -x[0])
-    top = [c for s, c in scored[:top_k] if s > 0]
-    return top or chunks[:top_k]
-
-
-def _extract_citations(answer: str, retrieved: list[dict]) -> list[dict]:
-    """从回答中提取 [N] 引用标记 → 映射到检索片段（去重、越界忽略）。"""
-    citations = []
-    seen = set()
-    for m in re.finditer(r"\[(\d+)\]", answer or ""):
-        idx = int(m.group(1))
-        if idx < 1 or idx > len(retrieved) or idx in seen:
-            continue
-        seen.add(idx)
-        src = retrieved[idx - 1]
-        citations.append(
-            {
-                "id": src.get("id", f"c{idx}"),
-                "doc_name": src.get("doc_name", ""),
-                "text": src.get("text", "")[:200],
-            }
-        )
-    return citations
-
-
 # ── 异步任务：文档问答（进度/自动重试/并发控制）──
-
 
 async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> dict:
     """文档问答 worker：RAG 上下文 → LLM 回答。"""
@@ -403,11 +302,9 @@ async def _docqa_ask_worker(payload: dict, progress: Callable | None = None) -> 
         "confidence": "基于文档内容",
     }
 
-
 async def _docqa_ask_handler(task_id: str, payload: dict, update: Callable, ctx: dict) -> dict:
     """异步任务处理器：包装文档问答，回报进度。"""
     return await _docqa_ask_worker(payload, progress=update)
-
 
 @router.post("/ask")
 async def ask_document(req: AskRequest, current_user: dict = require_auth()):
@@ -425,7 +322,6 @@ async def ask_document(req: AskRequest, current_user: dict = require_auth()):
         role=current_user.get("role", ""),
     )
     return {"ok": True, "task_id": task["id"], "status": task["status"]}
-
 
 @router.get("/records")
 async def list_records(current_user: dict = require_auth()):
@@ -448,7 +344,6 @@ async def list_records(current_user: dict = require_auth()):
         for r in rows
     ]
 
-
 def _can_access(conn, record_id: str, current_user: dict) -> bool:
     """记录归属校验：admin 可访问全部；普通用户仅自己的记录。"""
     role = current_user.get("role", "")
@@ -457,7 +352,6 @@ def _can_access(conn, record_id: str, current_user: dict) -> bool:
         return True
     row = conn.execute("SELECT user_id FROM doc_qa_records WHERE id=?", (record_id,)).fetchone()
     return bool(row) and str(row[0] or "") == uid
-
 
 @router.get("/records/{record_id}")
 async def get_record(record_id: str, current_user: dict = require_auth()):
@@ -480,7 +374,6 @@ async def get_record(record_id: str, current_user: dict = require_auth()):
         "created_at": row[8],
     }
 
-
 @router.delete("/records/{record_id}")
 async def delete_record(record_id: str, current_user: dict = require_auth()):
     """删除文档记录（归属校验）。"""
@@ -496,7 +389,6 @@ async def delete_record(record_id: str, current_user: dict = require_auth()):
             pass
         conn.execute("DELETE FROM doc_qa_records WHERE id=?", (record_id,))
     return {"message": "已删除"}
-
 
 # ── 异步任务处理器注册 ──
 register_handler("docqa_ask", _docqa_ask_handler, user_limit=1, max_attempts=1)
