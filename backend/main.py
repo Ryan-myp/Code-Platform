@@ -532,10 +532,13 @@ _QUOTA_PATHS = (
     "/api/forecast/analyze",
     "/api/video/analyze",
     "/api/auto-run",
+    "/api/assistant/chat",
+    "/api/assistant/chat/stream",
 )
 
-# 后缀匹配（/run、/execute 结尾的 AI 执行端点）
-_QUOTA_SUFFIXES = ("/run", "/execute")
+# 后缀匹配（/run、/execute、/stream 结尾的 AI 执行端点；/stream 目前仅 agent/assistant
+# 两个 LLM 流式执行路径命中，新增流式端点自动纳入额度闸）
+_QUOTA_SUFFIXES = ("/run", "/execute", "/stream")
 
 
 @app.middleware("http")
