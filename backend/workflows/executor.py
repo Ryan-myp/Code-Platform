@@ -558,12 +558,13 @@ class WorkflowExecutor:
                     set(bundle.get("runnable_tools") or []),
                     mcp_servers=bundle.get("mcp_servers"),
                     mcp_tools=bundle.get("mcp_tools"),
+                    model=agent["model"] or None,  # v18 P0：agent 级模型
                 )
                 result = loop["result"]
                 tools_used = loop["tools_used"] + [f"MCP:{c}" for c in loop.get("mcp_calls", [])]
             except Exception as e:
                 logger.warning(f"agent node {agent_id} bundle 执行失败，降级为纯文本: {e}")
-                result = call_llm(agent["instructions"] or "你是一个智能助手", message, max_tokens=2000)
+                result = call_llm(agent["instructions"] or "你是一个智能助手", message, max_tokens=2000, model=agent["model"] or None)
                 tools_used = []
         else:
             result = call_llm("你是一个智能助手", message, max_tokens=2000)

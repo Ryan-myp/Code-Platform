@@ -462,6 +462,8 @@ async def execute_tool_loop(
     *,
     user_id: str = "default",
     max_tokens: int = 2000,
+    model: str | None = None,
+    fallback_models: list[str] | None = None,
     llm_call=None,
     mcp_servers: list[dict] | None = None,
     mcp_tools: dict[str, str] | None = None,
@@ -474,6 +476,10 @@ async def execute_tool_loop(
     双模式路由：
     - 生产模式（llm_call 未注入）+ 有工具 → call_llm_with_tools_async（OpenAI tools API）
     - 测试模式（llm_call 注入）或 LLM 不支持 tools → 文本协议 [TOOL:name|input]（兼容）
+
+    参数：
+    - model/fallback_models：agent 级模型选择透传（v18）；None = 全局/中转站默认。
+      仅生产/文本层按传入与否注入，保持测试 fake llm_call 的旧签名兼容。
 
     参数：
     - conversation_messages：多轮上下文（含 system + 历史，含当前 user 消息）；
@@ -521,19 +527,25 @@ async def execute_tool_loop(
     else:
         token_spent = _est_tokens(system) + _est_tokens(prompt)
 
+    # 文本协议层的 LLM 附加 kwarg：agent 级模型选择仅在配置时注入（保持旧版 fake llm_call 签名兼容）
+    text_llm_kwargs = {"model": model} if model else {}
+
     # 首次调用
     tool_calls: list | None = None
     if use_fc:
         from common.llm import call_llm_with_tools_async
 
-        resp = await call_llm_with_tools_async("", "", tool_schemas, max_tokens=max_tokens, messages=conv_messages)
+        resp = await call_llm_with_tools_async(
+            "", "", tool_schemas, max_tokens=max_tokens, model=model,
+            fallback_models=fallback_models, messages=conv_messages,
+        )
         text = resp["content"]
         tool_calls = resp["tool_calls"]
     else:
         if conversation_messages:
-            text = await llm("", "", max_tokens=max_tokens, messages=first_messages)
+            text = await llm("", "", max_tokens=max_tokens, messages=first_messages, **text_llm_kwargs)
         else:
-            text = await llm(system, prompt, max_tokens=max_tokens)
+            text = await llm(system, prompt, max_tokens=max_tokens, **text_llm_kwargs)
     token_spent += _est_tokens(text)
 
     for _round_idx in range(_MAX_TOOL_ROUNDS):
@@ -593,7 +605,10 @@ async def execute_tool_loop(
                 conv_messages.append(
                     {"role": "user", "content": "\n\n".join(exec_results[len(tool_result_msgs):]) + "\n\n请基于以上工具执行结果，直接给出最终答案。"}
                 )
-            resp = await call_llm_with_tools_async("", "", tool_schemas, max_tokens=max_tokens, messages=conv_messages)
+            resp = await call_llm_with_tools_async(
+                "", "", tool_schemas, max_tokens=max_tokens, model=model,
+                fallback_models=fallback_models, messages=conv_messages,
+            )
             text = resp["content"]
             tool_calls = resp["tool_calls"]
         else:
@@ -604,9 +619,9 @@ async def execute_tool_loop(
             )
             if conversation_messages:
                 follow_msgs = first_messages + [{"role": "assistant", "content": text}, {"role": "user", "content": follow_up}]
-                text = await llm("", "", max_tokens=max_tokens, messages=follow_msgs)
+                text = await llm("", "", max_tokens=max_tokens, messages=follow_msgs, **text_llm_kwargs)
             else:
-                text = await llm(system, follow_up, max_tokens=max_tokens)
+                text = await llm(system, follow_up, max_tokens=max_tokens, **text_llm_kwargs)
             tool_calls = None
         token_spent += _est_tokens(text)
         if token_spent > token_budget:

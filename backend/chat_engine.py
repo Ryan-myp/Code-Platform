@@ -285,6 +285,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
             runnable,
             user_id=user_id,
             max_tokens=2000,
+            model=bundle.get("model") or None,  # v18 P0：agent 级模型选择生效
             mcp_servers=bundle.get("mcp_servers"),
             mcp_tools=bundle.get("mcp_tools"),
             conversation_messages=conversation_messages,
@@ -377,6 +378,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 runnable,
                 user_id=user_id,
                 max_tokens=2000,
+                model=bundle.get("model") or None,  # v18 P0
                 mcp_servers=bundle.get("mcp_servers"),
                 mcp_tools=bundle.get("mcp_tools"),
                 conversation_messages=conversation_messages,
@@ -602,6 +604,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
                 prompt,
                 runnable,
                 user_id="team",
+                model=bundle.get("model") or None,  # v18 P0：成员 agent 各自模型
                 mcp_servers=bundle.get("mcp_servers"),
                 mcp_tools=bundle.get("mcp_tools"),
             )
