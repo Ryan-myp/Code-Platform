@@ -41,6 +41,9 @@ from common.llm import call_llm, log_usage
 
 logger = logging.getLogger(__name__)
 
+# 每层 DAG 并行执行并发上限（低并发策略，避免大量独立节点同时冲击 LLM/DB）
+_DAG_LAYER_SEM = asyncio.Semaphore(3)
+
 # 模块加载时同步 LLM 配置 (Agent/PRD/Music 节点直接使用)
 load_config()
 
@@ -234,9 +237,13 @@ class WorkflowExecutor:
     def _build_dag(self, nodes: list, connections: list) -> tuple[dict, dict]:
         """从节点和连接构建 DAG 邻接表和入度表。
 
+        连接可携带 source_port 字段（"if_true"/"if_false"）实现 condition 节点
+        的互斥分支路由：condition 求值后只激活匹配分支的下游节点，
+        非匹配分支的下游节点被标记为 skipped 并传播跳过。
+
         Returns:
             (adjacency_list, in_degree)
-            adjacency_list: {node_id: [downstream_node_ids]}
+            adjacency_list: {node_id: [(downstream_id, source_port)]}
             in_degree: {node_id: count}
         """
         node_ids = {n["id"] for n in nodes}
@@ -246,31 +253,73 @@ class WorkflowExecutor:
         for conn in connections:
             src = conn.get("source") or conn.get("from") or conn.get("source_id", "")
             dst = conn.get("target") or conn.get("to") or conn.get("target_id", "")
+            port = conn.get("source_port") or conn.get("port") or conn.get("condition_branch") or ""
             if src in node_ids and dst in node_ids:
-                adjacency[src].append(dst)
+                adjacency[src].append((dst, port))
                 in_degree[dst] += 1
 
         return adjacency, in_degree
 
+    def _skip_downstream(self, nid: str, in_degree: dict, adjacency: dict, processed: set, results: dict, run_id: str):
+        """跳过条件分支未命中的下游节点，并传播跳过到无其他依赖的后续节点。
+
+        被跳过的节点标记为 skipped 状态；其下游入度照常递减，
+        若下游入度降为 0 且无其他未处理上游则一并跳过（传播）。
+        """
+        queue = [nid]
+        while queue:
+            current = queue.pop(0)
+            if current in processed:
+                continue
+            processed.add(current)
+            results[current] = {"status": "skipped", "message": "条件分支未命中，跳过执行"}
+            self._log_node(run_id, current, "skipped", json.dumps(results[current], ensure_ascii=False))
+            for dst, _port in adjacency.get(current, []):
+                in_degree[dst] -= 1
+                if in_degree[dst] == 0 and dst not in processed:
+                    queue.append(dst)
+
     async def _run_dag_layers(
         self, nodes, node_map, in_degree, adjacency, results, input_data, run_id, ws_channel, processed
     ) -> dict:
-        """Kahn 拓扑排序分层并行执行节点。"""
+        """Kahn 拓扑排序分层并行执行节点。
+
+        v8.1: condition 节点支持 if_true/if_false 互斥分支路由。
+        condition 求值后只激活匹配分支的下游节点，非匹配分支被跳过并传播。
+        """
         while len(processed) < len(nodes):
             ready = [nid for nid in in_degree if in_degree[nid] == 0 and nid not in processed]
             if not ready:
                 remaining = [nid for nid in in_degree if nid not in processed]
                 for nid in remaining:
-                    results[nid] = {"status": "error", "message": "检测到循环依赖，节点未执行"}
-                    self._log_node(run_id, nid, "failed", results[nid])
+                    results[nid] = {"status": "error", "message": "检测到循环依赖或条件跳过后阻塞，节点未执行"}
+                    self._log_node(run_id, nid, "failed", json.dumps(results[nid], ensure_ascii=False))
                 break
-            await asyncio.gather(
-                *[self._exec_one(nid, node_map, results, input_data, run_id, ws_channel) for nid in ready]
-            )
+            # 并发上限 3：防止一层内大量独立节点同时冲击 LLM/DB（低并发策略；模块级信号量避免 B023）
+            async def _capped(nid: str) -> None:
+                async with _DAG_LAYER_SEM:
+                    await self._exec_one(nid, node_map, results, input_data, run_id, ws_channel)
+
+            await asyncio.gather(*[_capped(nid) for nid in ready])
             for nid in ready:
                 processed.add(nid)
-                for downstream in adjacency.get(nid, []):
-                    in_degree[downstream] -= 1
+                node = node_map.get(nid, {})
+                node_type = node.get("type", "")
+                if node_type == "condition":
+                    # 条件分支路由：只激活匹配分支，非匹配分支跳过并传播
+                    cond_result = results.get(nid, {}).get("result", False)
+                    for dst, port in adjacency.get(nid, []):
+                        if not port or port == "default":
+                            in_degree[dst] -= 1
+                        elif port == "if_true" and cond_result:
+                            in_degree[dst] -= 1
+                        elif port == "if_false" and not cond_result:
+                            in_degree[dst] -= 1
+                        else:
+                            self._skip_downstream(dst, in_degree, adjacency, processed, results, run_id)
+                else:
+                    for dst, _port in adjacency.get(nid, []):
+                        in_degree[dst] -= 1
         return results
 
     async def _exec_one(
@@ -396,8 +445,12 @@ class WorkflowExecutor:
         return run_id
 
     def _log_node(self, run_id: str, node_id: str, status: str, output: str) -> None:
-        """记录节点执行日志到数据库。"""
+        """记录节点执行日志到数据库（run 行不存在时懒创建，兼容单测直调）。"""
         conn = get_db()
+        conn.execute(
+            "INSERT OR IGNORE INTO workflow_runs (id, workflow_id, status, started_at) VALUES (?, '', 'running', ?)",
+            (run_id, datetime.now().isoformat()),
+        )
         conn.execute(
             "INSERT INTO workflow_run_logs (id, run_id, node_id, status, output_data, completed_at) VALUES (?, ?, ?, ?, ?, ?)",
             (f"log_{node_id}_{uuid.uuid4().hex[:6]}", run_id, node_id, status, output, datetime.now().isoformat()),

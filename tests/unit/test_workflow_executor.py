@@ -295,7 +295,7 @@ def test_execute_http_node_no_url(test_db_path):
 
 
 def test_build_dag_simple():
-    """简单 DAG 构建"""
+    """简单 DAG 构建（邻接表存储 (dst, port) 元组）"""
     from workflows.executor import WorkflowExecutor
 
     executor = WorkflowExecutor()
@@ -309,11 +309,32 @@ def test_build_dag_simple():
         {"source": "n2", "target": "n3"},
     ]
     adj, in_degree = executor._build_dag(nodes, connections)
-    assert adj["n1"] == ["n2"]
-    assert adj["n2"] == ["n3"]
+    assert adj["n1"] == [("n2", "")]
+    assert adj["n2"] == [("n3", "")]
     assert in_degree["n1"] == 0
     assert in_degree["n2"] == 1
     assert in_degree["n3"] == 1
+
+
+def test_build_dag_condition_branch():
+    """条件分支 DAG：if_true / if_false 边端口保留"""
+    from workflows.executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    nodes = [
+        {"id": "cond", "type": "condition", "config": {"expression": "True"}},
+        {"id": "true_branch", "type": "delay"},
+        {"id": "false_branch", "type": "delay"},
+    ]
+    connections = [
+        {"source": "cond", "target": "true_branch", "source_port": "if_true"},
+        {"source": "cond", "target": "false_branch", "source_port": "if_false"},
+    ]
+    adj, in_degree = executor._build_dag(nodes, connections)
+    assert ("true_branch", "if_true") in adj["cond"]
+    assert ("false_branch", "if_false") in adj["cond"]
+    assert in_degree["true_branch"] == 1
+    assert in_degree["false_branch"] == 1
 
 
 def test_build_dag_parallel():
@@ -387,3 +408,152 @@ def test_execute_workflow_not_found(test_db_path):
     with pytest.raises(ValueError) as exc_info:
         run(executor.execute("nonexistent_wf", {}))
     assert "不存在" in str(exc_info.value)
+
+
+# ══════════════════════════════════════════════════════════════
+# 条件分支路由
+# ══════════════════════════════════════════════════════════════
+
+
+def test_skip_downstream_propagation():
+    """_skip_downstream 传播跳过到无其他依赖的后续节点"""
+    from workflows.executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    in_degree = {"a": 1, "b": 1, "c": 1}
+    adjacency = {"a": [("b", "")], "b": [("c", "")]}
+    processed = set()
+    results = {}
+    executor._skip_downstream("a", in_degree, adjacency, processed, results, "run_test")
+    assert "a" in processed
+    assert "b" in processed
+    assert "c" in processed
+    assert results["a"]["status"] == "skipped"
+    assert results["b"]["status"] == "skipped"
+    assert results["c"]["status"] == "skipped"
+    assert in_degree["b"] == 0
+    assert in_degree["c"] == 0
+
+
+def test_skip_downstream_blocked_by_other_dependency():
+    """_skip_downstream 不跳过有其他未处理上游的节点"""
+    from workflows.executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    in_degree = {"a": 1, "b": 2}  # b 依赖 a 和另一个未处理节点
+    adjacency = {"a": [("b", "")]}
+    processed = set()
+    results = {}
+    executor._skip_downstream("a", in_degree, adjacency, processed, results, "run_test")
+    assert "a" in processed
+    assert "b" not in processed  # b 仍有 in_degree=1，不被跳过
+    assert in_degree["b"] == 1
+
+
+def test_condition_routing_true_branch(test_db_path):
+    """条件为 True 时 if_true 分支执行，if_false 分支跳过"""
+    from common.db import get_db
+    from workflows.executor import WorkflowExecutor
+
+    nodes = [
+        {"id": "cond", "type": "condition", "config": {"expression": "True"}},
+        {"id": "yes", "type": "delay", "config": {"seconds": 0.01}},
+        {"id": "no", "type": "delay", "config": {"seconds": 0.01}},
+    ]
+    connections = [
+        {"source": "cond", "target": "yes", "source_port": "if_true"},
+        {"source": "cond", "target": "no", "source_port": "if_false"},
+    ]
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO workflows (id, name, steps, connections, created_at, active)
+           VALUES (?, ?, ?, ?, ?, 1)""",
+        ("wf_cond_true", "条件路由测试-True", json.dumps(nodes), json.dumps(connections), "2024-01-01T00:00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    executor = WorkflowExecutor()
+    run_id = run(executor.execute("wf_cond_true", {}))
+
+    conn = get_db()
+    run_record = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    output = json.loads(run_record["output_data"])
+    assert output["cond"]["result"] is True
+    assert output["yes"]["status"] == "delayed"
+    assert output["no"]["status"] == "skipped"
+
+
+def test_condition_routing_false_branch(test_db_path):
+    """条件为 False 时 if_false 分支执行，if_true 分支跳过"""
+    from common.db import get_db
+    from workflows.executor import WorkflowExecutor
+
+    nodes = [
+        {"id": "cond", "type": "condition", "config": {"expression": "False"}},
+        {"id": "yes", "type": "delay", "config": {"seconds": 0.01}},
+        {"id": "no", "type": "delay", "config": {"seconds": 0.01}},
+    ]
+    connections = [
+        {"source": "cond", "target": "yes", "source_port": "if_true"},
+        {"source": "cond", "target": "no", "source_port": "if_false"},
+    ]
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO workflows (id, name, steps, connections, created_at, active)
+           VALUES (?, ?, ?, ?, ?, 1)""",
+        ("wf_cond_false", "条件路由测试-False", json.dumps(nodes), json.dumps(connections), "2024-01-01T00:00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    executor = WorkflowExecutor()
+    run_id = run(executor.execute("wf_cond_false", {}))
+
+    conn = get_db()
+    run_record = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    output = json.loads(run_record["output_data"])
+    assert output["cond"]["result"] is False
+    assert output["yes"]["status"] == "skipped"
+    assert output["no"]["status"] == "delayed"
+
+
+def test_condition_routing_merge_branches(test_db_path):
+    """条件分支后汇聚到同一节点：无论走哪个分支，汇聚节点都执行"""
+    from common.db import get_db
+    from workflows.executor import WorkflowExecutor
+
+    nodes = [
+        {"id": "cond", "type": "condition", "config": {"expression": "True"}},
+        {"id": "yes", "type": "delay", "config": {"seconds": 0.01}},
+        {"id": "no", "type": "delay", "config": {"seconds": 0.01}},
+        {"id": "merge", "type": "delay", "config": {"seconds": 0.01}},
+    ]
+    connections = [
+        {"source": "cond", "target": "yes", "source_port": "if_true"},
+        {"source": "cond", "target": "no", "source_port": "if_false"},
+        {"source": "yes", "target": "merge"},
+        {"source": "no", "target": "merge"},
+    ]
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO workflows (id, name, steps, connections, created_at, active)
+           VALUES (?, ?, ?, ?, ?, 1)""",
+        ("wf_cond_merge", "条件路由测试-汇聚", json.dumps(nodes), json.dumps(connections), "2024-01-01T00:00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    executor = WorkflowExecutor()
+    run_id = run(executor.execute("wf_cond_merge", {}))
+
+    conn = get_db()
+    run_record = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    output = json.loads(run_record["output_data"])
+    assert output["cond"]["result"] is True
+    assert output["yes"]["status"] == "delayed"
+    assert output["no"]["status"] == "skipped"
+    assert output["merge"]["status"] == "delayed"  # 汇聚节点仍执行（yes 路径激活）

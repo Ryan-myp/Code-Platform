@@ -52,6 +52,42 @@ def _parse_list(raw):
         return []
 
 
+def _build_tool_schemas(runnable_tools: set[str]) -> list[dict]:
+    """从 runnable_tools 生成 OpenAI function calling 工具 schema。
+
+    每个工具的入参统一为 {"input": string}，与文本协议 [TOOL:name|input] 语义一致。
+    """
+    from tool_definitions import TOOL_DEFINITIONS
+
+    schemas = []
+    for tid in sorted(runnable_tools):
+        meta = TOOL_DEFINITIONS.get(tid, {})
+        name = meta.get("name", tid)
+        desc = meta.get("description", "")
+        if tid == "code_interpreter":
+            desc = "执行 Python 代码（沙箱，10s CPU 限制），适合数值计算/数据处理/验证"
+        schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": tid,
+                    "description": (desc or f"工具 {name}")[:200],
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input": {
+                                "type": "string",
+                                "description": "工具输入内容（代码、任务描述或 JSON 参数）",
+                            }
+                        },
+                        "required": ["input"],
+                    },
+                },
+            }
+        )
+    return schemas[:8]  # 与 _tool_descriptions 一致，上限 8 个
+
+
 def load_agent_bundle(agent_id: str, user_message: str = "") -> dict:
     """加载 Agent 及其绑定资源，返回组装上下文所需的完整 bundle。
 
@@ -308,8 +344,8 @@ def attach_session_memory(bundle: dict, session_id: str | None = None, limit: in
         logger.warning(f"session memory load failed: {e}")
         bundle["memory_context"] = ""
         return bundle
-    long_rows = [r for r in rows if r.get("memory_type") == "long"][: int(limit * 0.6)]
-    short_rows = [r for r in rows if r.get("memory_type") != "long"][: max(limit - len(long_rows), 0)]
+    long_rows = [r for r in rows if r.get("memory_type") in ("long", "auto")][: int(limit * 0.6)]
+    short_rows = [r for r in rows if r.get("memory_type") not in ("long", "auto")][: max(limit - len(long_rows), 0)]
     lines: list[str] = []
     for r in long_rows + short_rows:
         c = str(r.get("content") or "").strip()[:200]
@@ -348,6 +384,17 @@ async def attach_mcp_tools(bundle: dict) -> dict:
     return bundle
 
 
+def _parse_tool_args(raw_args: str) -> str:
+    """解析 function calling arguments JSON，提取 input 字段。非 JSON 原样返回。"""
+    try:
+        data = json.loads(raw_args)
+        if isinstance(data, dict):
+            return str(data.get("input", raw_args))
+        return str(data)
+    except (json.JSONDecodeError, TypeError):
+        return raw_args
+
+
 async def execute_tool_loop(
     system: str,
     prompt: str,
@@ -360,11 +407,14 @@ async def execute_tool_loop(
     mcp_tools: dict[str, str] | None = None,
     mcp_executor=None,
 ) -> dict:
-    """可复用的工具调用循环（含 MCP 指令；与 chat_engine.run_agent 同语义）。
+    """可复用的工具调用循环（双模式：function calling + 文本协议兼容）。
 
-    支持两类指令：[TOOL:name|input]（平台工具）与 [MCP:server_id|tool|json] / [MCP:tool|json]（外部 MCP）。
+    双模式路由：
+    - 生产模式（llm_call 未注入）+ 有工具 → call_llm_with_tools_async（OpenAI tools API）
+    - 测试模式（llm_call 注入）或 LLM 不支持 tools → 文本协议 [TOOL:name|input]（兼容）
+
+    同时支持 MCP 指令 [MCP:server_id|tool|json] / [MCP:tool|json]。
     返回 {result（已剥离协议指令）, tools_used, mcp_calls, tool_logs}。
-    llm_call / mcp_executor 可注入以便测试。
 
     轮次上限 _MAX_TOOL_ROUNDS + 累计 token 预算 _MAX_TOOL_TOKEN_BUDGET 双闸控成本。
     """
@@ -374,13 +424,11 @@ async def execute_tool_loop(
         """粗略 token 估算：中英混合 ~ 4 char/token，纯 CJK 约 1.5 char/token。"""
         if not text:
             return 0
-        # CJK 占比越高 → token/char 越大（上限约 1/1.5，下限 1/4）
         import re as _re
 
         cjk = len(_re.findall(r"[\u4e00-\u9fff]", text))
         ratio = cjk / max(len(text), 1)
-        # 英文 1/4 token/char，中文 1/1.5 token/char，加权
-        token_per_char = 1 / (4 - 2.5 * ratio)  # ratio=0 → 0.25, ratio=1 → 0.67
+        token_per_char = 1 / (4 - 2.5 * ratio)
         return max(1, int(len(text) * token_per_char))
 
     llm = llm_call if llm_call is not None else call_llm_async
@@ -393,14 +441,40 @@ async def execute_tool_loop(
     token_budget = _MAX_TOOL_TOKEN_BUDGET
     token_spent = _est_tokens(system) + _est_tokens(prompt)
 
-    text = await llm(system, prompt, max_tokens=max_tokens)
+    # ── 双模式：function calling 或文本协议 ──
+    tool_schemas = _build_tool_schemas(runnable_tools) if runnable_tools else []
+    use_fc = bool(tool_schemas) and llm_call is None  # 仅生产模式启用 FC
+
+    base_messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+    conv_messages: list[dict] = list(base_messages)  # 可累积的对话上下文
+
+    # 首次调用
+    tool_calls: list | None = None
+    if use_fc:
+        from common.llm import call_llm_with_tools_async
+
+        resp = await call_llm_with_tools_async("", "", tool_schemas, max_tokens=max_tokens, messages=conv_messages)
+        text = resp["content"]
+        tool_calls = resp["tool_calls"]
+    else:
+        text = await llm(system, prompt, max_tokens=max_tokens)
     token_spent += _est_tokens(text)
+
     for _round_idx in range(_MAX_TOOL_ROUNDS):
-        directives = parse_tool_directives(text, runnable_tools)
+        # 双模式指令解析
+        if tool_calls:
+            # function calling 模式：从 tool_calls 提取 (name, args)
+            directives = [(tc["name"], _parse_tool_args(tc["arguments"])) for tc in tool_calls if tc["name"] in runnable_tools]
+        else:
+            # 文本协议模式：解析 [TOOL:name|input]
+            directives = parse_tool_directives(text, runnable_tools)
         mcp_directives = parse_mcp_directives(text, mcp_ids, mcp_tools)
         if not directives and not mcp_directives:
             break
-        exec_results = []
+
+        # 执行工具
+        exec_results: list[str] = []
+        tool_result_msgs: list[dict] = []  # FC 模式的 tool 结果消息
         round_tokens = 0
         for name, arg in directives:
             tools_used.append(name)
@@ -408,6 +482,9 @@ async def execute_tool_loop(
             exec_results.append(f"[工具 {name} 执行结果]\n{out}")
             tool_logs.append(f"{name}: {out[:300]}")
             round_tokens += _est_tokens(out)
+            if tool_calls:
+                tc_id = next((tc["id"] for tc in tool_calls if tc["name"] == name), "")
+                tool_result_msgs.append({"role": "tool", "tool_call_id": tc_id, "content": out[:_MAX_TOOL_RESULT]})
         for sid, mtool, args in mcp_directives:
             mcp_calls.append(f"{sid}:{mtool}")
             srv = mcp_by_id.get(sid) or {}
@@ -419,11 +496,34 @@ async def execute_tool_loop(
         if token_spent > token_budget:
             logger.info(f"agent tool loop stop: token budget {token_spent}>{token_budget}")
             break
-        follow_up = (
-            f"{prompt}\n\n" + "\n\n".join(exec_results)
-            + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"
-        )
-        text = await llm(system, follow_up, max_tokens=max_tokens)
+
+        # 后续调用
+        if use_fc and tool_calls:
+            # FC 模式：assistant + tool results → 再调用
+            assistant_msg = {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": [
+                    {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+                    for tc in tool_calls
+                ],
+            }
+            conv_messages = conv_messages + [assistant_msg] + tool_result_msgs
+            if exec_results:
+                conv_messages.append(
+                    {"role": "user", "content": "\n\n".join(exec_results[len(tool_result_msgs):]) + "\n\n请基于以上工具执行结果，直接给出最终答案。"}
+                )
+            resp = await call_llm_with_tools_async("", "", tool_schemas, max_tokens=max_tokens, messages=conv_messages)
+            text = resp["content"]
+            tool_calls = resp["tool_calls"]
+        else:
+            # 文本协议模式（或 FC 降级后）
+            follow_up = (
+                f"{prompt}\n\n" + "\n\n".join(exec_results)
+                + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"
+            )
+            text = await llm(system, follow_up, max_tokens=max_tokens)
+            tool_calls = None
         token_spent += _est_tokens(text)
         if token_spent > token_budget:
             logger.info(f"agent tool loop stop post-call: {token_spent}>{token_budget}")

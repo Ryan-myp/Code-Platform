@@ -7,7 +7,6 @@
 """
 
 import asyncio
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -138,7 +137,7 @@ class TestWorkflowNewNodes:
             files={
                 "file": (
                     "wf_kb_test.md",
-                    "工作流知识库节点测试条目：橙色是平台默认主题色".encode("utf-8"),
+                    "工作流知识库节点测试条目：橙色是平台默认主题色".encode(),
                     "utf-8",
                 )
             },
@@ -168,7 +167,6 @@ class TestWorkflowNewNodes:
 
 class TestWorkflowAgentNodeBundle:
     def test_agent_node_uses_tools(self, auth_token, monkeypatch):
-        import agent_runtime
 
         headers = {"Authorization": f"Bearer {auth_token}"}
         agent_id = _make_agent(
@@ -179,13 +177,21 @@ class TestWorkflowAgentNodeBundle:
             instructions="你是数值计算专家",
         )
 
-        async def fake_llm(system, prompt, **kw):
-            assert "code_interpreter" in system  # bundle 工具清单已注入
-            if "工具执行结果" in prompt:
-                return "答案：7"
-            return "算一下 [TOOL:code_interpreter|print(3+4)]"
+        import common.llm
 
-        monkeypatch.setattr(agent_runtime, "call_llm_async", fake_llm)
+        async def fake_fc(system, prompt, tools, **kw):
+            msgs = kw.get("messages") or []
+            # bundle 工具清单已注入（FC 模式下 system 在 messages[0]）
+            if msgs:
+                assert "code_interpreter" in str(msgs[0].get("content") or "")
+            if any(m.get("role") == "tool" for m in msgs):
+                return {"content": "答案：7", "tool_calls": None}
+            return {
+                "content": "",
+                "tool_calls": [{"id": "c1", "name": "code_interpreter", "arguments": '{"input": "print(3+4)"}'}],
+            }
+
+        monkeypatch.setattr(common.llm, "call_llm_with_tools_async", fake_fc)
 
         from workflows.executor import WorkflowExecutor
 

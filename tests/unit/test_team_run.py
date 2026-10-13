@@ -112,7 +112,6 @@ class TestExecuteToolLoop:
 
 class TestRunTeamUsesAgentBundle:
     def test_member_runs_with_tools_and_reports_usage(self, auth_token, monkeypatch):
-        import agent_runtime
         import chat_engine
 
         headers = {"Authorization": f"Bearer {auth_token}"}
@@ -126,19 +125,26 @@ class TestRunTeamUsesAgentBundle:
         assert r.status_code == 200
         team_id = r.json()["id"]
 
-        # 记录成员执行时的 system prompt（证明 bundle 接线：工具清单存在）
+        # 记录成员执行时的 system prompt（证明 bundle 接线：工具清单存在）；FC 模式下 system 在 messages[0]
         seen_systems = []
 
-        async def fake_member_llm(system, prompt, **kw):
-            seen_systems.append(system)
-            if "工具执行结果" in prompt:
-                return "结论：6×2=12"
-            return "先用工具算 [TOOL:code_interpreter|print(6*2)]"
+        import common.llm
 
         async def fake_coord_llm(system, prompt, **kw):
             return "协调汇总：团队计算完成，结果 12"
 
-        monkeypatch.setattr(agent_runtime, "call_llm_async", fake_member_llm)
+        async def fake_fc_llm(system, prompt, tools, **kw):
+            msgs = kw.get("messages") or []
+            if msgs:
+                seen_systems.append(str(msgs[0].get("content") or ""))
+            if any(m.get("role") == "tool" for m in msgs):
+                return {"content": "结论：6×2=12", "tool_calls": None}
+            return {
+                "content": "",
+                "tool_calls": [{"id": "c1", "name": "code_interpreter", "arguments": '{"input": "print(6*2)"}'}],
+            }
+
+        monkeypatch.setattr(common.llm, "call_llm_with_tools_async", fake_fc_llm)
         monkeypatch.setattr(chat_engine, "call_llm_async", fake_coord_llm)
 
         resp = client.post(f"/api/teams/{team_id}/run", headers=headers, json={"message": "算一下 6*2"})
@@ -186,7 +192,6 @@ class TestRunTeamUsesAgentBundle:
         monkeypatch.setattr(chat_engine, "call_llm_async", fake_coord_llm)
 
         # 顺序模式跑一次即可验证链路（mode 需要置为 sequential）
-        import json as _json
 
         from common.db import get_db
 
@@ -219,3 +224,77 @@ class TestRunTeamUsesAgentBundle:
         resp = client.post(f"/api/teams/{team_id}/run", headers=headers, json={"message": "hi"})
         assert resp.status_code == 200
         assert resp.json()["result"] == "团队指令直答"
+
+
+# ════════════════════════════════════════════════════════════════
+# P1-5 Team planner + 并发上限
+# ════════════════════════════════════════════════════════════════
+def test_team_plan_subtasks_parses_assignment(setup_test_db, monkeypatch):
+    """planner LLM 返回 JSON → 解析出 (agent, task) 分配，非法 assignee 过滤。"""
+    import asyncio
+
+    import chat_engine
+
+    agents = [
+        {"name": "写手", "instructions": "你负责文案"},
+        {"name": "审稿", "instructions": "你负责审查"},
+    ]
+
+    async def fake_llm(system, prompt, **kw):
+        return '{"subtasks": [{"assignee": "写手", "task": "写初稿"}, {"assignee": "审稿", "task": "审校"}, {"assignee": "不存在的人", "task": "x"}]}'
+
+    monkeypatch.setattr(chat_engine, "call_llm_async", fake_llm)
+    subs = asyncio.new_event_loop().run_until_complete(chat_engine._team_plan_subtasks("做一篇文章", "规则", agents))
+    assert subs and len(subs) == 2, "非法 assignee 应被过滤"
+    assert subs[0]["task"] == "写初稿" and subs[0]["agent"]["name"] == "写手"
+
+
+def test_team_plan_subtasks_llm_failure_fallback(setup_test_db, monkeypatch):
+    """planner LLM 故障 → None（run_team 降级为全员拿原始消息，不阻断）。"""
+    import asyncio
+
+    import chat_engine
+
+    async def boom(*a, **k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(chat_engine, "call_llm_async", boom)
+    subs = asyncio.new_event_loop().run_until_complete(
+        chat_engine._team_plan_subtasks("任务", "规则", [{"name": "a"}, {"name": "b"}])
+    )
+    assert subs is None
+
+
+def test_team_plan_single_member_skip(setup_test_db):
+    """单成员 team 不拆任务（无意义），planner 短路不调 LLM。"""
+    import asyncio
+
+    import chat_engine
+
+    subs = asyncio.new_event_loop().run_until_complete(chat_engine._team_plan_subtasks("任务", "规则", [{"name": "a"}]))
+    assert subs is None
+
+
+def test_gather_capped_limits_concurrency(setup_test_db):
+    """并行成员并发 ≤ 2（用户要求低并发，不无限堆）。"""
+    import asyncio
+
+    import chat_engine
+
+    running = 0
+    peak = 0
+
+    async def fake_member(item):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.05)
+        running -= 1
+        return {"name": item["name"], "result": "done"}
+
+    async def main():
+        items = [{"name": "m1"}, {"name": "m2"}, {"name": "m3"}, {"name": "m4"}]
+        await chat_engine._gather_capped(items, fake_member)
+
+    asyncio.new_event_loop().run_until_complete(main())
+    assert peak <= 2, f"峰值并发 {peak} 超过上限 2"

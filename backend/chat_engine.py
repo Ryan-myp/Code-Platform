@@ -25,6 +25,7 @@ from datetime import datetime
 
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -37,7 +38,14 @@ import agent_runtime
 import mcp_client
 from common.config import load_config
 from common.db import get_db
-from common.llm import build_conversation_messages, call_llm, call_llm_async, log_usage, stream_llm_async
+from common.llm import (
+    build_conversation_messages,
+    call_llm,
+    call_llm_async,
+    log_usage,
+    parse_llm_json,
+    stream_llm_async,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["对话执行"])
@@ -348,6 +356,8 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
         except Exception:
             pass
 
+    # P1-3 闭环：对话后自动记忆提取（关键词触发才调 LLM；仅 sessions 有记忆空间，conversations 不存）
+    await _maybe_extract_memory(session_id, agent_id, message, result)
     log_usage("agent_run", len(message), len(result), time.time() - start)
     _record_execution(agent_id, user_id, message, "done", time.time() - start)
     return {
@@ -476,6 +486,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                     pass
             log_usage("agent_run_stream", len(message), len(full), time.time() - start)
             _record_execution(agent_id, user_id, message, "done", time.time() - start)
+            _schedule_memory_extraction(session_id, agent_id, message, full)
             yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
         except HTTPException as e:
             _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e.detail))
@@ -490,16 +501,103 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
 
 # ══════════════════════════════════════════════════════════════
 # Team / Workflow 执行
-# ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+
+# 记忆自动提取（P1-3 闭环）：关键词预触发才调 LLM，控制成本；每轮至多 1 次小调用
+_MEMORY_TRIGGER_RE = re.compile(
+    r"记住|记一下|帮我记|别忘了|以後都|以後請|以後不要|不要再|我偏好|我的偏好|我习惯|我喜欢|我負責|我负责"
+)
+_BG_TASKS: set = set()
+
+
+async def _maybe_extract_memory(session_id: str | None, agent_id: str, user_msg: str, assistant_msg: str) -> None:
+    """对话后自动提取记忆：关键词命中才调 LLM 判断并写入 memories；失败静默不阻断。"""
+    if not session_id or not _MEMORY_TRIGGER_RE.search(user_msg or ""):
+        return
+    try:
+        from sessions import auto_extract_memory
+
+        await auto_extract_memory(session_id, agent_id, user_msg, assistant_msg)
+    except Exception as e:
+        logger.debug(f"memory extraction failed: {e}")
+
+
+def _schedule_memory_extraction(session_id: str | None, agent_id: str, user_msg: str, assistant_msg: str) -> None:
+    """流式版：响应完成后 fire-and-forget 提取（保持强引用防 GC）；触发条件同上。"""
+    if not session_id or not _MEMORY_TRIGGER_RE.search(user_msg or ""):
+        return
+
+    async def _task() -> None:
+        try:
+            from sessions import auto_extract_memory
+
+            await auto_extract_memory(session_id, agent_id, user_msg, assistant_msg)
+        except Exception as e:
+            logger.debug(f"memory extraction task failed: {e}")
+
+    task = asyncio.create_task(_task())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
+# Team 并行成员执行并发上限（控制资源压力；不无限堆并发）
+_TEAM_MEMBER_CONCURRENCY = 2
+_MAX_TEAM_SUBTASKS = 4
+
+
+async def _gather_capped(items: list, runner) -> list:
+    """按并发上限（_TEAM_MEMBER_CONCURRENCY）并行执行 runner(item)；不无限堆并发。"""
+    sem = asyncio.Semaphore(_TEAM_MEMBER_CONCURRENCY)
+
+    async def _one(item):
+        async with sem:
+            return await runner(item)
+
+    return await asyncio.gather(*[_one(i) for i in items])
+
+
+async def _team_plan_subtasks(message: str, team_instructions: str, agents: list[dict]) -> list[dict] | None:
+    """coordinate 模式 planner（P1-5）：LLM 把大任务拆成子任务并按成员专长分配。
+
+    失败/返回空 → None，调用方降级为「所有成员拿原始消息」旧行为（诚实降级不阻断）。
+    单次小 LLM 调用（max_tokens=500），子任务上限 _MAX_TEAM_SUBTASKS 控成本。
+    """
+    if len(agents) < 2:
+        return None
+    roster = "\n".join(f"- {a['name']}：{str((a.get('instructions') or '').strip()[:60]) or '无说明'}" for a in agents)
+    try:
+        out = await call_llm_async(
+            "你是团队任务规划器。把任务拆成子任务并分配给最合适的成员。只返回 JSON，不要其它内容。",
+            (
+                f"团队协作规则：{(team_instructions or '')[:300]}\n团队成员：\n{roster}\n任务：{message[:500]}\n"
+                f'返回 JSON：{{"subtasks":[{{"assignee":"成员名","task":"子任务描述"}}, ...]}}，最多 {_MAX_TEAM_SUBTASKS} 条；'
+                "任务简单时可只拆 1 条。"
+            ),
+            max_tokens=500,
+        )
+    except Exception as e:
+        logger.warning(f"team planner failed, fallback to raw task: {e}")
+        return None
+    data = parse_llm_json(out)
+    name_map = {a["name"]: a for a in agents}
+    subs = []
+    for s in (data.get("subtasks") or [])[:_MAX_TEAM_SUBTASKS]:
+        if not isinstance(s, dict):
+            continue
+        who = str(s.get("assignee") or "").strip()
+        task = str(s.get("task") or "").strip()
+        if who in name_map and task:
+            subs.append({"agent": name_map[who], "task": task})
+    return subs or None
 
 
 @router.post("/api/teams/{team_id}/run")
 async def run_team(team_id: str, req: dict):  # noqa: C901
     """运行 Team：按协作模式调度成员 Agent 执行，并汇总结果。
 
-    - coordinate（协调）：所有成员并行执行 → 协调者汇总最终答案
+    - coordinate（协调）：planner 拆分子任务分配成员（失败降级为全员拿原始消息）→ 并发上限内并行执行 → 协调者汇总最终答案
     - sequential（顺序）：成员按顺序执行，上一步输出作为下一步输入
-    - parallel（并行）：所有成员并行执行，返回各自结果
+    - parallel（并行）：所有成员在并发上限内执行，返回各自结果
     """
 
     message = (req.get("message") or "").strip()
@@ -591,12 +689,17 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
         # 汇总：由最后一个成员生成最终答案（上下文已包含全部产出）
         coordinator_result = member_results[-1]["result"] if member_results else ""
     elif mode == "parallel":
-        # 并行执行：各自独立完成，直接返回成员结果拼接
-        member_results = await asyncio.gather(*[_run_member(a, message) for a in agents])
+        # 并行执行：各自独立完成，直接返回成员结果拼接（并发上限 2）
+        member_results = await _gather_capped(agents, lambda a: _run_member(a, message))
         coordinator_result = "\n\n".join(f"### {r['name']}\n{r['result']}" for r in member_results)
     else:
-        # coordinate：成员并行产出 → 协调者汇总
-        member_results = await asyncio.gather(*[_run_member(a, message) for a in agents])
+        # coordinate：planner 拆分分配 → 并发上限内执行 → 协调者汇总
+        subtasks = await _team_plan_subtasks(message, team_instructions, agents)
+        if subtasks:
+            # planner 拆分后按分配执行（同并发上限）
+            member_results = await _gather_capped(subtasks, lambda st: _run_member(st["agent"], st["task"]))
+        else:
+            member_results = await _gather_capped(agents, lambda a: _run_member(a, message))
         digest = "\n\n".join(f"### {r['name']} 的产出\n{r['result'][:1200]}" for r in member_results)
         coordinator_system = (
             f"你是团队协调者。请汇总以下团队成员对任务的产出，给出统一的最终答案。\n"

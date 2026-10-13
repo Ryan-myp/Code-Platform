@@ -334,6 +334,136 @@ async def _call_one_async(
 
 
 # ══════════════════════════════════════════════════════════════
+# Function Calling 版（OpenAI tools API 兼容）
+# ══════════════════════════════════════════════════════════════
+
+
+def _extract_tool_calls(resp_json) -> tuple[str, list | None]:
+    """从 OpenAI 兼容响应中提取文本内容和 tool_calls。
+
+    返回 (content, tool_calls)。tool_calls 为 None 表示 LLM 未调用工具。
+    """
+    try:
+        msg = resp_json["choices"][0]["message"]
+        content = msg.get("content") or ""
+        raw_calls = msg.get("tool_calls")
+        if not raw_calls:
+            return content, None
+        calls = []
+        for tc in raw_calls:
+            func = tc.get("function") or {}
+            calls.append(
+                {
+                    "id": tc.get("id", ""),
+                    "name": func.get("name", ""),
+                    "arguments": func.get("arguments", ""),
+                }
+            )
+        return content, calls
+    except (KeyError, IndexError, TypeError):
+        pass
+    # 降级：尝试纯文本提取
+    try:
+        return resp_json["choices"][0]["message"]["content"] or "", None
+    except (KeyError, IndexError, TypeError):
+        pass
+    raise HTTPException(502, "操作失败，请稍后重试")
+
+
+async def call_llm_with_tools_async(
+    system_prompt: str,
+    user_prompt: str,
+    tools: list[dict],
+    *,
+    max_tokens: int = 4000,
+    temperature: float = 0.4,
+    timeout: int = 300,
+    model: str | None = None,
+    messages: list[dict] | None = None,
+    retries: int = 2,
+    fallback_models: list[str] | None = None,
+) -> dict:
+    """带 function calling 的异步 LLM 调用。
+
+    返回 {"content": str, "tool_calls": list[dict] | None}。
+    tool_calls 为 None 时 LLM 直接返回文本（未调用工具）。
+    每个 tool_call: {"id": str, "name": str, "arguments": str(JSON)}。
+
+    失败时降级到 call_llm_async（不携带 tools），保证可用性。
+    """
+    msgs = _build_messages(system_prompt, user_prompt, messages)
+    if not msgs:
+        raise HTTPException(400, "prompt 不能为空")
+
+    candidates = _fallback_candidates(model, fallback_models)
+    last_error: Exception | None = None
+    for idx, mname in enumerate(candidates):
+        cfg = get_model_config(mname)
+        if not cfg["api_key"]:
+            continue
+        try:
+            url = f"{cfg['api_base']}/chat/completions"
+            payload = {
+                "model": cfg["model"],
+                "messages": msgs,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "tools": tools,
+                "tool_choice": "auto",
+            }
+            headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
+            attempt = 0
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                while True:
+                    try:
+                        resp = await client.post(url, headers=headers, json=payload)
+                        if resp.status_code != 200:
+                            body = resp.text[:400]
+                            if resp.status_code in _RETRYABLE_STATUS and attempt < retries:
+                                attempt += 1
+                                await asyncio.sleep(_retry_delay(attempt))
+                                continue
+                            # tools 不支持时降级到纯文本调用
+                            if resp.status_code in (400, 422):
+                                logger.warning(f"LLM tools unsupported, fallback to text: {body}")
+                                text = await call_llm_async(
+                                    system_prompt, user_prompt,
+                                    max_tokens=max_tokens, temperature=temperature,
+                                    model=mname, messages=messages,
+                                )
+                                return {"content": text, "tool_calls": None}
+                            raise HTTPException(502, "操作失败，请稍后重试")
+                        try:
+                            content, tool_calls = _extract_tool_calls(resp.json())
+                            return {"content": content, "tool_calls": tool_calls}
+                        except (ValueError, TypeError):
+                            text = _extract_content(resp.text)
+                            return {"content": text, "tool_calls": None}
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        if isinstance(e, _NETWORK_EXC) and attempt < retries:
+                            attempt += 1
+                            await asyncio.sleep(_retry_delay(attempt))
+                            continue
+                        raise HTTPException(502, "操作失败，请稍后重试") from e
+        except HTTPException as e:
+            if e.status_code in _NON_RETRYABLE_STATUS:
+                raise
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM tools model {mname} failed, fallback: {e.detail}")
+        except Exception as e:
+            last_error = e
+            if idx < len(candidates) - 1:
+                logger.warning(f"LLM tools model {mname} exception, fallback: {e}")
+
+    if isinstance(last_error, HTTPException):
+        raise last_error
+    raise HTTPException(502, "操作失败，请稍后重试")
+
+
+# ══════════════════════════════════════════════════════════════
 # 流式版（SSE / Server-Sent Events）
 # ══════════════════════════════════════════════════════════════
 

@@ -99,3 +99,109 @@ def test_kb_rag_file(setup_test_db, tmp_path):
     assert "参考知识" in ctx
     assert "广告出价策略" in ctx
     assert "测试库" in ctx
+
+
+# ════════════════════════════════════════════════════════════════
+# 记忆注入（P0：memories 接通执行链路）
+# ════════════════════════════════════════════════════════════════
+def test_attach_session_memory_injects(setup_test_db, runtime):
+    """会话有记忆时：build_agent_system 注入「历史记忆」段，长期优先。"""
+    from sessions import add_memory, create_session
+
+    sid = create_session("agent-mem", "记忆测试")
+    add_memory(sid, "agent-mem", "用户偏好中文回答", "long")
+    add_memory(sid, "agent-mem", "用户在上海", "long")
+    add_memory(sid, "agent-mem", "本轮临时任务完成", "short")
+
+    bundle = {"id": "agent-mem"}
+    runtime.attach_session_memory(bundle, sid)
+    assert bundle["memory_context"], "应生成 memory_context"
+
+    ctx = runtime.build_agent_system(bundle)
+    assert "历史记忆" in ctx
+    assert "用户偏好中文回答" in ctx
+    # 长期/auto 记忆（60% 配额）排在短期之前
+    assert ctx.index("用户偏好中文回答") < ctx.index("本轮临时任务完成")
+
+
+def test_attach_session_memory_missing_session_ok(setup_test_db, runtime):
+    """无会话/无记忆 → 静默跳过，system prompt 无记忆段（不阻断执行）。"""
+    bundle = {"id": "agent-mem"}
+    runtime.attach_session_memory(bundle, "not-exist-session")
+    assert not bundle.get("memory_context")
+    ctx = runtime.build_agent_system(bundle)
+    assert "历史记忆" not in ctx
+
+
+# ════════════════════════════════════════════════════════════════
+# KB 检索 LLM 重排（P1b）
+# ════════════════════════════════════════════════════════════════
+def test_kb_rerank_orders_by_llm(setup_test_db, runtime, monkeypatch):
+    """候选 ≥4 时调一次 LLM 重排；返回下标序 + 未选中补后。"""
+    import common.llm
+
+    calls = []
+
+    def fake_call_llm(system, user, **kw):
+        calls.append(user)
+        return '{"top": [2, 0]}'
+
+    monkeypatch.setattr(common.llm, "call_llm", fake_call_llm)
+    assert runtime._kb_rerank("问题", [f"p{i}" for i in range(4)]) == [2, 0, 1, 3]
+    assert len(calls) == 1, "只允许一次重排 LLM 调用（成本控制）"
+
+
+def test_kb_rerank_few_candidates_no_llm(setup_test_db, runtime, monkeypatch):
+    """候选 <4 不调 LLM（省成本，关键词序已够好）。"""
+    import common.llm
+
+    monkeypatch.setattr(
+        common.llm, "call_llm",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("候选不足不应调用 LLM")),
+    )
+    assert runtime._kb_rerank("问题", ["a", "b", "c"]) == []
+
+
+def test_kb_rerank_llm_failure_keeps_keyword_order(setup_test_db, runtime, monkeypatch):
+    """LLM 故障 → 返回 [] 保持关键词原序（诚实降级不阻断检索）。"""
+    import common.llm
+
+    def boom(*a, **k):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(common.llm, "call_llm", boom)
+    assert runtime._kb_rerank("问题", ["a", "b", "c", "d"]) == []
+
+
+def test_kb_rag_rerank_reorders_kbs(setup_test_db, tmp_path, runtime, monkeypatch):
+    """2 个 file KB × 2 命中 = 4 候选 → LLM 重排把 kb2 候选排前（跨 KB 重排生效）。"""
+    from datetime import datetime
+
+    from common.db import get_db
+
+    d1, d2 = tmp_path / "k1", tmp_path / "k2"
+    d1.mkdir()
+    d2.mkdir()
+    (d1 / "a.md").write_text("数据库索引策略：批量扫描优化查询", encoding="utf-8")
+    (d1 / "b.md").write_text("数据库运维日常记录", encoding="utf-8")
+    (d2 / "c.md").write_text("数据库备份策略与恢复演练", encoding="utf-8")
+    (d2 / "d.md").write_text("数据库索引重建排期", encoding="utf-8")
+
+    conn = get_db()
+    for kid, name, p in (("k1", "库一", str(d1)), ("k2", "库二", str(d2))):
+        conn.execute(
+            "INSERT INTO knowledge_bases (id, name, type, path, created_at) VALUES (?,?,?,?,?)",
+            (kid, name, "file", p, datetime.now().isoformat()),
+        )
+    conn.commit()
+    conn.close()
+
+    import common.llm
+
+    monkeypatch.setattr(
+        common.llm, "call_llm",
+        lambda system, user, **kw: '{"top": [2, 3]}',
+    )
+    ctx = runtime._kb_rag_context(["k1", "k2"], "数据库索引策略")
+    assert "参考知识" in ctx
+    assert ctx.index("库二") < ctx.index("库一"), "LLM 重排后库二候选应排在库一之前"

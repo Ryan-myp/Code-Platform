@@ -179,24 +179,69 @@ async def delete_mcp_server(server_id: str, current_user: dict = require_auth())
     return {"success": True}
 
 
-@router.post("/api/mcp-servers/{server_id}/test")
-def _setup_mcp_test_env() -> dict:
-    """设置MCP测试环境。"""
-    import tempfile
+async def _run_mcp_health_check(server_row: dict) -> dict:
+    """真实 MCP 健康检查：复用 JSON-RPC 握手逻辑，返回 {ok, latency_ms, detail, tools}。
 
-    tmp_dir = tempfile.mkdtemp(prefix="mcp_test_")
-    return {"tmp_dir": tmp_dir, "config": {}}
+    HTTP/SSE → initialize 握手 + tools/list；stdio → 命令可执行 + 子进程握手。
+    """
+    import time as _time
+
+    transport = server_row.get("transport_type") or "stdio"
+    try:
+        auth_cfg = json.loads(server_row.get("auth_config") or "{}") or {}
+    except (ValueError, TypeError):
+        auth_cfg = {}
+    headers = _mcp_auth_headers(server_row.get("auth_type") or "none", auth_cfg)
+
+    start = _time.time()
+    if transport == "stdio":
+        result = await _mcp_test_stdio(server_row, headers)
+    else:
+        url = (server_row.get("url") or "").strip()
+        if not url:
+            return {"ok": False, "latency_ms": 0, "detail": "未配置 URL", "tools": []}
+        result = await _mcp_test_http(url, headers)
+    latency = round((_time.time() - start) * 1000, 1)
+    result["latency_ms"] = latency
+    return result
 
 
-def _run_mcp_health_check(config: dict) -> bool:
-    """运行MCP健康检查。"""
-    # 简化的健康检查
-    return True
+async def _collect_mcp_metrics(server_row: dict) -> dict:
+    """收集 MCP 服务指标：健康状态 + 延迟 + 工具数。"""
+    health = await _run_mcp_health_check(server_row)
+    return {
+        "ok": health.get("ok", False),
+        "latency_ms": health.get("latency_ms", 0),
+        "tools_count": len(health.get("tools") or []),
+        "detail": health.get("detail") or health.get("error", ""),
+    }
 
 
-def _collect_mcp_metrics(config: dict) -> dict:
-    """收集MCP指标。"""
-    return {"latency_ms": 10, "error_rate": 0.01, "throughput": 100}
+@router.get("/api/mcp-servers/{server_id}/health")
+async def mcp_server_health(server_id: str, current_user: dict = require_auth()):
+    """获取单个 MCP Server 的健康状态（实时 JSON-RPC 握手）。"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "MCP 服务器不存在")
+    return await _collect_mcp_metrics(dict(row))
+
+
+@router.get("/api/mcp-servers/health/all")
+async def all_mcp_health(current_user: dict = require_auth()):
+    """批量健康检查所有启用的 MCP Server。"""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM mcp_servers WHERE enabled=1 ORDER BY created_at DESC").fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        metrics = await _collect_mcp_metrics(d)
+        d["health"] = metrics
+        d["status"] = "active" if metrics.get("ok") else "unhealthy"
+        results.append(d)
+    return {"servers": results, "total": len(results), "healthy": sum(1 for r in results if r["health"].get("ok"))}
 
 
 async def _mcp_test_stdio(d: dict, headers: dict) -> dict:
@@ -265,6 +310,7 @@ async def _mcp_list_tools(client, url: str, headers: dict) -> list:
         return []
 
 
+@router.post("/api/mcp-servers/{server_id}/test")
 async def test_mcp_server(server_id: str, current_user: dict = require_auth()):  # noqa: C901
     """测试 MCP 连接：stdio 检查命令可执行；SSE/HTTP 执行 JSON-RPC initialize 握手（自动注入认证头）。"""
     conn = get_db()

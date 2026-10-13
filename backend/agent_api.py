@@ -136,6 +136,37 @@ async def delete_agent(agent_id: str, current_user: dict = require_auth()):
     return {"success": True}
 
 
+@router.post("/api/agents/{agent_id}/clone")
+async def clone_agent(agent_id: str, current_user: dict = require_auth()):
+    """克隆 Agent：复制指令与所有绑定资源（工具/知识库/技能/MCP）。"""
+    conn = get_db()
+    src = conn.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
+    if not src:
+        conn.close()
+        raise HTTPException(404, "Agent 不存在")
+    src = dict(src)
+    new_id = f"agent_{int(time.time() * 1000)}"
+    conn.execute(
+        """INSERT INTO agents (id, name, description, instructions, model, tools, knowledge_base_ids, skill_ids, mcp_server_ids, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+        (
+            new_id,
+            f"{src['name']} (副本)",
+            src.get("description") or "",
+            src.get("instructions") or "",
+            src.get("model") or "agnes-2.5-flash",
+            src.get("tools") or "[]",
+            src.get("knowledge_base_ids") or "[]",
+            src.get("skill_ids") or "[]",
+            src.get("mcp_server_ids") or "[]",
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": new_id, "name": f"{src['name']} (副本)", "source_id": agent_id}
+
+
 # ── Agent 模板（agent_templates/ 标准目录）────────────────────
 _AGENT_TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent_templates")
 
@@ -209,8 +240,8 @@ async def list_agent_templates(current_user: dict = require_auth()):
 
 
 @router.post("/api/agent-templates/{template_name}/create")
-async def create_agent_from_template(template_name: str, current_user: dict = require_auth()):
-    """从模板一键创建 Agent：解析 SKILL.md 的 Instructions 作为系统指令。"""
+async def create_agent_from_template(template_name: str, req: dict = None, current_user: dict = require_auth()):
+    """从模板一键创建 Agent：解析 SKILL.md 的 Instructions 作为系统指令。支持 {{var}} 占位符替换。"""
     if not template_name or "/" in template_name or ".." in template_name:
         raise HTTPException(400, "模板名不合法")
     skill_path = None
@@ -228,6 +259,13 @@ async def create_agent_from_template(template_name: str, current_user: dict = re
     if not tpl:
         raise HTTPException(400, "模板解析失败")
 
+    # {{var}} 占位符替换：请求体 variables 字典逐项 str.replace；未提供的变量保留原样
+    variables = (req or {}).get("variables") or {}
+    instructions = tpl["instructions"]
+    if isinstance(variables, dict) and instructions:
+        for var_name, var_value in variables.items():
+            instructions = instructions.replace(f"{{{{{var_name}}}}}", str(var_value))
+
     conn = get_db()
     agent_id = f"agent_{int(time.time() * 1000)}"
     conn.execute(
@@ -237,7 +275,7 @@ async def create_agent_from_template(template_name: str, current_user: dict = re
             agent_id,
             tpl["label"],
             tpl["description"] or tpl["title"],
-            tpl["instructions"],
+            instructions,
             "agnes-2.5-flash",
             "[]",
             "[]",
@@ -270,7 +308,7 @@ async def list_workflows(current_user: dict = require_auth()):
     return result
 
 
-_WF_VALID_TYPES = {"agent", "http", "condition", "parallel", "code", "delay", "output"}
+_WF_VALID_TYPES = {"agent", "http", "condition", "parallel", "code", "delay", "output", "loop"}
 _WF_TYPE_MAP = {"start": "agent", "end": "output", "llm": "agent", "http": "http", "condition": "condition"}
 
 
@@ -293,7 +331,7 @@ def _normalize_wf_nodes(nodes: list) -> list:
 
 
 def _normalize_wf_edges(edges: list) -> list:
-    """规范化工作流边：统一 from/to 格式。"""
+    """规范化工作流边：统一 from/to 格式，保留 condition 分支端口。"""
     normalized = []
     for e in edges:
         if not isinstance(e, dict):
@@ -301,13 +339,16 @@ def _normalize_wf_edges(edges: list) -> list:
         edge_from = e.get("from") or e.get("source")
         edge_to = e.get("to") or e.get("target")
         if edge_from and edge_to:
-            normalized.append(
-                {
-                    "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
-                    "from": edge_from,
-                    "to": edge_to,
-                }
-            )
+            edge = {
+                "id": e.get("id") or f"edge_{edge_from}_{edge_to}",
+                "from": edge_from,
+                "to": edge_to,
+            }
+            # 保留 condition 分支端口（if_true/if_false），供 executor 互斥路由
+            port = e.get("source_port") or e.get("port") or e.get("condition_branch")
+            if port:
+                edge["source_port"] = port
+            normalized.append(edge)
     return normalized
 
 

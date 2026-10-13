@@ -110,6 +110,53 @@ def get_memories(session_id: str, agent_id: str = None) -> list:
     return [dict(r) for r in rows]
 
 
+async def auto_extract_memory(session_id: str, agent_id: str, user_message: str, assistant_reply: str) -> int:
+    """对话后自动提取记忆：LLM 判断是否有值得记住的内容并写入 memories 表。
+
+    策略：将用户消息 + 助手回复交给 LLM，让它提取「用户偏好/关键决定/重要上下文」，
+    返回 JSON {"memories": ["...", "..."]}。每条写入 memories 表，type=auto。
+    失败静默（不影响主流程）。返回写入条数。
+    """
+    if not user_message or not assistant_reply:
+        return 0
+    try:
+        from common.llm import call_llm_async
+
+        system = (
+            "你是记忆提取器。分析对话，提取值得长期记住的用户偏好、关键决定或重要上下文。"
+            "如果没有值得记住的内容，返回空数组。只返回 JSON，不要其它内容。"
+            '格式：{"memories": ["记忆1", "记忆2"]}'
+        )
+        prompt = f"用户说：{user_message[:800]}\n\n助手回复：{assistant_reply[:800]}"
+        resp = await call_llm_async(system, prompt, max_tokens=300, temperature=0.2)
+        import re
+
+        m = re.search(r"\{.*\}", resp or "", re.S)
+        if not m:
+            return 0
+        import json as _json
+
+        data = _json.loads(m.group(0))
+        memories = [str(item) for item in (data.get("memories") or []) if str(item).strip()][:5]
+        if not memories:
+            return 0
+        conn = get_db()
+        for content in memories:
+            mem_id = f"mem_{int(time.time() * 1000)}_{content[:4]}"
+            conn.execute(
+                "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, ?, ?)",
+                (mem_id, session_id, agent_id or "", "auto", content[:500]),
+            )
+        conn.commit()
+        conn.close()
+        return len(memories)
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).debug(f"auto_extract_memory failed: {e}")
+        return 0
+
+
 # ══════════════════════════════════════════════════════════════
 # FastAPI 路由
 # ══════════════════════════════════════════════════════════════
