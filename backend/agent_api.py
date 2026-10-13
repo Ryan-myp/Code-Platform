@@ -533,14 +533,15 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
     conn = get_db()
     skill_id = f"skill_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO skills (id, name, description, content, `references`, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO skills (id, name, description, content, `references`, params, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
             skill_id,
             req.name,
             req.description,
             req.content,
             req.references,
+            req.params or "",
             datetime.now().isoformat(),
         ),
     )
@@ -603,7 +604,7 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
     conn = get_db()
     updates = []
     values = []
-    for field in ["name", "description", "content", "references"]:
+    for field in ["name", "description", "content", "references", "params"]:
         v = getattr(req, field, None)
         if v is not None:
             updates.append(f"{field}=?")

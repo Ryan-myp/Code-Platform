@@ -484,6 +484,8 @@ class WorkflowExecutor:
             return await self.execute_tool_node(config, previous_results, input_data or {})
         elif node_type == "kb":
             return await self.execute_kb_node(config, previous_results, input_data or {})
+        elif node_type == "loop":
+            return await self.execute_loop_node(config, previous_results, input_data or {})
         elif node_type == "output":
             return await self.execute_output_node(config, previous_results)
         else:
@@ -714,6 +716,51 @@ class WorkflowExecutor:
         return {"status": "delayed", "seconds": seconds}
 
     # ── Output 节点：汇总上游结果作为工作流最终输出 ────────────
+    async def execute_loop_node(self, config: dict, previous_results: dict, input_data: dict = None) -> dict:
+        """循环节点（v18 P2）：对列表逐项执行内层节点（for-each），max_iterations 限次。
+
+        config：
+        - items：列表，或 "${...}" 引用前序节点结果（逐项解析）
+        - body：内层节点类型（agent/http/code/delay/…）
+        - body_config：内层节点配置（可用 ${loop_item} / ${loop_index} 引用当前项）
+        - max_iterations：上限（默认 10，硬顶 20；低并发/控成本）
+
+        单项失败不中断循环（记录 errors，status=partial）；输出 {status, results, count, errors}。
+        """
+        input_data = input_data or {}
+        raw_items = config.get("items")
+        if isinstance(raw_items, str):
+            raw_items = _substitute(raw_items, previous_results)
+        if isinstance(raw_items, str):
+            try:
+                raw_items = json.loads(raw_items)
+            except (ValueError, TypeError):
+                raw_items = [raw_items]
+        items = raw_items if isinstance(raw_items, list) else ([raw_items] if raw_items is not None else [])
+        max_it = max(1, min(int(config.get("max_iterations") or 10), 20))
+
+        body_type = config.get("body") or "delay"
+        body_config = dict(config.get("body_config") or {})
+        results: list[dict] = []
+        errors = 0
+        for i, item in enumerate(items[:max_it]):
+            # 当前项注入内层上下文（body_config 内可 ${loop_item} 引用）
+            prev2 = dict(previous_results)
+            prev2["loop_item"] = item
+            prev2["loop_index"] = i
+            out = await self.execute_node(body_type, body_config, prev2, input_data)
+            status = out.get("status", "success") if isinstance(out, dict) else "success"
+            results.append({"index": i, "item": str(item)[:200], "output": out, "status": status})
+            if status not in ("success", "delayed"):
+                errors += 1
+        return {
+            "status": "success" if errors == 0 else "partial",
+            "results": results,
+            "count": len(results),
+            "errors": errors,
+            "truncated": len(items) > max_it,
+        }
+
     async def execute_output_node(self, config: dict, previous_results: dict) -> dict:
         """输出节点：把上游最后一个成功节点的结果作为最终输出。"""
         success = {

@@ -557,3 +557,44 @@ def test_condition_routing_merge_branches(test_db_path):
     assert output["yes"]["status"] == "delayed"
     assert output["no"]["status"] == "skipped"
     assert output["merge"]["status"] == "delayed"  # 汇聚节点仍执行（yes 路径激活）
+
+
+# ════════════════════════════════════════════════════════════════
+# P2 循环节点（for-each + 限次）
+# ════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_loop_node_foreach_with_cap(setup_test_db):
+    """items 逐项执行内层节点；max_iterations 截断；单项错误不中断（status=partial）。"""
+    from workflows.executor import WorkflowExecutor
+
+    ex = WorkflowExecutor()
+    out = await ex.execute_node(
+        "loop",
+        {
+            "items": ["a", "b", "c", "d", "e"],
+            "body": "delay",
+            "body_config": {"seconds": 0},
+            "max_iterations": 3,
+        },
+        {},
+    )
+    assert out["count"] == 3, "max_iterations=3 应只跑 3 项"
+    assert out["truncated"] is True
+    assert out["status"] == "success"
+    assert [r["item"] for r in out["results"]] == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_loop_node_unknown_body_reports_partial(setup_test_db):
+    """内层节点未知类型 → 单项 error，循环继续，整体 status=partial。"""
+    from workflows.executor import WorkflowExecutor
+
+    ex = WorkflowExecutor()
+    out = await ex.execute_node(
+        "loop",
+        {"items": [1, 2], "body": "no_such_type", "body_config": {}},
+        {},
+    )
+    assert out["status"] == "partial"
+    assert out["errors"] == 2
+    assert out["count"] == 2

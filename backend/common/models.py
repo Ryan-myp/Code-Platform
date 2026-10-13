@@ -168,12 +168,14 @@ class SkillCreateRequest(BaseModel):
     description: str = ""
     content: str = ""
     references: str = ""
+    params: str = ""  # v18 参数化：{"param名": "说明"} JSON，正文中 {{param名}} 占位
 
 
 class SkillUpdateRequest(BaseModel):
     name: str | None = None
     description: str | None = None
     content: str | None = None
+    params: str | None = None  # v18 参数化定义（JSON）
     references: str | None = None
 
 

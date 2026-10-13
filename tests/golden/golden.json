@@ -1,0 +1,16 @@
+{
+  "corpus_dir": "kb_corpus",
+  "note": "KB 检索质量黄金集：query → 期望相关文件（top3 命中即算 hit@3）",
+  "cases": [
+    {"query": "广告出价策略 分时段", "expect": "ad_strategy.md"},
+    {"query": "智能出价 自动调价", "expect": "ad_strategy.md"},
+    {"query": "索引重建 回滚", "expect": "db_ops.md"},
+    {"query": "慢查询定位", "expect": "db_ops.md"},
+    {"query": "发票 红冲审批", "expect": "finance.md"},
+    {"query": "电子发票归档", "expect": "finance.md"},
+    {"query": "故障应急 值班响应", "expect": "ops.md"},
+    {"query": "复盘模板", "expect": "ops.md"},
+    {"query": "试用期 转正答辩", "expect": "hr.md"},
+    {"query": "个人信息 跨境传输", "expect": "legal.md"}
+  ]
+}
