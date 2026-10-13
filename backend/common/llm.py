@@ -206,6 +206,9 @@ def call_llm(
 
 def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int) -> str:
     """单模型同步调用，内置指数退避重试。"""
+    import common.metrics as metrics
+    from common import errors
+
     url = f"{cfg['api_base']}/chat/completions"
     payload = {
         "model": cfg["model"],
@@ -215,6 +218,7 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
     }
     headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
     attempt = 0
+    t0 = time.time()
     while True:
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
@@ -225,12 +229,17 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
                     time.sleep(_retry_delay(attempt))
                     continue
                 logger.error(f"LLM call failed: {resp.status_code} {body}")
+                metrics.record("llm", "error", (time.time() - t0) * 1000,
+                              errors.classify_http_status(resp.status_code, body),
+                              f"model={cfg.get('model','')} status={resp.status_code}")
                 raise HTTPException(502, "操作失败，请稍后重试")
             try:
-                return _extract_content(resp.json())
+                result = _extract_content(resp.json())
             except (ValueError, TypeError):
                 # omniroute 等网关返回 SSE 文本而非标准 JSON
-                return _extract_content(resp.text)
+                result = _extract_content(resp.text)
+            metrics.record("llm", "ok", (time.time() - t0) * 1000, detail=f"model={cfg.get('model','')}")
+            return result
         except HTTPException:
             raise
         except Exception as e:
@@ -239,6 +248,9 @@ def _call_one_sync(cfg: dict, msgs: list[dict], max_tokens: int, temperature: fl
                 time.sleep(_retry_delay(attempt))
                 continue
             logger.error(f"LLM call exception: {e}", exc_info=True)
+            metrics.record("llm", "error", (time.time() - t0) * 1000,
+                          errors.classify_exception(e),
+                          f"model={cfg.get('model','')} exception={type(e).__name__}")
             raise HTTPException(502, "操作失败，请稍后重试") from e
 
 
@@ -298,6 +310,9 @@ async def _call_one_async(
     cfg: dict, msgs: list[dict], max_tokens: int, temperature: float, timeout: int, retries: int
 ) -> str:
     """单模型异步调用，内置指数退避重试。"""
+    import common.metrics as metrics
+    from common import errors
+
     url = f"{cfg['api_base']}/chat/completions"
     payload = {
         "model": cfg["model"],
@@ -307,6 +322,7 @@ async def _call_one_async(
     }
     headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
     attempt = 0
+    t0 = time.time()
     async with httpx.AsyncClient(timeout=timeout) as client:
         while True:
             try:
@@ -318,12 +334,17 @@ async def _call_one_async(
                         await asyncio.sleep(_retry_delay(attempt))
                         continue
                     logger.error(f"LLM async call failed: {resp.status_code} {body}")
+                    metrics.record("llm", "error", (time.time() - t0) * 1000,
+                                   errors.classify_http_status(resp.status_code, body),
+                                   f"model={cfg.get('model','')} status={resp.status_code}")
                     raise HTTPException(502, "操作失败，请稍后重试")
                 try:
-                    return _extract_content(resp.json())
+                    result = _extract_content(resp.json())
                 except (ValueError, TypeError):
                     # omniroute 等网关返回 SSE 文本而非标准 JSON
-                    return _extract_content(resp.text)
+                    result = _extract_content(resp.text)
+                metrics.record("llm", "ok", (time.time() - t0) * 1000, detail=f"model={cfg.get('model','')}")
+                return result
             except HTTPException:
                 raise
             except Exception as e:
@@ -332,6 +353,9 @@ async def _call_one_async(
                     await asyncio.sleep(_retry_delay(attempt))
                     continue
                 logger.error(f"LLM async call exception: {e}", exc_info=True)
+                metrics.record("llm", "error", (time.time() - t0) * 1000,
+                               errors.classify_exception(e),
+                               f"model={cfg.get('model','')} exception={type(e).__name__}")
                 raise HTTPException(502, "操作失败，请稍后重试") from e
 
 
@@ -398,6 +422,9 @@ async def call_llm_with_tools_async(
         raise HTTPException(400, "prompt 不能为空")
 
     candidates = _fallback_candidates(model, fallback_models)
+    import common.metrics as metrics
+    from common import errors
+
     last_error: Exception | None = None
     for idx, mname in enumerate(candidates):
         cfg = get_model_config(mname)
@@ -415,6 +442,7 @@ async def call_llm_with_tools_async(
             }
             headers = {"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"}
             attempt = 0
+            fc_t0 = time.time()
             async with httpx.AsyncClient(timeout=timeout) as client:
                 while True:
                     try:
@@ -427,6 +455,9 @@ async def call_llm_with_tools_async(
                                 continue
                             # tools 不支持时降级到纯文本调用
                             if resp.status_code in (400, 422):
+                                metrics.record("llm", "degraded", (time.time() - fc_t0) * 1000,
+                                               errors.classify_http_status(resp.status_code, body),
+                                               f"model={cfg.get('model','')} tools→text status={resp.status_code}")
                                 logger.warning(f"LLM tools unsupported, fallback to text: {body}")
                                 text = await call_llm_async(
                                     system_prompt, user_prompt,
@@ -434,12 +465,19 @@ async def call_llm_with_tools_async(
                                     model=mname, messages=messages,
                                 )
                                 return {"content": text, "tool_calls": None}
+                            metrics.record("llm", "error", (time.time() - fc_t0) * 1000,
+                                           errors.classify_http_status(resp.status_code, body),
+                                           f"model={cfg.get('model','')} status={resp.status_code}")
                             raise HTTPException(502, "操作失败，请稍后重试")
                         try:
                             content, tool_calls = _extract_tool_calls(resp.json())
+                            metrics.record("llm", "ok", (time.time() - fc_t0) * 1000,
+                                           detail=f"model={cfg.get('model','')} tools={len(tools)}")
                             return {"content": content, "tool_calls": tool_calls}
                         except (ValueError, TypeError):
                             text = _extract_content(resp.text)
+                            metrics.record("llm", "ok", (time.time() - fc_t0) * 1000,
+                                             detail=f"model={cfg.get('model','')} tools=sse-fallback")
                             return {"content": text, "tool_calls": None}
                     except HTTPException:
                         raise
@@ -448,6 +486,9 @@ async def call_llm_with_tools_async(
                             attempt += 1
                             await asyncio.sleep(_retry_delay(attempt))
                             continue
+                        metrics.record("llm", "error", (time.time() - fc_t0) * 1000,
+                                       errors.classify_exception(e),
+                                       f"model={cfg.get('model','')} exception={type(e).__name__}")
                         raise HTTPException(502, "操作失败，请稍后重试") from e
         except HTTPException as e:
             if e.status_code in _NON_RETRYABLE_STATUS:

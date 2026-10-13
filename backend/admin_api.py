@@ -60,6 +60,15 @@ async def admin_metrics(current_user: dict = require_auth()):
     return ops_metrics()
 
 
+@router.get("/metrics/reliability")
+async def admin_metrics_reliability(days: int = 7, current_user: dict = require_auth()):
+    """可靠性指标：LLM/工具/MCP 事件量、五类错误分布、延迟 avg/p50/p95（v18 F）。"""
+    _check_admin(current_user)
+    from common import metrics as platform_metrics
+
+    return platform_metrics.summarize(days=days)
+
+
 @router.get("/stats")
 async def admin_stats(current_user: dict = require_auth()):
     """总体统计：用户 / 调用 / 工具 / 分享。"""

@@ -620,8 +620,30 @@ async def execute_tool_loop(
     }
 
 
+# 工具执行降级标记（结果文本由本模块控制，前缀匹配稳定）
+_TOOL_DEGRADED_MARKERS = (
+    "代码执行失败", "执行异常", "执行失败", "不存在或未接入",
+)
+
+
 async def execute_tool_async(tool_id: str, tool_input: str, user_id: str = "default") -> str:
-    """真实执行工具，返回给 LLM 回喂的结果文本。失败返回降级说明而非抛异常。"""
+    """真实执行工具，返回给 LLM 回喂的结果文本。失败返回降级说明而非抛异常。
+
+    包一层做可靠性指标记录（kind=tool，ok/degraded），实现与监控解耦。
+    """
+    import time
+
+    import common.metrics as metrics
+
+    t0 = time.time()
+    out = await _execute_tool_impl(tool_id, tool_input, user_id)
+    degraded = any(m in out for m in _TOOL_DEGRADED_MARKERS)
+    metrics.record("tool", "degraded" if degraded else "ok", (time.time() - t0) * 1000, detail=f"tool={tool_id}")
+    return out
+
+
+async def _execute_tool_impl(tool_id: str, tool_input: str, user_id: str = "default") -> str:
+    """工具执行本体（原 execute_tool_async 实现）。"""
     if tool_id == "code_interpreter":
         from common.sandbox_check import run_sandbox_python
 

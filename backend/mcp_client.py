@@ -247,12 +247,36 @@ async def mcp_list_tools(server: dict) -> list[dict]:
         return _extract_tools(msg or {})
 
 
+# MCP 执行降级/失败标记（与 _mcp_call_tool_impl 实际返回文本对齐；成功文本含「执行结果」）
+_MCP_FAIL_MARKERS = (
+    "MCP 调用异常", "报告错误", "调用不可用", "未配置 URL", "无响应", "失败：", "结果解析失败",
+)
+
+
 async def mcp_call_tool(server: dict, tool_name: str, arguments: dict) -> str:
     """真实 tools/call。返回结果文本；失败返回诚实降级说明，不抛异常。
 
-    HTTP 传输瞬时故障（连接/超时类）自动重试 1 次（统一错误分类口径，低并发：
-    至多重试 1 次 + 短退避）；stdio 不重试（进程成本 + 超时已有上限）。
+    包一层做可靠性指标记录（kind=mcp，ok/error/degraded），实现与监控解耦。
+    HTTP 传输瞬时故障自动重试 1 次；stdio 不重试（见 _mcp_call_tool_impl）。
     """
+    import time
+
+    import common.metrics as metrics
+
+    t0 = time.time()
+    out = await _mcp_call_tool_impl(server, tool_name, arguments)
+    if any(h in out for h in ("MCP 调用异常", "失败：", "报告错误")):
+        outcome = "error"
+    elif any(m in out for m in _MCP_FAIL_MARKERS):
+        outcome = "degraded"
+    else:
+        outcome = "ok"
+    metrics.record("mcp", outcome, (time.time() - t0) * 1000, detail=f"tool={tool_name}")
+    return out
+
+
+async def _mcp_call_tool_impl(server: dict, tool_name: str, arguments: dict) -> str:
+    """MCP 调用本体（原 mcp_call_tool 实现）。"""
     import asyncio
 
     from common import errors
