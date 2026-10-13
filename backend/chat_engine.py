@@ -206,7 +206,7 @@ async def _assembled_agent_system(agent_id: str, message: str, session_id: str |
     """
     try:
         bundle = agent_runtime.load_agent_bundle(agent_id, message)
-        agent_runtime.attach_session_memory(bundle, session_id)
+        agent_runtime.attach_session_memory(bundle, session_id, query=message)
         await agent_runtime.attach_mcp_tools(bundle)
         return agent_runtime.build_agent_system(bundle), bundle
     except HTTPException:
@@ -462,9 +462,10 @@ async def _maybe_extract_memory(session_id: str | None, agent_id: str, user_msg:
     if not session_id or not _MEMORY_TRIGGER_RE.search(user_msg or ""):
         return
     try:
-        from sessions import auto_extract_memory
+        from sessions import auto_extract_memory, compress_memory_summary
 
         await auto_extract_memory(session_id, agent_id, user_msg, assistant_msg)
+        await compress_memory_summary(session_id, agent_id)  # v18 D：规则摘要→LLM 语义压缩（best-effort）
     except Exception as e:
         logger.debug(f"memory extraction failed: {e}")
 
@@ -476,9 +477,10 @@ def _schedule_memory_extraction(session_id: str | None, agent_id: str, user_msg:
 
     async def _task() -> None:
         try:
-            from sessions import auto_extract_memory
+            from sessions import auto_extract_memory, compress_memory_summary
 
             await auto_extract_memory(session_id, agent_id, user_msg, assistant_msg)
+            await compress_memory_summary(session_id, agent_id)  # 同上，best-effort
         except Exception as e:
             logger.debug(f"memory extraction task failed: {e}")
 
@@ -589,7 +591,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
         runnable: set[str] = set()
         try:
             bundle = agent_runtime.load_agent_bundle(agent["id"], prompt)
-            agent_runtime.attach_session_memory(bundle, team_session)
+            agent_runtime.attach_session_memory(bundle, team_session, query=prompt)
             await agent_runtime.attach_mcp_tools(bundle)
             system = agent_runtime.build_agent_system(bundle)
             if team_instructions:

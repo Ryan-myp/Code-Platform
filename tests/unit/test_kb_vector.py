@@ -101,3 +101,62 @@ def test_file_search_merges_vector_recall_miss(setup_test_db, tmp_path, monkeypa
     assert "y.md" in files, "关键词 miss 的文件应由向量召回补进"
     # 不重复
     assert files.count("y.md") == 1
+
+
+def test_cached_query_embedding_hits(monkeypatch, setup_test_db):
+    """同 query 60s 内第二次零 API；precomputed 可回写缓存。"""
+    import kb_vector
+
+    calls = {"n": 0}
+
+    def fake_embed(config, texts):
+        calls["n"] += 1
+        return [[0.5] * 4 for _ in texts]
+
+    monkeypatch.setattr(kb_vector, "_embed", fake_embed)
+    monkeypatch.setattr(kb_vector, "_cfg", lambda: ("m", "k", "http://x"))
+    kb_vector._QUERY_EMB_CACHE.clear()
+    cfg = ("m", "k", "http://x")
+
+    v1 = kb_vector.cached_query_embedding(cfg, "查询词")
+    assert calls["n"] == 1
+    v2 = kb_vector.cached_query_embedding(cfg, "查询词")
+    assert calls["n"] == 1, "缓存命中不应再调 embed"
+    assert v1 == v2
+    # precomputed 回写：不同 query 但给现成向量 → 不付费
+    kb_vector.cached_query_embedding(cfg, "别的查询", precomputed=[1.0] * 4)
+    assert calls["n"] == 1
+
+
+def test_vector_recall_scans_beyond_500(setup_test_db, monkeypatch):
+    """存量向量 >500 条时高分块不再被 LIMIT 500 漏掉（分批全扫）。"""
+    import struct
+
+    import kb_vector
+
+    kb_vector.ensure_embedding_table()
+    from common.db import get_db
+
+    conn = get_db()
+    for i in range(600):
+        # 高分向量给第 599 号（旧 LIMIT 500 永远看不到它）
+        vec = [1.0, 0.0, 0.0, 0.0] if i == 599 else [0.0, 1.0, 0.0, 0.0]
+        blob = struct.pack("4f", *vec)
+        conn.execute(
+            "INSERT OR REPLACE INTO kb_chunk_embeddings (kb_id, file_name, chunk_hash, chunk_text, embedding, model)"
+            " VALUES (?,?,?,?,?,?)",
+            ("kb-scan", f"f{i % 10}.md", f"h{i}", f"块{i}", blob, "m"),
+        )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(kb_vector, "_cfg", lambda: ("m", "k", "http://x"))
+    monkeypatch.setattr(kb_vector, "_embed", lambda c, t: [[1.0, 0.0, 0.0, 0.0] for _ in t])
+    import os
+
+    monkeypatch.delenv("APP_ENV", raising=False)
+    try:
+        hits = kb_vector.vector_recall("kb-scan", "查询", limit=1)
+    finally:
+        os.environ["APP_ENV"] = "test"
+    assert hits and hits[0]["file"] == "f9.md", "第 599 块（>500）高分应被全扫找到"

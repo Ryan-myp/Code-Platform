@@ -147,8 +147,47 @@ def _upsert_memory_summary(conn, session_id: str, agent_id: str, pruned: list[st
         )
 
 
+def _bigrams(text: str) -> set[str]:
+    """CJK 双字 + ASCII 词（与 agent_runtime._mem_relevance 同口径，零依赖）。"""
+    import re
+
+    t = (text or "").lower()
+    words = set(re.findall(r"[a-z0-9_]{2,}", t))
+    cjk = re.findall(r"[\u4e00-\u9fff]", t)
+    words.update({"".join(p) for p in zip(cjk, cjk[1:], strict=False)})
+    return words
+
+
+def _near_dup_score(a: str, b: str) -> float:
+    """包含系数 |A∩B|/min(|A|,|B|)：一条记忆的词块大部分出现在另一条里 → 视为近重。"""
+    x, y = _bigrams(a), _bigrams(b)
+    if not x or not y:
+        return 0.0
+    return len(x & y) / min(len(x), len(y))
+
+
+def _is_near_duplicate(conn, session_id: str, content: str, threshold: float = 0.5) -> str | None:
+    """语义去重：与同会话最近 50 条记忆比较，包含系数 ≥阈值 视为重复，返回已有 id。
+
+    「我喜欢简洁风格」与「用户偏好简洁」这类措辞不同但语义相近的会被合并，
+    避免记忆表塞满近义条目（exact-string 去重的漏网）。冲突偏好（简洁 vs 详细）
+    不在此例（词块重叠低）→ 两条都保留，交由 LLM 提取层去重。"""
+    rows = conn.execute(
+        "SELECT id, content FROM memories WHERE session_id=? AND content NOT LIKE ? "
+        "ORDER BY created_at DESC LIMIT 50",
+        (session_id, SUMMARY_PREFIX + "%"),
+    ).fetchall()
+    for r in rows:
+        if _near_dup_score(content, r["content"]) >= threshold:
+            return r["id"]
+    return None
+
+
 def add_memory(session_id: str, agent_id: str, content: str, memory_type: str = "short") -> str:
-    """添加记忆（同 session 同内容去重；写入后自动治理裁剪到上限）。"""
+    """添加记忆（同 session 同内容去重；写入后自动治理裁剪到上限）。
+
+    注：不做语义近重去重——用户/程序写入可能是模板化内容（「记忆 1/2/3」），
+    误合并代价高于重复；语义去重只在 LLM 自动提取路径用（见 auto_extract_memory）。"""
     mem_id = f"mem_{int(time.time() * 1000)}"
     conn = get_db()
     existing = conn.execute(
@@ -165,6 +204,44 @@ def add_memory(session_id: str, agent_id: str, content: str, memory_type: str = 
     conn.commit()
     conn.close()
     return mem_id
+
+
+async def compress_memory_summary(session_id: str, agent_id: str) -> bool:
+    """把规则 lossy 摘要升级为 LLM 语义压缩（v18 D，fire-and-forget 调用）。
+
+    只对已有摘要记忆生效：LLM 把「最近 20 条各截 60 字」压成 ≤3 条真要点，原地更新。
+    失败/无摘要 → 保持规则摘要（诚实降级，不影响主流程）。返回是否成功压缩。
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    try:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT id, content FROM memories WHERE session_id=? AND content LIKE ? LIMIT 1",
+            (session_id, SUMMARY_PREFIX + "%"),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return False
+        from common.llm import call_llm_async
+
+        system = ("你是记忆压缩器。把下面的旧记忆要点合并压缩为不超过 3 条最关键要点"
+                   "（保留事实/偏好/决定，去掉细节与重复，每条一行以 - 开头）。只输出要点本身。")
+        resp = await call_llm_async(system, row["content"][:1500], max_tokens=300, temperature=0.2)
+        lines = [ln.strip().lstrip("-• ").strip() for ln in (resp or "").splitlines() if ln.strip()]
+        lines = [ln for ln in lines if len(ln) > 3][:3]
+        if not lines:
+            return False  # 输出不可用 → 保持规则摘要
+        new_text = f"{SUMMARY_PREFIX}（LLM 语义压缩）\n" + "\n".join(f"- {ln}" for ln in lines)
+        conn = get_db()
+        conn.execute("UPDATE memories SET content=? WHERE id=?", (new_text, row["id"]))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        log.warning(f"memory summary compress failed (keep rule summary): {e}")
+        return False
 
 
 def get_memories(session_id: str, agent_id: str = None) -> list:
@@ -220,6 +297,8 @@ async def auto_extract_memory(session_id: str, agent_id: str, user_message: str,
                 "SELECT id FROM memories WHERE session_id=? AND content=? LIMIT 1", (session_id, c)
             ).fetchone()
             if dup:  # 已有相同记忆 → 不重复写
+                continue
+            if _is_near_duplicate(conn, session_id, c):  # 语义近重 → 不重复写（v18 D）
                 continue
             mem_id = f"mem_{int(time.time() * 1000)}_{c[:4]}"
             conn.execute(

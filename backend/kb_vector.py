@@ -68,6 +68,46 @@ def _embed(config: tuple[str, str, str], texts: list[str]) -> list[list[float]] 
         return None
 
 
+# ── query embedding 缓存（v18 B：同 query 短 TTL 内复用，避免每次检索重付 API）──
+_QUERY_EMB_CACHE: dict[str, tuple[float, list[float]]] = {}
+_QUERY_EMB_TTL = 60.0
+
+
+def cached_query_embedding(
+    config: tuple[str, str, str], query: str, precomputed: list[float] | None = None
+) -> list[float] | None:
+    """query embedding，带 60s TTL 缓存（键含模型）。缓存命中零 API；失败 → None。
+
+    precomputed：调用方刚付费算出的向量（如 rerank 批量 embed 的 query 段），
+    传入即回写缓存供后续 vector_recall 复用，不重复 embed。"""
+    import time as _time
+
+    model, key, base = config
+    q = (query or "").strip()
+    if not q:
+        return None
+    now = _time.monotonic()
+    qh = hashlib.sha1((model + "\n" + q).encode("utf-8")).hexdigest()[:24]
+    if precomputed is not None:
+        if len(_QUERY_EMB_CACHE) > 128:
+            _QUERY_EMB_CACHE.clear()
+        _QUERY_EMB_CACHE[qh] = (now, precomputed)
+        return precomputed
+    if not key or not base:
+        return None
+    hit = _QUERY_EMB_CACHE.get(qh)
+    if hit and now - hit[0] < _QUERY_EMB_TTL:
+        return hit[1]
+    embs = _embed(config, [q])
+    if not embs:
+        return None
+    if len(_QUERY_EMB_CACHE) > 128:
+        _QUERY_EMB_CACHE.clear()
+    _QUERY_EMB_CACHE[qh] = (now, embs[0])
+    return embs[0]
+
+
+
 def _cfg() -> tuple[str, str, str]:
     """embedding 配置（复用 kb_api 的解析：专属 env 优先，继承全局中转站）。"""
     import kb_api
@@ -204,22 +244,35 @@ def vector_recall(kb_id: str, query: str, limit: int = 3) -> list[dict]:
     config = _cfg()
     if not config[1] or not config[2]:
         return []
-    qv = _embed(config, [query])
+    qv = cached_query_embedding(config, query)  # v18 B：60s TTL 缓存，命中零 API
     if not qv:
         return []
 
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT file_name, chunk_text, embedding FROM kb_chunk_embeddings WHERE kb_id=? LIMIT 500",
-        (kb_id,),
-    ).fetchall()
-    conn.close()
-    if not rows:
+    # v18 B：分批全扫（不再 LIMIT 500 硬顶漏召回；进程内上限 5000 块控成本）
+    from common.db import get_db as _gdb
+
+    _BATCH = 500
+    _CAP = 5000
+    scored: list[tuple[float, dict]] = []
+    offset = 0
+    while True:
+        conn = _gdb()
+        rows = conn.execute(
+            "SELECT id, file_name, chunk_text, embedding FROM kb_chunk_embeddings WHERE kb_id=? "
+            "ORDER BY id LIMIT ? OFFSET ?",
+            (kb_id, _BATCH, offset),
+        ).fetchall()
+        conn.close()
+        if not rows:
+            break
+        for r in rows:
+            s = _cos(qv, _unpack_vec(r["embedding"]))
+            scored.append((s, dict(r)))
+        offset += _BATCH
+        if offset >= _CAP or len(rows) < _BATCH:
+            break
+    if not scored:
         return []
-    scored = []
-    for r in rows:
-        s = _cos(qv[0], _unpack_vec(r["embedding"]))
-        scored.append((s, dict(r)))
     scored.sort(key=lambda x: -x[0])
     # 按文件聚合（同文件多块取最高分）
     by_file: dict[str, tuple[float, str]] = {}

@@ -1,0 +1,70 @@
+{
+  "note": "Agent 执行链路黄金集：锁定 FC/文本双模式管道行为（工具路由/指令剥离/轮次护栏/错误不阻断），防 FC 化后续重构漂移。LLM 与工具执行均用脚本假件，零网络依赖。",
+  "cases": [
+    {
+      "name": "fc_two_tools_then_answer",
+      "mode": "fc",
+      "runnable_tools": ["kb_search", "write_artifact"],
+      "user_message": "查一下出价规则再写个产物",
+      "llm_script": [
+        {"content": "", "tool_calls": [{"id": "c1", "name": "kb_search", "arguments": "{\"input\": \"出价规则\"}"}, {"id": "c2", "name": "write_artifact", "arguments": "{\"input\": \"出价规则摘要\"}"}]},
+        {"content": "出价规则：智能出价支持分时段调价。已写入产物。", "tool_calls": null}
+      ],
+      "expected_tools": ["kb_search", "write_artifact"],
+      "forbidden_tools": [],
+      "answer_contains": ["分时段"],
+      "answer_not_contains": ["[TOOL:", "[MCP:"]
+    },
+    {
+      "name": "fc_pure_answer_no_tools",
+      "mode": "fc",
+      "runnable_tools": ["kb_search", "write_artifact"],
+      "user_message": "1+1等于几",
+      "llm_script": [
+        {"content": "1+1=2，无需查资料。", "tool_calls": null}
+      ],
+      "expected_tools": [],
+      "forbidden_tools": ["kb_search"],
+      "answer_contains": ["1+1=2"],
+      "answer_not_contains": ["[TOOL:"]
+    },
+    {
+      "name": "text_directive_fallback",
+      "mode": "text",
+      "runnable_tools": ["kb_search"],
+      "user_message": "查下索引重建方案",
+      "llm_script": [
+        "[TOOL:kb_search|索引重建] 我先查一下。",
+        "索引重建：先建影子索引再切换，回滚预案保留旧索引 48 小时。"
+      ],
+      "expected_tools": ["kb_search"],
+      "forbidden_tools": [],
+      "answer_contains": ["影子索引"],
+      "answer_not_contains": ["[TOOL:", "kb_search|"]
+    },
+    {
+      "name": "tool_error_does_not_block",
+      "mode": "fc",
+      "runnable_tools": ["kb_search"],
+      "user_message": "查一下不存在的文档",
+      "llm_script": [
+        {"content": "", "tool_calls": [{"id": "e1", "name": "kb_search", "arguments": "{\"input\": \"不存在的文档\"}"}]},
+        {"content": "没查到相关资料，建议补充更多关键词。", "tool_calls": null}
+      ],
+      "tool_result_override": "工具「kb_search」执行失败：知识库无匹配内容",
+      "expected_tools": ["kb_search"],
+      "forbidden_tools": [],
+      "answer_contains": ["建议补充"],
+      "answer_not_contains": ["[TOOL:"]
+    },
+    {
+      "name": "text_round_guard",
+      "mode": "text",
+      "runnable_tools": ["kb_search"],
+      "user_message": "无限循环指令（应被轮次护栏截断）",
+      "infinite_directives": true,
+      "expected_tools_max": 8,
+      "answer_not_contains": ["[TOOL:"]
+    }
+  ]
+}

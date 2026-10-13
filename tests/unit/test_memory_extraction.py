@@ -8,6 +8,8 @@
 
 import asyncio
 
+import pytest
+
 
 def test_trigger_miss_no_llm_call(setup_test_db, monkeypatch):
     """普通对话不触发提取（零 LLM 成本）。"""
@@ -192,3 +194,83 @@ def test_prune_summary_upsert_not_duplicate(setup_test_db):
     ).fetchone()["c"]
     conn.close()
     assert n == 1, "摘要只应有一条（upsert 不重插）"
+
+
+def test_auto_extract_semantic_dedup(setup_test_db, monkeypatch):
+    """LLM 提取出措辞不同但语义相近的两条 → 只入一条（语义去重只在提取路径生效）。"""
+    import common.llm
+    import sessions
+
+    sid = sessions.create_session("a-ss", "t")
+    sessions.add_memory(sid, "a-ss", "用户喜欢简洁风格的输出", "short")
+
+    async def fake_llm(system, user, **kw):
+        return '{"memories": ["用户偏好简洁的输出风格", "部署前必须跑全量回归"]}'
+
+    monkeypatch.setattr(common.llm, "call_llm_async", fake_llm)
+    import asyncio
+
+    written = asyncio.run(sessions.auto_extract_memory(sid, "a-ss", "帮我记一下", "好的"))
+    assert written == 1, "近义条目被去重，只写入不重复的那条"
+
+    conn = sessions.get_db()
+    rows = conn.execute("SELECT content FROM memories WHERE session_id=?", (sid,)).fetchall()
+    conn.close()
+    contents = [r["content"] for r in rows]
+    assert any("简洁" in c for c in contents), "已有条目保留"
+    assert sum(1 for c in contents if "简洁" in c or "简练" in c) == 1, "不重复存近义条目"
+    assert any("回归" in c for c in contents), "不相关的正常写入"
+
+
+def test_add_memory_different_content_kept(setup_test_db):
+    """语义无关的条目正常入库（add_memory 不做语义去重，模板化内容不误杀）。"""
+    import sessions
+
+    sid = sessions.create_session("a-ss2", "t")
+    a = sessions.add_memory(sid, "a-ss2", "用户喜欢简洁风格的输出", "short")
+    b = sessions.add_memory(sid, "a-ss2", "数据库连接池大小设为 20", "short")
+    assert a != b
+
+    conn = sessions.get_db()
+    n = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=?", (sid,)).fetchone()["c"]
+    conn.close()
+    assert n == 2
+
+
+@pytest.mark.asyncio
+async def test_compress_memory_summary_llm(setup_test_db, monkeypatch):
+    """LLM 语义压缩：规则摘要被替换为 ≤3 条真要点；LLM 失败保持规则摘要（诚实降级）。"""
+    import sessions
+
+    sid = sessions.create_session("a-comp", "t")
+    # 造一条规则摘要记忆
+    conn = sessions.get_db()
+    conn.execute(
+        "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, 'long', ?)",
+        ("mem_sum_1", sid, "a-comp", sessions.SUMMARY_PREFIX + "（10 条）\n- 旧记忆 0\n- 旧记忆 1"),
+    )
+    conn.commit()
+    conn.close()
+
+    # LLM 成功 → 原地升级为语义要点
+    async def fake_llm(system, user, **kw):
+        return "- 用户偏好简洁\n- 索引重建在周三\n- 订单服务回滚预案"
+
+    import common.llm
+
+    monkeypatch.setattr(common.llm, "call_llm_async", fake_llm)
+    ok = await sessions.compress_memory_summary(sid, "a-comp")
+    assert ok is True
+    conn = sessions.get_db()
+    row = conn.execute("SELECT content FROM memories WHERE id='mem_sum_1'").fetchone()
+    conn.close()
+    assert "用户偏好简洁" in row["content"]
+    assert "LLM 语义压缩" in row["content"]
+
+    # LLM 失败 → 保持（内容不回滚为旧值，但也不崩）
+    async def fail_llm(system, user, **kw):
+        raise RuntimeError("llm down")
+
+    monkeypatch.setattr(common.llm, "call_llm_async", fail_llm)
+    ok2 = await sessions.compress_memory_summary(sid, "a-comp")
+    assert ok2 is False

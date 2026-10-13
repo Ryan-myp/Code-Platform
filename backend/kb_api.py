@@ -393,20 +393,32 @@ def _execute_vector_search(params: dict) -> list:  # noqa: C901
     try:
         import httpx
 
+        import kb_vector
+
+        # v18 B：query 段走共享 60s TTL 缓存（与 vector_recall 同源，命中则零 API）；
+        # 仅 hit 摘要批量 embed（query 缓存 miss 时一并补上）
+        config = (emb_model, emb_key, emb_base)
+        q_vec = kb_vector.cached_query_embedding(config, query)
         resp = httpx.post(
             f"{emb_base.rstrip('/')}/embeddings",
             headers={"Authorization": f"Bearer {emb_key}", "Content-Type": "application/json"},
-            json={"model": emb_model, "input": [query, *hit_texts]},
+            json={"model": emb_model, "input": ([query, *hit_texts] if q_vec is None else hit_texts)},
             timeout=10,
         )
         if resp.status_code != 200:
             return hits
         data = resp.json()
         embs = [d["embedding"] for d in data.get("data", [])]
-        if len(embs) < 2:
-            return hits
-        q_vec = embs[0]
-        hit_vecs = embs[1:]
+        if q_vec is None:
+            if len(embs) < 2:
+                return hits
+            q_vec = embs[0]
+            hit_vecs = embs[1:]
+        else:
+            hit_vecs = embs
+        # 本次已付费算出的 query 向量（无论是批量段还是缓存 miss 单独付的）回写缓存，
+        # 供后续 vector_recall 复用不重付
+        kb_vector.cached_query_embedding(config, query, precomputed=q_vec)
     except Exception as e:
         logger.info(f"kb embedding skip: {e}")
         return hits

@@ -284,3 +284,37 @@ def test_render_skill_template(runtime):
     out = runtime.render_skill_template("处理 {{svc}} 的 {{err}}", {"svc": "订单服务"})
     assert out == "处理 订单服务 的 {{err}}"
     assert runtime.render_skill_template("", {}) == ""
+
+
+# ════════════════════════════════════════════════════════════════
+# P1-A 记忆按查询相关性筛选（不串味）
+# ════════════════════════════════════════════════════════════════
+def test_attach_memory_relevance_filters(setup_test_db, runtime, monkeypatch):
+    """query 提供时，只有相关记忆进提示词；无关旧话题被过滤（避免稀释预算）。"""
+    import sessions
+
+    sid = sessions.create_session("a-rel", "t")
+    sessions.add_memory(sid, "a-rel", "订单服务上线失败 回滚预案", "long")
+    sessions.add_memory(sid, "a-rel", "用户喜欢简洁风格的周报", "short")
+    sessions.add_memory(sid, "a-rel", "数据库索引重建排期定在周三", "short")
+
+    bundle = {"agent": {"id": "a-rel", "instructions": "x"}, "runnable_tools": set()}
+    runtime.attach_session_memory(bundle, sid, query="订单服务 回滚 怎么办", limit=2)
+    ctx = bundle["memory_context"]
+    assert "回滚预案" in ctx, "相关记忆应被选中"
+    assert "周报" not in ctx, "无关话题不应稀释预算"
+    assert "索引" not in ctx
+
+
+def test_attach_memory_no_relevant_falls_back_recent(setup_test_db, runtime, monkeypatch):
+    """query 与所有记忆都无关 → 诚实降级回「最新 limit 条」（不丢全部上下文）。"""
+    import sessions
+
+    sid = sessions.create_session("a-rel2", "t")
+    sessions.add_memory(sid, "a-rel2", "历史记忆甲", "short")
+    sessions.add_memory(sid, "a-rel2", "历史记忆乙", "short")
+
+    bundle = {"agent": {"id": "a-rel2", "instructions": "x"}, "runnable_tools": set()}
+    runtime.attach_session_memory(bundle, sid, query="完全不沾边的问题 zzz")
+    ctx = bundle["memory_context"]
+    assert "历史记忆甲" in ctx and "历史记忆乙" in ctx, "无相关 → 回退最新 limit 条"

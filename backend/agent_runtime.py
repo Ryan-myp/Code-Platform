@@ -347,11 +347,31 @@ def strip_tool_directives(text: str) -> str:
     return strip_mcp_directives(_TOOL_DIRECTIVE_RE.sub("", text or "")).strip()
 
 
-def attach_session_memory(bundle: dict, session_id: str | None = None, limit: int = 10) -> dict:
+def _mem_relevance(content: str, query: str) -> int:
+    """轻量相关性打分（CJK 双字重叠×2 + ASCII 词重叠，零依赖；与 KB 关键词口径一致）。"""
+    import re
+
+    qc = (query or "").strip()
+    if not qc:
+        return 0
+
+    def toks(t: str) -> tuple[set[str], set[str]]:
+        t = (t or "").lower()
+        words = set(re.findall(r"[a-z0-9_]{2,}", t))
+        cjk = re.findall(r"[\u4e00-\u9fff]", t)
+        bigrams = {"".join(p) for p in zip(cjk, cjk[1:], strict=False)}
+        return words, bigrams
+
+    cq_words, cq_big = toks(content)
+    qq_words, qq_big = toks(qc)
+    return 2 * len(cq_big & qq_big) + len(cq_words & qq_words)
+
+
+def attach_session_memory(bundle: dict, session_id: str | None = None, limit: int = 10, query: str = "") -> dict:
     """把会话记忆挂进 bundle：long 型优先，各截 200 字，总预算 2000 字。
 
-    历史短板：memories 表只写不读。本函数让「用户存过的记忆」在后续对话中
-    真实被注入系统提示词；无记忆/失败时 memory_context 为空，提示词自动省略（诚实降级）。
+    提供 query 时按与当前问题的相关性选 top-k（避免无关旧话题稀释提示词预算）；
+    无相关记忆时回退「最新 limit 条」（诚实降级：不丢全部上下文）。无记忆/失败时 memory_context 为空。
     """
     agent = bundle.get("agent") or bundle
     sid = (session_id or "").strip()
@@ -366,13 +386,31 @@ def attach_session_memory(bundle: dict, session_id: str | None = None, limit: in
         logger.warning(f"session memory load failed: {e}")
         bundle["memory_context"] = ""
         return bundle
-    long_rows = [r for r in rows if r.get("memory_type") in ("long", "auto")][: int(limit * 0.6)]
-    short_rows = [r for r in rows if r.get("memory_type") not in ("long", "auto")][: max(limit - len(long_rows), 0)]
+
+    long_rows = [r for r in rows if r.get("memory_type") in ("long", "auto")]
+    short_rows = [r for r in rows if r.get("memory_type") not in ("long", "auto")]
+
+    if (query or "").strip():
+        # 按与当前问题的相关性选 top-k：长型保底 1 席（若相关），其余按分取
+        scored: list[tuple[int, int, dict]] = []
+        for idx, r in enumerate(long_rows + short_rows):
+            s = _mem_relevance(str(r.get("content") or ""), query)
+            if s > 0:
+                scored.append((s, -idx, r))  # 分降序，同分取新（idx 大 = 新）
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        picked = [r for _, _, r in scored[: int(limit)]]
+        # 无相关记忆 → 诚实降级回最新 limit 条（不丢全部上下文）
+        if not picked:
+            picked = (long_rows[: int(limit * 0.6)] + short_rows[: max(limit - int(limit * 0.6), 0)])
+    else:
+        picked = long_rows[: int(limit * 0.6)] + short_rows[: max(limit - int(limit * 0.6), 0)]
+
+    long_ids = {id(r) for r in long_rows}
     lines: list[str] = []
-    for r in long_rows + short_rows:
+    for r in picked:
         c = str(r.get("content") or "").strip()[:200]
         if c:
-            lines.append(f"- {'[长期] ' if r in long_rows else ''}{c}")
+            lines.append(f"- {'[长期] ' if id(r) in long_ids else ''}{c}")
     if not lines:
         bundle["memory_context"] = ""
         return bundle
