@@ -160,3 +160,61 @@ def test_vector_recall_scans_beyond_500(setup_test_db, monkeypatch):
     finally:
         os.environ["APP_ENV"] = "test"
     assert hits and hits[0]["file"] == "f9.md", "第 599 块（>500）高分应被全扫找到"
+
+
+def test_delete_file_chunks_and_kb_chunks(setup_test_db):
+    """删文档/删KB → 对应块向量被清理（防孤儿召回）。"""
+    import kb_vector
+
+    kb_vector.ensure_embedding_table()
+    import struct
+
+    from common.db import get_db
+
+    conn = get_db()
+    for fname in ("a.md", "b.md"):
+        conn.execute(
+            """INSERT INTO kb_chunk_embeddings
+               (kb_id, file_name, chunk_hash, chunk_text, embedding, model)
+               VALUES (?,?,?,?,?,?)""",
+            ("kb-del", fname, "h-" + fname, "x" * 30, struct.pack("4f", 0.1, 0.2, 0.3, 0.4), "m"),
+        )
+    conn.commit()
+    conn.close()
+
+    assert kb_vector.delete_file_chunks("kb-del", "a.md") == 1
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) AS c FROM kb_chunk_embeddings WHERE kb_id='kb-del'").fetchone()["c"]
+    conn.close()
+    assert n == 1, "只剩 b.md"
+    assert kb_vector.delete_kb_chunks("kb-del") == 1
+    assert kb_vector.delete_file_chunks("kb-del", "no-such.md") == 0, "幂等：无行不报错"
+
+
+def test_schedule_backfill_noop_in_test_env(setup_test_db):
+    """APP_ENV=test 时不调度（防误打真实 embedding API）。"""
+    import kb_vector
+
+    assert kb_vector.schedule_backfill("kb-x", "/some/path") is False
+
+
+def test_kb_create_hooks_incremental_backfill(setup_test_db, auth_headers, monkeypatch):
+    """创建 file 型 KB → 自动排队增量回填（幂等；hook 存在即可，实际调度被 test 环境闸住）。"""
+    import kb_vector
+
+    calls = []
+    monkeypatch.setattr(kb_vector, "schedule_backfill", lambda kb_id, kb_path: calls.append((kb_id, kb_path)) or True)
+
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app)
+    res = client.post(
+        "/api/knowledge-bases",
+        headers=auth_headers,
+        json={"name": "增量回填测试库", "type": "file", "path": "/tmp/kb-inc"},
+    )
+    assert res.status_code == 200, res.text
+    kb_id = res.json()["id"]
+    assert calls and calls[0][0] == kb_id and calls[0][1] == "/tmp/kb-inc"

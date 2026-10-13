@@ -210,6 +210,12 @@ async def create_knowledge_base(req: KnowledgeBaseCreateRequest, current_user: d
     )
     conn.commit()
     conn.close()
+
+    # v18 C 增量回填：file/url 型 KB 创建后自动排队 embed（幂等；无配置静默 no-op）
+    if kb_type in ("file", "url") and kb_path:
+        import kb_vector
+
+        kb_vector.schedule_backfill(kb_id, kb_path)
     return {"id": kb_id, "name": req.name}
 
 
@@ -220,6 +226,11 @@ async def delete_knowledge_base(kb_id: str, current_user: dict = require_auth())
     conn.execute("DELETE FROM knowledge_bases WHERE id=?", (kb_id,))
     conn.commit()
     conn.close()
+
+    # v18 C：KB 删除 → 清理块向量（防孤儿召回）
+    import kb_vector
+
+    kb_vector.delete_kb_chunks(kb_id)
     return {"success": True}
 
 
@@ -264,6 +275,12 @@ async def update_knowledge_base(kb_id: str, req: KnowledgeBaseUpdateRequest, cur
     conn.execute(f"UPDATE knowledge_bases SET {', '.join(updates)} WHERE id=?", vals)
     conn.commit()
     conn.close()
+
+    # v18 C：path 变更 → 重排增量回填（幂等：旧文件向量保留，新文件补嵌）
+    if db_path is not None:
+        import kb_vector
+
+        kb_vector.schedule_backfill(kb_id, db_path)
     return {"success": True, "id": kb_id}
 
 
@@ -1016,4 +1033,9 @@ async def delete_kb_document(kb_id: str, filename: str = "", current_user: dict 
     if not os.path.isfile(target):
         raise HTTPException(404, "文件不存在")
     os.remove(target)
+
+    # v18 C：删除文档 → 同步清理该文件的块向量（防召回已不存在的文件）
+    import kb_vector
+
+    kb_vector.delete_file_chunks(kb_id, os.path.basename(target))
     return {"success": True, "filename": os.path.basename(target)}

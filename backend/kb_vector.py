@@ -296,6 +296,69 @@ def vector_recall(kb_id: str, query: str, limit: int = 3) -> list[dict]:
     return out
 
 
+def delete_file_chunks(kb_id: str, file_name: str) -> int:
+    """删除指定文件的块向量（文件从 KB 目录被删后清理孤儿向量，防召回已不存在的文件）。
+
+    返回删除行数；表不存在/无行 → 0（幂等，不报错）。"""
+    ensure_embedding_table()
+    from common.db import get_db
+
+    conn = get_db()
+    cur = conn.execute(
+        "DELETE FROM kb_chunk_embeddings WHERE kb_id=? AND file_name=?", (kb_id, file_name)
+    )
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def delete_kb_chunks(kb_id: str) -> int:
+    """KB 删除时清理其全部块向量。返回删除行数。"""
+    ensure_embedding_table()
+    from common.db import get_db
+
+    conn = get_db()
+    cur = conn.execute("DELETE FROM kb_chunk_embeddings WHERE kb_id=?", (kb_id,))
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+_BG_TASKS: set = set()  # 保持强引用防 GC（与 chat_engine 同模式）
+
+
+def schedule_backfill(kb_id: str, kb_path: str) -> bool:
+    """创建/更新 file 型 KB 后 fire-and-forget 增量回填（v18 C）。
+
+    幂等（已有 hash 不重算）；无 embedding 配置时静默 no-op；
+    APP_ENV=test 不触发（防测试误打真实 API）。返回是否已调度。
+    """
+    import asyncio
+    import os
+
+    if os.environ.get("APP_ENV") == "test":
+        return False
+    if not (kb_path or "").strip():
+        return False
+
+    async def _task() -> None:
+        try:
+            await asyncio.to_thread(backfill_kb_chunks, kb_id, kb_path)
+        except Exception as e:
+            logger.warning(f"kb vector incremental backfill failed (ignored): {e}")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False  # 非异步上下文（不应发生，端点均为 async）
+    task = loop.create_task(_task())
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return True
+
+
 # ── FastAPI 路由：显式回填（低并发、幂等）──
 from fastapi import APIRouter, HTTPException
 
