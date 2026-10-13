@@ -74,6 +74,7 @@ from common.observability import (  # noqa: E402
 )
 from feedback_api import ensure_feedback_table  # noqa: E402
 from kb_api import router as kb_router  # noqa: E402
+from kb_vector import router as kb_vector_router  # noqa: E402
 from mcp_api import router as mcp_router  # noqa: E402
 from oauth_api import ensure_social_bindings_table  # noqa: E402
 from routers import register_routers  # noqa: E402
@@ -924,6 +925,7 @@ register_routers(app)
 app.include_router(commercial_router)
 app.include_router(agent_router)
 app.include_router(kb_router)
+app.include_router(kb_vector_router)
 app.include_router(mcp_router)
 app.include_router(sandbox_router)
 

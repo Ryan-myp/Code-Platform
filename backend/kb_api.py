@@ -797,7 +797,22 @@ def _kb_search_file(d: dict, q: str, limit: int) -> dict:
     raw_hits = [h for _, h in scored[:limit]]
     # 向量重排增强（降级安全：测试环境/无 key/失败 → 保持关键词原序）
     final_hits = _execute_vector_search({"query": q, "hits": raw_hits})
-    return {"ok": True, "hits": final_hits, "count": len(final_hits)}
+    # 真向量召回：补关键词全 miss 的文件（无配置/无存量/测试环境 → 空，行为不变）
+    try:
+        import kb_vector
+
+        kb_id = str(d.get("id") or "")
+        if kb_id:
+            kw_files = {h.get("file") for h in final_hits}
+            for vh in kb_vector.vector_recall(kb_id, q, limit=3):
+                if len(final_hits) >= limit:
+                    break
+                if vh.get("file") in kw_files:
+                    continue  # 关键词已覆盖 → 不重复
+                final_hits.append(vh)
+    except Exception as e:
+        logger.info(f"kb vector recall skip: {e}")
+    return {"ok": True, "hits": final_hits[:limit], "count": min(len(final_hits), limit)}
 
 
 @router.get("/api/knowledge-bases/{kb_id}/search")

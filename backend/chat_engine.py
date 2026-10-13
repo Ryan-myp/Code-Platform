@@ -35,12 +35,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 import agent_runtime
-import mcp_client
 from common.config import load_config
 from common.db import get_db
 from common.llm import (
     build_conversation_messages,
-    call_llm,
     call_llm_async,
     log_usage,
     parse_llm_json,
@@ -273,60 +271,26 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
     session_id = req.get("session_id")
     user_id = req.get("user_id", "")
     runnable = bundle.get("runnable_tools") or set()
+    # 多轮上下文（含当前 user 消息；无会话时 None → execute_tool_loop 默认 [system, prompt]）
+    conversation_messages = None
+    if conv_id:
+        conversation_messages = build_conversation_messages(conversation_id=conv_id, system_prompt=system)
+    elif session_id:
+        conversation_messages = build_conversation_messages(session_id=session_id, system_prompt=system)
     try:
-        if conv_id:
-            result = call_llm(
-                "",
-                "",
-                max_tokens=2000,
-                messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system),
-            )
-        elif session_id:
-            result = call_llm(
-                "",
-                "",
-                max_tokens=2000,
-                messages=build_conversation_messages(session_id=session_id, system_prompt=system),
-            )
-        else:
-            result = call_llm(system, message, max_tokens=2000)
-
-        # 工具调用循环（最多 2 轮）：解析指令 → 真实执行 → 结果回喂 → 最终答案
-        mcp_servers_by_id = {s.get("id"): s for s in (bundle.get("mcp_servers") or [])}
-        tools_used: list[str] = []
-        if runnable or mcp_servers_by_id:
-            base_msgs = (
-                build_conversation_messages(conversation_id=conv_id, system_prompt="")
-                if conv_id
-                else build_conversation_messages(session_id=session_id, system_prompt="")
-                if session_id
-                else []
-            )
-            for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
-                directives = agent_runtime.parse_tool_directives(result, runnable)
-                mcp_dirs = agent_runtime.parse_mcp_directives(result, set(mcp_servers_by_id), bundle.get("mcp_tools"))
-                if not directives and not mcp_dirs:
-                    break
-                tools_used.extend(name for name, _ in directives)
-                exec_results = []
-                for name, arg in directives:
-                    exec_results.append(f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}")
-                for sid, mtool, margs in mcp_dirs:
-                    exec_results.append(f"[MCP {mtool} 执行结果]\n{await mcp_client.mcp_call_tool(mcp_servers_by_id[sid], mtool, margs)}")
-                result = call_llm(
-                    "",
-                    "",
-                    max_tokens=2000,
-                    messages=(
-                        base_msgs
-                        + [
-                            {"role": "user", "content": message},
-                            {"role": "assistant", "content": result},
-                            {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"},
-                        ]
-                    ),
-                )
-            result = agent_runtime.strip_tool_directives(result)
+        # 统一工具循环（v18：FC 原生 + 异步 LLM，与 Team/Workflow 同源，不再双实现）
+        loop = await agent_runtime.execute_tool_loop(
+            system,
+            message,
+            runnable,
+            user_id=user_id,
+            max_tokens=2000,
+            mcp_servers=bundle.get("mcp_servers"),
+            mcp_tools=bundle.get("mcp_tools"),
+            conversation_messages=conversation_messages,
+        )
+        result = loop["result"]
+        tools_used: list[str] = loop["tools_used"]
     except HTTPException as e:
         _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e.detail))
         raise
@@ -390,111 +354,94 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
     user_id = req.get("user_id", "")
     system, bundle = await _assembled_agent_system(agent_id, message, conv_id or session_id)
     runnable = bundle.get("runnable_tools") or set()
+    # 多轮上下文（含当前 user 消息；无会话时 None → 默认 [system, prompt]）
+    conversation_messages = None
+    if conv_id:
+        conversation_messages = build_conversation_messages(conversation_id=conv_id, system_prompt=system)
+    elif session_id:
+        conversation_messages = build_conversation_messages(session_id=session_id, system_prompt=system)
     start = time.time()
 
     async def gen():
+        tool_events: list[dict] = []
+
+        # 工具事件实时转发：execute_tool_loop 在真实执行前推事件，gen 消费后发 SSE
+        async def on_tool_use(kind: str, label: str, preview: str) -> None:
+            tool_events.append({"tool": label, "input": preview})
+
+        # 后台跑统一工具循环（FC 原生，与 Team/Workflow 同源），事件随产随发
+        loop_task = asyncio.create_task(
+            agent_runtime.execute_tool_loop(
+                system,
+                message,
+                runnable,
+                user_id=user_id,
+                max_tokens=2000,
+                mcp_servers=bundle.get("mcp_servers"),
+                mcp_tools=bundle.get("mcp_tools"),
+                conversation_messages=conversation_messages,
+                on_tool_use=on_tool_use,
+            )
+        )
+        emitted = 0
+        while not loop_task.done():
+            while emitted < len(tool_events):
+                yield _sse_event("tool", tool_events[emitted])
+                emitted += 1
+            await asyncio.sleep(0.02)
+        while emitted < len(tool_events):
+            yield _sse_event("tool", tool_events[emitted])
+            emitted += 1
         try:
-            # 首答（非流式：可能是「工具调用指令」中间轮，不能直接流给用户）
-            if conv_id:
-                result = await call_llm_async(
-                    "",
-                    "",
-                    max_tokens=2000,
-                    messages=build_conversation_messages(conversation_id=conv_id, system_prompt=system),
-                )
-            elif session_id:
-                result = await call_llm_async(
-                    "",
-                    "",
-                    max_tokens=2000,
-                    messages=build_conversation_messages(session_id=session_id, system_prompt=system),
-                )
-            else:
-                result = await call_llm_async(system, message, max_tokens=2000)
-
-            # 工具调用循环：解析指令 → 真实执行 → SSE tool 事件 → 结果回喂（含 MCP）
-            mcp_servers_by_id = {s.get("id"): s for s in (bundle.get("mcp_servers") or [])}
-            tools_used: list[str] = []
-            if runnable or mcp_servers_by_id:
-                base_msgs = (
-                    build_conversation_messages(conversation_id=conv_id, system_prompt="")
-                    if conv_id
-                    else build_conversation_messages(session_id=session_id, system_prompt="")
-                    if session_id
-                    else []
-                )
-                for _ in range(agent_runtime._MAX_TOOL_ROUNDS):
-                    directives = agent_runtime.parse_tool_directives(result, runnable)
-                    mcp_dirs = agent_runtime.parse_mcp_directives(result, set(mcp_servers_by_id), bundle.get("mcp_tools"))
-                    if not directives and not mcp_dirs:
-                        break
-                    exec_results = []
-                    for name, arg in directives:
-                        tools_used.append(name)
-                        yield _sse_event("tool", {"tool": name, "input": arg[:200]})
-                        exec_results.append(
-                            f"[工具 {name} 执行结果]\n{await agent_runtime.execute_tool_async(name, arg, user_id)}"
-                        )
-                    for sid, mtool, margs in mcp_dirs:
-                        yield _sse_event("tool", {"tool": f"MCP:{mtool}", "input": json.dumps(margs, ensure_ascii=False)[:200]})
-                        exec_results.append(f"[MCP {mtool} 执行结果]\n{await mcp_client.mcp_call_tool(mcp_servers_by_id[sid], mtool, margs)}")
-                    result = await call_llm_async(
-                        "",
-                        "",
-                        max_tokens=2000,
-                        messages=(
-                            base_msgs
-                            + [
-                                {"role": "user", "content": message},
-                                {"role": "assistant", "content": result},
-                                {"role": "user", "content": "\n\n".join(exec_results) + "\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"},
-                            ]
-                        ),
-                    )
-            final_answer = agent_runtime.strip_tool_directives(result)
-
-            # 最终答案分块流式输出（打字机兼容；无工具循环时同样路径，行为一致）
-            full = ""
-            chunk = 24
-            for i in range(0, len(final_answer), chunk):
-                part = final_answer[i : i + chunk]
-                full += part
-                yield _sse_event("delta", {"text": part})
-
-            # 落库 assistant 回复（若有会话）
-            if conv_id or session_id:
-                try:
-                    c2 = get_db()
-                    now2 = datetime.now().isoformat()
-                    if conv_id:
-                        c2.execute(
-                            """INSERT INTO messages (conversation_id, role, content, timestamp)
-                               VALUES (?, ?, ?, ?) """,
-                            (conv_id, "assistant", full, now2),
-                        )
-                        c2.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now2, conv_id))
-                    else:
-                        c2.execute(
-                            """INSERT INTO messages (session_id, role, content, timestamp)
-                               VALUES (?, ?, ?, ?) """,
-                            (session_id, "assistant", full, now2),
-                        )
-                        c2.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now2, session_id))
-                    c2.commit()
-                    c2.close()
-                except Exception:
-                    pass
-            log_usage("agent_run_stream", len(message), len(full), time.time() - start)
-            _record_execution(agent_id, user_id, message, "done", time.time() - start)
-            _schedule_memory_extraction(session_id, agent_id, message, full)
-            yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
+            loop = await loop_task
         except HTTPException as e:
             _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e.detail))
             yield _sse_event("error", {"detail": e.detail})
+            return
         except Exception as e:
             _record_execution(agent_id, user_id, message, "error", time.time() - start, str(e)[:300])
             logger.exception("agent stream failed")
             yield _sse_event("error", {"detail": f"流式调用异常: {e}"})
+            return
+
+        final_answer = loop["result"]
+        tools_used = loop["tools_used"]
+
+        # 最终答案分块流式输出（打字机兼容；与 v17 行为一致）
+        full = ""
+        chunk = 24
+        for i in range(0, len(final_answer), chunk):
+            part = final_answer[i : i + chunk]
+            full += part
+            yield _sse_event("delta", {"text": part})
+
+        # 落库 assistant 回复（若有会话）
+        if conv_id or session_id:
+            try:
+                c2 = get_db()
+                now2 = datetime.now().isoformat()
+                if conv_id:
+                    c2.execute(
+                        """INSERT INTO messages (conversation_id, role, content, timestamp)
+                           VALUES (?, ?, ?, ?) """,
+                        (conv_id, "assistant", full, now2),
+                    )
+                    c2.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now2, conv_id))
+                else:
+                    c2.execute(
+                        """INSERT INTO messages (session_id, role, content, timestamp)
+                           VALUES (?, ?, ?, ?) """,
+                        (session_id, "assistant", full, now2),
+                    )
+                    c2.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now2, session_id))
+                c2.commit()
+                c2.close()
+            except Exception:
+                pass
+        log_usage("agent_run_stream", len(message), len(full), time.time() - start)
+        _record_execution(agent_id, user_id, message, "done", time.time() - start)
+        _schedule_memory_extraction(session_id, agent_id, message, full)
+        yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
 

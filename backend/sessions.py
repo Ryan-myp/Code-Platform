@@ -82,14 +82,54 @@ def delete_session(session_id: str) -> bool:
     return True
 
 
+# 记忆治理上限：防无界增长（auto 最弱先裁；session 总量硬上限）
+_MAX_SESSION_MEMORIES = 100
+_MAX_AUTO_MEMORIES = 30
+
+
+def _prune_session_memories(conn, session_id: str) -> None:
+    """裁剪会话记忆到上限：先裁最老的 auto（最弱），再裁最老非 long，总量超限时最后才裁 long。
+
+    调用方持有 conn 并负责 commit。"""
+    rows = conn.execute(
+        "SELECT id FROM memories WHERE session_id=? AND memory_type='auto' ORDER BY created_at ASC, id ASC",
+        (session_id,),
+    ).fetchall()
+    excess = len(rows) - _MAX_AUTO_MEMORIES
+    if excess > 0:
+        conn.executemany("DELETE FROM memories WHERE id=?", [ (r["id"],) for r in rows[:excess] ])
+    total = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=?", (session_id,)).fetchone()["c"]
+    over = total - _MAX_SESSION_MEMORIES
+    while over > 0:
+        victim = conn.execute(
+            "SELECT id FROM memories WHERE session_id=? AND memory_type!='long' ORDER BY created_at ASC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if not victim:
+            victim = conn.execute(
+                "SELECT id FROM memories WHERE session_id=? ORDER BY created_at ASC LIMIT 1", (session_id,)
+            ).fetchone()
+        if not victim:
+            break
+        conn.execute("DELETE FROM memories WHERE id=?", (victim["id"],))
+        over -= 1
+
+
 def add_memory(session_id: str, agent_id: str, content: str, memory_type: str = "short") -> str:
-    """添加记忆"""
+    """添加记忆（同 session 同内容去重；写入后自动治理裁剪到上限）。"""
     mem_id = f"mem_{int(time.time() * 1000)}"
     conn = get_db()
+    existing = conn.execute(
+        "SELECT id FROM memories WHERE session_id=? AND content=? LIMIT 1", (session_id, content)
+    ).fetchone()
+    if existing:
+        conn.close()
+        return existing["id"]
     conn.execute(
         "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, ?, ?)",
         (mem_id, session_id, agent_id, memory_type, content),
     )
+    _prune_session_memories(conn, session_id)
     conn.commit()
     conn.close()
     return mem_id
@@ -141,15 +181,25 @@ async def auto_extract_memory(session_id: str, agent_id: str, user_message: str,
         if not memories:
             return 0
         conn = get_db()
+        written = 0
         for content in memories:
-            mem_id = f"mem_{int(time.time() * 1000)}_{content[:4]}"
+            c = str(content)[:500]
+            dup = conn.execute(
+                "SELECT id FROM memories WHERE session_id=? AND content=? LIMIT 1", (session_id, c)
+            ).fetchone()
+            if dup:  # 已有相同记忆 → 不重复写
+                continue
+            mem_id = f"mem_{int(time.time() * 1000)}_{c[:4]}"
             conn.execute(
                 "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?, ?, ?, ?, ?)",
-                (mem_id, session_id, agent_id or "", "auto", content[:500]),
+                (mem_id, session_id, agent_id or "", "auto", c),
             )
+            written += 1
+        if written:
+            _prune_session_memories(conn, session_id)
         conn.commit()
         conn.close()
-        return len(memories)
+        return written
     except Exception as e:
         import logging
 

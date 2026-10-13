@@ -83,3 +83,55 @@ def test_schedule_extraction_fires_background_task(setup_test_db, monkeypatch):
 
     asyncio.new_event_loop().run_until_complete(run())
     assert "s1" in done, "后台提取任务应真实执行"
+
+
+# ════════════════════════════════════════════════════════════════
+# P1 记忆治理：去重 + 上限裁剪（防无界增长）
+# ════════════════════════════════════════════════════════════════
+def test_add_memory_dedup_same_content(setup_test_db):
+    """同 session 同内容不重复写（返回已有 id）。"""
+    from sessions import add_memory, create_session
+
+    sid = create_session("agent-gov", "治理测试")
+    id1 = add_memory(sid, "agent-gov", "用户偏好：使用中文", "long")
+    id2 = add_memory(sid, "agent-gov", "用户偏好：使用中文", "long")
+    assert id1 == id2
+
+    from common.db import get_db
+
+    conn = get_db()
+    n = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=?", (sid,)).fetchone()["c"]
+    conn.close()
+    assert n == 1
+
+
+def test_memory_prune_caps_session_total(setup_test_db):
+    """session 总量超 100 → 裁到 100（先裁非 long）。"""
+    from sessions import add_memory, create_session, get_memories
+
+    sid = create_session("agent-gov2", "裁剪测试")
+    for i in range(110):
+        add_memory(sid, "agent-gov2", f"短期记忆 {i}", "short")
+    assert len(get_memories(sid)) == 100
+
+
+def test_memory_prune_caps_auto_type(setup_test_db):
+    """auto 记忆最多保留最近 30 条。"""
+    from common.db import get_db
+    from sessions import create_session
+
+    sid = create_session("agent-gov3", "auto 裁剪")
+    conn = get_db()
+    for i in range(40):
+        conn.execute(
+            "INSERT INTO memories (id, session_id, agent_id, memory_type, content) VALUES (?,?,?,?,?)",
+            (f"auto_{i}", sid, "agent-gov3", "auto", f"auto 记忆 {i}"),
+        )
+    conn.commit()
+    from sessions import _prune_session_memories
+
+    _prune_session_memories(conn, sid)
+    conn.commit()
+    n = conn.execute("SELECT COUNT(*) AS c FROM memories WHERE session_id=? AND memory_type='auto'", (sid,)).fetchone()["c"]
+    conn.close()
+    assert n == 30

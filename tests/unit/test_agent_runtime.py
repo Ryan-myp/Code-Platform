@@ -205,3 +205,82 @@ def test_kb_rag_rerank_reorders_kbs(setup_test_db, tmp_path, runtime, monkeypatc
     ctx = runtime._kb_rag_context(["k1", "k2"], "数据库索引策略")
     assert "参考知识" in ctx
     assert ctx.index("库二") < ctx.index("库一"), "LLM 重排后库二候选应排在库一之前"
+
+
+# ════════════════════════════════════════════════════════════════
+# execute_tool_loop v18 P0：多轮上下文 + 工具事件回调
+# ════════════════════════════════════════════════════════════════
+@pytest.mark.asyncio
+async def test_execute_loop_conversation_messages(runtime):
+    """多轮上下文（conversation_messages）优先于默认 [system, prompt]。"""
+    calls = []
+
+    async def fake_llm(system, prompt, **kw):
+        calls.append({"system": system, "prompt": prompt, "messages": kw.get("messages")})
+        return "最终答案"
+
+    conv = [
+        {"role": "system", "content": "多轮系统"},
+        {"role": "user", "content": "上一轮"},
+        {"role": "assistant", "content": "上一轮回答"},
+        {"role": "user", "content": "当前问题"},
+    ]
+    out = await runtime.execute_tool_loop(
+        "应被忽略的 system", "应被忽略的 prompt", set(), llm_call=fake_llm, conversation_messages=conv
+    )
+    assert out["result"] == "最终答案"
+    # 文本模式：首次调用带完整多轮 messages，system/prompt 参数置空
+    assert calls[0]["messages"] == conv
+    assert calls[0]["prompt"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_loop_on_tool_use_events(runtime, monkeypatch):
+    """on_tool_use 在每次真实执行前触发（流式 SSE tool 事件源）；工具真实执行并回喂。"""
+    import agent_runtime as ar
+
+    calls = []
+
+    async def fake_llm(system, prompt, **kw):
+        calls.append(prompt)
+        if "工具执行结果" not in prompt:
+            return "[TOOL:code_interpreter|print(1)] 先算"
+        return "结果：1"
+
+    events = []
+
+    async def on_tool_use(kind, label, preview):
+        events.append((kind, label, preview))
+
+    out = await ar.execute_tool_loop(
+        "你是助手", "算一下", {"code_interpreter"}, llm_call=fake_llm, on_tool_use=on_tool_use
+    )
+    assert events == [("tool", "code_interpreter", "print(1)")]
+    assert out["tools_used"] == ["code_interpreter"]
+    assert "结果：1" in out["result"]
+
+
+# ════════════════════════════════════════════════════════════════
+# P2 技能参数化：params 定义 + {{param}} 渲染
+# ════════════════════════════════════════════════════════════════
+def test_skills_context_renders_params(runtime):
+    """技能带 params 定义时，注入段列出参数及说明（LLM 据此提取值填占位符）。"""
+    rows = [
+        {
+            "name": "周报生成",
+            "description": "按模板出周报",
+            "content": "本周完成 {{topic}}，风险 {{risk}}",
+            "params": '{"topic": "本周主题", "risk": "主要风险"}',
+        }
+    ]
+    ctx = runtime._skills_context(rows)
+    assert "周报生成" in ctx
+    assert "topic" in ctx and "本周主题" in ctx
+    assert "占位符" in ctx or "提取" in ctx
+
+
+def test_render_skill_template(runtime):
+    """占位符替换；未提供的参数保留原样（诚实降级不猜值）。"""
+    out = runtime.render_skill_template("处理 {{svc}} 的 {{err}}", {"svc": "订单服务"})
+    assert out == "处理 订单服务 的 {{err}}"
+    assert runtime.render_skill_template("", {}) == ""

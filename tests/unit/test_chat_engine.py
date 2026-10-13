@@ -18,14 +18,14 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def _seed_agent(agent_id="agent_test", name="TestAgent", instructions="你是测试助手"):
-    """在数据库中创建测试 Agent。"""
+def _seed_agent(agent_id="agent_test", name="TestAgent", instructions="你是测试助手", tools=None):
+    """在数据库中创建测试 Agent（可选绑定 tools JSON）。"""
     from common.db import get_db
 
     conn = get_db()
     conn.execute(
-        "INSERT INTO agents (id, name, instructions, model, created_at, active) VALUES (?, ?, ?, ?, ?, 1)",
-        (agent_id, name, instructions, "agnes-2.0-flash", "2024-01-01T00:00:00"),
+        "INSERT INTO agents (id, name, instructions, model, tools, created_at, active) VALUES (?, ?, ?, ?, ?, ?, 1)",
+        (agent_id, name, instructions, "agnes-2.0-flash", json.dumps(tools or []), "2024-01-01T00:00:00"),
     )
     conn.commit()
     conn.close()
@@ -115,11 +115,11 @@ def test_add_conversation_message_empty(test_db_path):
 
 
 def test_run_agent(test_db_path):
-    """运行 Agent（mock LLM 返回；v17.0 run_agent 改 async，工具循环无指令时首轮即终答）"""
+    """运行 Agent（v18：主路径统一走 execute_tool_loop；无工具时文本模式，patch agent_runtime.call_llm_async）"""
     from chat_engine import run_agent
 
     _seed_agent("agent_run_1", instructions="你是助手")
-    with patch("chat_engine.call_llm", return_value="LLM 模拟回复"):
+    with patch("agent_runtime.call_llm_async", new_callable=AsyncMock, return_value="LLM 模拟回复"):
         result = run(run_agent("agent_run_1", {"message": "你好"}))
 
     assert result["result"] == "LLM 模拟回复"
@@ -127,6 +127,64 @@ def test_run_agent(test_db_path):
     assert "elapsed" in result
     assert result["tools_used"] == []
     assert "used" in result  # v17.0 上下文使用透明化
+
+
+def test_run_agent_fc_with_tools(test_db_path):
+    """v18 P0：有工具时主路径走 function calling（call_llm_with_tools_async），工具真实执行并回喂"""
+    import common.llm
+    from chat_engine import run_agent
+
+    _seed_agent("agent_run_fc", instructions="你是助手", tools=["code_interpreter"])
+
+    async def fake_fc(system, prompt, tools, **kw):
+        msgs = kw.get("messages") or []
+        if any(m.get("role") == "tool" for m in msgs):
+            return {"content": "计算完成：2", "tool_calls": None}
+        return {
+            "content": "",
+            "tool_calls": [{"id": "c1", "name": "code_interpreter", "arguments": '{"input": "print(1+1)"}'}],
+        }
+
+    with patch.object(common.llm, "call_llm_with_tools_async", fake_fc):
+        result = run(run_agent("agent_run_fc", {"message": "算 1+1"}))
+
+    assert result["tools_used"] == ["code_interpreter"]
+    assert "计算完成" in result["result"]
+
+
+def test_run_agent_stream_events(test_db_path):
+    """v18：流式路径走统一工具循环；tool 事件经 on_tool_use 实时发出，delta 打字机，done 携带 tools_used"""
+    import common.llm
+    from chat_engine import run_agent_stream
+
+    _seed_agent("agent_stream_1", instructions="你是助手", tools=["code_interpreter"])
+
+    async def fake_fc(system, prompt, tools, **kw):
+        msgs = kw.get("messages") or []
+        if any(m.get("role") == "tool" for m in msgs):
+            return {"content": "分段回答内容", "tool_calls": None}
+        return {
+            "content": "",
+            "tool_calls": [{"id": "c1", "name": "code_interpreter", "arguments": '{"input": "print(1)"}'}],
+        }
+
+    with patch.object(common.llm, "call_llm_with_tools_async", fake_fc):
+        resp = run(run_agent_stream("agent_stream_1", {"message": "你好"}))
+        # 生成器在消费时才执行 LLM 调用，必须在 patch 生效期间消费
+        body = []
+
+        async def _consume():
+            async for chunk in resp.body_iterator:
+                body.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        asyncio.run(_consume())
+    text = "\n".join(body)
+    assert "event: tool" in text  # 工具调用实时事件（on_tool_use → SSE）
+    assert "code_interpreter" in text
+    assert "event: delta" in text
+    assert "event: done" in text
+    assert "分段回答内容" in text
+
 
 
 def test_run_agent_no_message(test_db_path):

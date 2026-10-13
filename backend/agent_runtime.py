@@ -241,10 +241,32 @@ def _skills_context(skill_rows: list, max_chars: int = 2500) -> str:
     for s in skill_rows[:3]:
         body = (s.get("content") or "").strip()[:800]
         desc = (s.get("description") or "").strip()
-        lines.append(f"### 技能「{s.get('name')}」\n{desc}\n{body}" if body else f"### 技能「{s.get('name')}」\n{desc}")
+        import json as _json
+
+        params = {}
+        try:
+            params = _json.loads(s.get("params") or "{}") or {}
+        except (ValueError, TypeError):
+            params = {}
+        block = f"### 技能「{s.get('name')}」\n{desc}\n{body}" if body else f"### 技能「{s.get('name')}」\n{desc}"
+        if params:
+            p_lines = "\n".join(f"  - {k}：{str(v).strip()}" for k, v in params.items())
+            block += f"\n参数（回答时从用户消息中提取具体值填入占位符）：\n{p_lines}"
+        lines.append(block)
     if not lines:
         return ""
     return "## 可用技能（按用户请求套用以下技能规范）\n\n" + "\n\n".join(lines)[:max_chars]
+
+
+def render_skill_template(content: str, values: dict) -> str:
+    """把技能正文里的 {{param}} 占位符替换为具体值（未提供的保留原样，诚实降级）。
+
+    供程序化套用（如工作流技能节点）使用；LLM 注入路径由 _skills_context 提示提取。
+    """
+    out = content or ""
+    for k, v in (values or {}).items():
+        out = out.replace("{{" + str(k).strip() + "}}", str(v))
+    return out
 
 
 def _tool_descriptions(tool_ids: list) -> tuple[list[str], set[str]]:
@@ -406,12 +428,20 @@ async def execute_tool_loop(
     mcp_servers: list[dict] | None = None,
     mcp_tools: dict[str, str] | None = None,
     mcp_executor=None,
+    conversation_messages: list[dict] | None = None,
+    on_tool_use=None,
 ) -> dict:
     """可复用的工具调用循环（双模式：function calling + 文本协议兼容）。
 
     双模式路由：
     - 生产模式（llm_call 未注入）+ 有工具 → call_llm_with_tools_async（OpenAI tools API）
     - 测试模式（llm_call 注入）或 LLM 不支持 tools → 文本协议 [TOOL:name|input]（兼容）
+
+    参数：
+    - conversation_messages：多轮上下文（含 system + 历史，含当前 user 消息）；
+      传入时优先于默认 [system, prompt]，支持会话/Session 双轨。
+    - on_tool_use：async 回调 (kind, label, preview) → None，kind∈{"tool","mcp"}，
+      每次真实执行前触发；供流式路径发 SSE tool 事件（不传则静默）。
 
     同时支持 MCP 指令 [MCP:server_id|tool|json] / [MCP:tool|json]。
     返回 {result（已剥离协议指令）, tools_used, mcp_calls, tool_logs}。
@@ -439,14 +469,19 @@ async def execute_tool_loop(
     mcp_calls: list[str] = []
     tool_logs: list[str] = []
     token_budget = _MAX_TOOL_TOKEN_BUDGET
-    token_spent = _est_tokens(system) + _est_tokens(prompt)
 
     # ── 双模式：function calling 或文本协议 ──
     tool_schemas = _build_tool_schemas(runnable_tools) if runnable_tools else []
     use_fc = bool(tool_schemas) and llm_call is None  # 仅生产模式启用 FC
 
     base_messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
-    conv_messages: list[dict] = list(base_messages)  # 可累积的对话上下文
+    first_messages: list[dict] = list(conversation_messages) if conversation_messages else list(base_messages)
+    conv_messages: list[dict] = list(first_messages)  # 可累积的对话上下文
+
+    if conversation_messages:
+        token_spent = sum(_est_tokens(str(m.get("content") or "")) for m in conversation_messages)
+    else:
+        token_spent = _est_tokens(system) + _est_tokens(prompt)
 
     # 首次调用
     tool_calls: list | None = None
@@ -457,7 +492,10 @@ async def execute_tool_loop(
         text = resp["content"]
         tool_calls = resp["tool_calls"]
     else:
-        text = await llm(system, prompt, max_tokens=max_tokens)
+        if conversation_messages:
+            text = await llm("", "", max_tokens=max_tokens, messages=first_messages)
+        else:
+            text = await llm(system, prompt, max_tokens=max_tokens)
     token_spent += _est_tokens(text)
 
     for _round_idx in range(_MAX_TOOL_ROUNDS):
@@ -478,6 +516,8 @@ async def execute_tool_loop(
         round_tokens = 0
         for name, arg in directives:
             tools_used.append(name)
+            if on_tool_use is not None:
+                await on_tool_use("tool", name, str(arg)[:200])
             out = await execute_tool_async(name, arg, user_id)
             exec_results.append(f"[工具 {name} 执行结果]\n{out}")
             tool_logs.append(f"{name}: {out[:300]}")
@@ -487,6 +527,8 @@ async def execute_tool_loop(
                 tool_result_msgs.append({"role": "tool", "tool_call_id": tc_id, "content": out[:_MAX_TOOL_RESULT]})
         for sid, mtool, args in mcp_directives:
             mcp_calls.append(f"{sid}:{mtool}")
+            if on_tool_use is not None:
+                await on_tool_use("mcp", f"MCP:{mtool}", json.dumps(args, ensure_ascii=False)[:200])
             srv = mcp_by_id.get(sid) or {}
             out = await mcp_call(srv, mtool, args)
             exec_results.append(f"[MCP {mtool} 执行结果]\n{out}")
@@ -522,7 +564,11 @@ async def execute_tool_loop(
                 f"{prompt}\n\n" + "\n\n".join(exec_results)
                 + "\n\n请基于以上工具执行结果，直接给出最终答案（不要再输出 [TOOL:] / [MCP:] 指令）。"
             )
-            text = await llm(system, follow_up, max_tokens=max_tokens)
+            if conversation_messages:
+                follow_msgs = first_messages + [{"role": "assistant", "content": text}, {"role": "user", "content": follow_up}]
+                text = await llm("", "", max_tokens=max_tokens, messages=follow_msgs)
+            else:
+                text = await llm(system, follow_up, max_tokens=max_tokens)
             tool_calls = None
         token_spent += _est_tokens(text)
         if token_spent > token_budget:
