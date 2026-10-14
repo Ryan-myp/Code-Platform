@@ -1333,7 +1333,7 @@ async def usage_stats_export(current_user: dict = Depends(require_auth)):
 
 
 @router.get("/api/evolution/prompt-history")
-async def prompt_history():
+async def prompt_history(current_user: dict = require_auth()):
     conn = get_db()
     rows = conn.execute("SELECT * FROM prompt_versions ORDER BY optimized_at DESC LIMIT 50").fetchall()
     conn.close()
@@ -1394,7 +1394,7 @@ def _metrics_digest() -> str:
 
 
 @router.post("/api/evolution/optimize-prompts")
-def optimize_prompts(req: dict):
+def optimize_prompts(req: dict, current_user: dict = require_auth()):
     """自进化 - 优化提示词模板（v18 闭环 v1：指标接地 + 结构闸 + 版本化可回滚）。
 
     - 候选过结构闸 → 自动置 published；不过闸 → 留 candidate 供人工/下轮迭代
@@ -1444,7 +1444,7 @@ def optimize_prompts(req: dict):
 
 
 @router.post("/api/evolution/prompt-versions/{version_id}/rollback")
-def rollback_prompt_version(version_id: int):
+def rollback_prompt_version(version_id: int, current_user: dict = require_auth()):
     """回滚：把指定历史版本重新置为 published，同模块当前 published 版本标记 rolled_back。"""
     conn = get_db()
     _ensure_prompt_version_schema(conn)
@@ -1466,7 +1466,7 @@ def rollback_prompt_version(version_id: int):
 
 
 @router.post("/api/evolution/prompt-versions/{version_id}/publish")
-def publish_prompt_version(version_id: int):
+def publish_prompt_version(version_id: int, current_user: dict = require_auth()):
     """手动发布：candidate → published（对基准版本过结构闸才允许，不过闸 400）。"""
     conn = get_db()
     _ensure_prompt_version_schema(conn)
@@ -1493,7 +1493,7 @@ def publish_prompt_version(version_id: int):
 
 
 @router.get("/api/evolution/prompt-versions")
-def list_prompt_versions(status: str = ""):
+def list_prompt_versions(status: str = "", current_user: dict = require_auth()):
     """版本清单（可按 status 筛选）；旧行无 status 时兼容 candidate。"""
     conn = get_db()
     _ensure_prompt_version_schema(conn)

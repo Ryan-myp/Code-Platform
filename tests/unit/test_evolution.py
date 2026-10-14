@@ -42,7 +42,7 @@ def test_gate_placeholder_preservation(setup_test_db):
     assert prd_engine._prompt_gate("太短", ref)["ok"] is False, "过短必须拦截"
 
 
-def test_optimize_publishes_when_gate_passes(setup_test_db, monkeypatch):
+def test_optimize_publishes_when_gate_passes(setup_test_db, monkeypatch, auth_headers):
     """候选保留占位符 + 足够长 → 自动 published。"""
     import prd_engine
 
@@ -58,14 +58,14 @@ def test_optimize_publishes_when_gate_passes(setup_test_db, monkeypatch):
 
     from main import app
 
-    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"})
+    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"}, headers=auth_headers)
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["status"] == "published", f"过闸应自动发布：{body}"
     assert body["gate"]["ok"] is True
 
 
-def test_optimize_holds_candidate_when_gate_fails(setup_test_db, monkeypatch):
+def test_optimize_holds_candidate_when_gate_fails(setup_test_db, monkeypatch, auth_headers):
     """候选丢占位符 → 留 candidate（诚实降级，不发布坏版本）。"""
     import prd_engine
 
@@ -74,13 +74,13 @@ def test_optimize_holds_candidate_when_gate_fails(setup_test_db, monkeypatch):
 
     from main import app
 
-    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"})
+    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"}, headers=auth_headers)
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "candidate"
     assert res.json()["gate"]["ok"] is False
 
 
-def test_metrics_digest_injected_into_prompt(setup_test_db, monkeypatch):
+def test_metrics_digest_injected_into_prompt(setup_test_db, monkeypatch, auth_headers):
     """可靠性指标接地：错误分布摘要进优化 prompt。"""
     import common.metrics as metrics
     import prd_engine
@@ -104,19 +104,19 @@ def test_metrics_digest_injected_into_prompt(setup_test_db, monkeypatch):
 
     from main import app
 
-    TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"})
+    TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"}, headers=auth_headers)
     assert "transient" in captured.get("user", ""), "错误分布应注入优化上下文"
     assert "8200.0" in captured.get("user", ""), "p95 延迟应注入优化上下文"
 
 
-def test_rollback_republishes_history(setup_test_db):
+def test_rollback_republishes_history(setup_test_db, auth_headers):
     """回滚：旧版本重新 published，当前 published 标记 rolled_back（审计链保留）。"""
     old = _seed_version("report", "旧版好提示词" * 8, status="rolled_back", when="2024-01-01T00:00:00")
     new = _seed_version("report", "新版提示词" * 10, status="published", when="2025-01-01T00:00:00")
 
     from main import app
 
-    res = TestClient(app).post(f"/api/evolution/prompt-versions/{old}/rollback")
+    res = TestClient(app).post(f"/api/evolution/prompt-versions/{old}/rollback", headers=auth_headers)
     assert res.status_code == 200, res.text
     assert res.json()["published_id"] == old
 
@@ -128,7 +128,7 @@ def test_rollback_republishes_history(setup_test_db):
     assert st[old] == "published" and st[new] == "rolled_back"
 
 
-def test_publish_rejected_when_gate_fails(setup_test_db):
+def test_publish_rejected_when_gate_fails(setup_test_db, auth_headers):
     """手动发布也过结构闸：对基准版本缺占位符 → 400。"""
     base = _seed_version("report", "请写 {report_type} 汇报，控制在 {limit} 字，语言要精炼且专业，突出关键成果与数据，便于团队评审",
                          status="published", when="2024-01-01T00:00:00")
@@ -136,7 +136,17 @@ def test_publish_rejected_when_gate_fails(setup_test_db):
 
     from main import app
 
-    res = TestClient(app).post(f"/api/evolution/prompt-versions/{bad}/publish")
+    res = TestClient(app).post(f"/api/evolution/prompt-versions/{bad}/publish", headers=auth_headers)
     assert res.status_code == 400, f"缺占位符应被结构闸拦截：{res.text}"
-    res2 = TestClient(app).post(f"/api/evolution/prompt-versions/{base}/publish")
+    res2 = TestClient(app).post(f"/api/evolution/prompt-versions/{base}/publish", headers=auth_headers)
     assert res2.status_code == 200, "对自身无缺失占位符（基准=排除自身后取上一版）可发布"
+
+
+def test_evolution_endpoints_require_auth(setup_test_db):
+    """evolution 端点必须鉴权（防匿名烧 LLM / 污染版本库）。"""
+    from main import app
+
+    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "x"})
+    assert res.status_code == 401, f"无 token 应 401：{res.status_code} {res.text[:100]}"
+    res2 = TestClient(app).get("/api/evolution/prompt-history")
+    assert res2.status_code == 401, "prompt-history 也应鉴权"
