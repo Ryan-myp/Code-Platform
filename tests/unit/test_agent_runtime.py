@@ -318,3 +318,31 @@ def test_attach_memory_no_relevant_falls_back_recent(setup_test_db, runtime, mon
     runtime.attach_session_memory(bundle, sid, query="完全不沾边的问题 zzz")
     ctx = bundle["memory_context"]
     assert "历史记忆甲" in ctx and "历史记忆乙" in ctx, "无相关 → 回退最新 limit 条"
+
+
+def test_skills_context_programmatic_prefill(setup_test_db):
+    """v18 P2：pattern 命中的参数程序化预填占位符；未命中保留占位符走 LLM 提取（双轨）。"""
+    import json
+
+    import agent_runtime as runtime
+
+    rows = [{
+        "name": "发布助手",
+        "description": "多平台发布",
+        "content": "按 {{channel}} 渠道发布，标题 {{title}}",
+        "params": json.dumps({
+            "channel": {"desc": "发布渠道", "pattern": r"渠道[：:]\s*([\u4e00-\u9fff]+)"},
+            "title": "标题",
+        }),
+    }]
+    ctx = runtime._skills_context(rows, user_message="渠道：公众号，请帮我发一篇")
+    assert "按 公众号 渠道发布" in ctx, f"命中参数应程序化预填：{ctx!r}"
+    assert "{{title}}" in ctx, "未命中参数应保留占位符（LLM 兜底）"
+    assert "公众号" not in ctx.split("按 公众号")[-1].split("\n")[0], "已填参数不重复列参数说明"
+
+    ctx2 = runtime._skills_context(rows, user_message="帮我发一篇，标题是 X")
+    assert "{{channel}}" in ctx2, "pattern 未命中 → 占位符保留"
+    assert "渠道" in ctx2, "未命中参数仍列入 LLM 提取说明"
+
+    ctx3 = runtime._skills_context(rows)  # 无用户消息
+    assert "{{channel}}" in ctx3 and "{{title}}" in ctx3, "无消息时全部走 LLM 提取（行为与旧版一致）"

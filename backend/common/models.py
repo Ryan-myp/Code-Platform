@@ -169,6 +169,7 @@ class SkillCreateRequest(BaseModel):
     content: str = ""
     references: str = ""
     params: str = ""  # v18 参数化：{"param名": "说明"} JSON，正文中 {{param名}} 占位
+    version: int = 1  # v18 P2 技能版本化：创建时版本号（更新时自动 +1）
 
 
 class SkillUpdateRequest(BaseModel):

@@ -533,8 +533,8 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
     conn = get_db()
     skill_id = f"skill_{int(time.time() * 1000)}"
     conn.execute(
-        """INSERT INTO skills (id, name, description, content, `references`, params, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO skills (id, name, description, content, `references`, params, version, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             skill_id,
             req.name,
@@ -542,6 +542,7 @@ async def create_skill(req: SkillCreateRequest, current_user: dict = require_aut
             req.content,
             req.references,
             req.params or "",
+            max(1, int(req.version or 1)),  # v18 P2 版本化
             datetime.now().isoformat(),
         ),
     )
@@ -613,6 +614,7 @@ async def update_skill(skill_id: str, req: SkillUpdateRequest, current_user: dic
             values.append(v)
     if not updates:
         raise HTTPException(400, "没有需要更新的字段")
+    updates.append("version=COALESCE(version,1)+1")  # v18 P2：内容变更自动 +1（无额外占位参数）
     values.append(skill_id)
     conn.execute(f"UPDATE skills SET {','.join(updates)} WHERE id=?", values)
     row = conn.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()

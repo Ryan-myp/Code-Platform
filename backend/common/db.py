@@ -219,7 +219,7 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
         content TEXT DEFAULT '', `references` TEXT DEFAULT '', templates TEXT DEFAULT '',
         scripts TEXT DEFAULT '', assets TEXT DEFAULT '', params TEXT DEFAULT '',
-        created_at TEXT, active INTEGER DEFAULT 1
+        version INTEGER DEFAULT 1, created_at TEXT, active INTEGER DEFAULT 1
     )""",
     """CREATE TABLE IF NOT EXISTS skills_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT, skill_id TEXT NOT NULL, folder TEXT NOT NULL,
@@ -631,6 +631,7 @@ def migrate() -> None:
         _add_column_if_missing(conn, "mcp_servers", "auth_type", "TEXT DEFAULT 'none'")
         # v18 技能参数化：{{param}} 占位符定义（name → 说明 JSON）
         _add_column_if_missing(conn, "skills", "params", "TEXT DEFAULT ''")
+        _add_column_if_missing(conn, "skills", "version", "INTEGER DEFAULT 1")
         # v16.0 门户系统：用户门户类型（rdm=研发管理 / media=自媒体创作 / general=通用）
         _add_column_if_missing(conn, "users", "portal_type", "TEXT DEFAULT 'general'")
         # v17.0 密码重置 + 试用机制

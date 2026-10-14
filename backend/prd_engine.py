@@ -1340,31 +1340,174 @@ async def prompt_history():
     return [dict(r) for r in rows]
 
 
+def _ensure_prompt_version_schema(conn) -> None:
+    """幂等迁移：prompt_versions 加 status 列（candidate/published/rolled_back）。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(prompt_versions)").fetchall()}
+    if "status" not in cols:
+        conn.execute("ALTER TABLE prompt_versions ADD COLUMN status TEXT DEFAULT 'candidate'")
+
+
+def _extract_placeholders(text: str) -> set:
+    import re
+
+    return set(re.findall(r"\{(\w+)\}", text or ""))
+
+
+def _prompt_gate(candidate: str, reference: str) -> dict:
+    """提示词结构闸（自进化 v1 闭环）：
+
+    - 非空且长度合理（防 LLM 退化输出）
+    - 保留基准版本全部 {参数} 占位符（模板完整性，缺一个就不可发布）
+
+    诚实边界：v1 闸是结构性的；可度量的效果评分（黄金集打分）待
+    按模板建立评测集后接入，本版不谎报「质量提升」。
+    """
+    issues = []
+    body = (candidate or "").strip()
+    if not body:
+        issues.append("优化结果为空")
+    elif len(body) < 50:
+        issues.append(f"结果过短（{len(body)} 字符），疑似 LLM 退化")
+    missing = _extract_placeholders(reference) - _extract_placeholders(candidate)
+    if missing:
+        issues.append(f"丢失参数占位符：{', '.join(sorted(missing))}")
+    return {"ok": not issues, "issues": issues}
+
+
+def _metrics_digest() -> str:
+    """把可靠性指标（错误分布/延迟）喂进优化上下文——自进化的数据接地。
+
+    无数据/表不存在 → 空串（不阻断优化）。"""
+    try:
+        import common.metrics as metrics
+
+        s = metrics.summarize(days=7)
+        errs = s.get("error_classes") or {}
+        if not errs:
+            return ""
+        top = ", ".join(f"{k}×{v}" for k, v in list(errs.items())[:5])
+        ll = (s.get("latency") or {}).get("llm") or {}
+        p95 = ll.get("p95_ms")
+        return f"近7天可靠性指标：错误分布[{top}]；LLM p95 延迟 {p95 or 'n/a'}ms"
+    except Exception:
+        return ""
+
+
 @router.post("/api/evolution/optimize-prompts")
 def optimize_prompts(req: dict):
-    """自进化 - 优化提示词模板"""
+    """自进化 - 优化提示词模板（v18 闭环 v1：指标接地 + 结构闸 + 版本化可回滚）。
+
+    - 候选过结构闸 → 自动置 published；不过闸 → 留 candidate 供人工/下轮迭代
+    - 优化上下文加入近 7 天错误分布/延迟（指标接地，不再纯靠 LLM 想象）
+    - 历史版本可回滚（见 rollback 端点）
+    """
     target = req.get("target") or "all"
     conn = get_db()
-    rows = conn.execute("SELECT * FROM prompt_versions ORDER BY optimized_at DESC LIMIT 20").fetchall()
+    _ensure_prompt_version_schema(conn)
+    rows = conn.execute(
+        "SELECT * FROM prompt_versions ORDER BY optimized_at DESC LIMIT 20"
+    ).fetchall()
     conn.close()
 
+    history = [dict(r) for r in rows]
     history_summary = ""
-    if rows:
+    if history:
         history_summary = "\n".join(
             f"- [{r.get('module') or r.get('id')}] v{r.get('version') or '?'}: {(r.get('instructions') or '')[:200]}"
-            for r in rows[-5:]
+            for r in history[-5:]
         )
+    reference = next((h.get("instructions") for h in history if h.get("instructions")), "")
+
+    metric_digest = _metrics_digest()
+    digest_block = f"\n\n平台近期可靠性数据（供参考，优先修复高频错误类对应场景）：\n{metric_digest}" if metric_digest else ""
 
     system = "你是一位提示词工程专家。根据历史 prompt 的使用效果，优化改进提示词模板。输出优化后的 prompt 版本。"
-    user = f"优化目标: {target}\n\n历史 prompt 记录:\n{history_summary or '暂无历史记录'}\n\n请输出优化后的 prompt（直接给内容，标注优化点）。"
+    user = (
+        f"优化目标: {target}\n\n历史 prompt 记录:\n{history_summary or '暂无历史记录'}"
+        f"{digest_block}\n\n请输出优化后的 prompt（直接给内容，标注优化点；保留所有 {{参数}} 占位符）。"
+    )
     result = call_llm(system, user, max_tokens=3000)
+
+    # 结构闸：过闸才发布，不过闸留 candidate（诚实降级：不声称质量提升）
+    gate = _prompt_gate(result, reference)
+    status = "published" if gate["ok"] else "candidate"
 
     conn = get_db()
     conn.execute(
-        """INSERT INTO prompt_versions (module, version, instructions, optimized_at, created_by)
-           VALUES (?, ?, ?, ?, ?)""",
-        (target, 1, result, datetime.now().isoformat(), "platform_evolution"),
+        """INSERT INTO prompt_versions (module, version, instructions, optimized_at, created_by, status)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (target, 1, result, datetime.now().isoformat(), "platform_evolution", status),
     )
     conn.commit()
     conn.close()
-    return {"result": result}
+    return {"result": result, "status": status, "gate": gate}
+
+
+@router.post("/api/evolution/prompt-versions/{version_id}/rollback")
+def rollback_prompt_version(version_id: int):
+    """回滚：把指定历史版本重新置为 published，同模块当前 published 版本标记 rolled_back。"""
+    conn = get_db()
+    _ensure_prompt_version_schema(conn)
+    row = conn.execute("SELECT * FROM prompt_versions WHERE id=?", (version_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "版本不存在")
+    module = row["module"]
+    # 同模块当前 published → 标记 rolled_back（审计链保留）
+    cur = conn.execute(
+        "SELECT id FROM prompt_versions WHERE module=? AND status='published'", (module,)
+    ).fetchall()
+    for c in cur:
+        conn.execute("UPDATE prompt_versions SET status='rolled_back' WHERE id=?", (c["id"],))
+    conn.execute("UPDATE prompt_versions SET status='published' WHERE id=?", (version_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "published_id": version_id, "module": module}
+
+
+@router.post("/api/evolution/prompt-versions/{version_id}/publish")
+def publish_prompt_version(version_id: int):
+    """手动发布：candidate → published（对基准版本过结构闸才允许，不过闸 400）。"""
+    conn = get_db()
+    _ensure_prompt_version_schema(conn)
+    row = conn.execute("SELECT * FROM prompt_versions WHERE id=?", (version_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "版本不存在")
+    ref_row = conn.execute(
+        "SELECT instructions FROM prompt_versions WHERE module=? AND id!=? "
+        "ORDER BY optimized_at DESC NULLS LAST LIMIT 1",
+        (row["module"], version_id),
+    ).fetchone()
+    ref = (ref_row or {"instructions": ""})["instructions"] or ""
+    gate = _prompt_gate(row["instructions"], ref)
+    if not gate["ok"]:
+        conn.close()
+        raise HTTPException(400, f"结构闸未过：{'; '.join(gate['issues'])}")
+    conn.execute("UPDATE prompt_versions SET status='rolled_back' WHERE module=? AND status='published' AND id!=?",
+                 (row["module"], version_id))
+    conn.execute("UPDATE prompt_versions SET status='published' WHERE id=?", (version_id,))
+    conn.commit()
+    conn.close()
+    return {"success": True, "published_id": version_id, "gate": gate}
+
+
+@router.get("/api/evolution/prompt-versions")
+def list_prompt_versions(status: str = ""):
+    """版本清单（可按 status 筛选）；旧行无 status 时兼容 candidate。"""
+    conn = get_db()
+    _ensure_prompt_version_schema(conn)
+    sql = "SELECT * FROM prompt_versions ORDER BY optimized_at DESC NULLS LAST LIMIT 100"
+    args: list = []
+    if status:
+        sql = "SELECT * FROM prompt_versions WHERE status=? ORDER BY optimized_at DESC NULLS LAST LIMIT 100"
+        args = [status]
+    rows = conn.execute(sql, args).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["status"] = d.get("status") or "candidate"  # 旧行兼容
+        out.append(d)
+    return out
+

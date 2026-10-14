@@ -120,8 +120,8 @@ def load_agent_bundle(agent_id: str, user_message: str = "") -> dict:
     rag = _kb_rag_context(_parse_list(agent.get("knowledge_base_ids")), user_message)
     agent["rag_context"] = rag
 
-    # ── Skills：注入技能指令 ──
-    agent["skills_context"] = _skills_context([dict(s) for s in skills])
+    # ── Skills：注入技能指令（v18 P2：带用户消息做确定性参数预填）──
+    agent["skills_context"] = _skills_context([dict(s) for s in skills], user_message=user_message)
 
     # ── Tools：可执行工具说明 + 白名单 ──
     tool_lines, runnable = _tool_descriptions(_parse_list(agent.get("tools")))
@@ -236,7 +236,32 @@ def _kb_rag_context(kb_ids: list, user_message: str, max_chars: int = 4000) -> s
     return "\n".join(lines)[:max_chars]
 
 
-def _skills_context(skill_rows: list, max_chars: int = 2500) -> str:
+def _skill_param_values(params: dict, user_message: str) -> dict:
+    """确定性参数抽取（v18 P2）：params 条目支持 {"desc","pattern"}，
+    pattern 命中用户消息 → 取值（group(1) 优先，其次 group(0)）；未命中 → 不填（占位符保留，LLM 兜底）。
+
+    普通字符串条目（仅描述）不参与抽取——纯 LLM 提取路径不变。
+    """
+    import re
+
+    values = {}
+    msg = user_message or ""
+    if not msg:
+        return values
+    for pname, spec in (params or {}).items():
+        pattern = spec.get("pattern", "") if isinstance(spec, dict) else ""
+        if not pattern:
+            continue
+        try:
+            m = re.search(pattern, msg)
+        except re.error:
+            continue  # 坏 pattern 诚实跳过（不阻断技能注入）
+        if m:
+            values[str(pname)] = (m.group(1) if m.lastindex else m.group(0)).strip()
+    return values
+
+
+def _skills_context(skill_rows: list, user_message: str = "", max_chars: int = 2500) -> str:
     lines = []
     for s in skill_rows[:3]:
         body = (s.get("content") or "").strip()[:800]
@@ -248,10 +273,22 @@ def _skills_context(skill_rows: list, max_chars: int = 2500) -> str:
             params = _json.loads(s.get("params") or "{}") or {}
         except (ValueError, TypeError):
             params = {}
-        block = f"### 技能「{s.get('name')}」\n{desc}\n{body}" if body else f"### 技能「{s.get('name')}」\n{desc}"
+
+        # v18 P2 程序化预填：pattern 命中 → 占位符直接替换；未命中保留，由 LLM 提取（双轨诚实降级）
+        filled = _skill_param_values(params, user_message)
+        body_rendered = render_skill_template(body, filled) if filled else body
+
+        block = f"### 技能「{s.get('name')}」\n{desc}\n{body_rendered}" if body_rendered else f"### 技能「{s.get('name')}」\n{desc}"
         if params:
-            p_lines = "\n".join(f"  - {k}：{str(v).strip()}" for k, v in params.items())
-            block += f"\n参数（回答时从用户消息中提取具体值填入占位符）：\n{p_lines}"
+            p_lines = []
+            for k, v in params.items():
+                if str(k).strip() in filled:
+                    continue  # 已程序化填入的不再让 LLM 重复提取
+                desc_v = v.get("desc", "") if isinstance(v, dict) else str(v).strip()
+                note = f"（正则：{v.get('pattern', '')}）" if isinstance(v, dict) and v.get("pattern") else ""
+                p_lines.append(f"  - {k}：{desc_v}{note}")
+            if p_lines:
+                block += "\n参数（回答时从用户消息中提取具体值填入占位符）：\n" + "\n".join(p_lines)
         lines.append(block)
     if not lines:
         return ""
