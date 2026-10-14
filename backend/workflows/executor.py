@@ -339,7 +339,8 @@ class WorkflowExecutor:
             results[node_id] = {"status": "error", "message": str(e)}
             status = "failed"
             output = json.dumps(results[node_id], ensure_ascii=False, default=str)
-        self._log_node(run_id, node_id, status, output)
+        node_snapshot = json.dumps({"node_type": node_type, "workflow_input": input_data or {}}, ensure_ascii=False, default=str)[:8000]
+        self._log_node(run_id, node_id, status, output, node_input=node_snapshot)
         try:
             from realtime import manager
 
@@ -444,16 +445,19 @@ class WorkflowExecutor:
 
         return run_id
 
-    def _log_node(self, run_id: str, node_id: str, status: str, output: str) -> None:
-        """记录节点执行日志到数据库（run 行不存在时懒创建，兼容单测直调）。"""
+    def _log_node(self, run_id: str, node_id: str, status: str, output: str, node_input: str = "") -> None:
+        """记录节点执行日志到数据库（run 行不存在时懒创建，兼容单测直调）。
+
+        v18.2 快照：node_input 存节点输入（workflow 输入 + 节点类型），支撑运行检查/重放。
+        """
         conn = get_db()
         conn.execute(
             "INSERT OR IGNORE INTO workflow_runs (id, workflow_id, status, started_at) VALUES (?, '', 'running', ?)",
             (run_id, datetime.now().isoformat()),
         )
         conn.execute(
-            "INSERT INTO workflow_run_logs (id, run_id, node_id, status, output_data, completed_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (f"log_{node_id}_{uuid.uuid4().hex[:6]}", run_id, node_id, status, output, datetime.now().isoformat()),
+            "INSERT INTO workflow_run_logs (id, run_id, node_id, status, output_data, input_data, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (f"log_{node_id}_{uuid.uuid4().hex[:6]}", run_id, node_id, status, output, node_input, datetime.now().isoformat()),
         )
         conn.commit()
         conn.close()
@@ -559,6 +563,7 @@ class WorkflowExecutor:
                     mcp_servers=bundle.get("mcp_servers"),
                     mcp_tools=bundle.get("mcp_tools"),
                     model=agent["model"] or None,  # v18 P0：agent 级模型
+                    metrics_ref=f"workflow:wf_agent:{agent['id']}",  # v18.2 指标归因
                 )
                 result = loop["result"]
                 tools_used = loop["tools_used"] + [f"MCP:{c}" for c in loop.get("mcp_calls", [])]

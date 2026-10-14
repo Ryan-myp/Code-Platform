@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 _MAX_TOOL_ROUNDS = 8  # 工具调用轮次上限（v17→v21 放宽到 8，配合 token 预算控成本）
 _MAX_TOOL_INPUT = 4000
 _MAX_TOOL_RESULT = 3000
+
+
+def _truncate_for_context(out: str, source: str) -> str:
+    """工具/MCP 输出截断治理（v18.2）：超 _MAX_TOOL_RESULT → 截断 + 明示总量（诚实降级，
+    不静默丢弃）；超限事件记 degraded/content 指标（可统计「模型丢尾部」频率）。"""
+    if out and len(out) > _MAX_TOOL_RESULT:
+        import common.metrics as _metrics
+
+        _metrics.record("tool", "degraded", err_class="content", detail=f"{source[:40]} truncated:{len(out)}")
+        return out[:_MAX_TOOL_RESULT] + f"\n…[输出已截断：共 {len(out)} 字符，仅展示前 {_MAX_TOOL_RESULT} 字符]"
+    return out
 _MAX_TOOL_TOKEN_BUDGET = 12000  # 累计 token 预算（估算：字符数 / 4）
 _TOOL_DIRECTIVE_RE = re.compile(r"\[TOOL:([^\]\|]+)\|([^\[\]]*)\]")
 
@@ -507,6 +518,7 @@ async def execute_tool_loop(
     mcp_executor=None,
     conversation_messages: list[dict] | None = None,
     on_tool_use=None,
+    metrics_ref: str = "",
 ) -> dict:
     """可复用的工具调用循环（双模式：function calling + 文本协议兼容）。
 
@@ -529,7 +541,11 @@ async def execute_tool_loop(
 
     轮次上限 _MAX_TOOL_ROUNDS + 累计 token 预算 _MAX_TOOL_TOKEN_BUDGET 双闸控成本。
     """
+    import common.metrics as _metrics
     import mcp_client
+
+    if metrics_ref:  # v18.2 agent 归因：本任务内所有 metrics.record 自动带 ref（contextvars 继承）
+        _metrics.set_ref(metrics_ref)
 
     def _est_tokens(text: str) -> int:
         """粗略 token 估算：中英混合 ~ 4 char/token，纯 CJK 约 1.5 char/token。"""
@@ -605,7 +621,7 @@ async def execute_tool_loop(
             tools_used.append(name)
             if on_tool_use is not None:
                 await on_tool_use("tool", name, str(arg)[:200])
-            out = await execute_tool_async(name, arg, user_id)
+            out = _truncate_for_context(await execute_tool_async(name, arg, user_id), f"tool:{name}")
             exec_results.append(f"[工具 {name} 执行结果]\n{out}")
             tool_logs.append(f"{name}: {out[:300]}")
             round_tokens += _est_tokens(out)
@@ -617,7 +633,7 @@ async def execute_tool_loop(
             if on_tool_use is not None:
                 await on_tool_use("mcp", f"MCP:{mtool}", json.dumps(args, ensure_ascii=False)[:200])
             srv = mcp_by_id.get(sid) or {}
-            out = await mcp_call(srv, mtool, args)
+            out = _truncate_for_context(await mcp_call(srv, mtool, args), f"mcp:{sid}:{mtool}")
             exec_results.append(f"[MCP {mtool} 执行结果]\n{out}")
             tool_logs.append(f"MCP {mtool}: {out[:300]}")
             round_tokens += _est_tokens(out)

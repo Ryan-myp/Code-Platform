@@ -779,18 +779,20 @@ def log_usage(
     error: str = "",
     api_key: str = "",
     user_id: str = "",
+    agent_id: str = "",
 ) -> None:
     """记录使用统计到 usage_logs。失败静默（不影响主流程）。
 
     error 为失败原因摘要（阶段标记 [stage:xxx] 等），供运营诊断失败率。
     api_key 为开放网关调用来源（api_keys.id），用于 API Key 使用报表（v13.23）。
     user_id 为平台用户（users.id），用于用量分析按用户筛选（v15）。
+    agent_id 为 Agent 归因（v18.2 成本核算）：哪个 agent 烧的钱一目了然。
     """
     try:
         from common.db import get_db_context
 
         with get_db_context() as conn:
-            # 幂等补列：老库无 error 列（v13.1 诊断埋点）/ 无 api_key 列（v13.23 报表）/ 无 user_id 列（v15 按用户筛选）
+            # 幂等补列：老库无 error 列（v13.1）/ 无 api_key 列（v13.23）/ 无 user_id 列（v15）/ 无 agent_id 列（v18.2 成本核算）
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(usage_logs)").fetchall()]
             if "error" not in cols:
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN error TEXT DEFAULT ''")
@@ -798,10 +800,12 @@ def log_usage(
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN api_key TEXT DEFAULT ''")
             if "user_id" not in cols:
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN user_id TEXT DEFAULT ''")
+            if "agent_id" not in cols:
+                conn.execute("ALTER TABLE usage_logs ADD COLUMN agent_id TEXT DEFAULT ''")
             conn.commit()
             conn.execute(
-                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success, error, api_key, user_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success, error, api_key, user_id, agent_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now().isoformat(),
                     task_type,
@@ -812,6 +816,7 @@ def log_usage(
                     (error or "")[:500],
                     (api_key or "")[:64],
                     (user_id or "")[:64],
+                    (agent_id or "")[:64],
                 ),
             )
     except Exception as e:

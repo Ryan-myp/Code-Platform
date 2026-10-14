@@ -69,6 +69,65 @@ async def admin_metrics_reliability(days: int = 7, current_user: dict = require_
     return platform_metrics.summarize(days=days)
 
 
+@router.get("/metrics/by-agent")
+async def admin_metrics_by_agent(days: int = 7, current_user: dict = require_auth()):
+    """按 Agent 维度的成本/可靠性核算（v18.2）：
+
+    - usage_logs.agent_id 归因（agent_run/agent_run_stream 调用量 + 字符吞吐）
+    - metrics_events.ref（'agent:<id>'/'workflow:wf_agent:<id>'）归因（LLM/工具/MCP 事件）
+    诚实说明：字符吞吐是成本代理指标（平台未接入模型计费 API），非精确账单。
+    """
+    _check_admin(current_user)
+
+    window_start = (datetime.now() - timedelta(days=max(1, min(days, 90)))).isoformat()
+    conn = get_db()
+    try:
+        # 1) usage_logs 按 agent 归因
+        usage_rows = conn.execute(
+            """SELECT agent_id, COUNT(*) AS calls,
+                 COALESCE(SUM(input_length),0) AS in_chars,
+                 COALESCE(SUM(output_length),0) AS out_chars,
+                 ROUND(COALESCE(SUM(response_time),0),1) AS total_s
+               FROM usage_logs
+               WHERE agent_id!='' AND timestamp>=? AND task_type IN ('agent_run','agent_run_stream')
+               GROUP BY agent_id ORDER BY calls DESC LIMIT 30""",
+            (window_start,),
+        ).fetchall()
+        usage = []
+        for r in usage_rows:
+            # 关联 agent 名称（查不到保留原 id）
+            a = conn.execute("SELECT name FROM agents WHERE id=?", (r["agent_id"],)).fetchone()
+            usage.append({
+                "agent_id": r["agent_id"],
+                "agent_name": a["name"] if a else "",
+                "calls": r["calls"],
+                "in_chars": r["in_chars"],
+                "out_chars": r["out_chars"],
+                "total_s": r["total_s"],
+            })
+
+        # 2) metrics_events 按 ref 归因（LLM/工具/MCP 事件 × 结果分布）
+        ts_cutoff = (datetime.now() - timedelta(days=max(1, min(days, 30)))).timestamp()
+        metric_rows = conn.execute(
+            """SELECT ref, kind, outcome, COUNT(*) AS n FROM metrics_events
+               WHERE ts>=? AND ref!='' GROUP BY ref, kind, outcome ORDER BY ref""",
+            (ts_cutoff,),
+        ).fetchall()
+        by_ref: dict = {}
+        for r in metric_rows:
+            key = r["ref"]
+            d = by_ref.setdefault(key, {"events": 0, "error": 0, "degraded": 0, "kinds": {}})
+            d["events"] += r["n"]
+            if r["outcome"] in ("error", "degraded"):
+                d[r["outcome"]] += r["n"]
+            d["kinds"][r["kind"]] = d["kinds"].get(r["kind"], 0) + r["n"]
+        reliability = [{"ref": k, **v} for k, v in sorted(by_ref.items(), key=lambda x: -x[1]["events"])[:30]]
+
+        return {"window_days": days, "usage_by_agent": usage, "reliability_by_ref": reliability}
+    finally:
+        conn.close()
+
+
 @router.get("/stats")
 async def admin_stats(current_user: dict = require_auth()):
     """总体统计：用户 / 调用 / 工具 / 分享。"""

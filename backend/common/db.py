@@ -151,7 +151,7 @@ _SCHEMA_STATEMENTS = [
     )""",
     """CREATE TABLE IF NOT EXISTS workflow_run_logs (
         id TEXT PRIMARY KEY, run_id TEXT NOT NULL, node_id TEXT, status TEXT,
-        output_data TEXT DEFAULT '{}', completed_at TEXT,
+        output_data TEXT DEFAULT '{}', input_data TEXT DEFAULT '', completed_at TEXT,
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
     )""",
     # ── 会话 / 消息 / 记忆 ──────────────────────────────────
@@ -594,6 +594,7 @@ def migrate() -> None:
         _add_column_if_missing(conn, "requirements", "code_review", "TEXT DEFAULT ''")
         _add_column_if_missing(conn, "requirements", "pipeline_status", "TEXT DEFAULT '{}'")
         _add_column_if_missing(conn, "sandbox_projects", "ports", "TEXT DEFAULT '[]'")
+        _add_column_if_missing(conn, "workflow_run_logs", "input_data", "TEXT DEFAULT ''")  # v18.2 节点快照
         _add_column_if_missing(conn, "sandbox_projects", "config", "TEXT DEFAULT '{}'")
         # v10.1 游戏工坊资产化：更新/收藏/标签/迭代记录
         _add_column_if_missing(conn, "game_projects", "updated_at", "TEXT")

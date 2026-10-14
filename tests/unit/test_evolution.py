@@ -150,3 +150,75 @@ def test_evolution_endpoints_require_auth(setup_test_db):
     assert res.status_code == 401, f"无 token 应 401：{res.status_code} {res.text[:100]}"
     res2 = TestClient(app).get("/api/evolution/prompt-history")
     assert res2.status_code == 401, "prompt-history 也应鉴权"
+
+
+def test_evaluate_prompt_scores_cases(setup_test_db, monkeypatch, auth_headers):
+    """v18.2：评测集打分——keywords 命中/未命中各算对。"""
+    import prd_engine
+    from main import app
+
+    client = TestClient(app)
+    client.post("/api/evolution/eval-cases", headers=auth_headers,
+                json={"module": "report", "input": "写个周报", "pass_criteria": {"keywords": ["完成", "下周"]}})
+    client.post("/api/evolution/eval-cases", headers=auth_headers,
+                json={"module": "report", "input": "写个月报", "pass_criteria": {"keywords": ["不存在词"]}})
+
+    monkeypatch.setattr(
+        prd_engine, "call_llm",
+        lambda s, u, **kw: ("本周期完成了核心模块，下周计划……" if "周报" in u else "空"),
+    )
+
+    res = client.post("/api/evolution/evaluate-prompt", headers=auth_headers,
+                      json={"module": "report", "instructions": "你是周报助手"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["total"] == 2 and body["passed"] == 1 and body["rate"] == 0.5, body
+
+
+def test_optimize_publish_blocked_by_eval_regression(setup_test_db, monkeypatch, auth_headers):
+    """v18.2：新 prompt 评测率劣于旧 prompt → 即使结构闸过，也不得自动发布（可度量闭环）。"""
+    import prd_engine
+
+    _seed_version("report", "旧版好提示词：请写 {report_type} 汇报，控制在 {limit} 字，语言要精炼且专业，突出关键成果",
+                  when="2024-01-01T00:00:00")
+
+    from main import app
+
+    TestClient(app).post("/api/evolution/eval-cases", headers=auth_headers,
+                         json={"module": "report", "input": "写个周报", "pass_criteria": {"keywords": ["完成了"]}})
+
+    def fake_llm(system, user, **kw):
+        # 优化调用：生成候选（保留占位符 + 够长）
+        if "优化目标" in user:
+            return "候选提示词：请写 {report_type} 汇报，控制在 {limit} 字，语言精炼专业，突出成果与数据。"
+        # 评测调用：旧 prompt（system 含「旧版好」）过，新 prompt（含「候选提示词」）不过 → 劣化
+        if "旧版好" in system:
+            return "本周期完成了核心模块"
+        return "（没有完成信息）"
+
+    monkeypatch.setattr(prd_engine, "call_llm", fake_llm)
+
+    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "report"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["eval"] is not None, "有评测集时 eval 结果必须返回"
+    assert body["eval"]["before_rate"] == 1.0 and body["eval"]["after_rate"] == 0.0, body["eval"]
+    assert body["status"] == "candidate", "评测劣化必须阻断自动发布"
+    assert body["gate"]["ok"] is False
+
+
+def test_optimize_no_eval_set_falls_back_to_structural_gate(setup_test_db, monkeypatch, auth_headers):
+    """无评测集的 module → 退化为 v1 结构闸（诚实降级，eval=null）。"""
+    import prd_engine
+
+    _seed_version("nomodule", "基准提示词：请写 {report_type} 汇报，控制在 {limit} 字，语言要精炼且专业，突出关键成果与数据")
+    monkeypatch.setattr(
+        prd_engine, "call_llm",
+        lambda s, u, **kw: "优化后：请写 {report_type} 汇报，控制在 {limit} 字，突出成果与数据，语言精炼专业。",
+    )
+
+    from main import app
+
+    res = TestClient(app).post("/api/evolution/optimize-prompts", json={"target": "nomodule"}, headers=auth_headers)
+    assert res.status_code == 200, res.text
+    assert res.json()["eval"] is None and res.json()["status"] == "published"

@@ -35,6 +35,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 import agent_runtime
+from common.auth import require_auth  # v18.2 快照/重放端点鉴权
 from common.config import load_config
 from common.db import get_db
 from common.llm import (
@@ -289,6 +290,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
             mcp_servers=bundle.get("mcp_servers"),
             mcp_tools=bundle.get("mcp_tools"),
             conversation_messages=conversation_messages,
+            metrics_ref=f"agent:{bundle.get('id', '')}",  # v18.2 指标归因
         )
         result = loop["result"]
         tools_used: list[str] = loop["tools_used"]
@@ -323,7 +325,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
 
     # P1-3 闭环：对话后自动记忆提取（关键词触发才调 LLM；仅 sessions 有记忆空间，conversations 不存）
     await _maybe_extract_memory(session_id, agent_id, message, result)
-    log_usage("agent_run", len(message), len(result), time.time() - start)
+    log_usage("agent_run", len(message), len(result), time.time() - start, agent_id=agent_id)  # v18.2 成本核算归因
     _record_execution(agent_id, user_id, message, "done", time.time() - start)
     return {
         "result": result,
@@ -383,6 +385,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 mcp_tools=bundle.get("mcp_tools"),
                 conversation_messages=conversation_messages,
                 on_tool_use=on_tool_use,
+                metrics_ref=f"agent:{bundle.get('id', '')}",  # v18.2 指标归因
             )
         )
         emitted = 0
@@ -440,7 +443,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 c2.close()
             except Exception:
                 pass
-        log_usage("agent_run_stream", len(message), len(full), time.time() - start)
+        log_usage("agent_run_stream", len(message), len(full), time.time() - start, agent_id=agent_id)  # v18.2 成本核算归因
         _record_execution(agent_id, user_id, message, "done", time.time() - start)
         _schedule_memory_extraction(session_id, agent_id, message, full)
         yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
@@ -607,6 +610,7 @@ async def run_team(team_id: str, req: dict):  # noqa: C901
                 model=bundle.get("model") or None,  # v18 P0：成员 agent 各自模型
                 mcp_servers=bundle.get("mcp_servers"),
                 mcp_tools=bundle.get("mcp_tools"),
+                metrics_ref=f"agent:{bundle.get('id', '')}",  # v18.2 指标归因（成员 agent）
             )
             return {
                 "agent_id": agent["id"],
@@ -786,6 +790,59 @@ def _wf_elapsed(run_dict: dict | None) -> float | None:
     except (ValueError, TypeError):
         pass
     return None
+
+
+@router.get("/api/workflows/runs/{run_id}/snapshots")
+async def workflow_run_snapshots(run_id: str, current_user: dict = require_auth()):
+    """v18.2 运行快照：节点级 input/output/status 时间线（工作流可观测性的地基）。"""
+    conn = get_db()
+    run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    logs = conn.execute(
+        "SELECT node_id, status, output_data, completed_at, "
+        "COALESCE(input_data, '') AS input_data FROM workflow_run_logs WHERE run_id=? ORDER BY completed_at",
+        (run_id,),
+    ).fetchall()
+    conn.close()
+    if not run:
+        raise HTTPException(404, "运行记录不存在")
+    return {
+        "run_id": run_id,
+        "workflow_id": run["workflow_id"],
+        "status": run["status"],
+        "workflow_input": run["input_data"] or "{}",
+        "nodes": [dict(r) for r in logs],
+    }
+
+
+@router.post("/api/workflows/runs/{run_id}/replay")
+async def workflow_run_replay(run_id: str, current_user: dict = require_auth()):
+    """v18.2 重放：用原运行保存的 input_data 重新跑同工作流（快照 → 可重跑）。
+
+    诚实边界：v1 是输入重放（新 run_id，不篡改历史 run）；节点级断点续跑/回滚为 v2。
+    """
+    conn = get_db()
+    run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    if not run:
+        raise HTTPException(404, "运行记录不存在")
+    wf_id = run["workflow_id"]
+    if not wf_id:
+        raise HTTPException(400, "该运行无 workflow_id（兼容旧数据），无法重放")
+    try:
+        wf_input = json.loads(run["input_data"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        wf_input = {}
+    from workflows.executor import executor as _executor
+
+    new_run_id = await _executor.execute(wf_id, wf_input)
+    conn = get_db()
+    new_run = conn.execute("SELECT id, status FROM workflow_runs WHERE id=?", (new_run_id,)).fetchone()
+    conn.close()
+    return {
+        "source_run": run_id,
+        "new_run": new_run["id"] if new_run else new_run_id,
+        "status": new_run["status"] if new_run else "unknown",
+    }
 
 
 @router.post("/api/workflows/{workflow_id}/run")

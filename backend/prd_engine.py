@@ -1347,6 +1347,16 @@ def _ensure_prompt_version_schema(conn) -> None:
         conn.execute("ALTER TABLE prompt_versions ADD COLUMN status TEXT DEFAULT 'candidate'")
 
 
+def _ensure_eval_cases_table(conn) -> None:
+    """v18.2 自进化 v2：提示词评测集（按 module 建评测用例，发布前可度量对比）。"""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS prompt_eval_cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL,
+            input TEXT NOT NULL, pass_criteria TEXT DEFAULT '', created_at TEXT
+        )"""
+    )
+
+
 def _extract_placeholders(text: str) -> set:
     import re
 
@@ -1428,8 +1438,24 @@ def optimize_prompts(req: dict, current_user: dict = require_auth()):
     )
     result = call_llm(system, user, max_tokens=3000)
 
-    # 结构闸：过闸才发布，不过闸留 candidate（诚实降级：不声称质量提升）
+    # 结构闸：过闸才有资格谈发布
     gate = _prompt_gate(result, reference)
+
+    # v18.2 可度量闸：目标 module 有评测集 → 新旧 prompt 对比评分，不劣化才发布
+    eval_result = None
+    eval_cases = _fetch_eval_cases(target)
+    if eval_cases:
+        before = _evaluate_prompt(reference, eval_cases)
+        after = _evaluate_prompt(result, eval_cases)
+        eval_result = {
+            "before_rate": before["rate"], "after_rate": after["rate"],
+            "before": before, "after": after,
+            "ok": after["rate"] >= before["rate"] and after["passed"] > 0,
+        }
+        if not eval_result["ok"]:
+            gate = {**gate, "ok": False, "issues": gate["issues"] + [f"评测未通过：新 prompt {after['rate']} < 旧 {before['rate']}（不劣化才发布）"]}
+
+    # 双闸都过才自动发布；任一不过 → candidate（诚实降级：不声称质量提升）
     status = "published" if gate["ok"] else "candidate"
 
     conn = get_db()
@@ -1440,7 +1466,109 @@ def optimize_prompts(req: dict, current_user: dict = require_auth()):
     )
     conn.commit()
     conn.close()
-    return {"result": result, "status": status, "gate": gate}
+    return {"result": result, "status": status, "gate": gate, "eval": eval_result}
+
+
+def _fetch_eval_cases(module: str) -> list:
+    conn = get_db()
+    _ensure_eval_cases_table(conn)
+    rows = conn.execute(
+        "SELECT module, input, pass_criteria FROM prompt_eval_cases WHERE module=? ORDER BY id LIMIT 20", (module,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def _evaluate_prompt(instructions: str, eval_cases: list) -> dict:
+    """用评测集给一份 prompt 打分（v18.2 自进化 v2 核心）。
+
+    每条用例：instructions 作 system 调 LLM → 检查 pass_criteria（JSON：{"keywords": [...]}
+    全部命中 / {"regex": "..."}）；单条失败不阻断其余（诚实记入 cases）。
+    """
+    import json as _json
+    import re as _re
+
+    cases = []
+    passed = 0
+    for c in eval_cases:
+        ok = False
+        err = ""
+        try:
+            out = call_llm((instructions or "")[:4000], c["input"], max_tokens=800)
+            crit = {}
+            try:
+                crit = _json.loads(c.get("pass_criteria") or "{}") or {}
+            except (ValueError, TypeError):
+                err = "pass_criteria 非法 JSON"
+            if crit:
+                kws = [k for k in crit.get("keywords") or [] if k]
+                rx = crit.get("regex") or ""
+                if kws:
+                    low = (out or "").lower()
+                    ok = all(k.lower() in low for k in kws)
+                elif rx:
+                    ok = bool(_re.search(rx, out or ""))
+                else:
+                    err = "pass_criteria 无有效判据"
+            else:
+                ok = bool((out or "").strip())  # 无判据：非空即过（宽松，鼓励补判据）
+        except Exception as e:  # noqa: BLE001
+            err = str(e)[:120]
+        if ok:
+            passed += 1
+        cases.append({"input": c["input"], "passed": ok, "error": err})
+    total = len(eval_cases)
+    return {"total": total, "passed": passed, "rate": round(passed / total, 2) if total else 0.0, "cases": cases}
+
+
+@router.post("/api/evolution/eval-cases")
+def add_eval_case(req: dict, current_user: dict = require_auth()):
+    """v18.2：给 module 加一条评测用例（input + pass_criteria JSON：keywords/regex）。"""
+    module = (req.get("module") or "").strip()
+    inp = (req.get("input") or "").strip()
+    if not module or not inp:
+        raise HTTPException(400, "module 和 input 必填")
+    import json as _json
+
+    crit = _json.dumps(req.get("pass_criteria") or {}, ensure_ascii=False)
+    conn = get_db()
+    _ensure_eval_cases_table(conn)
+    conn.execute(
+        "INSERT INTO prompt_eval_cases (module, input, pass_criteria, created_at) VALUES (?,?,?,?)",
+        (module, inp, crit, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "module": module}
+
+
+@router.post("/api/evolution/evaluate-prompt")
+def evaluate_prompt(req: dict, current_user: dict = require_auth()):
+    """v18.2：给一份 prompt（或当前 module 的 published 版）跑评测集，返回命中率。"""
+    module = (req.get("module") or "").strip()
+    if not module:
+        raise HTTPException(400, "module 必填")
+    eval_cases = _fetch_eval_cases(module)
+    if not eval_cases:
+        raise HTTPException(404, f"module '{module}' 无评测用例，先 POST /api/evolution/eval-cases 建集")
+    instructions = (req.get("instructions") or "").strip()
+    if not instructions:  # 不传 → 评估当前 published 版（无则最新 candidate）
+        conn = get_db()
+        _ensure_prompt_version_schema(conn)
+        row = conn.execute(
+            "SELECT instructions FROM prompt_versions WHERE module=? AND status='published' "
+            "ORDER BY optimized_at DESC NULLS LAST LIMIT 1", (module,),
+        ).fetchone()
+        if not row:
+            row = conn.execute(
+                "SELECT instructions FROM prompt_versions WHERE module=? ORDER BY optimized_at DESC NULLS LAST LIMIT 1",
+                (module,),
+            ).fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(404, f"module '{module}' 无 prompt 版本可评")
+        instructions = row["instructions"]
+    return {"module": module, **_evaluate_prompt(instructions, eval_cases)}
 
 
 @router.post("/api/evolution/prompt-versions/{version_id}/rollback")

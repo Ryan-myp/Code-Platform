@@ -28,6 +28,7 @@ import {
   Lock,
   Unlock,
   KeyRound,
+  Gauge,
 } from 'lucide-react'
 import { api } from '../lib/api'
 import { useToast } from '../lib/toast'
@@ -394,6 +395,17 @@ export default function AdminPage() {
         >
           <Video className="w-4 h-4" />
           数字人运营
+        </button>
+        <button
+          onClick={() => setActiveSection('metrics')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+            activeSection === 'metrics'
+              ? 'border-brand-500 text-brand-600'
+              : 'border-transparent text-ink-500 hover:text-ink-800'
+          }`}
+        >
+          <Gauge className="w-4 h-4" />
+          可靠性 & 成本
         </button>
       </div>
 
@@ -1338,6 +1350,7 @@ export default function AdminPage() {
 
       {/* 数字人运营报表 */}
       {activeSection === 'dh' && <DigitalHumanStats />}
+      {activeSection === 'metrics' && <ReliabilityMetrics />}
     </div>
   )
 }
@@ -1974,6 +1987,211 @@ function DigitalHumanStats() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// v18.2 可靠性 & 成本：指标事件（错误分布/p95/最近错误）+ Agent 成本核算（usage_logs.agent_id 归因）
+function ReliabilityMetrics() {
+  const [days, setDays] = useState(7)
+  const [reliability, setReliability] = useState(null)
+  const [byAgent, setByAgent] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    Promise.all([
+      api.get('/api/admin/metrics/reliability', { params: { days } }),
+      api.get('/api/admin/metrics/by-agent', { params: { days } }),
+    ])
+      .then(([r, b]) => {
+        if (cancelled) return
+        setReliability(r.data)
+        setByAgent(b.data)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReliability(null)
+          setByAgent(null)
+        }
+      })
+      .finally(() => !cancelled && setLoading(false))
+    return () => {
+      cancelled = true
+    }
+  }, [days])
+
+  const kinds = reliability ? (reliability.by_kind || {}) : {}
+  const errClasses = reliability ? (reliability.error_classes || {}) : {}
+  const latency = reliability ? (reliability.latency || {}) : {}
+  const recentErrors = reliability ? (reliability.recent_errors || []) : []
+  const agentRows = byAgent ? byAgent.usage_by_agent || [] : []
+  const refRows = byAgent ? byAgent.reliability_by_ref || [] : []
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-500">
+          LLM/工具/MCP 事件可靠性 + Agent 成本核算（字符吞吐为成本代理指标，非精确账单）
+        </p>
+        <div className="flex gap-1.5">
+          {[7, 14, 30].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={`px-2.5 py-1 text-xs rounded-md border ${
+                days === d
+                  ? 'bg-brand-500 text-white border-brand-500'
+                  : 'border-ink-200 text-ink-600 hover:bg-ink-50'
+              }`}
+            >
+              近{d}天
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-ink-500 py-8 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" /> 加载中…
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {Object.entries(kinds).map(([kind, d]) => (
+              <div key={kind} className="rounded-lg border border-ink-200 p-3">
+                <p className="text-xs text-ink-500 uppercase tracking-wide">{kind}</p>
+                <p className="text-xl font-semibold text-ink-900 mt-1">
+                  {(d.ok || 0) + (d.degraded || 0) + (d.error || 0)}
+                </p>
+                <p className="text-xs text-ink-500 mt-0.5">
+                  ok {d.ok || 0} · 降级 {d.degraded || 0} · 错 {d.error || 0}
+                </p>
+              </div>
+            ))}
+            {Object.keys(kinds).length === 0 && (
+              <div className="col-span-4 text-sm text-ink-500 py-6 text-center">
+                窗口内无指标事件（埋点未触发或数据被 30 天滚动清理）
+              </div>
+            )}
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-ink-200 p-4">
+              <h4 className="text-sm font-semibold text-ink-800 mb-2">错误类分布</h4>
+              {Object.keys(errClasses).length === 0 ? (
+                <p className="text-xs text-ink-400">窗口内无错误事件</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {Object.entries(errClasses).map(([k, v]) => (
+                    <div key={k} className="flex items-center gap-2 text-xs">
+                      <span className="w-20 font-mono text-ink-700">{k}</span>
+                      <div className="flex-1 h-2 rounded bg-ink-100 overflow-hidden">
+                        <div
+                          className="h-full bg-red-400"
+                          style={{ width: `${Math.min(100, (v / Math.max(1, Math.max(...Object.values(errClasses)))) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-ink-500 w-8 text-right">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <h4 className="text-sm font-semibold text-ink-800 mt-4 mb-2">延迟（p50/p95）</h4>
+              {Object.keys(latency).length === 0 ? (
+                <p className="text-xs text-ink-400">无延迟数据</p>
+              ) : (
+                <div className="space-y-1">
+                  {Object.entries(latency).map(([k, d]) => (
+                    <div key={k} className="text-xs text-ink-600">
+                      <span className="font-mono">{k}</span> p50 {d.p50_ms ?? 'n/a'}ms · p95{' '}
+                      {d.p95_ms ?? 'n/a'}ms
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-ink-200 p-4">
+              <h4 className="text-sm font-semibold text-ink-800 mb-2">最近错误（最多 20 条）</h4>
+              {recentErrors.length === 0 ? (
+                <p className="text-xs text-ink-400">窗口内无错误</p>
+              ) : (
+                <div className="space-y-1 max-h-64 overflow-y-auto">
+                  {recentErrors.map((e, i) => (
+                    <div key={i} className="text-xs text-ink-600 font-mono truncate" title={e.detail}>
+                      <span className="text-red-500">[{e.err_class}]</span> {e.kind} {e.detail}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-ink-200 p-4">
+            <h4 className="text-sm font-semibold text-ink-800 mb-2">Agent 成本核算（usage_logs 归因）</h4>
+            {agentRows.length === 0 ? (
+              <p className="text-xs text-ink-400">
+                窗口内无 agent 归因数据（v18.2 之后跑过 agent 才会计入；历史数据无 agent_id）
+              </p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-ink-400 border-b border-ink-100 text-left">
+                    <th className="py-1.5">Agent</th>
+                    <th>调用</th>
+                    <th>入参字符</th>
+                    <th>产出字符</th>
+                    <th>累计耗时(s)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentRows.map((r) => (
+                    <tr key={r.agent_id} className="border-b border-ink-50 text-ink-700">
+                      <td className="py-1.5">{r.agent_name || r.agent_id}</td>
+                      <td>{r.calls}</td>
+                      <td>{r.in_chars?.toLocaleString()}</td>
+                      <td>{r.out_chars?.toLocaleString()}</td>
+                      <td>{r.total_s}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="rounded-lg border border-ink-200 p-4">
+            <h4 className="text-sm font-semibold text-ink-800 mb-2">可靠性事件归因（metrics_events.ref）</h4>
+            {refRows.length === 0 ? (
+              <p className="text-xs text-ink-400">窗口内无归因事件（agent 执行链 v18.2 之后才带 ref）</p>
+            ) : (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-ink-400 border-b border-ink-100 text-left">
+                    <th className="py-1.5">归因</th>
+                    <th>事件</th>
+                    <th>降级</th>
+                    <th>错误</th>
+                    <th>明细</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {refRows.map((r) => (
+                    <tr key={r.ref} className="border-b border-ink-50 text-ink-700">
+                      <td className="py-1.5 font-mono">{r.ref}</td>
+                      <td>{r.events}</td>
+                      <td>{r.degraded || 0}</td>
+                      <td>{r.error || 0}</td>
+                      <td>{Object.entries(r.kinds || {}).map(([k, v]) => `${k}×${v}`).join(' ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

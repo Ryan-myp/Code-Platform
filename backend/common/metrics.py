@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 
@@ -44,10 +45,28 @@ def _ensure_table(conn) -> None:
             outcome TEXT NOT NULL,
             err_class TEXT DEFAULT '',
             latency_ms REAL,
-            detail TEXT DEFAULT ''
+            detail TEXT DEFAULT '',
+            ref TEXT DEFAULT ''
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_events_ts ON metrics_events(ts)")
+    # 幂等补列：老库无 ref（v18.2 agent 归因）
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(metrics_events)").fetchall()}
+    if "ref" not in cols:
+        conn.execute("ALTER TABLE metrics_events ADD COLUMN ref TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_events_ref ON metrics_events(ref)")
+
+
+# v18.2 agent 归因：执行链路入口 set_ref("agent:<id>")，该任务内所有 record 自动带上
+_ctx_ref: contextvars.ContextVar = contextvars.ContextVar("metrics_ref", default="")
+
+
+def set_ref(ref: str):
+    """设置当前执行上下文的归因标签（如 'agent:a_123' / 'workflow:run_x'）。
+
+    asyncio task / to_thread 均继承 contextvars → 子调用自动携带，无需逐层透传。
+    返回 token（需要恢复时可 reset）。"""
+    return _ctx_ref.set(ref or "")
 
 
 def record(kind: str, outcome: str, latency_ms: float | None = None, err_class: str = "", detail: str = "") -> None:
@@ -57,7 +76,7 @@ def record(kind: str, outcome: str, latency_ms: float | None = None, err_class: 
         _ensure_table(conn)
         ts = time.time()
         conn.execute(
-            "INSERT INTO metrics_events (ts, kind, outcome, err_class, latency_ms, detail) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO metrics_events (ts, kind, outcome, err_class, latency_ms, detail, ref) VALUES (?,?,?,?,?,?,?)",
             (
                 ts,
                 kind if kind in _KINDS else "workflow",
@@ -65,6 +84,7 @@ def record(kind: str, outcome: str, latency_ms: float | None = None, err_class: 
                 err_class if err_class in _CLASSES else "unknown",
                 round(float(latency_ms)) if latency_ms is not None else None,
                 (str(detail) or "")[:_DETAIL_MAX],
+                (_ctx_ref.get() or "")[:80],
             ),
         )
         # 滚动保留（低量级下每次顺手清旧行，无单独清理任务）
