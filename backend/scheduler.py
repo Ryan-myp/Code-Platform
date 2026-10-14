@@ -9,6 +9,7 @@
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -614,16 +615,17 @@ def _ensure_optimizer_job():
     conn = get_db()
     try:
         # 检查是否已存在
-        row = conn.execute("SELECT id FROM scheduler_jobs WHERE name='企业级智能优化'").fetchone()
+        row = conn.execute("SELECT id, enabled FROM scheduler_jobs WHERE name='企业级智能优化'").fetchone()
         if row:
-            # 更新 cron 表达式为每小时20分
+            # 只对齐 cron；不碰 enabled——管理员手动暂停必须被尊重（v18.1 修复：
+            # 旧逻辑每次 import scheduler 都强制 enabled=1，导致定时任务反复复活）
             conn.execute(
-                "UPDATE scheduler_jobs SET cron_expression='20 * * * *', enabled=1 WHERE name='企业级智能优化'"
+                "UPDATE scheduler_jobs SET cron_expression='20 * * * *' WHERE name='企业级智能优化'"
             )
             conn.commit()
-            logger.info("✅ 企业级优化器任务已更新: 每小时20分")
+            logger.info("✅ 企业级优化器任务已对齐 cron: 每小时20分（enabled=%s 保持原状）", row["enabled"])
         else:
-            # 插入新任务
+            # 插入新任务（新安装才自动启用；存量库暂停状态不会被复活）
             conn.execute(
                 "INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, enabled) VALUES (?, ?, ?, ?, ?, ?)",
                 (
@@ -641,5 +643,6 @@ def _ensure_optimizer_job():
         conn.close()
 
 
-# 启动时注册
-_ensure_optimizer_job()
+# 启动时注册（测试环境跳过：避免 import 时写开发库/测试库产生副作用）
+if os.environ.get("APP_ENV") != "test":
+    _ensure_optimizer_job()

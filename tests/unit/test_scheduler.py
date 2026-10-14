@@ -312,3 +312,27 @@ class TestTriggerJob:
         assert result["next_run"]
         nxt = datetime.fromisoformat(result["next_run"])
         assert nxt.hour == 9 and nxt.minute == 0
+
+
+def test_ensure_optimizer_job_respects_manual_pause(setup_test_db):
+    """v18.1：_ensure_optimizer_job 不得把已暂停的优化器任务复活（只对齐 cron，不碰 enabled）。"""
+    import scheduler as sch
+    from common.db import get_db
+
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO scheduler_jobs (user_id, name, description, job_type, cron_expression, enabled) "
+        "VALUES ('admin', '企业级智能优化', '', 'enterprise_optimizer', '20 * * * *', 0)"
+    )
+    conn.commit()
+    conn.close()
+
+    sch._ensure_optimizer_job()
+
+    conn = get_db()
+    r = conn.execute(
+        "SELECT enabled, cron_expression FROM scheduler_jobs WHERE name='企业级智能优化'"
+    ).fetchone()
+    conn.close()
+    assert r["enabled"] == 0, "手动暂停必须被尊重，不得复活"
+    assert r["cron_expression"] == "20 * * * *", "cron 对齐仍应生效"
