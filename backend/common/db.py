@@ -154,6 +154,13 @@ _SCHEMA_STATEMENTS = [
         output_data TEXT DEFAULT '{}', input_data TEXT DEFAULT '', completed_at TEXT,
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
     )""",
+    # workflow_versions: 工作流版本快照（每次保存自动存版本，保留最近 N 个，支持回滚恢复）
+    """CREATE TABLE IF NOT EXISTS workflow_versions (
+        id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, version INTEGER NOT NULL,
+        name TEXT DEFAULT '', description TEXT DEFAULT '',
+        steps TEXT DEFAULT '[]', connections TEXT DEFAULT '[]',
+        created_at TEXT
+    )""",
     # ── 会话 / 消息 / 记忆 ──────────────────────────────────
     # conversations + messages 是 chat_engine 使用的对话模型
     """CREATE TABLE IF NOT EXISTS conversations (
@@ -266,7 +273,8 @@ _SCHEMA_STATEMENTS = [
         id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, task_type TEXT,
         input_length INTEGER, output_length INTEGER, response_time REAL, success INTEGER,
         error TEXT DEFAULT '', api_key TEXT DEFAULT '', user_id TEXT DEFAULT '',
-        feature TEXT DEFAULT '', model TEXT DEFAULT ''
+        feature TEXT DEFAULT '', model TEXT DEFAULT '', agent_id TEXT DEFAULT '',
+        cost_est REAL DEFAULT 0
     )""",
     """CREATE TABLE IF NOT EXISTS prompt_versions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, module TEXT NOT NULL, version INTEGER NOT NULL,

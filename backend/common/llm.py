@@ -780,6 +780,7 @@ def log_usage(
     api_key: str = "",
     user_id: str = "",
     agent_id: str = "",
+    model: str = "",
 ) -> None:
     """记录使用统计到 usage_logs。失败静默（不影响主流程）。
 
@@ -787,12 +788,15 @@ def log_usage(
     api_key 为开放网关调用来源（api_keys.id），用于 API Key 使用报表（v13.23）。
     user_id 为平台用户（users.id），用于用量分析按用户筛选（v15）。
     agent_id 为 Agent 归因（v18.2 成本核算）：哪个 agent 烧的钱一目了然。
+    model 为实际使用的模型（v18.3 成本估算）：传入后自动算 cost_est（USD 估算，非账单）。
     """
     try:
         from common.db import get_db_context
+        from common.pricing import estimate_cost
 
         with get_db_context() as conn:
-            # 幂等补列：老库无 error 列（v13.1）/ 无 api_key 列（v13.23）/ 无 user_id 列（v15）/ 无 agent_id 列（v18.2 成本核算）
+            # 幂等补列：老库无 error 列（v13.1）/ 无 api_key 列（v13.23）/ 无 user_id 列（v15）/
+            # 无 agent_id 列（v18.2 成本核算）/ 无 model、cost_est 列（v18.3 成本估算）
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(usage_logs)").fetchall()]
             if "error" not in cols:
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN error TEXT DEFAULT ''")
@@ -802,10 +806,15 @@ def log_usage(
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN user_id TEXT DEFAULT ''")
             if "agent_id" not in cols:
                 conn.execute("ALTER TABLE usage_logs ADD COLUMN agent_id TEXT DEFAULT ''")
+            if "model" not in cols:
+                conn.execute("ALTER TABLE usage_logs ADD COLUMN model TEXT DEFAULT ''")
+            if "cost_est" not in cols:
+                conn.execute("ALTER TABLE usage_logs ADD COLUMN cost_est REAL DEFAULT 0")
             conn.commit()
+            cost = estimate_cost(model, input_len, output_len) if (model and success) else 0.0
             conn.execute(
-                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success, error, api_key, user_id, agent_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO usage_logs (timestamp, task_type, input_length, output_length, response_time, success, error, api_key, user_id, agent_id, model, cost_est)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     datetime.now().isoformat(),
                     task_type,
@@ -817,6 +826,8 @@ def log_usage(
                     (api_key or "")[:64],
                     (user_id or "")[:64],
                     (agent_id or "")[:64],
+                    (model or "")[:64],
+                    cost,
                 ),
             )
     except Exception as e:

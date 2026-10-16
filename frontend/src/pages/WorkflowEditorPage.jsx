@@ -27,73 +27,108 @@ import {
   Workflow,
   Wrench,
   Database,
+  Repeat,
+  History,
+  GitCommit,
+  RotateCcw,
+  PlayCircle,
 } from 'lucide-react'
 import MarkdownRenderer from '../components/MarkdownRenderer'
 import { api } from '../lib/api'
 import { connectWs } from '../lib/ws'
 import { useToast } from '../lib/toast'
 import { formatDateTime } from '../lib/format'
-import { Button, Empty, PageLoading, ErrorState, ConfirmDialog } from '../components/ui'
+import { Button, Empty, PageLoading, ErrorState, ConfirmDialog, Badge } from '../components/ui'
 import ShareButton from '../components/ShareButton'
 
 // 节点类型定义（与后端 workflows/executor.py 支持的节点一一对应）
 const NODE_TYPES = {
+  start: {
+    label: '开始节点',
+    icon: PlayCircle,
+    color: 'green',
+    desc: '工作流入口，定义输入参数（名称/默认值），下游可用 ${开始节点.result.字段} 引用',
+    config: { fields: [] }, // fields: [{ name, label, default }]
+  },
   agent: {
     label: 'Agent',
+  desc: '调 LLM 处理一段指令，可引用上游节点结果',
     icon: GitBranch,
     color: 'purple',
     config: { agent_id: '', message: '' },
   },
   http: {
     label: 'HTTP 请求',
+  desc: '请求 URL，抓取网页 / API 内容',
     icon: Globe,
     color: 'blue',
     config: { url: '', method: 'GET', headers: '{}' },
   },
-  condition: { label: '条件判断', icon: GitMerge, color: 'orange', config: { expression: '' } },
-  parallel: { label: '并行执行', icon: Zap, color: 'green', config: {} },
-  code: { label: '代码执行', icon: Code2, color: 'gray', config: { code: '', language: 'python' } },
-  delay: { label: '延迟等待', icon: Clock, color: 'yellow', config: { seconds: 1 } },
+  condition: { label: '条件判断', desc: '按表达式走 if_true / if_false 分支', icon: GitMerge, color: 'orange', config: { expression: '' } },
+  parallel: { label: '并行执行', desc: '同时执行多个分支并汇合', icon: Zap, color: 'green', config: {} },
+  code: { label: '代码执行', desc: '执行一段受限 Python 代码', icon: Code2, color: 'gray', config: { code: '', language: 'python' } },
+  delay: { label: '延迟等待', desc: '等待 N 秒后继续', icon: Clock, color: 'yellow', config: { seconds: 1 } },
   image: {
     label: '图片生成',
+  desc: '按提示词生成图片',
     icon: ImageIcon,
     color: 'pink',
     config: { prompt: '', size: '1024x1024', model: '' }, // model 留空 = 使用系统配置的图片模型
   },
   video: {
     label: '视频生成',
+  desc: '按提示词生成视频',
     icon: Video,
     color: 'blue',
     config: { prompt: '', duration: 5, width: 1152, height: 768 },
   },
   music: {
     label: '音乐歌词',
+  desc: '生成音乐 / 歌词',
     icon: Music,
     color: 'yellow',
     config: { theme: '', style: 'pop', language: 'zh', mood: 'happy' },
   },
   prd: {
     label: 'PRD 流程',
+  desc: 'PRD → 技术方案 → 代码 三段式',
     icon: FileText,
     color: 'orange',
     config: { stage: 'generate', prd_text: '', tech_design: '', language: 'python' },
   },
   tool: {
     label: '平台工具',
+  desc: '调用工具广场里的平台工具',
     icon: Wrench,
     color: 'teal',
     config: { tool_id: '', input: '' }, // tool_id：工具广场工具 id（如 code_interpreter）
   },
+  loop: {
+    label: '循环',
+  desc: '对列表逐项执行内层节点，支持 until / 最大迭代',
+    icon: Repeat,
+    color: 'indigo',
+    config: {
+      items: '', // JSON 数组或 ${node_x.results} 引用；留空 = until 迭代模式
+      body: 'agent', // 内层节点类型
+      body_config: '{"message": "${loop_item}"}', // 内层节点配置（JSON，可引用 ${loop_item}/${loop_index}）
+      until_key: '',
+      until_value: '',
+      max_iterations: 5,
+    },
+  },
   kb: {
     label: '知识库检索',
+  desc: '从知识库检索相关内容',
     icon: Database,
     color: 'indigo',
     config: { kb_ids: [], query: '' },
   },
-  output: { label: '输出节点', icon: FileText, color: 'pink', config: {} },
+  output: { label: '结束节点', desc: '把上游结果作为最终输出', icon: FileText, color: 'pink', config: {} },
 }
 
 // 静态颜色映射（避免 Tailwing 动态类名被 purge）
+// 注意：hoverBg 必须是完整类名字面量，否则 Tailwind 扫描不到不生效
 const COLOR_STYLES = {
   purple: {
     header: 'bg-purple-500',
@@ -101,6 +136,7 @@ const COLOR_STYLES = {
     text: 'text-purple-600',
     light: 'bg-purple-50',
     border: 'border-purple-500',
+    hoverBg: 'hover:bg-purple-50',
   },
   blue: {
     header: 'bg-blue-500',
@@ -108,6 +144,7 @@ const COLOR_STYLES = {
     text: 'text-blue-600',
     light: 'bg-blue-50',
     border: 'border-blue-500',
+    hoverBg: 'hover:bg-blue-50',
   },
   orange: {
     header: 'bg-orange-500',
@@ -115,6 +152,7 @@ const COLOR_STYLES = {
     text: 'text-orange-600',
     light: 'bg-orange-50',
     border: 'border-orange-500',
+    hoverBg: 'hover:bg-orange-50',
   },
   green: {
     header: 'bg-green-500',
@@ -122,6 +160,7 @@ const COLOR_STYLES = {
     text: 'text-green-600',
     light: 'bg-green-50',
     border: 'border-green-500',
+    hoverBg: 'hover:bg-green-50',
   },
   gray: {
     header: 'bg-gray-500',
@@ -129,6 +168,7 @@ const COLOR_STYLES = {
     text: 'text-gray-600',
     light: 'bg-gray-50',
     border: 'border-gray-500',
+    hoverBg: 'hover:bg-gray-50',
   },
   yellow: {
     header: 'bg-yellow-500',
@@ -136,6 +176,7 @@ const COLOR_STYLES = {
     text: 'text-yellow-600',
     light: 'bg-yellow-50',
     border: 'border-yellow-500',
+    hoverBg: 'hover:bg-yellow-50',
   },
   pink: {
     header: 'bg-pink-500',
@@ -143,6 +184,23 @@ const COLOR_STYLES = {
     text: 'text-pink-600',
     light: 'bg-pink-50',
     border: 'border-pink-500',
+    hoverBg: 'hover:bg-pink-50',
+  },
+  teal: {
+    header: 'bg-teal-500',
+    ring: 'ring-teal-500',
+    text: 'text-teal-600',
+    light: 'bg-teal-50',
+    border: 'border-teal-500',
+    hoverBg: 'hover:bg-teal-50',
+  },
+  indigo: {
+    header: 'bg-indigo-500',
+    ring: 'ring-indigo-500',
+    text: 'text-indigo-600',
+    light: 'bg-indigo-50',
+    border: 'border-indigo-500',
+    hoverBg: 'hover:bg-indigo-50',
   },
 }
 
@@ -164,14 +222,52 @@ export default function WorkflowEditorPage() {
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [runInput, setRunInput] = useState('')
+  const [startValues, setStartValues] = useState({}) // 开始节点字段 -> 值
   const [deleteNodeTarget, setDeleteNodeTarget] = useState(null)
   const [agents, setAgents] = useState([])
 
   // v17.x 内嵌执行控制台：替代原「弹窗输入 + 弹窗结果」，WS 实时节点状态
-  const [showRunConsole, setShowRunConsole] = useState(false)
+  const [rightTab, setRightTab] = useState('run')
   const [runStatus, setRunStatus] = useState('idle') // idle | running | done | error
   const [liveNodes, setLiveNodes] = useState({}) // node_id -> { status, result }
-  const [consoleCollapsed, setConsoleCollapsed] = useState(false)
+  const [inspectNode, setInspectNode] = useState(null) // 正在查看输入/输出的节点 id
+  const [liveRunId, setLiveRunId] = useState(null) // 当前执行 run_id（WS 带出，用于拉节点快照）
+
+  // 查看某节点的输入/输出：输出取 WS 实时结果，输入拉该 run 的节点快照（节点完成即落库，执行中也可查）
+  const fetchInspectSnapshot = useCallback(
+    async (nid) => {
+      if (!liveRunId) return
+      try {
+        const res = await api.get(`/api/workflows/runs/${liveRunId}/snapshots`)
+        const snap = (res.data?.nodes || []).find((s) => s.node_id === nid)
+        if (snap) setInspectSnap(nid, snap)
+      } catch {
+        /* 快照尚未写入或 run 不存在，忽略 */
+      }
+    },
+    [liveRunId]
+  )
+  const [inspectSnap, setInspectSnap] = useState({}) // node_id -> { input_data, output_data }
+  const [openNodeCard, setOpenNodeCard] = useState(null) // 「节点执行情况」卡片中展开完整输出的节点
+  const [nodeTip, setNodeTip] = useState(null) // 左侧节点工具栏 hover 提示 { label, desc, y }
+  const openInspect = useCallback(
+    (nid) => {
+      setInspectNode(nid === inspectNode ? null : nid)
+      if (nid === inspectNode) return
+      fetchInspectSnapshot(nid)
+    },
+    [inspectNode, fetchInspectSnapshot]
+  )
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyTab, setHistoryTab] = useState('runs') // runs | versions
+  const [runs, setRuns] = useState([])
+  const [runsLoading, setRunsLoading] = useState(false)
+  const [expandedRun, setExpandedRun] = useState(null) // run_id -> 展开看快照
+  const [snapshots, setSnapshots] = useState({}) // run_id -> nodes[]
+  const [resetNodes, setResetNodes] = useState({}) // run_id -> [node_id]（单节点回滚勾选）
+  const [resumeBusy, setResumeBusy] = useState(null) // 正在续跑/重放的 run_id
+  const [versions, setVersions] = useState([])
+  const [restoreTarget, setRestoreTarget] = useState(null) // 待恢复的版本号
 
   // 画布交互
   const [dragging, setDragging] = useState(null)
@@ -297,6 +393,107 @@ export default function WorkflowEditorPage() {
   const toastRef = useRef(toast)
   toastRef.current = toast
 
+  // ── 运行历史 / 版本管理：加载与操作（放在 toastRef 与 loadWorkflow 定义之后，避免 TDZ）──
+  const [runsError, setRunsError] = useState('')
+
+  const loadRuns = useCallback(async () => {
+    setRunsLoading(true)
+    setRunsError('')
+    try {
+      const res = await api.get(`/api/workflows/${workflowId}/runs`, { params: { limit: 20 } })
+      setRuns(Array.isArray(res.data) ? res.data : [])
+    } catch (e) {
+      setRuns([])
+      setRunsError(e.message || '网络异常')
+    } finally {
+      setRunsLoading(false)
+    }
+  }, [workflowId])
+
+  const loadVersions = useCallback(async () => {
+    try {
+      const res = await api.get(`/api/workflows/${workflowId}/versions`)
+      setVersions(Array.isArray(res.data) ? res.data : [])
+    } catch {
+      setVersions([])
+    }
+  }, [workflowId])
+
+  const openHistory = useCallback(() => {
+    setShowHistory(true)
+    loadRuns()
+    loadVersions()
+  }, [loadRuns, loadVersions])
+
+  const openRunSnapshots = useCallback(
+    async (runId) => {
+      setExpandedRun((cur) => (cur === runId ? null : runId))
+      if (!snapshots[runId]) {
+        try {
+          const res = await api.get(`/api/workflows/runs/${runId}/snapshots`)
+          setSnapshots((prev) => ({ ...prev, [runId]: res.data?.nodes || [] }))
+        } catch (e) {
+          toastRef.current.error(`加载节点快照失败：${e.message}`)
+        }
+      }
+    },
+    [snapshots]
+  )
+
+  // 断点续跑（可选 reset_node：勾选的节点清快照重跑）
+  const resumeRun = useCallback(
+    async (run, resetList) => {
+      setResumeBusy(run.id)
+      try {
+        const cfg = resetList?.length ? { params: { reset_node: resetList } } : {}
+        const res = await api.post(`/api/workflows/runs/${run.id}/resume`, null, cfg)
+        toastRef.current.success(
+          `续跑完成：${res.data?.status || 'completed'}（复用快照 ${res.data?.resumed_nodes?.length || 0} 个节点，新 run ${res.data?.new_run}）`
+        )
+        setResetNodes({})
+        setExpandedRun(null)
+        loadRuns()
+      } catch (e) {
+        toastRef.current.error(`续跑失败：${e.message}`)
+      } finally {
+        setResumeBusy(null)
+      }
+    },
+    [loadRuns]
+  )
+
+  // 输入重放：用原 run 的 input_data 重新跑
+  const replayRun = useCallback(
+    async (run) => {
+      setResumeBusy(run.id)
+      try {
+        const res = await api.post(`/api/workflows/runs/${run.id}/replay`)
+        toastRef.current.success(`重放完成：${res.data?.status || 'completed'}（新 run ${res.data?.new_run}）`)
+        loadRuns()
+      } catch (e) {
+        toastRef.current.error(`重放失败：${e.message}`)
+      } finally {
+        setResumeBusy(null)
+      }
+    },
+    [loadRuns]
+  )
+
+  const restoreVersion = useCallback(
+    async (version) => {
+      try {
+        const res = await api.post(`/api/workflows/${workflowId}/versions/${version}/restore`)
+        toastRef.current.success(`已恢复到版本 ${version}（当前状态已存档为版本 ${res.data?.saved_version}）`)
+        setRestoreTarget(null)
+        await loadWorkflow()
+        loadVersions()
+      } catch (e) {
+        toastRef.current.error(`恢复失败：${e.message}`)
+      }
+    },
+    [workflowId, loadWorkflow, loadVersions]
+  )
+
   const doSave = useCallback(async ({ manual = false } = {}) => {
     const { nodes: n, edges: e, workflow: wf } = stateRef.current
     if (!wf) return false
@@ -354,6 +551,7 @@ export default function WorkflowEditorPage() {
     }
     setNodes((prev) => [...prev, newNode])
     setSelectedNodeId(newNode.id)
+    setRightTab('config')
   }
 
   const deleteNode = (nodeId) => {
@@ -361,6 +559,11 @@ export default function WorkflowEditorPage() {
     setEdges((prev) => prev.filter((e) => e.from !== nodeId && e.to !== nodeId))
     if (selectedNodeId === nodeId) setSelectedNodeId(null)
   }
+
+  // 选中节点时自动切到右侧「节点配置」Tab
+  useEffect(() => {
+    if (selectedNodeId) setRightTab('config')
+  }, [selectedNodeId])
 
   const updateNodePosition = (nodeId, x, y) => {
     setNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, x, y } : n)))
@@ -435,6 +638,10 @@ export default function WorkflowEditorPage() {
     }
   }
 
+  // 开始节点（定义了输入字段的）：执行台渲染对应表单
+  const startNode = nodes.find((n) => n.type === 'start' && (n.config?.fields || []).length) || null
+  const startFields = startNode?.config?.fields || []
+
   // 运行工作流（v17.x：内嵌控制台，非弹窗；执行期间 WS 实时推送节点完成事件）
   const runWorkflow = async () => {
     if (!workflow) return
@@ -442,17 +649,23 @@ export default function WorkflowEditorPage() {
       toast.error('请先在画布中添加节点')
       return
     }
-    if (!runInput.trim()) {
-      toast.error('请输入执行内容')
+    const hasStartValues = startFields.length > 0
+    if (hasStartValues && !runInput.trim() && !Object.values(startValues).some((v) => String(v || '').trim())) {
+      toast.error('请填写执行内容或开始节点输入')
       return
     }
     setRunning(true)
     setRunStatus('running')
     setRunResult(null)
     setLiveNodes({})
-    setConsoleCollapsed(false)
+    setLiveRunId(null)
+    setInspectNode(null)
+    setInspectSnap({})
+    setOpenNodeCard(null)
+    setRightTab('run')
     try {
-      const res = await api.post(`/api/workflows/${workflow.id}/run`, { message: runInput.trim() })
+      const payload = { message: runInput.trim(), ...(hasStartValues ? startValues : {}) }
+      const res = await api.post(`/api/workflows/${workflow.id}/run`, payload)
       setRunResult(res.data)
       setRunStatus('done')
     } catch (e) {
@@ -465,7 +678,7 @@ export default function WorkflowEditorPage() {
 
   // WS 订阅稳定频道 workflow-live:{workflow_id}：执行期间实时看到节点逐个完成
   useEffect(() => {
-    if (!workflow || !showRunConsole) return undefined
+    if (!workflow) return undefined
     const unsubscribe = connectWs(`workflow-live:${workflow.id}`, {
       onMessage: (msg) => {
         const { event, data } = msg || {}
@@ -474,11 +687,12 @@ export default function WorkflowEditorPage() {
             ...prev,
             [data.node_id]: { status: data.status, result: data.result },
           }))
+          if (data.run_id) setLiveRunId(data.run_id)
         }
       },
     })
     return unsubscribe
-  }, [workflow?.id, showRunConsole])
+  }, [workflow?.id])
 
   // 导出工作流
   const exportWorkflow = () => {
@@ -537,18 +751,35 @@ export default function WorkflowEditorPage() {
         <div className="text-[10px] text-gray-400 font-medium mb-1">节点</div>
         {Object.entries(NODE_TYPES).map(([type, cfg]) => {
           const Icon = cfg.icon
-          const styles = COLOR_STYLES[cfg.color]
+          const styles = COLOR_STYLES[cfg.color] || COLOR_STYLES.gray
           return (
             <button
               key={type}
               onClick={() => addNode(type)}
-              className={`w-11 h-11 flex flex-col items-center justify-center rounded-xl border border-gray-200 hover:${styles.light} hover:border-current transition-all group relative`}
-              title={`添加 ${cfg.label}`}
+              onMouseEnter={(e) => {
+                const r = e.currentTarget.getBoundingClientRect()
+                setNodeTip({ label: cfg.label, desc: cfg.desc || '', y: r.top + r.height / 2 })
+              }}
+              onMouseLeave={() => setNodeTip(null)}
+              className={`w-11 h-11 flex flex-col items-center justify-center rounded-xl border border-gray-200 ${styles.hoverBg} hover:border-current transition-all group relative`}
+              aria-label={`添加 ${cfg.label}`}
             >
               <Icon className={`w-5 h-5 ${styles.text}`} />
             </button>
           )
         })}
+        {/* 节点提示气泡（fixed 定位，避免被侧栏 overflow 裁剪） */}
+        {nodeTip && (
+          <div
+            className="fixed z-50 pointer-events-none"
+            style={{ left: 72, top: nodeTip.y - 24 }}
+          >
+            <div className="rounded-lg bg-gray-900 text-white text-xs px-3 py-2 shadow-lg w-56">
+              <p className="font-medium">+ {nodeTip.label}</p>
+              {nodeTip.desc && <p className="mt-0.5 text-gray-300 leading-snug">{nodeTip.desc}</p>}
+            </div>
+          </div>
+        )}
         <div className="flex-1" />
         <button
           onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)))}
@@ -641,7 +872,7 @@ export default function WorkflowEditorPage() {
           <div className="h-6 w-px bg-gray-200 mx-1" />
 
           <Button variant="secondary" size="sm" icon={Download} onClick={exportWorkflow}>
-            <span className="hidden sm:inline">导出</span>
+            <span className="hidden sm:inline whitespace-nowrap">导出</span>
           </Button>
           <ShareButton
             content={JSON.stringify({ nodes, edges, version: '1.0', name: workflow?.name }, null, 2)}
@@ -655,10 +886,26 @@ export default function WorkflowEditorPage() {
             loading={saving}
             onClick={() => doSave({ manual: true })}
           >
-            <span className="hidden sm:inline">保存</span>
+            <span className="hidden sm:inline whitespace-nowrap">保存</span>
           </Button>
-          <Button variant="success" size="sm" icon={Play} onClick={() => setShowRunConsole(true)}>
-            <span className="hidden sm:inline">执行</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={History}
+            onClick={openHistory}
+          >
+            <span className="hidden sm:inline whitespace-nowrap">历史</span>
+          </Button>
+          <Button
+            variant="success"
+            size="sm"
+            icon={Play}
+            onClick={() => {
+              setRightTab('run')
+              runWorkflow()
+            }}
+          >
+            <span className="hidden sm:inline whitespace-nowrap">执行</span>
           </Button>
         </div>
 
@@ -887,11 +1134,16 @@ export default function WorkflowEditorPage() {
           {/* 空状态 */}
           {nodes.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <Empty
-                icon={Workflow}
-                title="画布为空"
-                description="从左侧节点栏点击添加节点，支持 Agent / 图片 / 视频 / 音乐 / PRD 等节点编排"
-              />
+              <div className="pointer-events-auto flex flex-col items-center gap-3">
+                <Empty
+                  icon={Workflow}
+                  title="画布为空"
+                  description="建议从「开始节点」拖入，再连 Agent / HTTP / 图片等节点，最后接「结束节点」"
+                />
+                <Button variant="primary" size="sm" icon={PlayCircle} onClick={() => addNode('start')}>
+                  快速添加开始节点
+                </Button>
+              </div>
             </div>
           )}
 
@@ -912,34 +1164,45 @@ export default function WorkflowEditorPage() {
             {'{input}'} 引用输入
           </div>
         </div>
-        {/* 内嵌执行控制台（v17.x：替代原弹窗输入/结果，执行期间可继续编辑画布） */}
-        {showRunConsole && (
-          <div className="border-t border-gray-200 bg-white flex-shrink-0">
-            <div
-              className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 cursor-pointer select-none"
-              onClick={() => setConsoleCollapsed((c) => !c)}
-            >
-              <Play className="w-4 h-4 text-emerald-600" />
-              <span className="text-sm font-medium text-gray-800">执行控制台</span>
-              {runStatus === 'running' && (
-                <span className="flex items-center gap-1.5 text-xs text-emerald-600">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  执行中…
-                </span>
-              )}
-              {runStatus === 'done' && runResult?.run?.status && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">
-                  {runResult.run.status}
-                  {runResult.elapsed != null && <span className="tabular-nums ml-1">{runResult.elapsed}s</span>}
-                </span>
-              )}
-              {runStatus === 'error' && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600">失败</span>
-              )}
-              <span className="ml-auto text-xs text-gray-400">{consoleCollapsed ? '展开' : '收起'}</span>
-            </div>
-            {!consoleCollapsed && (
-              <div className="px-4 py-3 space-y-3 max-h-72 overflow-y-auto">
+      </div>
+
+      <aside className="w-[400px] bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
+        {/* Tab 头：执行 | 节点配置 */}
+        <div className="flex items-center border-b border-gray-200 shrink-0">
+          <button
+            onClick={() => setRightTab('run')}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              rightTab === 'run' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            执行
+          </button>
+          <button
+            onClick={() => setRightTab('config')}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              rightTab === 'config' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            节点配置
+          </button>
+          <span className="ml-auto flex items-center gap-1.5 pr-3 text-xs">
+            {runStatus === 'running' && (
+              <span className="flex items-center gap-1 text-emerald-600">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />执行中…
+              </span>
+            )}
+            {runStatus === 'done' && runResult?.run?.status && (
+              <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                {runResult.run.status}
+                {runResult.elapsed != null && <span className="tabular-nums ml-1">{runResult.elapsed}s</span>}
+              </span>
+            )}
+            {runStatus === 'error' && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600">失败</span>}
+          </span>
+        </div>
+
+        {rightTab === 'run' ? (
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {/* 实时节点状态（WS workflow-live 频道） */}
                 {(runStatus === 'running' || Object.keys(liveNodes).length > 0) && nodes.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
@@ -958,17 +1221,81 @@ export default function WorkflowEditorPage() {
                       const mark =
                         st === 'success' ? '✓' : st === 'error' || st === 'failed' ? '✕' : runStatus === 'running' ? '…' : '·'
                       const resultText = lv?.result && typeof lv.result === 'object' ? JSON.stringify(lv.result).slice(0, 160) : null
+                      const active = inspectNode === n.id
                       return (
-                        <span
+                        <button
                           key={n.id}
-                          title={resultText || (runResult?.nodes?.find((r) => r.node_id === n.id)?.summary || '')}
-                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs ${cls}`}
+                          onClick={() => openInspect(n.id)}
+                          title={
+                            (st === 'success' || st === 'error' || st === 'failed'
+                              ? (resultText || runResult?.nodes?.find((r) => r.node_id === n.id)?.summary || '')
+                              : '点击查看详情') + '（点击查看输入/输出）'
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs cursor-pointer transition-all ${cls} ${active ? 'ring-2 ring-purple-500/40 shadow-sm' : ''}`}
                         >
                           <span className="font-medium">{label}</span>
                           <span>{mark}</span>
-                        </span>
+                        </button>
                       )
                     })}
+                  </div>
+                )}
+
+                {/* 节点输入/输出详情（点击上方 chip 展开） */}
+                {inspectNode && (() => {
+                  const nd = nodes.find((x) => x.id === inspectNode)
+                  const lv = liveNodes[inspectNode]
+                  const snap = inspectSnap[inspectNode]
+                  const out = snap?.output_data ?? lv?.result
+                  const inp = snap?.input_data
+                  const fmt = (v, max = 2000) => {
+                    const s = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+                    return s?.length > max ? s.slice(0, max) + '\n…（已截断，完整内容见历史面板快照）' : s || '（空）'
+                  }
+                  return (
+                    <div className="border border-purple-200 bg-purple-50/40 rounded-lg p-3 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium text-purple-700">
+                          {nd?.label || inspectNode}（{nd?.type}）输入 / 输出
+                        </p>
+                        <button onClick={() => setInspectNode(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 mb-1">输入</p>
+                        <pre className="whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-md p-2 max-h-40 overflow-y-auto text-gray-700">
+                          {fmt(inp)}
+                        </pre>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 mb-1">输出</p>
+                        <pre className="whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-md p-2 max-h-40 overflow-y-auto text-gray-700">
+                          {fmt(out)}
+                        </pre>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* 开始节点输入字段（若定义了） */}
+                {startFields.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <p className="sm:col-span-2 text-xs text-gray-400 -mt-1">
+                      开始节点（{startNode.label || startNode.id}）输入：
+                    </p>
+                    {startFields.map((f) => (
+                      <div key={f.name} className="flex items-center gap-2">
+                        <label className="text-xs text-gray-500 w-24 flex-shrink-0 truncate" title={f.label || f.name}>
+                          {f.label || f.name}
+                        </label>
+                        <input
+                          type="text"
+                          value={startValues[f.name] ?? f.default ?? ''}
+                          onChange={(e) => setStartValues((p) => ({ ...p, [f.name]: e.target.value }))}
+                          placeholder={f.default ? `默认：${f.default}` : ''}
+                          className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none min-w-0"
+                        />
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -977,7 +1304,11 @@ export default function WorkflowEditorPage() {
                   <textarea
                     value={runInput}
                     onChange={(e) => setRunInput(e.target.value)}
-                    placeholder="输入执行内容，如：帮我分析用户登录功能的需求...（Ctrl+Enter 快速执行）"
+                    placeholder={
+                      startFields.length > 0
+                        ? '补充说明（可选），或留空仅用上方开始节点字段'
+                        : '输入执行内容，如：帮我分析用户登录功能的需求...（Ctrl+Enter 快速执行）'
+                    }
                     rows={2}
                     className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 resize-none"
                     onKeyDown={(e) => {
@@ -993,9 +1324,11 @@ export default function WorkflowEditorPage() {
                     </Button>
                     <button
                       onClick={() => {
-                        setShowRunConsole(false)
                         setRunStatus('idle')
                         setLiveNodes({})
+                        setLiveRunId(null)
+                        setInspectNode(null)
+                        setInspectSnap({})
                       }}
                       className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
                     >
@@ -1010,15 +1343,29 @@ export default function WorkflowEditorPage() {
                     {runResult.nodes?.length > 0 && (
                       <div className="space-y-1.5">
                         <p className="text-xs font-medium text-gray-500">节点执行情况</p>
-                        {runResult.nodes.map((n, idx) => (
-                          <div
-                            key={idx}
-                            className={`px-3 py-2 rounded-lg border text-xs ${n.status === 'error' ? 'border-red-200 bg-red-50/60 text-red-600' : 'border-gray-100 bg-gray-50 text-gray-600'}`}
-                          >
-                            <span className="font-medium text-gray-700">{n.label || n.node_id}</span>
-                            <span className="ml-2">{n.summary}</span>
-                          </div>
-                        ))}
+                        {runResult.nodes.map((n, idx) => {
+                          const raw = n.summary || ''
+                          const isOpen = openNodeCard === n.node_id
+                          return (
+                            <div
+                              key={idx}
+                              className={`px-3 py-2 rounded-lg border text-xs cursor-pointer select-none ${n.status === 'error' ? 'border-red-200 bg-red-50/60 text-red-600' : 'border-gray-100 bg-gray-50 text-gray-600'}`}
+                              onClick={() => setOpenNodeCard(isOpen ? null : n.node_id)}
+                              title="点击查看/收起完整输出"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium text-gray-700">{n.label || n.node_id}</span>
+                                <span className={`ml-1 ${n.status === 'error' ? 'text-red-500' : 'text-emerald-600'}`}>▸</span>
+                                <span className="truncate flex-1">{raw.length > 120 ? raw.slice(0, 120) + '…' : raw}</span>
+                              </div>
+                              {isOpen && (
+                                <pre className="mt-2 whitespace-pre-wrap break-all bg-white border border-gray-100 rounded-md p-2 max-h-52 overflow-y-auto text-gray-700">
+                                  {typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2)}
+                                </pre>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                     {(() => {
@@ -1030,7 +1377,37 @@ export default function WorkflowEditorPage() {
                         <img src={m[0]} alt="生成的图片" className="rounded-lg border border-gray-200 w-full" />
                       ) : null
                     })()}
-                    <div className="border border-gray-100 rounded-lg p-3 bg-gray-50 max-h-48 overflow-y-auto">
+                    <div className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+                      {typeof runResult.result === 'string' && runResult.result.length > 300 && (
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs text-gray-500 flex-1">最终结果{runResult.elapsed != null && `（耗时 ${runResult.elapsed}s）`}</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(runResult.result)
+                              toast.success('已复制最终结果')
+                            }}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded-md text-gray-600 hover:bg-white transition-colors"
+                          >
+                            复制
+                          </button>
+                          <button
+                            onClick={() => {
+                              const blob = new Blob([runResult.result], { type: 'text/markdown' })
+                              const url = URL.createObjectURL(blob)
+                              const a = document.createElement('a')
+                              a.href = url
+                              a.download = `${workflow?.name || 'workflow'}-result.md`
+                              a.click()
+                              URL.revokeObjectURL(url)
+                              toast.success('已下载 Markdown')
+                            }}
+                            className="text-xs px-2 py-1 border border-gray-200 rounded-md text-gray-600 hover:bg-white transition-colors"
+                          >
+                            下载 .md
+                          </button>
+                        </div>
+                      )}
+                      <div className="max-h-96 overflow-y-auto">
                       <MarkdownRenderer
                         content={
                           typeof runResult.result === 'string'
@@ -1038,28 +1415,16 @@ export default function WorkflowEditorPage() {
                             : '```json\n' + JSON.stringify(runResult.result, null, 2) + '\n```'
                         }
                       />
+                      </div>
                     </div>
                   </div>
                 )}
                 {runStatus === 'error' && <p className="text-xs text-red-500">执行失败，请检查节点配置后重试</p>}
               </div>
-            )}
-          </div>
-        )}
-      </div>
-      {selectedNodeData && (
-        <aside className="w-64 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
-          <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900">节点配置</h3>
-            <button
-              onClick={() => setSelectedNodeId(null)}
-              className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
+        ) : (
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {selectedNodeData ? (
+            <>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">节点名称</label>
               <input
@@ -1076,6 +1441,93 @@ export default function WorkflowEditorPage() {
                 {NODE_TYPES[selectedNodeData.type]?.label || selectedNodeData.type}
               </div>
             </div>
+
+            {selectedNodeData.type === 'start' && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-medium text-gray-500">输入参数</label>
+                  <button
+                    onClick={() => {
+                      const cur = Array.isArray(selectedNodeData.config.fields)
+                        ? selectedNodeData.config.fields
+                        : []
+                      updateNodeConfig(selectedNodeData.id, 'fields', [
+                        ...cur,
+                        { name: '', label: '', default: '' },
+                      ])
+                    }}
+                    className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-700 transition-colors"
+                  >
+                    <Plus className="w-3 h-3" />
+                    添加
+                  </button>
+                </div>
+                {(Array.isArray(selectedNodeData.config.fields) ? selectedNodeData.config.fields : [])
+                  .length === 0 && (
+                    <p className="text-xs text-gray-400 mb-2">
+                      未定义字段时，执行台默认只显示一条文本输入（message）
+                    </p>
+                  )}
+                <div className="space-y-2">
+                  {(Array.isArray(selectedNodeData.config.fields)
+                    ? selectedNodeData.config.fields
+                    : []
+                  ).map((f, i) => (
+                    <div key={i} className="border border-gray-100 rounded-lg p-2 space-y-1.5 bg-gray-50/60">
+                      <div className="flex gap-1.5 items-center">
+                        <input
+                          type="text"
+                          value={f.name || ''}
+                          onChange={(e) => {
+                            const arr = [...selectedNodeData.config.fields]
+                            arr[i] = { ...arr[i], name: e.target.value }
+                            updateNodeConfig(selectedNodeData.id, 'fields', arr)
+                          }}
+                          placeholder="字段名（英文，如 title）"
+                          className="flex-1 px-2 py-1.5 border border-gray-200 rounded-md text-xs focus:ring-1 focus:ring-emerald-500/40 outline-none min-w-0"
+                        />
+                        <button
+                          onClick={() => {
+                            const arr = selectedNodeData.config.fields.filter((_, j) => j !== i)
+                            updateNodeConfig(selectedNodeData.id, 'fields', arr)
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                          title="删除字段"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={f.label || ''}
+                        onChange={(e) => {
+                          const arr = [...selectedNodeData.config.fields]
+                          arr[i] = { ...arr[i], label: e.target.value }
+                          updateNodeConfig(selectedNodeData.id, 'fields', arr)
+                        }}
+                        placeholder="显示名（可留空）"
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs focus:ring-1 focus:ring-emerald-500/40 outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={f.default || ''}
+                        onChange={(e) => {
+                          const arr = [...selectedNodeData.config.fields]
+                          arr[i] = { ...arr[i], default: e.target.value }
+                          updateNodeConfig(selectedNodeData.id, 'fields', arr)
+                        }}
+                        placeholder="默认值（可留空）"
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs focus:ring-1 focus:ring-emerald-500/40 outline-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                  下游节点可用 <code className="text-emerald-600">${'{开始节点id.result.字段名}'}</code> 引用输入，如{' '}
+                  <code className="text-emerald-600">${'{n_start.result.title}'}</code>
+                </p>
+              </div>
+            )}
 
             {selectedNodeData.type === 'agent' && (
               <>
@@ -1520,6 +1972,83 @@ export default function WorkflowEditorPage() {
               </>
             )}
 
+            {selectedNodeData.type === 'loop' && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">循环项列表</label>
+                  <textarea
+                    value={selectedNodeData.config.items || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'items', e.target.value)}
+                    rows={3}
+                    placeholder='JSON 数组如 ["a","b"]，或引用上游结果 ${"{node_x.results}"}；留空 = until 迭代模式'
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">内层节点类型</label>
+                  <select
+                    value={selectedNodeData.config.body || 'agent'}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'body', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  >
+                    {[['agent', 'Agent'], ['http', 'HTTP'], ['code', '代码'], ['condition', '条件'], ['delay', '延迟'], ['image', '图片'], ['kb', '知识库'], ['tool', '工具']].map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">内层节点配置 (JSON)</label>
+                  <textarea
+                    value={selectedNodeData.config.body_config || ''}
+                    onChange={(e) => updateNodeConfig(selectedNodeData.id, 'body_config', e.target.value)}
+                    rows={3}
+                    placeholder='{"message": "${loop_item} 的处理"}（可引用 ${loop_item}/${loop_index}）'
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">until 键</label>
+                    <input
+                      type="text"
+                      value={selectedNodeData.config.until_key || ''}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'until_key', e.target.value)}
+                      placeholder="可选"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">until 值</label>
+                    <input
+                      type="text"
+                      value={selectedNodeData.config.until_value ?? ''}
+                      onChange={(e) => updateNodeConfig(selectedNodeData.id, 'until_value', e.target.value)}
+                      placeholder="如 done"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">最大迭代次数（硬顶 20）</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={selectedNodeData.config.max_iterations ?? 5}
+                    onChange={(e) =>
+                      updateNodeConfig(
+                        selectedNodeData.id,
+                        'max_iterations',
+                        Math.max(1, Math.min(20, parseInt(e.target.value) || 5))
+                      )
+                    }
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">单项失败不中断循环（输出 status=partial）；until 命中提前终止</p>
+                </div>
+              </>
+            )}
+
             {selectedNodeData.type === 'parallel' && (
               <p className="text-xs text-gray-400">
                 并行执行节点无需额外配置，所有下游分支将同时触发。
@@ -1527,22 +2056,214 @@ export default function WorkflowEditorPage() {
             )}
 
             {selectedNodeData.type === 'output' && (
-              <p className="text-xs text-gray-400">输出节点将上游结果作为工作流的最终输出。</p>
+              <p className="text-xs text-gray-400">结束节点将上游结果作为工作流的最终输出。</p>
+            )}
+
+            <div className="p-4 border-t border-gray-200">
+              <Button
+                variant="danger"
+                icon={Trash2}
+                className="w-full"
+                onClick={() => setDeleteNodeTarget(selectedNodeData.id)}
+              >
+                删除节点
+              </Button>
+            </div>
+            </>
+            ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-500 flex items-center gap-2">
+                <GitBranch className="w-4 h-4" />
+                选中画布上的节点即可编辑其配置
+              </p>
+              <p className="text-xs text-gray-400 leading-relaxed">
+                提示：开始节点定义工作流输入参数；Agent 节点可引用上游结果 {'${上游节点id.result}'}
+              </p>
+            </div>
             )}
           </div>
+        )}
+      </aside>
+      
+      {/* 运行历史 / 版本管理抽屉 */}
+      {showHistory && (
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={() => setShowHistory(false)}>
+          <div
+            className="w-full max-w-lg h-full bg-white shadow-xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setShowHistory(false)}
+                className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="flex-1" />
+              {[['runs', '运行历史', History], ['versions', '版本', GitCommit]].map(([tab, label, Icon]) => (
+                <button
+                  key={tab}
+                  onClick={() => setHistoryTab(tab)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                    historyTab === tab ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
 
-          <div className="p-4 border-t border-gray-200">
-            <Button
-              variant="danger"
-              icon={Trash2}
-              className="w-full"
-              onClick={() => setDeleteNodeTarget(selectedNodeData.id)}
-            >
-              删除节点
-            </Button>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {historyTab === 'runs' && (
+                runsLoading ? (
+                  <div className="py-10 text-center text-sm text-gray-400">加载中…</div>
+                ) : runsError && runs.length === 0 ? (
+                  <div className="py-10 text-center space-y-3">
+                    <p className="text-sm text-red-500">加载失败：{runsError}</p>
+                    <button
+                      onClick={() => loadRuns()}
+                      className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+                    >
+                      重试
+                    </button>
+                  </div>
+                ) : runs.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-gray-400">暂无运行记录</div>
+                ) : (
+                  runs.map((run) => {
+                    const isExp = expandedRun === run.id
+                    const busy = resumeBusy === run.id
+                    const checked = resetNodes[run.id] || []
+                    return (
+                      <div key={run.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                        <button
+                          onClick={() => openRunSnapshots(run.id)}
+                          className="w-full px-3 py-2.5 flex items-center gap-2 text-left hover:bg-gray-50 transition-colors"
+                        >
+                          <span
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                              run.status === 'running'
+                                ? 'bg-amber-400 animate-pulse'
+                                : run.node_failed > 0
+                                  ? 'bg-red-500'
+                                  : 'bg-emerald-500'
+                            }`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-700 truncate">{run.id}</p>
+                            <p className="text-[11px] text-gray-400">
+                              {formatDateTime(run.started_at)}
+                              {run.elapsed_seconds != null && ` · ${run.elapsed_seconds}s`}
+                            </p>
+                          </div>
+                          <span className="text-[11px] text-gray-500 flex-shrink-0">
+                            节点 {run.node_ok}/{run.node_total}
+                          </span>
+                          <Badge color={run.status === 'running' ? 'amber' : run.node_failed > 0 ? 'red' : 'green'}>
+                            {run.status === 'running' ? '运行中' : run.node_failed > 0 ? '有失败' : '成功'}
+                          </Badge>
+                        </button>
+                        {isExp && (
+                          <div className="px-3 py-2.5 bg-gray-50/60 border-t border-gray-100 space-y-2.5">
+                            {(snapshots[run.id] || []).map((sn) => {
+                              const ok = sn.status === 'success'
+                              const canCheck = ok && run.node_failed > 0
+                              return (
+                                <div key={sn.node_id} className="flex items-center gap-2 text-xs">
+                                  {canCheck ? (
+                                    <input
+                                      type="checkbox"
+                                      checked={checked.includes(sn.node_id)}
+                                      onChange={(e) =>
+                                        setResetNodes((p) => ({
+                                          ...p,
+                                          [run.id]: e.target.checked
+                                            ? [...(p[run.id] || []), sn.node_id]
+                                            : (p[run.id] || []).filter((x) => x !== sn.node_id),
+                                        }))
+                                      }
+                                      className="accent-purple-600"
+                                    />
+                                  ) : (
+                                    <span className="w-3.5" />
+                                  )}
+                                  <span
+                                    className={`font-mono ${
+                                      sn.status === 'success' ? 'text-emerald-600' : sn.status === 'skipped' ? 'text-gray-400' : 'text-red-500'
+                                    }`}
+                                  >
+                                    {sn.node_id}
+                                  </span>
+                                  <Badge color={sn.status === 'success' ? 'green' : sn.status === 'skipped' ? 'gray' : 'red'}>
+                                    {sn.status}
+                                  </Badge>
+                                  <span className="text-gray-400 truncate flex-1">
+                                    {JSON.stringify(sn.output_data || '').slice(0, 80)}
+                                  </span>
+                                </div>
+                              )
+                            })}
+                            {(snapshots[run.id] || []).length === 0 && (
+                              <p className="text-xs text-gray-400">无节点快照</p>
+                            )}
+                            {run.node_failed > 0 && (
+                              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100">
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  icon={RotateCcw}
+                                  loading={busy}
+                                  onClick={() => resumeRun(run, checked)}
+                                >
+                                  断点续跑{checked.length > 0 ? `（重跑 ${checked.length} 个节点）` : ''}
+                                </Button>
+                                <Button variant="secondary" size="sm" icon={Play} loading={busy} onClick={() => replayRun(run)}>
+                                  输入重放
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                )
+              )}
+
+              {historyTab === 'versions' && (
+                versions.length === 0 ? (
+                  <div className="py-10 text-center text-sm text-gray-400">暂无版本（每次保存自动存档，保留最近 20 版）</div>
+                ) : (
+                  versions.map((v) => (
+                    <div key={v.version} className="border border-gray-200 rounded-xl px-3 py-2.5 flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-gray-700">
+                          v{v.version} · {v.name}
+                        </p>
+                        <p className="text-[11px] text-gray-400">{formatDateTime(v.created_at)}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" icon={RotateCcw} onClick={() => setRestoreTarget(v.version)}>
+                        恢复
+                      </Button>
+                    </div>
+                  ))
+                )
+              )}
+            </div>
           </div>
-        </aside>
+        </div>
       )}
+
+      {/* 版本恢复确认 */}
+      <ConfirmDialog
+        open={restoreTarget != null}
+        onClose={() => setRestoreTarget(null)}
+        onConfirm={() => restoreVersion(restoreTarget)}
+        title={`恢复到版本 ${restoreTarget ?? ''}`}
+        message="恢复后画布将替换为该版本的节点/连线（当前未保存的修改会丢失，但会自动存档为新版本可找回）。确定恢复？"
+        confirmLabel="恢复"
+      />
 
       {/* 删除节点确认 */}
       <ConfirmDialog

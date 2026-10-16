@@ -680,8 +680,12 @@ async def execute_tool_loop(
         if token_spent > token_budget:
             logger.info(f"agent tool loop stop post-call: {token_spent}>{token_budget}")
             break
+    result = strip_tool_directives(text)
+    if not result.strip() and text.strip():
+        # 降级提示：LLM 只输出了无法解析的指令（工具名/Server 不存在）时，不得静默返回空串
+        result = "工具调用指令未能识别（工具名或 MCP Server 不存在），未执行任何工具。请核对工具名后重试。"
     return {
-        "result": strip_tool_directives(text),
+        "result": result,
         "tools_used": tools_used,
         "mcp_calls": mcp_calls,
         "tool_logs": tool_logs,

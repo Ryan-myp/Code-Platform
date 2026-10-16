@@ -2144,6 +2144,7 @@ function ReliabilityMetrics() {
                     <th>入参字符</th>
                     <th>产出字符</th>
                     <th>累计耗时(s)</th>
+                    <th>成本估算(USD)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2154,6 +2155,7 @@ function ReliabilityMetrics() {
                       <td>{r.in_chars?.toLocaleString()}</td>
                       <td>{r.out_chars?.toLocaleString()}</td>
                       <td>{r.total_s}</td>
+                      <td>{r.cost_est_usd ? Number(r.cost_est_usd).toFixed(4) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

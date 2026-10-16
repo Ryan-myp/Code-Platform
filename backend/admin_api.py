@@ -75,19 +75,20 @@ async def admin_metrics_by_agent(days: int = 7, current_user: dict = require_aut
 
     - usage_logs.agent_id 归因（agent_run/agent_run_stream 调用量 + 字符吞吐）
     - metrics_events.ref（'agent:<id>'/'workflow:wf_agent:<id>'）归因（LLM/工具/MCP 事件）
-    诚实说明：字符吞吐是成本代理指标（平台未接入模型计费 API），非精确账单。
+    诚实说明：字符吞吐是成本代理；v18.3 起 cost_est_usd 为单价表×字符启发式的估算值（非账单）。
     """
     _check_admin(current_user)
 
     window_start = (datetime.now() - timedelta(days=max(1, min(days, 90)))).isoformat()
     conn = get_db()
     try:
-        # 1) usage_logs 按 agent 归因
+        # 1) usage_logs 按 agent 归因（v18.3 + 成本估算：cost_est = 单价表 × 字符→token 启发式，非账单）
         usage_rows = conn.execute(
             """SELECT agent_id, COUNT(*) AS calls,
                  COALESCE(SUM(input_length),0) AS in_chars,
                  COALESCE(SUM(output_length),0) AS out_chars,
-                 ROUND(COALESCE(SUM(response_time),0),1) AS total_s
+                 ROUND(COALESCE(SUM(response_time),0),1) AS total_s,
+                 ROUND(COALESCE(SUM(COALESCE(cost_est,0)),0),6) AS cost_est
                FROM usage_logs
                WHERE agent_id!='' AND timestamp>=? AND task_type IN ('agent_run','agent_run_stream')
                GROUP BY agent_id ORDER BY calls DESC LIMIT 30""",
@@ -104,9 +105,13 @@ async def admin_metrics_by_agent(days: int = 7, current_user: dict = require_aut
                 "in_chars": r["in_chars"],
                 "out_chars": r["out_chars"],
                 "total_s": r["total_s"],
+                "cost_est_usd": r["cost_est"],  # v18.3 成本估算（USD，启发式非账单）
             })
 
         # 2) metrics_events 按 ref 归因（LLM/工具/MCP 事件 × 结果分布）
+        import common.metrics as _metrics
+
+        _metrics._ensure_table(conn)
         ts_cutoff = (datetime.now() - timedelta(days=max(1, min(days, 30)))).timestamp()
         metric_rows = conn.execute(
             """SELECT ref, kind, outcome, COUNT(*) AS n FROM metrics_events

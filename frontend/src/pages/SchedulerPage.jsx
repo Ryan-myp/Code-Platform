@@ -31,6 +31,7 @@ const JOB_TYPES = [
   { value: 'report', label: '定时报告', icon: Calendar },
   { value: 'notify', label: '提醒通知', icon: Clock },
   { value: 'backup', label: '数据备份', icon: RefreshCw },
+  { value: 'workflow', label: '定时工作流', icon: Zap },
 ]
 
 const CRON_PRESETS = [
@@ -71,6 +72,18 @@ export default function SchedulerPage() {
     config: '{}',
   })
 
+  // 定时工作流：工作流下拉选择 + 输入消息
+  const [wfOptions, setWfOptions] = useState([])
+  const [wfId, setWfId] = useState('')
+  const [wfMessage, setWfMessage] = useState('')
+
+  useEffect(() => {
+    api
+      .get('/api/workflows')
+      .then((res) => setWfOptions(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setWfOptions([]))
+  }, [])
+
   useEffect(() => {
     loadJobs()
   }, [])
@@ -94,6 +107,10 @@ export default function SchedulerPage() {
       toast.error('请输入任务名称')
       return
     }
+    if (form.job_type === 'workflow' && !wfId.trim()) {
+      toast.error('请选择要定时触发的工作流')
+      return
+    }
     setLoading(true)
     try {
       await api.post('/api/scheduler', {
@@ -101,10 +118,16 @@ export default function SchedulerPage() {
         description: form.description.trim(),
         job_type: form.job_type,
         cron_expression: form.cron_expression,
+        config:
+          form.job_type === 'workflow'
+            ? { workflow_id: wfId, message: wfMessage }
+            : {},
       })
       toast.success('任务创建成功')
       setShowCreate(false)
       resetForm()
+      setWfId('')
+      setWfMessage('')
       loadJobs()
     } catch (e) {
       toast.error(`创建失败：${e.message}`)
@@ -238,6 +261,45 @@ export default function SchedulerPage() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
               />
             </div>
+            {/* 定时工作流配置：选择工作流 + 输入消息 */}
+            {form.job_type === 'workflow' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-3 bg-teal-50/50 rounded-lg border border-teal-100">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">选择工作流 *</label>
+                  {wfOptions.length > 0 ? (
+                    <select
+                      value={wfId}
+                      onChange={(e) => setWfId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                    >
+                      <option value="">请选择工作流</option>
+                      {wfOptions.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={wfId}
+                      onChange={(e) => setWfId(e.target.value)}
+                      placeholder="工作流 ID（wf_xxx）"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">触发输入</label>
+                  <input
+                    value={wfMessage}
+                    onChange={(e) => setWfMessage(e.target.value)}
+                    placeholder="作为工作流输入 message（可留空）"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 outline-none"
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cron 表达式</label>
               <div className="flex flex-wrap gap-2 mb-2">

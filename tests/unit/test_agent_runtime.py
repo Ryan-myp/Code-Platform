@@ -346,3 +346,27 @@ def test_skills_context_programmatic_prefill(setup_test_db):
 
     ctx3 = runtime._skills_context(rows)  # 无用户消息
     assert "{{channel}}" in ctx3 and "{{title}}" in ctx3, "无消息时全部走 LLM 提取（行为与旧版一致）"
+
+
+def test_unresolved_directive_not_silent_empty(runtime):
+    """LLM 输出的工具/MCP 指令无法解析（工具名/Server 不存在）时，不得静默返回空串。
+
+    回归：活体探测发现 agent 绑 MCP 后 LLM 只输出指令时 result=""（用户看到空白）。
+    修复：result 为空但原文有指令 → 降级提示而非空白。
+    注入 llm_call 使 LLM 恒定返回一条无法解析的 [MCP:] 指令。
+    """
+    import asyncio
+
+    async def fake_llm(system, prompt, **kwargs):
+        return '[MCP:no_such_tool|{"path": "/tmp"}]'
+
+    loop = asyncio.run(
+        runtime.execute_tool_loop(
+            "system", "prompt", set(),
+            llm_call=fake_llm,
+            mcp_servers=[{"id": "g1", "name": "g1"}],
+            mcp_tools=[{"g1": {"real_tool": {"inputSchema": {}}}}],
+        )
+    )
+    assert loop["result"].strip() != "", "不得静默返回空串"
+    assert "未能识别" in loop["result"], "降级提示应明示失败原因"

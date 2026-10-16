@@ -268,6 +268,54 @@ def test_execute_unknown_node_type(test_db_path):
     assert result["status"] == "unknown_type"
 
 
+def test_execute_parallel_node(test_db_path):
+    """Parallel 扇出节点：透传成功标记（并行由 DAG 层保证，节点本身不产生新结果）"""
+    from workflows.executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    result = run(executor.execute_node("parallel", {}, {}, {}))
+    assert result["status"] == "success"
+    assert result["type"] == "parallel"
+    # wait_all 缺省 true（全收敛语义）
+    assert result["wait_all"] is True
+
+
+def test_execute_parallel_node_custom_wait_all(test_db_path):
+    """Parallel 节点 wait_all 可配"""
+    from workflows.executor import WorkflowExecutor
+
+    executor = WorkflowExecutor()
+    result = run(executor.execute_node("parallel", {"wait_all": False}, {}, {}))
+    assert result["status"] == "success"
+    assert result["wait_all"] is False
+
+
+def test_agent_node_row_get_regression(test_db_path, monkeypatch):
+    """回归：agent 节点命中 DB 行（sqlite3.Row）时不得因 Row.get 崩溃（v22 修复）。"""
+    import common.db
+    import common.llm
+    from workflows.executor import WorkflowExecutor
+
+    async def fake_fc(system, prompt, tools, **kw):
+        return {"content": "ok", "tool_calls": None}
+
+    monkeypatch.setattr(common.llm, "call_llm_with_tools_async", fake_fc)
+
+    conn = common.db.get_db()
+    conn.execute(
+        "INSERT INTO agents (id, name, description, instructions, model, tools, "
+        "knowledge_base_ids, skill_ids, mcp_server_ids, active, created_at) "
+        "VALUES ('agent_wfx', 'wx', '', '你是助手', 'agnes-2.5-flash', '[\"code_interpreter\"]', '[]', '[]', '[]', 1, '2026-01-01')",
+    )
+    conn.commit()
+    conn.close()
+
+    executor = WorkflowExecutor()
+    out = run(executor.execute_node("agent", {"agent_id": "agent_wfx", "message": "hi"}, {}, {}))
+    assert out["status"] == "success"
+    assert out["result"] == "ok"
+
+
 def test_execute_http_node_ssrf(test_db_path):
     """HTTP 节点 SSRF 防护"""
     from workflows.executor import WorkflowExecutor

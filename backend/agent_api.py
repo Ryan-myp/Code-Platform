@@ -2,13 +2,16 @@
 
 import io
 import json
+import logging
 import os
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 import skills_store
@@ -292,10 +295,29 @@ async def create_agent_from_template(template_name: str, req: dict = None, curre
 # ── Workflow 管理 ──────────────────────────────────────────────
 @router.get("/api/workflows")
 async def list_workflows(current_user: dict = require_auth()):
-    """获取工作流列表"""
+    """获取工作流列表（含执行统计：次数 + 成功率）"""
     conn = get_db()
     workflows = conn.execute("SELECT * FROM workflows ORDER BY created_at DESC").fetchall()
+    # 每个工作流的成功判定：已完成且节点日志中无 failed/error（skipped 属条件分支正常路由）
+    run_stats = {}
+    for r in conn.execute(
+        """SELECT workflow_id, id FROM workflow_runs WHERE status IN ('completed','success')"""
+    ).fetchall():
+        run_stats.setdefault(r["workflow_id"], []).append(r["id"])
+    fail_map = {
+        r["run_id"]: 1
+        for r in conn.execute(
+            """SELECT run_id FROM workflow_run_logs WHERE status IN ('failed','error') GROUP BY run_id"""
+        ).fetchall()
+    }
+    total_map = {
+        r["workflow_id"]: r["total"]
+        for r in conn.execute(
+            "SELECT workflow_id, COUNT(*) AS total FROM workflow_runs GROUP BY workflow_id"
+        ).fetchall()
+    }
     conn.close()
+
     result = []
     for w in workflows:
         d = dict(w)
@@ -304,11 +326,19 @@ async def list_workflows(current_user: dict = require_auth()):
             d["nodes"] = json.loads(d.get("steps") or "[]")
         except (json.JSONDecodeError, TypeError):
             d["nodes"] = []
+        wf_runs = run_stats.get(d["id"], [])
+        total = total_map.get(d["id"], 0)
+        d["execution_count"] = total
+        d["success_rate"] = (
+            round(sum(1 for rid in wf_runs if rid not in fail_map) / len(wf_runs), 4)
+            if wf_runs
+            else None
+        )
         result.append(d)
     return result
 
 
-_WF_VALID_TYPES = {"agent", "http", "condition", "parallel", "code", "delay", "output", "loop"}
+_WF_VALID_TYPES = {"start", "agent", "http", "condition", "parallel", "code", "delay", "output", "loop"}
 _WF_TYPE_MAP = {"start": "agent", "end": "output", "llm": "agent", "http": "http", "condition": "condition"}
 
 
@@ -473,6 +503,12 @@ async def update_workflow(workflow_id: str, req: WorkflowUpdateRequest, current_
 
     conn.execute(f"UPDATE workflows SET {', '.join(updates)} WHERE id=?", vals)
     conn.commit()
+    # 版本管理：每次真实保存自动存快照（保留最近 20 版）
+    try:
+        _snapshot_workflow_version(conn, workflow_id)
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"workflow version snapshot failed for {workflow_id}: {e}")
     conn.close()
     return {"success": True, "id": workflow_id}
 
@@ -485,6 +521,110 @@ async def delete_workflow(workflow_id: str, current_user: dict = require_auth())
     conn.commit()
     conn.close()
     return {"success": True}
+
+
+# ── 运行历史 / 版本管理 ───────────────────────────────
+
+
+def _snapshot_workflow_version(conn, wf_id: str) -> int:
+    """将工作流当前状态存入版本表（保留最近 20 版）。"""
+    row = conn.execute("SELECT * FROM workflows WHERE id=?", (wf_id,)).fetchone()
+    if not row:
+        return 0
+    ver = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM workflow_versions WHERE workflow_id=?", (wf_id,)
+    ).fetchone()[0]
+    conn.execute(
+        """INSERT INTO workflow_versions (id, workflow_id, version, name, description, steps, connections, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            f"wfver_{wf_id}_{ver}",
+            wf_id,
+            ver,
+            row["name"],
+            row["description"] or "",
+            row["steps"] or "[]",
+            row["connections"] or "[]",
+            datetime.now().isoformat(),
+        ),
+    )
+    conn.execute(
+        """DELETE FROM workflow_versions WHERE workflow_id=? AND version NOT IN
+           (SELECT version FROM workflow_versions WHERE workflow_id=? ORDER BY version DESC LIMIT 20)""",
+        (wf_id, wf_id),
+    )
+    return ver
+
+
+@router.get("/api/workflows/{workflow_id}/runs")
+async def list_workflow_runs(
+    workflow_id: str, limit: int = Query(default=20, le=100), current_user: dict = require_auth()
+):
+    """运行历史：最近 N 次 run，含节点级状态汇总与耗时。"""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT id, status, input_data, started_at, completed_at FROM workflow_runs
+           WHERE workflow_id=? ORDER BY started_at DESC LIMIT ?""",
+        (workflow_id, max(1, min(limit, 100))),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        node_counts = {k["status"]: k["c"] for k in conn.execute(
+            "SELECT status, COUNT(*) AS c FROM workflow_run_logs WHERE run_id=? GROUP BY status", (d["id"],)
+        )}
+        d["node_summary"] = node_counts
+        total_nodes = sum(node_counts.values())
+        d["node_ok"] = node_counts.get("success", 0)
+        d["node_failed"] = node_counts.get("failed", 0) + node_counts.get("error", 0)
+        d["node_total"] = total_nodes
+        try:
+            start = datetime.fromisoformat(d.get("started_at") or "")
+            end = datetime.fromisoformat(d.get("completed_at") or "")
+            d["elapsed_seconds"] = round((end - start).total_seconds(), 2)
+        except (ValueError, TypeError):
+            d["elapsed_seconds"] = None
+        result.append(d)
+    conn.close()
+    return result
+
+
+@router.get("/api/workflows/{workflow_id}/versions")
+async def list_workflow_versions(workflow_id: str, current_user: dict = require_auth()):
+    """版本列表（倒序）。"""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT version, name, description, created_at,
+                  (LENGTH(COALESCE(steps, '')) ) AS steps_size
+           FROM workflow_versions WHERE workflow_id=? ORDER BY version DESC LIMIT 50""",
+        (workflow_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/api/workflows/{workflow_id}/versions/{version}/restore")
+async def restore_workflow_version(
+    workflow_id: str, version: int, current_user: dict = require_auth()
+):
+    """恢复到指定版本：先将当前状态存一个新版本，再写回快照。"""
+    conn = get_db()
+    vrow = conn.execute(
+        "SELECT * FROM workflow_versions WHERE workflow_id=? AND version=?",
+        (workflow_id, version),
+    ).fetchone()
+    if not vrow:
+        conn.close()
+        raise HTTPException(404, "版本不存在")
+    saved_as = _snapshot_workflow_version(conn, workflow_id)  # 当前态也存档，防误操作
+    conn.execute(
+        "UPDATE workflows SET name=?, description=?, steps=?, connections=? WHERE id=?",
+        (vrow["name"], vrow["description"], vrow["steps"], vrow["connections"], workflow_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"success": True, "restored_version": version, "saved_version": saved_as}
+
 
 
 # ── 会话管理 ──────────────────────────────────────────────────

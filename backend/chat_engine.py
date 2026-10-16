@@ -31,7 +31,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 import agent_runtime
@@ -325,7 +325,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
 
     # P1-3 闭环：对话后自动记忆提取（关键词触发才调 LLM；仅 sessions 有记忆空间，conversations 不存）
     await _maybe_extract_memory(session_id, agent_id, message, result)
-    log_usage("agent_run", len(message), len(result), time.time() - start, agent_id=agent_id)  # v18.2 成本核算归因
+    log_usage("agent_run", len(message), len(result), time.time() - start, agent_id=agent_id, model=bundle.get("model") or "")  # v18.2 归因 + v18.3 成本估算
     _record_execution(agent_id, user_id, message, "done", time.time() - start)
     return {
         "result": result,
@@ -333,6 +333,7 @@ async def run_agent(agent_id: str, req: dict):  # noqa: C901
         "elapsed": round(time.time() - start, 2),
         # v17.0：上下文使用透明化（前端可展示「引用了知识库 X / 调用了工具 Y」）
         "tools_used": tools_used,
+        "mcp_calls": list(loop["mcp_calls"]),  # v18.4：MCP 调用回执透明化（server:tool 列表）
         "used": {
             "kb": len(agent_runtime._parse_list((bundle or {}).get("knowledge_base_ids"))),
             "skills": 1 if (bundle or {}).get("skills_context") else 0,
@@ -443,7 +444,7 @@ async def run_agent_stream(agent_id: str, req: dict):  # noqa: C901
                 c2.close()
             except Exception:
                 pass
-        log_usage("agent_run_stream", len(message), len(full), time.time() - start, agent_id=agent_id)  # v18.2 成本核算归因
+        log_usage("agent_run_stream", len(message), len(full), time.time() - start, agent_id=agent_id, model=bundle.get("model") or "")  # v18.2 归因 + v18.3 成本估算
         _record_execution(agent_id, user_id, message, "done", time.time() - start)
         _schedule_memory_extraction(session_id, agent_id, message, full)
         yield _sse_event("done", {"full": full, "elapsed": round(time.time() - start, 2), "tools_used": tools_used})
@@ -714,11 +715,11 @@ def _format_workflow_output(execution_results: list) -> dict:
     return {"status": "completed", "results": execution_results, "total_steps": len(execution_results)}
 
 
-async def _run_executor_workflow(workflow_id: str, message: str, nodes: list) -> dict:
+async def _run_executor_workflow(workflow_id: str, input_data: dict, nodes: list) -> dict:
     """用完整 executor 执行工作流并整理结果摘要。"""
     from workflows.executor import executor as _executor
 
-    run_id = await _executor.execute(workflow_id, {"message": message})
+    run_id = await _executor.execute(workflow_id, input_data or {})
     conn = get_db()
     run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
     conn.close()
@@ -752,7 +753,7 @@ async def _run_executor_workflow(workflow_id: str, message: str, nodes: list) ->
             }
         )
 
-    final_result = _wf_final_result(output_data, node_labels)
+    final_result = _wf_final_result(output_data, node_labels, nodes)
     elapsed = _wf_elapsed(run_dict)
 
     return {
@@ -765,12 +766,26 @@ async def _run_executor_workflow(workflow_id: str, message: str, nodes: list) ->
     }
 
 
-def _wf_final_result(output_data: dict, node_labels: dict) -> dict:
-    """从输出中挑选最终结果：优先输出节点 → 最后成功节点 → 错误信息。"""
-    for nid in node_labels:
+def _wf_final_result(output_data: dict, node_labels: dict, nodes: list = None) -> dict:
+    """挑选最终结果：优先结束(output)节点 → 定义顺序最后一个成功节点 → 任意成功 → 错误信息。"""
+    node_types = {}
+    for n in nodes or []:
+        if isinstance(n, dict) and n.get("id"):
+            node_types[n["id"]] = n.get("type", "")
+    # 1) 结束节点（output）
+    for nid, t in node_types.items():
+        if t == "output":
+            r = output_data.get(nid)
+            if isinstance(r, dict) and r.get("status") == "success":
+                return r
+    # 2) 定义顺序最后一个成功节点（排除开始节点自身，避免把入参当最终输出）
+    for nid in reversed(list(node_labels)):
+        if node_types.get(nid) == "start":
+            continue
         r = output_data.get(nid)
         if isinstance(r, dict) and r.get("status") == "success":
             return r
+    # 3) 任意成功 → 错误信息
     for r in reversed(list(output_data.values())):
         if isinstance(r, dict) and r.get("status") == "success":
             return r
@@ -790,6 +805,43 @@ def _wf_elapsed(run_dict: dict | None) -> float | None:
     except (ValueError, TypeError):
         pass
     return None
+
+
+@router.post("/api/workflows/runs/{run_id}/resume")
+async def workflow_run_resume(run_id: str, reset_node: list = Query(default=None), current_user: dict = require_auth()):
+    """v18.3 断点续跑：以旧 run 的成功节点快照为起点重跑（节点不重执行）。
+
+    reset_node（可多个）：单节点回滚——清除该节点快照，重跑它及其下游。
+    诚实边界：快照源是 workflow_run_logs 的 success 行；工作流结构变更后层序可能不一致，
+    返回 resumed_nodes 供审计。
+    """
+    conn = get_db()
+    run = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    conn.close()
+    if not run:
+        raise HTTPException(404, "运行记录不存在")
+    wf_id = run["workflow_id"]
+    if not wf_id:
+        raise HTTPException(400, "该运行无 workflow_id，无法续跑")
+    try:
+        wf_input = json.loads(run["input_data"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        wf_input = {}
+
+    from workflows.executor import executor as _executor
+
+    seeded = _executor._load_resume_snapshots(run_id, reset_node)
+    new_run_id = await _executor.execute(wf_id, wf_input, resume_run_id=run_id, reset_nodes=reset_node)
+    conn = get_db()
+    new_run = conn.execute("SELECT id, status FROM workflow_runs WHERE id=?", (new_run_id,)).fetchone()
+    conn.close()
+    return {
+        "source_run": run_id,
+        "new_run": new_run["id"] if new_run else new_run_id,
+        "status": new_run["status"] if new_run else "unknown",
+        "resumed_nodes": sorted(seeded.keys()),
+        "reset_nodes": reset_node or [],
+    }
 
 
 @router.get("/api/workflows/runs/{run_id}/snapshots")
@@ -849,8 +901,11 @@ async def workflow_run_replay(run_id: str, current_user: dict = require_auth()):
 async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
     """运行 Workflow - 若可用 executor 则用，否则简单执行"""
     message = (req.get("message") or "").strip()
-    if not message:
-        raise HTTPException(400, "消息不能为空")
+    # 开始节点字段：除 message 外的其它键作为工作流入参（供 ${start.result.<key>} 引用）
+    input_data = {k: v for k, v in req.items() if k != "message"}
+    full_input = {**input_data, "message": message}
+    if not message and not input_data:
+        raise HTTPException(400, "消息或开始节点输入不能为空")
 
     conn = get_db()
     wf = conn.execute("SELECT * FROM workflows WHERE id=?", (workflow_id,)).fetchone()
@@ -864,7 +919,7 @@ async def run_workflow(workflow_id: str, req: dict):  # noqa: C901
 
     # 尝试用完整 executor
     try:
-        return await _run_executor_workflow(workflow_id, message, nodes)
+        return await _run_executor_workflow(workflow_id, full_input, nodes)
     except Exception as e:
         logger.warning(f"workflow executor unavailable, simple run: {e}")
 

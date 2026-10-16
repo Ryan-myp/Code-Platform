@@ -129,3 +129,7 @@ share/
 # 依赖
 requirements.txt
 !requirements.txt  # 保留这个文件
+
+# runtime artifacts
+backend/platform.bak
+backend/platform.bak_*

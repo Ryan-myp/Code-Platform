@@ -243,6 +243,27 @@ def _execute_job(job) -> tuple:
             except Exception as e:
                 logger.exception("[Scheduler] 企业级优化失败: %s", e)
                 return False, str(e)
+        if job_type == "workflow":
+            # 工作流定时触发器：config = {workflow_id, message}（message 缺省“定时触发”）
+            import asyncio
+
+            from workflows.executor import executor as _wf_executor
+
+            cfg = json.loads(job.get("config") or "{}")
+            wf_id = (cfg.get("workflow_id") or "").strip()
+            if not wf_id:
+                return False, "未配置工作流（config.workflow_id）"
+            message = str(cfg.get("message") or "定时触发")
+            run_id = asyncio.run(
+                _wf_executor.execute(wf_id, {"message": message, "trigger": "scheduler"})
+            )
+            conn = get_db()
+            try:
+                row = conn.execute("SELECT status FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+            finally:
+                conn.close()
+            status = row["status"] if row else "unknown"
+            return True, f"工作流 {wf_id} 执行完成（run={run_id}, status={status}）"
         # 默认 report：生成调度运行统计摘要
         conn = get_db()
         try:

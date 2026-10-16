@@ -947,6 +947,7 @@ export default function GameFactoryPage() {
               <Pagination
                 items={filteredProjects}
                 pageSize={8}
+                gridClass="grid grid-cols-1 gap-2"
                 label={`共 ${filteredProjects.length} 个小游戏`}
                 renderItem={(p) => {
                   const t = templates.find((x) => x.id === p.template)
@@ -971,70 +972,73 @@ export default function GameFactoryPage() {
                           t?.icon || '🎮'
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-800 truncate">
+                      <div className="flex-1 min-w-[120px]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium text-gray-800 truncate max-w-[200px]">
                             {p.name}
                           </span>
                           {p.iterations > 0 && (
-                            <Badge color="violet">
+                            <Badge color="violet" className="flex-shrink-0">
                               <GitCommitHorizontal className="w-3 h-3 mr-0.5 inline" />
                               迭代 {p.iterations} 次
                             </Badge>
                           )}
+                          <span className="ml-auto text-[11px] text-gray-400 flex-shrink-0 tabular-nums hidden sm:inline">
+                            {(p.updated_at || p.created_at)?.slice(5, 16).replace('T', ' ')}
+                          </span>
                         </div>
-                        <div className="text-xs text-gray-400 truncate">
-                          {t?.name || '自定义'} · 双版本 · {p.requirement?.slice(0, 50)}
+                        <div className="text-xs text-gray-400 truncate mt-0.5">
+                          {t?.name || '自定义'} · 双版本 · {p.requirement?.slice(0, 40)}
                         </div>
                       </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap tabular-nums">
-                        {(p.updated_at || p.created_at)?.slice(0, 16).replace('T', ' ')}
-                      </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={Play}
-                        className="flex-shrink-0 whitespace-nowrap"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          playGame(p)
-                        }}
-                      >
-                        试玩
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={Eye}
-                        className="flex-shrink-0 whitespace-nowrap"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openProject(p)
-                        }}
-                      >
-                        查看
-                      </Button>
-                      <span onClick={(e) => e.stopPropagation()}>
-                        <ShareButton
-                          content={`# 小游戏：${p.name}\n\n需求：${p.requirement || ''}\n\n> 由小团智能平台小游戏工坊生成 · ${new Date().toLocaleString()}`}
-                          title={`小游戏：${p.name}`}
-                          contentType="game"
-                          className="!p-1.5"
-                        />
-                      </span>
-                      <button
-                        onClick={(e) => openRename(p, e)}
-                        title="重命名"
-                        className="p-1.5 text-gray-300 hover:text-violet-500 rounded-lg hover:bg-violet-50"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => removeProject(p, e)}
-                        className="p-1.5 text-gray-300 hover:text-red-500 rounded-lg hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={Play}
+                          className="whitespace-nowrap"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            playGame(p)
+                          }}
+                        >
+                          试玩
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={Eye}
+                          className="whitespace-nowrap"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openProject(p)
+                          }}
+                        >
+                          查看
+                        </Button>
+                        <div className="flex items-center gap-0.5 pl-1.5 border-l border-gray-200" onClick={(e) => e.stopPropagation()}>
+                          <ShareButton
+                            content={`# 小游戏：${p.name}\n\n需求：${p.requirement || ''}\n\n> 由小团智能平台小游戏工坊生成 · ${new Date().toLocaleString()}`}
+                            title={`小游戏：${p.name}`}
+                            contentType="game"
+                            className="!p-1.5 text-gray-400 hover:text-fuchsia-500"
+                          />
+                          <button
+                            onClick={(e) => openRename(p, e)}
+                            title="重命名"
+                            className="p-1.5 text-gray-400 hover:text-violet-500 rounded-lg hover:bg-violet-50"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => removeProject(p, e)}
+                            title="删除"
+                            className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )
                 }}
